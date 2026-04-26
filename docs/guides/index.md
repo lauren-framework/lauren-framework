@@ -44,4 +44,9 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     One-way streaming with `EventStream` and `ServerSentEvent`: keep-alive heartbeats, `Last-Event-ID` resumability, AI text-streaming patterns.
 
+-   :material-sync-circle: [__Circular Module Imports__](circular-module-imports.md)
+
+    ---
+    Break circular import cycles between feature modules using `ForwardRef("ClassName")` in `@module(imports=[...])` — resolved lazily at startup.
+
 </div>

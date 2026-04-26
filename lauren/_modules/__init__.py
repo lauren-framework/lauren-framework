@@ -20,8 +20,9 @@ in module *B* unless *B* explicitly exported it.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any, ForwardRef, Iterable
 
 from ..decorators import MODULE_META, ModuleMeta
 from .._di.custom import CustomProvider, normalise_provider_token
@@ -46,6 +47,106 @@ from ..exceptions import (
     MetadataInheritanceError,
     ModuleExportViolation,
 )
+
+
+def _resolve_forward_import(ref: Any, declaring_cls: type) -> type:
+    """Resolve a ``ForwardRef`` or string in ``@module(imports=...)`` to the
+    actual module class.
+
+    Resolution order
+    ----------------
+    1. The declaring module's own globals (exact match, fastest path).
+    2. All currently-loaded ``sys.modules`` entries (handles the case where
+       the target module is defined in a *different* file that was never
+       imported directly into the declaring module's namespace — the common
+       circular-import scenario).
+
+    The scan in step 2 rejects ambiguous matches (same class name in two
+    different loaded modules) and raises ``ValueError`` with an actionable
+    suggestion to use a dotted name (``"pkg.sub.ClassName"``) instead.
+
+    Parameters
+    ----------
+    ref:
+        A :class:`typing.ForwardRef` or plain ``str`` naming the target class.
+        Dotted names (``"pkg.mod.ClassName"``) are resolved by splitting on
+        the last ``.`` and looking up the parent module in ``sys.modules``.
+    declaring_cls:
+        The ``@module``-decorated class that contains the forward reference.
+        Used to establish the local namespace for step 1.
+
+    Raises
+    ------
+    ValueError
+        When the name cannot be resolved or the match is ambiguous.
+    """
+    if isinstance(ref, type):
+        return ref
+
+    if isinstance(ref, ForwardRef):
+        name: str = ref.__forward_arg__
+    elif isinstance(ref, str):
+        name = ref
+    else:
+        raise ValueError(
+            f"Invalid entry in @module(imports=[...]): {ref!r}. "
+            "Each entry must be a module class, ForwardRef('ClassName'), or 'ClassName'."
+        )
+
+    # Dotted name: "pkg.mod.ClassName" → split into module path + class name.
+    if "." in name:
+        mod_path, cls_name = name.rsplit(".", 1)
+        sys_mod = sys.modules.get(mod_path)
+        if sys_mod is not None:
+            resolved = getattr(sys_mod, cls_name, None)
+            if resolved is not None and isinstance(resolved, type):
+                return resolved
+        raise ValueError(
+            f"{declaring_cls.__name__} references forward import {name!r} "
+            f"but {mod_path!r} is not loaded or does not export {cls_name!r}. "
+            "Ensure the module is imported before LaurenFactory.create() is called."
+        )
+
+    # Simple name: check the declaring class's own module globals first.
+    module_name = getattr(declaring_cls, "__module__", None)
+    if module_name:
+        sys_mod = sys.modules.get(module_name)
+        if sys_mod is not None:
+            resolved = getattr(sys_mod, name, None)
+            if resolved is not None and isinstance(resolved, type):
+                return resolved
+
+    # Fallback: scan every loaded module for a class with this name.
+    # Snapshot sys.modules to avoid "dictionary changed size during iteration"
+    # if a lazy import fires while we scan.
+    candidates: list[type] = []
+    seen_ids: set[int] = set()
+    for sys_mod in list(sys.modules.values()):
+        if sys_mod is None:
+            continue
+        resolved = getattr(sys_mod, name, None)
+        if resolved is not None and isinstance(resolved, type) and id(resolved) not in seen_ids:
+            candidates.append(resolved)
+            seen_ids.add(id(resolved))
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        locations = ", ".join(
+            getattr(c, "__module__", "?") + "." + c.__name__ for c in candidates
+        )
+        raise ValueError(
+            f"{declaring_cls.__name__} has an ambiguous forward import {name!r}: "
+            f"found {len(candidates)} classes with that name ({locations}). "
+            "Use a dotted name such as ForwardRef('myapp.b_module.BModule') "
+            "or 'myapp.b_module.BModule' to disambiguate."
+        )
+
+    raise ValueError(
+        f"{declaring_cls.__name__} references forward import {name!r} that could "
+        "not be resolved. Ensure the target module class is defined (and its "
+        "module imported) before LaurenFactory.create() is called."
+    )
 
 
 @dataclass
@@ -107,9 +208,12 @@ class ModuleGraph:
             compiled = CompiledModule(cls=mod_cls, meta=meta)
             compiled.controllers = meta.controllers
             # Walk imports first so exports are known.
+            # Each entry may be a real class or a ForwardRef / string that
+            # is resolved lazily here (all modules are loaded by compile time).
             imported_exports: set[Any] = set()
             for imp in meta.imports:
-                sub = visit(imp)
+                resolved_imp = _resolve_forward_import(imp, mod_cls)
+                sub = visit(resolved_imp)
                 imported_exports |= sub.exported
 
             # Each entry in ``meta.providers`` is either a class /

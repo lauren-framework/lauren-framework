@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, ForwardRef, TypeVar
 
 from ._di import INJECTABLE_META, InjectableMeta
 from .exceptions import (
@@ -139,12 +139,14 @@ class ModuleMeta:
         *,
         controllers: list[type] | None = None,
         providers: list[type] | None = None,
-        imports: list[type] | None = None,
+        imports: list[type | ForwardRef | str] | None = None,
         exports: list[type] | None = None,
     ) -> None:
         self.controllers = tuple(controllers or [])
         self.providers = tuple(providers or [])
-        self.imports = tuple(imports or [])
+        # imports may contain ForwardRef/str entries that are resolved lazily
+        # during ModuleGraph.compile() once all modules are loaded.
+        self.imports: tuple[type | ForwardRef | str, ...] = tuple(imports or [])
         self.exports = tuple(exports or [])
 
 
@@ -152,7 +154,7 @@ def module(
     *args: Any,
     controllers: list[type] | None = None,
     providers: list[type] | None = None,
-    imports: list[type] | None = None,
+    imports: list[type | ForwardRef | str] | None = None,
     exports: list[type] | None = None,
 ) -> Callable[[C], C]:
     """Declare a module boundary.
