@@ -1,0 +1,64 @@
+name: 📚 Documentation issue
+description: Report a problem with the docs, README, llms.txt, llms-full.txt, or examples.
+title: "[docs]: <one-line summary>"
+labels: ["documentation", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping keep the documentation honest! Documentation
+        bugs include wrong code samples, broken links, missing entries in
+        `llms-full.txt`, or sections that contradict the implementation.
+
+  - type: dropdown
+    id: location
+    attributes:
+      label: Where is the issue?
+      multiple: true
+      options:
+        - "README.md"
+        - "Documentation site (mkdocs)"
+        - "llms.txt"
+        - "llms-full.txt"
+        - "AGENTS.md / .CLAUDE.md"
+        - "CONTRIBUTING.md"
+        - "Docstrings / `__doc__`"
+        - "IDEAS.md"
+        - "Other (please specify)"
+    validations:
+      required: true
+
+  - type: input
+    id: url-or-path
+    attributes:
+      label: URL or file path
+      description: A direct link to the affected page or a path inside the repo.
+      placeholder: e.g. docs/core-concepts/extractors.md, or https://lauren-framework.github.io/lauren/guides/middleware/
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's wrong?
+      description: |
+        Describe the issue. If a code sample doesn't work, paste the snippet, the command you ran, and the error.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested wording (optional)
+      description: |
+        If you'd like to propose specific wording, paste it here. Markdown is welcome. PRs welcome too!
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Pre-flight checklist
+      options:
+        - label: I have searched existing documentation issues for duplicates.
+          required: true
+        - label: If a code sample is wrong, I verified that it actually fails on the latest `main`.
+          required: false

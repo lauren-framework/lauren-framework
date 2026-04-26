@@ -1,0 +1,24 @@
+# CODEOWNERS — auto-request reviews from these owners on PRs.
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
+#
+# Replace the placeholder team / users below with the actual maintainers
+# (e.g. @lauren-framework/core, @your-handle) once the repo is published.
+
+# Default owner — every file unless overridden below.
+*                       @lauren-framework/maintainers
+
+# Critical subsystems — keep an extra reviewer in the loop.
+/lauren/_asgi/          @lauren-framework/runtime
+/lauren/_di/            @lauren-framework/runtime
+/lauren/_routing/       @lauren-framework/runtime
+
+# Documentation and the AI-readable refs.
+/docs/                  @lauren-framework/docs
+/README.md              @lauren-framework/docs
+/llms.txt               @lauren-framework/docs
+/llms-full.txt          @lauren-framework/docs
+
+# CI / build / release pipeline.
+/.github/               @lauren-framework/maintainers
+/noxfile.py             @lauren-framework/maintainers
+/pyproject.toml         @lauren-framework/maintainers

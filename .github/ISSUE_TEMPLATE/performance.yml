@@ -1,0 +1,82 @@
+name: 🐢 Performance regression
+description: Report unexpected latency, memory, or throughput regressions.
+title: "[perf]: <one-line summary>"
+labels: ["performance", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        lauren has strong performance invariants — no reflection on the
+        request path, per-request DI cache, immutable execution graph.
+        If you've measured a regression against those guarantees we want
+        to know.
+
+        Please make sure your numbers come from a **warm** process
+        (discard the first ~1k requests) and that you're comparing
+        like-for-like (same Python version, same Pydantic version,
+        same number of workers, same hardware).
+
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Scenario
+      description: What route / endpoint / startup step is slow? Paste the controller and the request.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: numbers
+    attributes:
+      label: Measurements
+      description: |
+        Show the numbers: p50/p95/p99 latency, RPS, memory, or startup time. Include the benchmarking command and any flags. `wrk`, `oha`, `bombardier`, `pytest-benchmark`, or a self-rolled `asyncio` harness are all welcome.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: baseline
+    attributes:
+      label: Baseline (good) version
+      description: Last lauren version where the numbers were acceptable, if known.
+      placeholder: e.g. 1.0.0
+
+  - type: input
+    id: regressed
+    attributes:
+      label: Regressed (bad) version
+      description: First lauren version where the regression appeared.
+      placeholder: e.g. main@abc1234
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: |
+        - Python version
+        - Pydantic version
+        - ASGI server + version (`uvicorn 0.30`, `hypercorn`, `granian`, …)
+        - OS + arch
+        - CPU / RAM / container limits
+    validations:
+      required: true
+
+  - type: textarea
+    id: profile
+    attributes:
+      label: Profile / flamegraph (optional but very welcome)
+      description: |
+        Output of `py-spy`, `cProfile`, `perf`, or `austin` on the slow path. Drag-and-drop SVGs are fine.
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Pre-flight checklist
+      options:
+        - label: My measurements were taken on a warm process (steady-state, not cold-start).
+          required: true
+        - label: I have isolated lauren — i.e., the slow path doesn't include my own database / network calls.
+          required: true

@@ -1,0 +1,105 @@
+name: ✨ Feature request
+description: Propose a new feature, decorator, extractor, or behavior.
+title: "[feature]: <one-line summary>"
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a feature! Please remember the project's
+        design philosophy from [`.CLAUDE.md`](https://github.com/lauren-framework/lauren/blob/main/.CLAUDE.md):
+
+        > **Startup validates; runtime dispatches.**
+        > Decorators attach metadata; they never rewrite functions.
+        > No reflection on the request path. Pre-compile everything.
+
+        Feature requests that violate these invariants are unlikely to land
+        even if useful — please propose a design that respects them, or
+        explain why the invariant should be relaxed.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: |
+        Describe the problem you're trying to solve. Include the user-facing pain — "I want to do X but currently have to write Y" — *not* the solution. Concrete code that fails or is awkward today is gold.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-api
+    attributes:
+      label: Proposed API
+      description: |
+        Sketch the public-facing API (Python code) that you would like to write. Include decorators, type hints, and at least one realistic example.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Behavior & invariants
+      description: |
+        Spell out the runtime behavior, including edge cases, what should happen at startup vs. on each request, and any new validation that would run inside `LaurenFactory.create(...)`.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: |
+        What other approaches did you consider, and why did you reject them? "I checked Axum / NestJS / FastAPI / Litestar and they do X" is welcome and useful.
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      description: Which subsystem(s) does this touch?
+      multiple: true
+      options:
+        - Routing (`lauren/_routing`)
+        - Dependency Injection (`lauren/_di`)
+        - Modules (`lauren/_modules`)
+        - Lifecycle (`lauren/_lifecycle`)
+        - ASGI runtime (`lauren/_asgi`)
+        - Extractors / typing (`lauren/_typing`)
+        - OpenAPI generation
+        - Middleware / guards
+        - Logging
+        - Documentation
+        - Tooling / build / CI
+    validations:
+      required: true
+
+  - type: dropdown
+    id: breaking
+    attributes:
+      label: Breaking change?
+      options:
+        - "No — pure addition"
+        - "No — addition with deprecation of an alternative"
+        - "Yes — would require a major version bump"
+        - "Unsure — please advise"
+      default: 0
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Links to similar features in other frameworks, prior art, RFCs, or Discussions.
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Pre-flight checklist
+      options:
+        - label: I have read the design philosophy in [`.CLAUDE.md`](https://github.com/lauren-framework/lauren/blob/main/.CLAUDE.md) / [`AGENTS.md`](https://github.com/lauren-framework/lauren/blob/main/AGENTS.md).
+          required: true
+        - label: I have searched [`IDEAS.md`](https://github.com/lauren-framework/lauren/blob/main/IDEAS.md) and existing issues for prior art on this idea.
+          required: true
+        - label: I have considered alternatives and explained why this proposal is preferable.
+          required: true

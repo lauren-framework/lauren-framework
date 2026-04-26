@@ -1,0 +1,26 @@
+# yamllint config — only applied to .github/ via prek `files:` filter.
+# Tuned to be friendly: workflows and issue forms are dense YAML, but
+# we still want to catch real mistakes (bad indentation, duplicate keys).
+
+extends: default
+
+rules:
+  line-length:
+    max: 200
+    level: warning
+  document-start: disable
+  truthy:
+    # GitHub Actions uses `on:` as a key — yamllint mistakes that for
+    # the boolean keyword "on". Whitelist the keys we know are safe.
+    allowed-values: ["true", "false"]
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: disable
+  indentation:
+    spaces: 2
+    indent-sequences: consistent
+  braces:
+    max-spaces-inside: 1
+  brackets:
+    max-spaces-inside: 1

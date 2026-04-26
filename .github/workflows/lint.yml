@@ -1,0 +1,75 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: lint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  prek:
+    name: prek (all hooks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      # Cache prek's hook environments — they're hashed off
+      # `.pre-commit-config.yaml`, so a cold run is one-time per dep bump.
+      - name: Restore prek cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/prek
+          key: prek-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            prek-${{ runner.os }}-
+      - name: Install prek
+        run: python -m pip install --upgrade pip "prek>=0.3"
+      - name: Run prek
+        run: prek run --all-files --show-diff-on-failure --color always
+
+  # Standalone mypy job — slower, isolated env, gating on main but
+  # only informational on PRs (matches the previous policy). The prek
+  # job above also runs mypy, but skipping it here would block lint on
+  # type errors that the developer hasn't seen yet locally.
+  mypy:
+    name: mypy
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install --upgrade pip nox
+      - run: nox -s typecheck
+
+  llms-txt-sync:
+    name: llms-full.txt is in sync
+    runs-on: ubuntu-latest
+    # Soft-fail on PRs (the `llms-full.txt` reference may legitimately
+    # need to be regenerated as part of a feature PR).
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install --upgrade pip nox
+      - name: Verify every public symbol appears in llms-full.txt
+        run: nox -s llms_check

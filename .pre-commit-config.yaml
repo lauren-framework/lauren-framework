@@ -1,0 +1,153 @@
+# Git hooks for the lauren framework, managed by `prek` — a fast,
+# Rust-powered, drop-in replacement for `pre-commit` that reads this
+# exact same file format.
+#
+# Install once per clone:
+#
+#     uv tool install prek      # or: brew install prek / pipx install prek
+#     prek install              # writes .git/hooks/pre-commit
+#
+# Run on demand:
+#
+#     prek run                  # changed files only
+#     prek run --all-files      # everything tracked by git
+#
+# `prek` keeps full compatibility with classic `pre-commit`, so
+# contributors who prefer the original `pre-commit run` will work too.
+# CI invokes `prek` via `nox -s prek` — see noxfile.py.
+
+minimum_pre_commit_version: "3.5.0"
+
+# Skip hooks during merge / rebase commits — the real branch CI will
+# catch issues there and forcing developers to fix conflicts AND lint
+# in one commit is needlessly painful.
+default_stages: [pre-commit]
+
+repos:
+  # ---------------------------------------------------------------------
+  # General hygiene
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-yaml
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        # Markdown trailing whitespace is sometimes meaningful (line breaks).
+        exclude: \.md$
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: detect-private-key
+
+  # ---------------------------------------------------------------------
+  # Python — ruff (lint + format)
+  # ---------------------------------------------------------------------
+  # We run ruff via its official mirror so prek can use the prebuilt
+  # binary instead of building from source on every clone.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        name: ruff (lint, autofix)
+        args: ["--fix", "--exit-non-zero-on-fix"]
+        types_or: [python, pyi]
+      - id: ruff-format
+        name: ruff (format)
+        types_or: [python, pyi]
+
+  # ---------------------------------------------------------------------
+  # Python — mypy (informational by default; CI gates on it)
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        name: mypy (lauren package)
+        files: ^lauren/
+        args: ["--config-file=pyproject.toml"]
+        # mypy needs the runtime deps to type-check correctly.
+        additional_dependencies:
+          - "pydantic>=2.0"
+
+  # ---------------------------------------------------------------------
+  # YAML — schema-aware lint for .github/workflows + issue templates
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        name: yamllint (.github/)
+        files: ^\.github/.*\.ya?ml$
+        args: ["-c=.yamllint.yaml"]
+
+  # ---------------------------------------------------------------------
+  # GitHub Actions — schema validation
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.7
+    hooks:
+      - id: actionlint
+        name: actionlint (workflows)
+        files: ^\.github/workflows/.*\.ya?ml$
+
+  # ---------------------------------------------------------------------
+  # Shell — shellcheck for the few inline scripts we ship
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+
+  # ---------------------------------------------------------------------
+  # Markdown — light formatting check for the docs and READMEs
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.43.0
+    hooks:
+      - id: markdownlint
+        name: markdownlint (README + docs)
+        # Limit to the top-level README and the docs site; long-form
+        # files like llms-full.txt and CLAUDE.md have their own format.
+        files: ^(README\.md|CONTRIBUTING\.md|AGENTS\.md|docs/.*\.md)$
+        args: ["--config=.markdownlint.yaml"]
+
+  # ---------------------------------------------------------------------
+  # Local hooks — invariants specific to this repo
+  # ---------------------------------------------------------------------
+  - repo: local
+    hooks:
+      # Mirrors `nox -s llms_check` — every public symbol in
+      # `lauren.__all__` must appear in `llms-full.txt`. Runs only when
+      # the package or the reference file changes (cheap on every commit).
+      - id: llms-full-txt-sync
+        name: llms-full.txt is in sync with lauren.__all__
+        entry: python scripts/check_llms_full.py
+        language: python
+        pass_filenames: false
+        files: ^(lauren/.*\.py|llms-full\.txt)$
+        # Editable install of the package so the script can `import lauren`.
+        additional_dependencies:
+          - "pydantic>=2.0"
+          - "-e ."
+
+      # Quick smoke: noxfile.py and pyproject.toml are syntactically valid.
+      - id: nox-list
+        name: nox sessions still parse
+        entry: bash -c 'python -c "import ast; ast.parse(open(\"noxfile.py\").read())" && python -c "import tomllib, pathlib; tomllib.loads(pathlib.Path(\"pyproject.toml\").read_text())"'
+        language: system
+        pass_filenames: false
+        files: ^(noxfile\.py|pyproject\.toml)$
+
+ci:
+  # If this repo ever moves to pre-commit.ci, tell it not to update
+  # us automatically — dependabot already does that on a schedule we
+  # control. (Has no effect on local prek runs.)
+  autoupdate_schedule: monthly
+  skip: [mypy, llms-full-txt-sync]  # too slow / installs deps in pre-commit.ci

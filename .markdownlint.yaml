@@ -1,0 +1,30 @@
+# markdownlint config — only applied to README, CONTRIBUTING, AGENTS,
+# and docs/**/*.md (not llms*.txt, .CLAUDE.md, IDEAS.md).
+
+default: true
+
+# Long lines are common in our docs (URLs, code samples, tables);
+# rule MD013 forces a hard wrap which is not valuable.
+MD013: false
+
+# Allow inline HTML — used for the README header centering and badges.
+MD033: false
+
+# Permit duplicate headings under different parents (common in changelogs
+# and per-version reference pages).
+MD024:
+  siblings_only: true
+
+# We use fenced code blocks without a language tag occasionally for
+# command output and trees — that's fine.
+MD040: false
+
+# Allow trailing punctuation in headings (e.g. "What's new?")
+MD026: false
+
+# First line of a file does not need to be a top-level heading
+# (the README starts with an HTML <p> for centering).
+MD041: false
+
+# Bare URLs (e.g. for shields.io) are intentional in some places.
+MD034: false

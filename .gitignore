@@ -1,0 +1,54 @@
+# Byte-compiled / optimised / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+wheels/
+pip-wheel-metadata/
+
+# MISC
+.python-version
+uv.lock
+.nox/
+
+# Test & coverage artefacts
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# Type-checkers & IDEs
+.pyre/
+.pyright/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Agentic development scratch
+.claude/
+.cursor/
+.aider*
+.continue/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Virtualenvs
+.venv/
+venv/
+env/
+.env

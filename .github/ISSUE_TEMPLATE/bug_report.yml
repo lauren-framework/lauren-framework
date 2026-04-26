@@ -1,0 +1,133 @@
+name: 🐞 Bug report
+description: Report a defect — something doesn't work the way the docs / `llms-full.txt` / type hints say it should.
+title: "[bug]: <one-line summary>"
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a precise bug report.
+
+        Before submitting, please:
+
+        1. Search [open](https://github.com/lauren-framework/lauren/issues?q=is%3Aissue+is%3Aopen+label%3Abug) and [closed](https://github.com/lauren-framework/lauren/issues?q=is%3Aissue+is%3Aclosed+label%3Abug) bug reports.
+        2. Reproduce on the **latest** `main` if at all possible (`pip install git+https://github.com/lauren-framework/lauren@main`).
+        3. Strip your reproducer down to the smallest self-contained snippet.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences describing the bug.
+      placeholder: e.g. "`Json[Model]` extractor raises `TypeError` when the model has a `ForwardRef` annotation."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal reproducer
+      description: |
+        A self-contained Python snippet that reproduces the bug. Prefer code that I can paste directly into a file and run with `python repro.py` or `pytest repro.py`. Include any `curl`/`httpx` commands needed.
+      render: python
+      placeholder: |
+        from lauren import LaurenFactory, controller, get, module, Json
+        # ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen, and *why* (cite the README, docs, llms-full.txt, or a type hint where applicable)?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: |
+        What happened instead? Paste the full traceback inside a fenced code block. If the bug is a wrong response, paste the request and the response.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: lauren-version
+    attributes:
+      label: lauren version
+      description: Output of `python -c "import lauren; print(lauren.__version__)"` (or the commit SHA if installed from `main`).
+      placeholder: e.g. 1.0.0 or main@abc1234
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: Output of `python --version`.
+      placeholder: e.g. 3.12.4
+    validations:
+      required: true
+
+  - type: input
+    id: pydantic-version
+    attributes:
+      label: Pydantic version
+      description: Output of `python -c "import pydantic; print(pydantic.VERSION)"`.
+      placeholder: e.g. 2.8.2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other (please describe in "Additional context")
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: Your best guess — maintainers may re-classify.
+      options:
+        - "Critical: data loss, security, or app cannot start"
+        - "High: a documented feature is broken; no workaround"
+        - "Medium: documented feature is broken; workaround exists"
+        - "Low: incorrect error message, type hint, or doc"
+      default: 2
+    validations:
+      required: true
+
+  - type: textarea
+    id: regression
+    attributes:
+      label: Regression (if applicable)
+      description: Did this work in a previous version? If so, which one was the last good version? `git bisect` is welcome.
+      placeholder: e.g. Worked in 0.9.x, broken in 1.0.0.
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Anything else — full ASGI server, deployment topology, related issues, screenshots.
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Pre-flight checklist
+      options:
+        - label: I have searched the existing issues and could not find a duplicate.
+          required: true
+        - label: I have read [`CONTRIBUTING.md`](https://github.com/lauren-framework/lauren/blob/main/CONTRIBUTING.md) and [`AGENTS.md`](https://github.com/lauren-framework/lauren/blob/main/AGENTS.md).
+          required: true
+        - label: My reproducer runs in a clean virtualenv with the dependencies I list above.
+          required: true
