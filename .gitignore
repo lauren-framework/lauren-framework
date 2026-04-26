@@ -17,6 +17,7 @@ pip-wheel-metadata/
 .python-version
 uv.lock
 .nox/
+ai-slave.sh
 
 # Test & coverage artefacts
 .pytest_cache/

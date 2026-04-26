@@ -421,13 +421,32 @@ def help_session(session: nox.Session) -> None:
         if not callable(fn):
             continue
         registered = getattr(fn, "_nox_registered_sessions", None)
-        if registered is None and not getattr(fn, "python", None) and name not in {
-            "tests", "tests_unit", "tests_integration", "tests_verbose",
-            "coverage", "lint", "format", "typecheck",
-            "docs_install", "docs", "docs_serve",
-            "build", "build_check", "release", "release_test",
-            "clean", "llms_check", "ci", "help_session",
-        }:
+        if (
+            registered is None
+            and not getattr(fn, "python", None)
+            and name
+            not in {
+                "tests",
+                "tests_unit",
+                "tests_integration",
+                "tests_verbose",
+                "coverage",
+                "lint",
+                "format",
+                "typecheck",
+                "docs_install",
+                "docs",
+                "docs_serve",
+                "build",
+                "build_check",
+                "release",
+                "release_test",
+                "clean",
+                "llms_check",
+                "ci",
+                "help_session",
+            }
+        ):
             continue
         doc = (getdoc(fn) or "").splitlines()[0] if getdoc(fn) else ""
         print(f"  nox -s {name:<22}  {doc}")
@@ -459,4 +478,3 @@ __all__ = [
     "tests_verbose",
     "typecheck",
 ]
-

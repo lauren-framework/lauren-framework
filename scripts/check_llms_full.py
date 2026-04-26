@@ -38,9 +38,7 @@ def main(argv: list[str]) -> int:
         for name in missing:
             print(f"  - {name}")
         print()
-        print(
-            "Either add them to llms-full.txt or remove them from `lauren.__all__`."
-        )
+        print("Either add them to llms-full.txt or remove them from `lauren.__all__`.")
         return 1
 
     print(

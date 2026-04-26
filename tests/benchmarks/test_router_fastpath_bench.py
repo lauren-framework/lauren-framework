@@ -144,9 +144,9 @@ class TestRouterFindBench:
         speedup = dynamic_result.seconds / static_result.seconds
         # We measure \u22482.5-4x locally. Assert \u22651.3x so the test is
         # robust on slow CI while still proving the fast path delivers.
-        assert speedup >= 1.3, (
-            f"static fast path only {speedup:.2f}x faster than radix walk; regression?"
-        )
+        assert (
+            speedup >= 1.3
+        ), f"static fast path only {speedup:.2f}x faster than radix walk; regression?"
 
     def test_static_lookup_in_mixed_router_still_fast(self) -> None:
         """Static lookups in a router that also contains dynamic
@@ -171,9 +171,9 @@ class TestRouterFindBench:
         # real correctness comes from the unit-test suite.
         dyn_result = _time_find(mixed, "GET", "/dynamic/d12/99", n)
         speedup = dyn_result.seconds / result.seconds
-        assert speedup >= 1.2, (
-            f"static-in-mixed only {speedup:.2f}x faster than dynamic-in-mixed"
-        )
+        assert (
+            speedup >= 1.2
+        ), f"static-in-mixed only {speedup:.2f}x faster than dynamic-in-mixed"
 
     def test_fast_path_does_not_allocate_params_dict(self) -> None:
         """The fast path returns the shared ``_EMPTY_PARAMS`` sentinel
@@ -253,6 +253,6 @@ class TestRouterEndToEndBench:
         # Static must not be slower end-to-end than dynamic. On this
         # workload we typically observe \u22481.05-1.15x faster.
         speedup = dynamic_secs / static_secs
-        assert speedup >= 0.5, (
-            f"static end-to-end slower than dynamic: speedup={speedup:.2f}x"
-        )
+        assert (
+            speedup >= 0.5
+        ), f"static end-to-end slower than dynamic: speedup={speedup:.2f}x"
