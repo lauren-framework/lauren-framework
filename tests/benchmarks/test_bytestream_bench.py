@@ -209,6 +209,6 @@ class TestByteStreamBench:
         # the overhead of the async iterator dispatch is real at this
         # scale. The real savings are on the large-upload test above.
         ratio = streamed.seconds / buf.seconds
-        assert (
-            ratio <= 1.5
-        ), f"ByteStream overhead on tiny body exceeded 1.5x: ratio={ratio:.2f}"
+        assert ratio <= 1.5, (
+            f"ByteStream overhead on tiny body exceeded 1.5x: ratio={ratio:.2f}"
+        )

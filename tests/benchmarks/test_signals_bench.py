@@ -240,6 +240,6 @@ class TestSignalBusEndToEnd:
         # Perf: adding two sync listeners must not slow the app by
         # more than 20% \u2014 observability overhead must be negligible.
         slowdown = loaded_secs / empty_secs
-        assert (
-            slowdown <= 1.9
-        ), f"2 listeners caused {slowdown:.2f}x slowdown; budget is 1.20x"
+        assert slowdown <= 1.9, (
+            f"2 listeners caused {slowdown:.2f}x slowdown; budget is 1.20x"
+        )

@@ -389,6 +389,6 @@ class TestStreamingOpenAPI:
                     "/stream/events"
                 ):
                     continue
-                assert (
-                    "x-streaming" not in op
-                ), f"x-streaming leaked into {method} {path}"
+                assert "x-streaming" not in op, (
+                    f"x-streaming leaked into {method} {path}"
+                )

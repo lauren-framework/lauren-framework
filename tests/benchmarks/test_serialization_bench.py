@@ -163,9 +163,9 @@ class TestEncoderMicroBench:
         # for slow CI.
         if "orjson" in by_name:
             speedup = by_name["stdlib"].seconds / by_name["orjson"].seconds
-            assert (
-                speedup >= 2.0
-            ), f"orjson only {speedup:.2f}\u00d7 faster than stdlib \u2014 regression?"
+            assert speedup >= 2.0, (
+                f"orjson only {speedup:.2f}\u00d7 faster than stdlib \u2014 regression?"
+            )
         if "msgspec" in by_name:
             speedup = by_name["stdlib"].seconds / by_name["msgspec"].seconds
             assert speedup >= 2.0, (
@@ -271,9 +271,9 @@ class TestEncoderEndToEndBench:
             # We observe ~1.3\u20131.8\u00d7 end-to-end on this shape. Even a
             # 5% improvement beats the stdlib baseline \u2014 assert on the
             # sign of the effect only so the test is robust on noisy CI.
-            assert (
-                speedup >= 1.0
-            ), f"orjson slower end-to-end: {speedup:.2f}\u00d7 \u2014 investigate"
+            assert speedup >= 1.0, (
+                f"orjson slower end-to-end: {speedup:.2f}\u00d7 \u2014 investigate"
+            )
 
     def test_end_to_end_small_response(self) -> None:
         encoders = _get_encoders()
