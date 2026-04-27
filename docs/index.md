@@ -40,13 +40,14 @@ import asyncio
 from pydantic import BaseModel
 from lauren import (
     LaurenFactory, controller, get, post, module,
-    Path, Json, use_guards, ExecutionContext,
+    Path, Json, use_guards, ExecutionContext, injectable,
 )
 
 class CreateUser(BaseModel):
     name: str
     age: int
 
+@injectable()
 class AdminGuard:
     async def can_activate(self, ctx: ExecutionContext) -> bool:
         return ctx.request.headers.get("x-role") == "admin"

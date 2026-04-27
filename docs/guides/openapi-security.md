@@ -18,9 +18,10 @@ class UserController: ...
 Attach `@openapi_security({"SchemeName": [scopes...]})` to the guard class itself.  The decorator stores a small metadata object on the class; the OpenAPI generator picks it up automatically when it processes compiled handlers:
 
 ```python
-from lauren import openapi_security, use_guards, controller, get, ExecutionContext
+from lauren import openapi_security, use_guards, controller, get, ExecutionContext, injectable
 
 @openapi_security({"BearerAuth": []})          # ← add this
+@injectable()
 class JwtGuard:
     async def can_activate(self, ctx: ExecutionContext) -> bool:
         token = ctx.request.headers.get("Authorization", "")
@@ -121,6 +122,7 @@ Pass multiple requirement dicts to `@openapi_security` when *any* of the listed 
     {"BearerAuth": []},   # JWT token, OR …
     {"ApiKey":    []},    # … a service API key
 )
+@injectable()
 class FlexibleAuthGuard:
     async def can_activate(self, ctx: ExecutionContext) -> bool:
         auth  = ctx.request.headers.get("Authorization", "")
@@ -140,10 +142,12 @@ When several guards are listed in `@use_guards`, the generator **merges** their 
 
 ```python
 @openapi_security({"BearerAuth": []})
+@injectable()
 class AuthGuard:
     async def can_activate(self, ctx: ExecutionContext) -> bool: ...
 
 @openapi_security({"TenantHeader": []})
+@injectable()
 class TenantGuard:
     async def can_activate(self, ctx: ExecutionContext) -> bool: ...
 
@@ -167,6 +171,7 @@ Pass a non-empty scope list when using OAuth2:
 
 ```python
 @openapi_security({"OAuth2": ["read:items", "write:items"]})
+@injectable()
 class OAuth2Guard:
     async def can_activate(self, ctx: ExecutionContext) -> bool:
         scopes = ctx.request.state.get("oauth_scopes", [])
@@ -185,6 +190,7 @@ If `@controller` already declares `security=[...]` directly, that value **always
 
 ```python
 @openapi_security({"BearerAuth": []})
+@injectable()
 class JwtGuard: ...
 
 @use_guards(JwtGuard)
@@ -199,9 +205,11 @@ Guards attached at the **controller** level apply to every route on the controll
 
 ```python
 @openapi_security({"BearerAuth": []})
+@injectable()
 class AuthGuard: ...
 
 @openapi_security({"OtpCode": []})
+@injectable()
 class OtpGuard: ...
 
 @use_guards(AuthGuard)          # applies to all routes
@@ -236,15 +244,17 @@ class SensitiveController:
 
 ```python
 # guards.py
-from lauren import openapi_security, ExecutionContext
+from lauren import openapi_security, ExecutionContext, injectable
 
 @openapi_security({"BearerAuth": []})
+@injectable()
 class JwtGuard:
     async def can_activate(self, ctx: ExecutionContext) -> bool:
         auth = ctx.request.headers.get("Authorization", "")
         return auth.startswith("Bearer ")
 
 @openapi_security({"ApiKey": []})
+@injectable()
 class ApiKeyGuard:
     async def can_activate(self, ctx: ExecutionContext) -> bool:
         return bool(ctx.request.headers.get("X-API-Key"))

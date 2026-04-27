@@ -147,6 +147,9 @@ class Db:
 ## Guards
 
 ```python
+from lauren import ExecutionContext, injectable
+
+@injectable()
 class AdminGuard:
     async def can_activate(self, ctx: ExecutionContext) -> bool:
         return ctx.request.headers.get("x-role") == "admin"
