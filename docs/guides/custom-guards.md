@@ -5,8 +5,9 @@
 ## The minimum viable guard
 
 ```python
-from lauren import ExecutionContext
+from lauren import ExecutionContext, injectable, Scope
 
+@injectable(scope=Scope.SINGLETON)
 class AdminGuard:
     async def can_activate(self, ctx: ExecutionContext) -> bool:
         return ctx.request.headers.get("x-role") == "admin"
@@ -23,6 +24,7 @@ from lauren import use_guards, controller, get
 @controller("/x")
 class X:
     @get("/admin")
+    @injectable(scope=Scope.SINGLETON)
     @use_guards(AdminGuard)
     async def admin_only(self): ...
 
@@ -72,6 +74,8 @@ Guards are **classes**, and Lauren auto-marks them as injectables. They can take
 ```python
 from lauren import injectable
 
+@openapi_security({"BearerAuth": []})
+@injectable(scope=Scope.SINGLETON)
 class TokenGuard:
     def __init__(self, jwt: JwtService, log: Logger) -> None:
         self.jwt = jwt
@@ -100,6 +104,7 @@ Two important properties:
 There are three ways for a guard to block a request:
 
 ```python
+@injectable(scope=Scope.SINGLETON)
 class G:
     async def can_activate(self, ctx) -> bool:
         # 1. Return False — Lauren raises ForbiddenError(403).
@@ -128,6 +133,7 @@ Instead of writing one guard per role / scope / permission, write **one** guard 
 ```python
 from lauren import set_metadata
 
+@injectable(scope=Scope.SINGLETON)
 class RoleGuard:
     async def can_activate(self, ctx: ExecutionContext) -> bool:
         required = ctx.get_metadata("required_role", "user")
@@ -152,6 +158,7 @@ This is the standard pattern in NestJS-influenced codebases and works just as we
 A scopes-and-roles policy guard might look like:
 
 ```python
+@injectable(scope=Scope.SINGLETON)
 class PolicyGuard:
     async def can_activate(self, ctx) -> bool:
         scopes = set(ctx.get_metadata("required_scopes", []))
