@@ -127,8 +127,8 @@ make build-check             # twine check
 
 ## Companion Packages
 
-When fixing a logging or middleware concern, **first check whether the
-right home is a companion package**, not core. The framework stays
+When fixing a logging, middleware or auth concern, **first check whether
+the right home is a companion package**, not core. The framework stays
 small on purpose; cross-cutting concerns live next door.
 
 - `lauren-middlewares` — CORS, rate limit, GZip, security headers,
@@ -139,6 +139,24 @@ small on purpose; cross-cutting concerns live next door.
   `LoggerModule.forRoot(...)`). Processor pipeline, contextvars
   binding, request-logging middleware, pluggable backends. Built on
   top of stock `lauren>=1.0` with no framework changes required.
+  Three `@classmethod` presets on `LoggingConfig` cover the common
+  cases without remembering every knob:
+  - `LoggingConfig.for_development()` → `ConsoleBackend` at `DEBUG`.
+  - `LoggingConfig.for_production(backend, ...)` → any backend at `INFO`.
+  - `LoggingConfig.for_testing()` → `(config, InMemoryBackend)` for assertions.
+- `lauren-guards` — Authentication and authorization guards. All guard
+  classes are decorated with `@injectable(scope=Scope.SINGLETON)` so
+  the DI container manages them. Every guard respects the `@public`
+  metadata marker from `lauren_guards`:
+  - `@public` on a controller or route exempts it from ALL guards in
+    this package. Implemented as `set_metadata(IS_PUBLIC_KEY, True)`.
+  - Authentication guards: `bearer_token`, `jwt_bearer`, `api_key`,
+    `basic_auth`, `oauth2_introspection`, `session_cookie`.
+  - Authorization guards: `require_authenticated`, `require_roles`,
+    `require_scopes`.
+  - Cross-cutting: `csrf` (double-submit-cookie), `ip_allowlist`.
+  - Password utilities: `BcryptHasher`, `Argon2Hasher`, `generate_token`.
+  - Session utilities: `InMemorySessionStore`, `sign_cookie`, `verify_cookie`.
 
 ## How to Propose Large Changes
 

@@ -1447,12 +1447,40 @@ pip install lauren-logging[structlog]       # structlog backend
 pip install lauren-logging[otel]            # OpenTelemetry processor
 ```
 
+**`LoggingConfig` preset classmethods** — cover the three most common
+configurations without remembering every parameter:
+
+| Classmethod | Backend | Level | Notes |
+|---|---|---|---|
+| `LoggingConfig.for_development()` | `ConsoleBackend` | `DEBUG` | colour auto-detected from TTY |
+| `LoggingConfig.for_production(backend, ...)` | caller-supplied | `INFO` | `propagate_uncaught=True` |
+| `LoggingConfig.for_testing()` → `(config, backend)` | `InMemoryBackend` | `DEBUG` | `propagate_uncaught=False` |
+
 ```python
 from lauren_logging import (
     LoggingModule, LoggingConfig, LoggingService, ConsoleBackend,
-    ContextvarsProcessor, RedactSecrets,
+    ContextvarsProcessor, RedactSecrets, StdlibBackend,
 )
 
+# Development: one-liner, pretty coloured console at DEBUG
+LogModule = LoggingModule.configure(LoggingConfig.for_development())
+
+# Production: JSON stdlib backend with global tags
+LogModule = LoggingModule.configure(
+    LoggingConfig.for_production(
+        StdlibBackend(format="json"),
+        processors=[ContextvarsProcessor(), RedactSecrets()],
+        global_tags={"service": "billing", "env": "prod"},
+    )
+)
+
+# Testing: capture records for assertions
+config, backend = LoggingConfig.for_testing()
+LogModule = LoggingModule.configure(config)
+# … run the app …
+assert any("charged" in r.message for r in backend.records)
+
+# Manual construction still works for full control:
 LogModule = LoggingModule.configure(
     LoggingConfig(
         backend=ConsoleBackend(),
@@ -1481,3 +1509,87 @@ Processors: `ContextvarsProcessor`, `RedactSecrets`, `Sampler`,
 Drop-in `request_logging()` middleware propagates `X-Request-ID`,
 binds contextvars, and emits a structured request-summary line per
 request.
+
+### `lauren-guards`
+
+Authentication and authorization guards. Every guard class is decorated
+with `@injectable(scope=Scope.SINGLETON)` so the DI container manages
+its lifecycle. All guards honour the `@public` marker.
+
+```bash
+pip install lauren-guards           # core (bearer, api_key, basic, session, authz, csrf, ip)
+pip install lauren-guards[jwt]      # adds jwt_bearer (requires pyjwt, optionally cryptography)
+pip install lauren-guards[http]     # adds oauth2_introspection (requires httpx)
+pip install lauren-guards[bcrypt]   # BcryptHasher
+pip install lauren-guards[argon2]   # Argon2Hasher
+```
+
+**`@public` — bypass all guards on a route or controller**
+
+```python
+from lauren import controller, get, post, use_guards
+from lauren_guards import bearer_token, require_scopes, public
+
+@use_guards(bearer_token(verify=lookup_token))
+@controller("/api/v1")
+class ApiController:
+
+    @public          # no token required
+    @get("/health")
+    async def health(self): return {"status": "ok"}
+
+    @public          # no token required
+    @get("/version")
+    async def version(self): return {"version": "1.0"}
+
+    @get("/me")      # protected — bearer_token runs
+    async def me(self): ...
+
+    @post("/charge")
+    @use_guards(require_scopes("billing.write"))  # also protected
+    async def charge(self): ...
+```
+
+`@public` is `set_metadata(IS_PUBLIC_KEY, True)`. Every `can_activate`
+checks `ctx.get_metadata(IS_PUBLIC_KEY)` first and returns `True`
+immediately when set.
+
+**Authentication guards** (write `AuthUser` to `request.state.user`):
+
+| Guard | Transport |
+|---|---|
+| `bearer_token(verify=fn, realm=...)` | `Authorization: Bearer <token>` |
+| `jwt_bearer(secret=...\|public_key=...\|jwks_url=..., algorithms=...)` | `Authorization: Bearer <jwt>` |
+| `api_key(verify=fn, locations=["header"\|"query"\|"cookie"], ...)` | `X-API-Key` / query / cookie |
+| `basic_auth(verify=fn, realm=...)` | `Authorization: Basic <b64>` |
+| `oauth2_introspection(introspection_url=..., client_id=..., client_secret=...)` | `Authorization: Bearer <opaque>` |
+| `session_cookie(store=..., secret=..., cookie_name=...)` | HMAC-signed session cookie |
+
+**Authorization guards** (read `AuthUser` from `request.state.user`):
+
+| Guard | Check |
+|---|---|
+| `require_authenticated()` | any `AuthUser` is present |
+| `require_roles("admin", require_all=False)` | OR/AND role check |
+| `require_scopes("billing.read", require_all=True)` | AND/OR scope check |
+
+**Cross-cutting guards**:
+
+| Guard | Check |
+|---|---|
+| `csrf(cookie_name=..., header_name=..., safe_methods=...)` | double-submit-cookie |
+| `ip_allowlist(allow=["10.0.0.0/8"], trusted_proxies=[...])` | CIDR source IP |
+
+**Utilities**:
+
+```python
+from lauren_guards import (
+    AuthUser,         # principal record: id, roles, scopes, claims, credential_type
+    BcryptHasher, Argon2Hasher, PasswordHasher,  # password hashing
+    generate_token,   # cryptographically-random URL-safe token
+    InMemorySessionStore, Session, SessionStore,  # session primitives
+    sign_cookie, verify_cookie,  # HMAC-signed cookie helpers
+    basic_auth_challenge_handler,  # @exception_handler adds WWW-Authenticate header
+)
+```
+

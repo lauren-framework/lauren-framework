@@ -27,7 +27,8 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 ## Companion packages
 
 - **lauren-middlewares** — CORS, rate limit, GZip, security headers, request id, trusted hosts, request log, HTTPS redirect, body size limit, timeout. Each as a factory function returning a `@middleware`-decorated class.
-- **lauren-logging** — Configurable logging module modelled after NestJS's `LoggerModule.forRoot`. Processor pipeline, contextvars binding, request-logging middleware, pluggable backends (stdlib, structlog, console, file, fan-out, queue, …).
+- **lauren-logging** — Configurable logging module modelled after NestJS's `LoggerModule.forRoot`. Processor pipeline, contextvars binding, request-logging middleware, pluggable backends (stdlib, structlog, console, file, fan-out, queue, …). Three `@classmethod` presets: `LoggingConfig.for_development()`, `LoggingConfig.for_production(backend)`, `LoggingConfig.for_testing()` → `(config, InMemoryBackend)`.
+- **lauren-guards** — Authentication and authorization guards, all `@injectable(scope=SINGLETON)`. Guards: `bearer_token`, `jwt_bearer`, `api_key`, `basic_auth`, `oauth2_introspection`, `session_cookie`, `require_authenticated`, `require_roles`, `require_scopes`, `csrf`, `ip_allowlist`. Apply `@public` (from `lauren_guards`) to any controller or route to bypass all guards — implemented as `set_metadata(IS_PUBLIC_KEY, True)`.
 
 ## Documentation for LLMs
 
