@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING, get_args, get_origin
 
-from ..decorators import ControllerMeta, RouteMeta
+from ..decorators import OPENAPI_SECURITY_META, ControllerMeta, RouteMeta
 from ..extractors import FieldDescriptor, _Extraction
 from ..streaming import (
     FORMAT_TO_MEDIA_TYPE,
@@ -356,6 +356,48 @@ def _resolve_item_schema(item_type: Any, components: dict[str, Any]) -> dict[str
 
 
 # ---------------------------------------------------------------------------
+# Guard-derived security
+# ---------------------------------------------------------------------------
+
+
+def _collect_guard_security(
+    guards: tuple[type, ...],
+) -> list[dict[str, list[str]]] | None:
+    """Derive an OpenAPI ``security`` array from a compiled handler's guards.
+
+    Resolution rules:
+
+    * Guards without ``@openapi_security`` metadata are ignored.
+    * A **single** decorated guard → its requirements are returned verbatim
+      (preserving OR semantics: ``[{"BearerAuth": []}, {"ApiKey": []}]``).
+    * **Multiple** decorated guards → their requirements are AND-merged into
+      a single requirement object so that *all* schemes must be present:
+      ``[{"BearerAuth": [], "TenantHeader": []}]``.
+    * Returns ``None`` when no guard carries security metadata.
+    """
+    per_guard: list[list[dict[str, list[str]]]] = []
+    for guard_cls in guards:
+        meta = getattr(guard_cls, OPENAPI_SECURITY_META, None)
+        if meta is None or not meta.requirements:
+            continue
+        per_guard.append(list(meta.requirements))
+
+    if not per_guard:
+        return None
+
+    if len(per_guard) == 1:
+        # Single guard — return its requirements verbatim (OR semantics).
+        return [dict(r) for r in per_guard[0]]
+
+    # Multiple guards — AND semantics: merge all into one requirement object.
+    merged: dict[str, list[str]] = {}
+    for reqs in per_guard:
+        for req in reqs:
+            merged.update(req)
+    return [merged]
+
+
+# ---------------------------------------------------------------------------
 # Top-level generator
 # ---------------------------------------------------------------------------
 
@@ -434,7 +476,12 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             # operation yields a structured, typed stream.
             op["x-streaming"] = True
         if ctrl_meta.security:
+            # Explicit @controller(security=[...]) always takes precedence.
             op["security"] = [dict(s) for s in ctrl_meta.security]
+        elif compiled is not None and compiled.guards:
+            guard_sec = _collect_guard_security(compiled.guards)
+            if guard_sec is not None:
+                op["security"] = guard_sec
 
         path_item[entry.method.lower()] = op
 

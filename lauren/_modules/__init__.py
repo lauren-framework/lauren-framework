@@ -125,7 +125,11 @@ def _resolve_forward_import(ref: Any, declaring_cls: type) -> type:
         if sys_mod is None:
             continue
         resolved = getattr(sys_mod, name, None)
-        if resolved is not None and isinstance(resolved, type) and id(resolved) not in seen_ids:
+        if (
+            resolved is not None
+            and isinstance(resolved, type)
+            and id(resolved) not in seen_ids
+        ):
             candidates.append(resolved)
             seen_ids.add(id(resolved))
 

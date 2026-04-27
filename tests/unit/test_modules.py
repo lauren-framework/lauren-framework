@@ -102,6 +102,7 @@ class TestForwardRefImports:
         test_mod = sys.modules[__name__]
         test_mod.SharedFwdRef = SharedFwdRef  # type: ignore[attr-defined]
         try:
+
             @module(imports=[ForwardRef("SharedFwdRef")])
             class ConsumerFwdRef: ...
 
@@ -120,6 +121,7 @@ class TestForwardRefImports:
         test_mod = sys.modules[__name__]
         test_mod.SharedStr = SharedStr  # type: ignore[attr-defined]
         try:
+
             @module(imports=["SharedStr"])
             class ConsumerStr: ...
 
@@ -141,6 +143,7 @@ class TestForwardRefImports:
         fake_mod.DottedTarget = DottedTarget  # type: ignore[attr-defined]
         sys.modules["_lauren_test_fake_mod"] = fake_mod
         try:
+
             @module(imports=[ForwardRef("_lauren_test_fake_mod.DottedTarget")])
             class DottedConsumer: ...
 
@@ -209,6 +212,7 @@ class TestForwardRefImports:
         test_mod = sys.modules[__name__]
         test_mod.MixedFwd = MixedFwd  # type: ignore[attr-defined]
         try:
+
             @module(imports=[MixedReal, ForwardRef("MixedFwd")])
             class MixedConsumer: ...
 
@@ -232,6 +236,7 @@ class TestForwardRefImports:
         fake.DottedStrTarget = DottedStrTarget  # type: ignore[attr-defined]
         sys.modules["_lauren_test_dotted_str"] = fake
         try:
+
             @module(imports=["_lauren_test_dotted_str.DottedStrTarget"])
             class DottedStrConsumer: ...
 
@@ -260,6 +265,7 @@ class TestForwardRefImports:
         sys.modules["_lauren_test_amb1"] = mod1
         sys.modules["_lauren_test_amb2"] = mod2
         try:
+
             @module(imports=[ForwardRef("Ambiguous")])
             class AmbConsumer: ...
 
@@ -303,6 +309,7 @@ class TestForwardRefImports:
         test_mod.ChainC = ChainC  # type: ignore[attr-defined]
         test_mod.ChainB = ChainB  # type: ignore[attr-defined]
         try:
+
             @module(imports=[ForwardRef("ChainB")])
             class ChainA: ...
 
@@ -317,6 +324,7 @@ class TestForwardRefImports:
         """A true circular dependency expressed via ForwardRef is still caught."""
 
         class FwdCircA: ...
+
         class FwdCircB: ...
 
         test_mod = sys.modules[__name__]

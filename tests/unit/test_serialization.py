@@ -104,9 +104,9 @@ def test_every_encoder_produces_identical_parsed_output(payload: object) -> None
     """
     for encoder in _available_encoders():
         blob = encoder.encode_compact(payload)
-        assert (
-            stdlib_json.loads(blob) == payload
-        ), f"encoder={encoder.name} payload={payload!r}"
+        assert stdlib_json.loads(blob) == payload, (
+            f"encoder={encoder.name} payload={payload!r}"
+        )
 
 
 @pytest.mark.parametrize("payload", _COMMON_PAYLOADS)
@@ -119,9 +119,9 @@ def test_compact_output_has_no_whitespace(payload: object) -> None:
         # other whitespace between tokens would make the blob
         # non-compact. We check for ``": "`` and ``", "`` specifically
         # because unicode whitespace inside string values is legal.
-        assert (
-            ": " not in text or '"' in text.split(": ", 1)[0].split('"')[-1]
-        ), f"encoder={encoder.name} produced non-compact output"
+        assert ": " not in text or '"' in text.split(": ", 1)[0].split('"')[-1], (
+            f"encoder={encoder.name} produced non-compact output"
+        )
 
 
 # ---------------------------------------------------------------------------

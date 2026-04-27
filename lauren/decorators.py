@@ -66,6 +66,7 @@ EXCEPTION_HANDLER_META = "__lauren_exception_handler__"
 SET_METADATA = "__lauren_metadata__"
 POST_CONSTRUCT = "__lauren_post_construct__"
 PRE_DESTRUCT = "__lauren_pre_destruct__"
+OPENAPI_SECURITY_META = "__lauren_openapi_security__"
 
 
 # ---------------------------------------------------------------------------
@@ -674,6 +675,143 @@ def use_exception_handlers(
     return decorator
 
 
+# ---------------------------------------------------------------------------
+# @openapi_security
+# ---------------------------------------------------------------------------
+
+
+class OpenAPISecurityMeta:
+    """Metadata attached by :func:`openapi_security`.
+
+    Stores the list of OpenAPI security requirement objects declared on a
+    guard class.  Each element is a ``dict[str, list[str]]`` mapping a
+    security scheme name (as registered in ``securitySchemes``) to its
+    required OAuth2 scopes (empty list for Bearer / API-key schemes).
+
+    When multiple requirements are stored on a *single* guard they form an
+    **OR** relationship (any one scheme is sufficient).  When multiple
+    *different* guards each carry security metadata, the OpenAPI generator
+    applies **AND** semantics: all guards must be satisfied simultaneously,
+    so their requirements are merged into a single requirement object.
+    """
+
+    __slots__ = ("requirements",)
+
+    def __init__(self, requirements: list[dict[str, list[str]]]) -> None:
+        self.requirements = requirements
+
+
+def openapi_security(
+    *requirements: dict[str, list[str]],
+) -> Callable[[C], C]:
+    """Attach OpenAPI 3.1 security requirements to a guard class.
+
+    Use this decorator alongside ``@use_guards`` to tell the OpenAPI
+    generator which security scheme(s) protect every route guarded by this
+    class.  The guard's ``can_activate`` logic is **not** affected — the
+    decorator only adds metadata used during schema generation.
+
+    **Basic usage — single scheme** (Bearer token)::
+
+        @openapi_security({"BearerAuth": []})
+        class JwtGuard:
+            async def can_activate(self, ctx: ExecutionContext) -> bool:
+                ...
+
+        @use_guards(JwtGuard)
+        @controller("/secure")
+        class SecureController: ...
+
+    **OR semantics — multiple schemes on one guard**
+
+    Multiple requirements on the *same* guard mean *any* scheme is
+    acceptable (OpenAPI OR)::
+
+        @openapi_security({"BearerAuth": []}, {"ApiKey": []})
+        class FlexibleAuthGuard:
+            async def can_activate(self, ctx: ExecutionContext) -> bool:
+                ...
+
+    The generated ``security`` field for operations guarded by
+    ``FlexibleAuthGuard`` will be ``[{"BearerAuth": []}, {"ApiKey": []}]``.
+
+    **AND semantics — multiple guards**
+
+    When multiple guards *each* carry ``@openapi_security``, the generator
+    merges them into a single requirement object (OpenAPI AND — all schemes
+    must be present)::
+
+        @openapi_security({"BearerAuth": []})
+        class AuthGuard: ...
+
+        @openapi_security({"TenantHeader": []})
+        class TenantGuard: ...
+
+        @use_guards(AuthGuard, TenantGuard)
+        @controller("/tenant-api")
+        class TenantController: ...
+        # → security: [{"BearerAuth": [], "TenantHeader": []}]
+
+    **Explicit override**
+
+    If the ``@controller`` decorator already declares ``security=[...]``
+    explicitly, that value takes precedence and guard-derived security is
+    ignored for that controller.
+
+    **Registering the scheme**
+
+    You must still register the scheme in the OpenAPI components.  Pass
+    ``openapi_security_schemes`` to :func:`~lauren.LaurenFactory.create`::
+
+        app = await LaurenFactory.create(
+            AppModule,
+            openapi_security_schemes={
+                "BearerAuth": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "bearerFormat": "JWT",
+                },
+            },
+        )
+
+    ``@openapi_security`` must be invoked with at least one requirement dict
+    and must decorate a class.  Bare usage (``@openapi_security``) and empty
+    parentheses (``@openapi_security()``) are both rejected.
+    """
+    # Bare usage: @openapi_security on a class passes the class as
+    # requirements[0].
+    if requirements and isinstance(requirements[0], type):
+        _reject_bare_usage("openapi_security", requirements[0])
+
+    if not requirements:
+        raise GuardConfigError(
+            "@openapi_security requires at least one security requirement dict. "
+            "Write '@openapi_security({\"BearerAuth\": []})' — an empty "
+            "requirement list would produce no security entry in the OpenAPI "
+            "schema and is almost certainly a typo."
+        )
+
+    for req in requirements:
+        if not isinstance(req, dict):
+            raise GuardConfigError(
+                f"@openapi_security arguments must be dicts mapping a scheme "
+                f'name to its scopes (e.g. {{"BearerAuth": []}}); '
+                f"got {_describe(req)!r}."
+            )
+
+    captured: list[dict[str, list[str]]] = list(requirements)  # type: ignore[arg-type]
+
+    def decorator(cls: C) -> C:
+        if not isinstance(cls, type):
+            raise GuardConfigError(
+                f"@openapi_security must decorate a class; got {cls!r}."
+            )
+        setattr(cls, OPENAPI_SECURITY_META, OpenAPISecurityMeta(captured))
+        return cls
+
+    return decorator
+
+
 def set_metadata(key: str, value: Any) -> Callable[[Any], Any]:
     """Attach free-form metadata observable from ``ExecutionContext``."""
 
@@ -705,10 +843,12 @@ __all__ = [
     "exception_handler",
     "use_exception_handlers",
     "set_metadata",
+    "openapi_security",
     "ControllerMeta",
     "ModuleMeta",
     "RouteMeta",
     "ExceptionHandlerMeta",
+    "OpenAPISecurityMeta",
     "CONTROLLER_META",
     "MODULE_META",
     "ROUTE_META",
@@ -718,4 +858,5 @@ __all__ = [
     "USE_EXCEPTION_HANDLERS",
     "EXCEPTION_HANDLER_META",
     "SET_METADATA",
+    "OPENAPI_SECURITY_META",
 ]

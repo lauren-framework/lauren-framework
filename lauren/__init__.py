@@ -89,6 +89,7 @@ from .decorators import (
     injectable,
     middleware,
     module,
+    openapi_security,
     options,
     patch,
     post,
@@ -99,6 +100,7 @@ from .decorators import (
     use_exception_handlers,
     use_guards,
     use_middleware,
+    OpenAPISecurityMeta,
 )
 from .exceptions import (
     CircularDependencyError,
@@ -264,6 +266,8 @@ __all__ = [
     "exception_handler",
     "use_exception_handlers",
     "set_metadata",
+    "openapi_security",
+    "OpenAPISecurityMeta",
     # types
     "Scope",
     "State",

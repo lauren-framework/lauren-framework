@@ -49,4 +49,9 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Break circular import cycles between feature modules using `ForwardRef("ClassName")` in `@module(imports=[...])` — resolved lazily at startup.
 
+-   :material-shield-lock: [__OpenAPI Security from Guards__](openapi-security.md)
+
+    ---
+    Annotate guard classes with `@openapi_security({"SchemeName": []})` and Lauren populates the `security` field on every protected operation automatically — OR / AND semantics, OAuth2 scopes, explicit overrides.
+
 </div>
