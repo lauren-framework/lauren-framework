@@ -53,10 +53,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncIterator
-
-if TYPE_CHECKING:  # pragma: no cover - import cycle guard only
-    from ..types import Request
+from typing import Any, AsyncIterator
 
 
 # ---------------------------------------------------------------------------

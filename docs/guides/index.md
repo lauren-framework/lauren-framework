@@ -54,4 +54,9 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Annotate guard classes with `@openapi_security({"SchemeName": []})` and Lauren populates the `security` field on every protected operation automatically — OR / AND semantics, OAuth2 scopes, explicit overrides.
 
+-   :material-server-network: [__Proxy & Static Files__](proxy-and-static-files.md)
+
+    ---
+    Run behind a reverse proxy with `root_path`, and serve static assets with `StaticFilesModule.for_root("/static", directory="./public")` — ETag caching, path traversal protection, multiple mounts.
+
 </div>

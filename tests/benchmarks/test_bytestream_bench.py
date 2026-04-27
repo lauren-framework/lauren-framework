@@ -187,10 +187,6 @@ class TestByteStreamBench:
         ]
         _print_table(f"ByteStream vs Bytes: 2 MiB upload \u00d7 {n} requests", results)
 
-        by_mode = {r.mode: r for r in results}
-        buf = by_mode["/bench/buffered"]
-        streamed = by_mode["/bench/streamed"]
-
     def test_many_small_uploads_streaming_is_not_worse(self) -> None:
         """Small-body edge case: the zero-copy path is pure overhead
         when the body is tiny, so we want to pin that the slowdown
@@ -213,6 +209,6 @@ class TestByteStreamBench:
         # the overhead of the async iterator dispatch is real at this
         # scale. The real savings are on the large-upload test above.
         ratio = streamed.seconds / buf.seconds
-        assert ratio <= 1.5, (
-            f"ByteStream overhead on tiny body exceeded 1.5x: ratio={ratio:.2f}"
-        )
+        assert (
+            ratio <= 1.5
+        ), f"ByteStream overhead on tiny body exceeded 1.5x: ratio={ratio:.2f}"

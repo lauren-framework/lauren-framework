@@ -523,7 +523,7 @@ class TestListCycleDetection:
 
         # Now retrofit A to depend on Hub — that closes the cycle:
         # Hub -> list[Listener] -> A -> Hub.
-        original_init = A.__init__
+        # original_init = A.__init__
 
         def cyclic_init(self, hub: Hub) -> None:  # type: ignore[no-redef]
             self.hub = hub

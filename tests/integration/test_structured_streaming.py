@@ -218,7 +218,7 @@ class TestInboundSse:
         )
         assert r.status_code == 200, r.text
         lines = [l for l in r.text.split("\n") if l.strip()]
-        assert [json.loads(l)["text"] for l in lines] == ["A", "B"]
+        assert [json.loads(q)["text"] for q in lines] == ["A", "B"]
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +322,7 @@ class TestStreamingDiscriminatedUnions:
             headers={"content-type": "application/x-ndjson"},
         )
         assert r.status_code == 200
-        docs = [json.loads(l) for l in r.text.split("\n") if l.strip()]
+        docs = [json.loads(_q) for _q in r.text.split("\n") if _q.strip()]
         assert docs[0] == {"kind": "image", "url": "x"}
         assert "error" in docs[-1]
 
@@ -389,6 +389,6 @@ class TestStreamingOpenAPI:
                     "/stream/events"
                 ):
                     continue
-                assert "x-streaming" not in op, (
-                    f"x-streaming leaked into {method} {path}"
-                )
+                assert (
+                    "x-streaming" not in op
+                ), f"x-streaming leaked into {method} {path}"

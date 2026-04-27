@@ -136,7 +136,7 @@ class TestClient:
 
     def request(self, method: str, url: str, **kwargs: Any) -> TestResponse:
         try:
-            loop = asyncio.get_running_loop()
+            _ = asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(self._request(method, url, **kwargs))
         # When called from inside a running loop, block via a thread.

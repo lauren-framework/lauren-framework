@@ -481,7 +481,6 @@ class TestNonServiceProvider:
         # returns a different config dict per environment. Implemented
         # here with use_factory.
         dev_config = {"debug": True, "endpoint": "http://dev"}
-        prod_config = {"debug": False, "endpoint": "https://prod"}
 
         def config_factory() -> dict:
             return dev_config  # pretend NODE_ENV=development

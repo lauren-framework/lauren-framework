@@ -170,9 +170,6 @@ from .signals import (
     StartupBegin,
     StartupComplete,
 )
-from .types import (
-    UploadFile as UploadFileValue,  # re-export for forward-ref clarity
-)
 from .sse import (
     EventStream,
     ServerSentEvent,
@@ -202,6 +199,7 @@ from .websockets import (
     on_message,
     ws_controller,
 )
+from ._staticfiles import StaticFilesModule
 from .types import (
     AppState,
     CallNext,
@@ -268,6 +266,8 @@ __all__ = [
     "set_metadata",
     "openapi_security",
     "OpenAPISecurityMeta",
+    # static files
+    "StaticFilesModule",
     # types
     "Scope",
     "State",

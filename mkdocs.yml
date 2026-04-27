@@ -125,6 +125,7 @@ nav:
     - Server-Sent Events: guides/server-sent-events.md
     - Circular Module Imports: guides/circular-module-imports.md
     - OpenAPI Security from Guards: guides/openapi-security.md
+    - Proxy & Static Files: guides/proxy-and-static-files.md
   - Comparisons:
     - comparisons/index.md
     - vs FastAPI, Litestar & BlackSheep: comparisons/python-frameworks.md

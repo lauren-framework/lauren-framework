@@ -26,6 +26,11 @@ from typing import Any, ForwardRef, Iterable
 
 from ..decorators import MODULE_META, ModuleMeta
 from .._di.custom import CustomProvider, normalise_provider_token
+from ..exceptions import (
+    CircularModuleError,
+    MetadataInheritanceError,
+    ModuleExportViolation,
+)
 
 
 def _describe_token(tok: Any) -> str:
@@ -40,13 +45,6 @@ def _describe_token(tok: Any) -> str:
     if name is not None:
         return str(name)
     return repr(tok)
-
-
-from ..exceptions import (
-    CircularModuleError,
-    MetadataInheritanceError,
-    ModuleExportViolation,
-)
 
 
 def _resolve_forward_import(ref: Any, declaring_cls: type) -> type:

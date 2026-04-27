@@ -72,7 +72,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field
-from typing import Any, Callable, get_type_hints
+from typing import Any, Callable
 
 from .._typing import resolve_type_hints
 
@@ -88,15 +88,7 @@ from ..types import Scope
 from .custom import (
     CustomProvider,
     OptionalDep,
-    Token,
     _InjectMarker,
-    Inject,
-    is_custom_provider,
-    normalise_provider_token,
-    use_class,
-    use_existing,
-    use_factory,
-    use_value,
 )
 
 INJECTABLE_META = "__lauren_injectable__"
@@ -1606,7 +1598,6 @@ def _extract_inject_token(ann: Any) -> Any | None:
     raising a startup-time error here would force users to special-case
     re-decorations they have a legitimate reason to write.
     """
-    import typing as _typing
 
     metadata = getattr(ann, "__metadata__", None)
     if not metadata:
@@ -1775,8 +1766,6 @@ def _looks_injectable(ann: Any) -> bool:
     # check gives callers who wrote ``Annotated[int, SomeUnrelatedMeta]``
     # the right answer too.
     if origin is not None and _typing.get_origin(ann) is not None:
-        import sys
-
         # ``typing.Annotated`` identity test varies a little across Python
         # versions; ``__metadata__`` is the stable marker.
         metadata = getattr(ann, "__metadata__", ())

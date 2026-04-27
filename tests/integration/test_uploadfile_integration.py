@@ -309,8 +309,6 @@ def test_unicode_filename_survives_roundtrip() -> None:
 def test_parse_cache_is_populated_exactly_once() -> None:
     """Pin the cache invariant by using a middleware that peeks at\n    the request's cache attr before and after handler execution.\n    Two ``UploadFile`` parameters must not populate two caches.\n"""
 
-    parse_observations: list[bool] = []
-
     @controller("/probe")
     class _ProbeCtrl:
         @post("/")

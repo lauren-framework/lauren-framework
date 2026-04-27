@@ -191,6 +191,6 @@ class TestUploadFileBench:
         _print_table(f"1 MiB multipart upload \u00d7 {n}", [result])
 
         # Sanity: ms/req must be reasonable.
-        assert result.ms_per_req < 200, (
-            f"1 MiB upload took {result.ms_per_req:.1f} ms \u2014 parser regression?"
-        )
+        assert (
+            result.ms_per_req < 200
+        ), f"1 MiB upload took {result.ms_per_req:.1f} ms \u2014 parser regression?"

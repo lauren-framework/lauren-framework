@@ -405,6 +405,9 @@ def _collect_guard_security(
 def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
     info = getattr(app, "_openapi_info", None) or DEFAULT_INFO
     servers = getattr(app, "_openapi_servers", None)
+    root_path = getattr(app, "_root_path", "")
+    if not servers and root_path:
+        servers = [{"url": root_path}]
     security_schemes = getattr(app, "_openapi_security_schemes", None)
 
     paths: dict[str, Any] = {}

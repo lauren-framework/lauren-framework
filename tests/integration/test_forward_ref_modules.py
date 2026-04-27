@@ -113,7 +113,6 @@ async def test_same_file_forwardref_boots_and_routes() -> None:
 
 @pytest.mark.asyncio
 async def test_forwardref_provider_is_visible_in_consumer_module() -> None:
-    app = await LaurenFactory.create(HelloApp)
     # GreetService must appear in the compiled module's provider set.
     from lauren._modules import ModuleGraph
 
@@ -163,7 +162,7 @@ async def test_cross_file_forwardref_resolves_at_compile_time() -> None:
 
     # Now make FakeBModule reachable under a fake sys.modules entry, as if
     # b.py were fully imported at this point in the startup sequence.
-    fake_b_mod = _make_fake_module("_lauren_integ_fake_b", FakeBModule=FakeBModule)
+    fake_b_mod = _make_fake_module("_lauren_integ_fake_b", FakeBModule=FakeBModule)  # noqa: F841
     # Also inject into the current module's namespace so the own-globals
     # fast path can find it (mirrors the import machinery resolving at app boot).
     current = sys.modules[__name__]

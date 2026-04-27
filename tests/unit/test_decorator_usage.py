@@ -46,7 +46,7 @@ class TestBareDecoratorUsage:
         with pytest.raises(DecoratorUsageError) as ei:
 
             @injectable
-            class I:
+            class _I:
                 pass
 
         assert "@injectable must be used with parentheses" in str(ei.value)

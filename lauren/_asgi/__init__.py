@@ -4,22 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json as jsonlib
 import logging
-import signal
 import time
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Iterable, get_type_hints
+from typing import Any, Awaitable, Callable, Iterable
 
 from .._typing import resolve_type_hints
 
-from .._arena import RequestAllocation, RequestArena
-from .._di import INJECTABLE_META, DIContainer, InjectableMeta, Provider
+from .._arena import RequestArena
+from .._di import INJECTABLE_META, DIContainer, InjectableMeta
 from ..serialization import (
     JSONEncoder,
     StdlibJSONEncoder,
     get_active_encoder,
-    set_active_encoder,
 )
 from ..signals import (
     RequestComplete,
@@ -36,7 +33,6 @@ from .._routing import RouteEntry, Router
 from ..decorators import (
     CONTROLLER_META,
     EXCEPTION_HANDLER_META,
-    MIDDLEWARE_META,
     ROUTE_META,
     SET_METADATA,
     USE_EXCEPTION_HANDLERS,
@@ -53,10 +49,7 @@ from ..exceptions import (
     LaurenError,
     LifecycleViolationError,
     MethodNotAllowedError,
-    MiddlewareConfigError,
-    MissingProviderError,
     RouteNotFoundError,
-    RouterConflictError,
     StartupError,
 )
 from ..extractors import (
@@ -77,7 +70,6 @@ from ..logging import (
     Logger,
     LogLevel,
     NullLogger,
-    default_logger,
     format_duration_ms,
 )
 from ..types import (
@@ -1238,6 +1230,18 @@ class LaurenApp:
         )
         client = scope.get("client") or (None, None)
         server = scope.get("server") or (None, None)
+        # Resolve the effective request path, stripping a configured
+        # ``root_path`` prefix when the upstream ASGI server hasn't
+        # already done so.  Uvicorn honours ``--root-path`` by setting
+        # ``scope["root_path"]`` *and* pre-stripping ``scope["path"]``;
+        # a plain nginx proxy typically leaves ``scope["root_path"]``
+        # empty and the full prefixed path in ``scope["path"]``.
+        _own_root = getattr(self, "_root_path", "")
+        raw_path = scope["path"]
+        if _own_root and not scope.get("root_path") and raw_path.startswith(_own_root):
+            effective_path = raw_path[len(_own_root) :] or "/"
+        else:
+            effective_path = raw_path
         # Acquire a Request through the arena so pooled instances are
         # reused where possible. ``acquire_request`` dispatches to
         # :meth:`Request.reset` for pooled instances and to the
@@ -1246,7 +1250,7 @@ class LaurenApp:
         request = self._arena.acquire_request(
             Request,
             method=scope["method"],
-            path=scope["path"],
+            path=effective_path,
             raw_query_string=scope.get("query_string", b"") or b"",
             headers=headers,
             client=ClientInfo(
@@ -1298,6 +1302,12 @@ class LaurenApp:
             return
         from .._ws_runtime import handle_websocket
 
+        # Apply the same root_path stripping as HTTP requests.
+        _own_root = getattr(self, "_root_path", "")
+        if _own_root and not scope.get("root_path"):
+            raw_ws_path = scope.get("path", "/")
+            if raw_ws_path.startswith(_own_root):
+                scope = {**scope, "path": raw_ws_path[len(_own_root) :] or "/"}
         task = asyncio.current_task()
         if task is not None:
             self._in_flight.add(task)
@@ -1701,6 +1711,7 @@ class LaurenFactory:
         json_encoder: JSONEncoder | None = None,
         signals: SignalBus | None = None,
         error_format: str = "default",
+        root_path: str = "",
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -2103,6 +2114,7 @@ class LaurenFactory:
         app._openapi_url = openapi_url  # type: ignore[attr-defined]
         app._docs_url = docs_url  # type: ignore[attr-defined]
         app._redoc_url = redoc_url  # type: ignore[attr-defined]
+        app._root_path = root_path  # type: ignore[attr-defined]
         # Bind app into the stub docs handlers so they can call app.openapi().
         for compiled in compiled_handlers.values():
             if getattr(compiled.handler_fn, "__lauren_docs_stub__", False):

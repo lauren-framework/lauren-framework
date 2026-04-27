@@ -5,14 +5,12 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import dataclass
-from typing import Any
 
 from .._di import DIContainer, Provider
 from ..exceptions import (
     CircularDependencyError,
     DestructError,
     DestructTimeoutError,
-    LifecycleError,
 )
 
 

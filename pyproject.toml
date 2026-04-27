@@ -32,6 +32,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "httpx"]
 
+[tool.ruff.lint]
+ignore = ["E741"]
+
 [tool.setuptools.packages.find]
 include = ["lauren*"]
 

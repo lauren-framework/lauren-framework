@@ -152,6 +152,6 @@ class TestUploadFileBench:
         # Throughput must clear some minimal threshold \u2014 10 MiB/s is
         # trivial for a pure-Python linear scanner on modern hardware
         # and gives plenty of headroom for noisy CI.
-        assert results[0].throughput_mib_s > 10.0, (
-            f"parser throughput collapsed to {results[0].throughput_mib_s:.2f} MiB/s"
-        )
+        assert (
+            results[0].throughput_mib_s > 10.0
+        ), f"parser throughput collapsed to {results[0].throughput_mib_s:.2f} MiB/s"
