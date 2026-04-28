@@ -20,7 +20,6 @@ optimisation landed.
 
 from __future__ import annotations
 
-import asyncio
 import json as stdlib_json
 import time
 from dataclasses import dataclass
@@ -261,7 +260,7 @@ class TestEncoderEndToEndBench:
         encoders = _get_encoders()
         results: list[BenchResult] = []
         for name, enc in encoders.items():
-            app = asyncio.run(LaurenFactory.create(_BenchModule, json_encoder=enc))
+            app = LaurenFactory.create(_BenchModule, json_encoder=enc)
             secs = _run_requests(app, "/bench/list", n=500)
             results.append(BenchResult(name=name, iterations=500, seconds=secs))
         _print_table("end-to-end: GET /bench/list (list of 50 dicts)", results)
@@ -279,7 +278,7 @@ class TestEncoderEndToEndBench:
         encoders = _get_encoders()
         results: list[BenchResult] = []
         for name, enc in encoders.items():
-            app = asyncio.run(LaurenFactory.create(_BenchModule, json_encoder=enc))
+            app = LaurenFactory.create(_BenchModule, json_encoder=enc)
             secs = _run_requests(app, "/bench/small", n=2_000)
             results.append(BenchResult(name=name, iterations=2_000, seconds=secs))
         _print_table("end-to-end: GET /bench/small (tiny dict)", results)

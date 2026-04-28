@@ -18,7 +18,6 @@ references appear in lauren applications:
 
 from __future__ import annotations
 
-import asyncio
 
 from pydantic import BaseModel
 
@@ -64,7 +63,7 @@ class _PEP563Module:
 
 
 def test_pep563_annotations_resolve_for_di_and_extractors() -> None:
-    app = asyncio.run(LaurenFactory.create(_PEP563Module))
+    app = LaurenFactory.create(_PEP563Module)
     r = TestClient(app).get("/greet/world")
     assert r.status_code == 200
     assert r.json() == {"message": "hello world"}
@@ -95,7 +94,7 @@ class _TreeModule:
 
 
 def test_recursive_pydantic_model_through_json_extractor() -> None:
-    app = asyncio.run(LaurenFactory.create(_TreeModule))
+    app = LaurenFactory.create(_TreeModule)
     payload = {
         "value": 1,
         "children": [
@@ -146,7 +145,7 @@ class _ChainModule:
 
 
 def test_forward_ref_between_injectables_resolves() -> None:
-    app = asyncio.run(LaurenFactory.create(_ChainModule))
+    app = LaurenFactory.create(_ChainModule)
     r = TestClient(app).get("/svc/ping")
     assert r.status_code == 200
     assert r.json() == {"ok": "pong"}
@@ -185,7 +184,7 @@ def test_forwardref_inside_generic_container() -> None:
     """``Json[list[Item]]`` is stringified end-to-end by PEP 563 so the
     full generic tree — including the inner ``Item`` class — has to be
     walked and re-assembled by the resolver."""
-    app = asyncio.run(LaurenFactory.create(_ItemsModule))
+    app = LaurenFactory.create(_ItemsModule)
     r = TestClient(app).post(
         "/items/bulk",
         json=[{"id": 1, "name": "a"}, {"id": 2, "name": "b"}],

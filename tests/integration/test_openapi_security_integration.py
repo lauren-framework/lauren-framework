@@ -82,7 +82,7 @@ class SecuredApp: ...
 
 @pytest.mark.asyncio
 async def test_single_guard_security_appears_in_schema() -> None:
-    app = await LaurenFactory.create(SecuredApp)
+    app = LaurenFactory.create(SecuredApp)
     doc = generate_openapi(app)
     op = doc["paths"]["/secured"]["get"]
     assert "security" in op
@@ -113,7 +113,7 @@ class PlainApp: ...
 
 @pytest.mark.asyncio
 async def test_guard_without_security_meta_no_schema_entry() -> None:
-    app = await LaurenFactory.create(PlainApp)
+    app = LaurenFactory.create(PlainApp)
     doc = generate_openapi(app)
     op = doc["paths"]["/plain"]["get"]
     assert "security" not in op
@@ -144,7 +144,7 @@ class ExplicitApp: ...
 
 @pytest.mark.asyncio
 async def test_explicit_controller_security_takes_precedence() -> None:
-    app = await LaurenFactory.create(ExplicitApp)
+    app = LaurenFactory.create(ExplicitApp)
     doc = generate_openapi(app)
     op = doc["paths"]["/explicit"]["get"]
     assert op["security"] == [{"ApiKey": ["read"]}]
@@ -181,7 +181,7 @@ class AndMergeApp: ...
 
 @pytest.mark.asyncio
 async def test_two_guards_and_merge() -> None:
-    app = await LaurenFactory.create(AndMergeApp)
+    app = LaurenFactory.create(AndMergeApp)
     doc = generate_openapi(app)
     op = doc["paths"]["/and-merge"]["get"]
     assert "security" in op
@@ -216,7 +216,7 @@ class OrApp: ...
 
 @pytest.mark.asyncio
 async def test_single_guard_multiple_requirements_or_preserved() -> None:
-    app = await LaurenFactory.create(OrApp)
+    app = LaurenFactory.create(OrApp)
     doc = generate_openapi(app)
     op = doc["paths"]["/or-scheme"]["get"]
     assert op["security"] == [{"BearerAuth": []}, {"ApiKey": []}]
@@ -255,7 +255,7 @@ class MultiRouteApp: ...
 
 @pytest.mark.asyncio
 async def test_controller_level_guard_security_on_all_routes() -> None:
-    app = await LaurenFactory.create(MultiRouteApp)
+    app = LaurenFactory.create(MultiRouteApp)
     doc = generate_openapi(app)
     for path in ("/multi/a", "/multi/b", "/multi/c"):
         op = doc["paths"][path]["get"]
@@ -298,7 +298,7 @@ class RouteLevelApp: ...
 
 @pytest.mark.asyncio
 async def test_route_level_guard_adds_to_and_merge() -> None:
-    app = await LaurenFactory.create(RouteLevelApp)
+    app = LaurenFactory.create(RouteLevelApp)
     doc = generate_openapi(app)
     # /route-level/open — only ctrl guard
     open_op = doc["paths"]["/route-level/open"]["get"]
@@ -330,7 +330,7 @@ class PublicApp: ...
 
 @pytest.mark.asyncio
 async def test_unguarded_routes_have_no_security() -> None:
-    app = await LaurenFactory.create(PublicApp)
+    app = LaurenFactory.create(PublicApp)
     doc = generate_openapi(app)
     op = doc["paths"]["/public"]["get"]
     assert "security" not in op
@@ -368,7 +368,7 @@ BEARER_SCHEME = {
 
 @pytest.mark.asyncio
 async def test_security_schemes_component_registered() -> None:
-    app = await LaurenFactory.create(
+    app = LaurenFactory.create(
         SchemeTestApp,
         openapi_security_schemes={"BearerAuth": BEARER_SCHEME},
     )
@@ -380,7 +380,7 @@ async def test_security_schemes_component_registered() -> None:
 @pytest.mark.asyncio
 async def test_guard_security_and_scheme_component_together() -> None:
     """op["security"] references BearerAuth which appears in securitySchemes."""
-    app = await LaurenFactory.create(
+    app = LaurenFactory.create(
         SchemeTestApp,
         openapi_security_schemes={"BearerAuth": BEARER_SCHEME},
     )
@@ -415,7 +415,7 @@ class OAuth2App: ...
 
 @pytest.mark.asyncio
 async def test_oauth2_scopes_preserved_in_schema() -> None:
-    app = await LaurenFactory.create(OAuth2App)
+    app = LaurenFactory.create(OAuth2App)
     doc = generate_openapi(app)
     op = doc["paths"]["/oauth"]["get"]
     assert op["security"] == [{"OAuth2": ["read:items", "write:items"]}]
@@ -450,7 +450,7 @@ class MixedApp: ...
 
 @pytest.mark.asyncio
 async def test_mixed_guarded_and_unguarded_routes() -> None:
-    app = await LaurenFactory.create(MixedApp)
+    app = LaurenFactory.create(MixedApp)
     doc = generate_openapi(app)
     # Public route has no security.
     pub = doc["paths"]["/mixed-ctrl/public"]["get"]
@@ -485,7 +485,7 @@ class RuntimeAllowApp: ...
 
 @pytest.mark.asyncio
 async def test_guard_allows_request_and_schema_has_security() -> None:
-    app = await LaurenFactory.create(RuntimeAllowApp)
+    app = LaurenFactory.create(RuntimeAllowApp)
     r = TestClient(app).get("/runtime-allow/")
     assert r.status_code == 200
     assert r.json() == {"allowed": True}
@@ -518,7 +518,7 @@ class RuntimeDenyApp: ...
 
 @pytest.mark.asyncio
 async def test_guard_denies_request_and_schema_still_has_security() -> None:
-    app = await LaurenFactory.create(RuntimeDenyApp)
+    app = LaurenFactory.create(RuntimeDenyApp)
     r = TestClient(app).get("/runtime-deny/")
     assert r.status_code == 403
     doc = generate_openapi(app)

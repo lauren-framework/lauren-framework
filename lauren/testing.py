@@ -48,6 +48,37 @@ class TestClient:
 
     def __init__(self, app: Any) -> None:
         self._app = app
+        # Run startup so @post_construct hooks and lifecycle signals fire
+        # before the first request, matching what the ASGI lifespan protocol
+        # delivers in production (uvicorn, hypercorn, …).
+        # Guard against reusing the same app across multiple TestClient
+        # instances — startup() is idempotent once the app is running.
+        if hasattr(app, "startup") and not getattr(app, "_started", True):
+            self._run_sync(app.startup())
+
+    def _run_sync(self, coro: Any) -> None:
+        """Run a coroutine synchronously, even when called from an async context."""
+        try:
+            _ = asyncio.get_running_loop()
+            # Inside a running event loop — delegate to a background thread
+            # that creates its own loop (asyncio.run is not re-entrant).
+            import threading
+
+            err: list[BaseException] = []
+
+            def _runner() -> None:
+                try:
+                    asyncio.run(coro)
+                except BaseException as exc:
+                    err.append(exc)
+
+            t = threading.Thread(target=_runner)
+            t.start()
+            t.join()
+            if err:
+                raise err[0]
+        except RuntimeError:
+            asyncio.run(coro)
 
     async def _request(
         self,

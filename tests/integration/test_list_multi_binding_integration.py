@@ -13,7 +13,6 @@ apps coexist in one process (see ``.CLAUDE.md`` §3 / AGENTS.md).
 
 from __future__ import annotations
 
-import asyncio
 from typing import Protocol, runtime_checkable
 
 import pytest
@@ -79,7 +78,7 @@ class TestHandlerListParameterHappyPath:
         class AppModule:
             pass
 
-        app = asyncio.run(LaurenFactory.create(AppModule))
+        app = LaurenFactory.create(AppModule)
         client = TestClient(app)
         resp = client.get("/api/channels")
         assert resp.status_code == 200
@@ -109,7 +108,7 @@ class TestHandlerListParameterHappyPath:
             pass
 
         with pytest.raises(Exception) as excinfo:
-            asyncio.run(LaurenFactory.create(AppModule))
+            LaurenFactory.create(AppModule)
         # Any of these two error types is an acceptable signal for the
         # user — the handler compiler rejects the unresolvable parameter
         # before we ever reach a request.
@@ -160,7 +159,7 @@ class TestControllerConstructorList:
         class AppModule:
             pass
 
-        app = asyncio.run(LaurenFactory.create(AppModule))
+        app = LaurenFactory.create(AppModule)
         client = TestClient(app)
         resp = client.get("/plugins/")
         assert resp.status_code == 200
@@ -231,7 +230,7 @@ class TestRequestScopedListStability:
         class AppModule:
             pass
 
-        app = asyncio.run(LaurenFactory.create(AppModule))
+        app = LaurenFactory.create(AppModule)
         client = TestClient(app)
         r = client.get("/s/pair")
         assert r.status_code == 200
@@ -267,7 +266,7 @@ class TestSingleMultiBinding:
         class AppModule:
             pass
 
-        app = asyncio.run(LaurenFactory.create(AppModule))
+        app = LaurenFactory.create(AppModule)
         client = TestClient(app)
         r = client.get("/s/")
         assert r.status_code == 200
@@ -319,7 +318,7 @@ class TestMixedExtractors:
         class AppModule:
             pass
 
-        app = asyncio.run(LaurenFactory.create(AppModule))
+        app = LaurenFactory.create(AppModule)
         client = TestClient(app)
         r = client.get("/items/42?verbose=true")
         assert r.status_code == 200
@@ -372,7 +371,7 @@ class TestServiceConsumesList:
         class AppModule:
             pass
 
-        app = asyncio.run(LaurenFactory.create(AppModule))
+        app = LaurenFactory.create(AppModule)
         client = TestClient(app)
         r = client.get("/pipe/")
         assert r.status_code == 200
@@ -430,7 +429,7 @@ class TestModuleBoundaryWithList:
         class AppModule:
             pass
 
-        app = asyncio.run(LaurenFactory.create(AppModule))
+        app = LaurenFactory.create(AppModule)
         client = TestClient(app)
         r = client.get("/f/")
         assert r.status_code == 200

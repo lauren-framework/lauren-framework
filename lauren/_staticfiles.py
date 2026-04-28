@@ -18,7 +18,7 @@ Usage::
     class AppModule:
         pass
 
-    app = await LaurenFactory.create(AppModule)
+    app = LaurenFactory.create(AppModule)
 
 Requests whose path starts with the configured prefix are handled by a
 generated controller and served directly from the filesystem.  All other

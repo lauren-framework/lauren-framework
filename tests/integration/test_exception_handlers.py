@@ -239,13 +239,11 @@ class DomainModule:
 
 def _build_domain_app(*, with_global_tenant_filter: bool = True):
     return TestClient(
-        asyncio.run(
-            LaurenFactory.create(
-                DomainModule,
-                global_exception_filters=[TenantErrorHandler]
-                if with_global_tenant_filter
-                else None,
-            )
+        LaurenFactory.create(
+            DomainModule,
+            global_exception_filters=[TenantErrorHandler]
+            if with_global_tenant_filter
+            else None,
         )
     )
 
@@ -317,13 +315,13 @@ class FnModule:
 
 class TestFunctionFormHandler:
     def test_function_handler_catches_first_type(self):
-        client = TestClient(asyncio.run(LaurenFactory.create(FnModule)))
+        client = TestClient(LaurenFactory.create(FnModule))
         r = client.get("/fn/value")
         assert r.status_code == 200
         assert r.json() == {"caught": "fn", "kind": "ValueError"}
 
     def test_function_handler_catches_second_type(self):
-        client = TestClient(asyncio.run(LaurenFactory.create(FnModule)))
+        client = TestClient(LaurenFactory.create(FnModule))
         r = client.get("/fn/key")
         assert r.status_code == 200
         assert r.json() == {"caught": "fn", "kind": "KeyError"}
@@ -365,7 +363,7 @@ class AuditModule:
 
 class TestHandlerDI:
     def test_handler_receives_injected_service(self):
-        app = asyncio.run(LaurenFactory.create(AuditModule))
+        app = LaurenFactory.create(AuditModule)
         client = TestClient(app)
         r = client.get("/audit/raise")
         assert r.status_code == 200
@@ -407,9 +405,7 @@ class CfgModule:
 
 class TestLaurenFactoryGlobals:
     def test_global_middlewares_alias_runs(self):
-        app = asyncio.run(
-            LaurenFactory.create(CfgModule, global_middlewares=[StampMiddleware])
-        )
+        app = LaurenFactory.create(CfgModule, global_middlewares=[StampMiddleware])
         client = TestClient(app)
         r = client.get("/cfg/")
         assert r.status_code == 200
@@ -417,9 +413,7 @@ class TestLaurenFactoryGlobals:
 
     def test_legacy_singular_global_middleware_still_works(self):
         # The original kwarg must keep working for backward compatibility.
-        app = asyncio.run(
-            LaurenFactory.create(CfgModule, global_middleware=[StampMiddleware])
-        )
+        app = LaurenFactory.create(CfgModule, global_middleware=[StampMiddleware])
         client = TestClient(app)
         r = client.get("/cfg/")
         assert r.header("x-global-mw") == "1"
@@ -428,18 +422,14 @@ class TestLaurenFactoryGlobals:
         from lauren.exceptions import StartupError
 
         with pytest.raises(StartupError):
-            asyncio.run(
-                LaurenFactory.create(
-                    CfgModule,
-                    global_middleware=[StampMiddleware],
-                    global_middlewares=[StampMiddleware],
-                )
+            LaurenFactory.create(
+                CfgModule,
+                global_middleware=[StampMiddleware],
+                global_middlewares=[StampMiddleware],
             )
 
     def test_global_guards_run_for_every_route(self):
-        app = asyncio.run(
-            LaurenFactory.create(CfgModule, global_guards=[GlobalAdminGuard])
-        )
+        app = LaurenFactory.create(CfgModule, global_guards=[GlobalAdminGuard])
         client = TestClient(app)
         # Without the header the global guard denies.
         assert client.get("/cfg/").status_code == 403
@@ -451,9 +441,7 @@ class TestLaurenFactoryGlobals:
                 return Response.no_content()
 
         with pytest.raises(ExceptionHandlerConfigError):
-            asyncio.run(
-                LaurenFactory.create(CfgModule, global_exception_filters=[NotAFilter])
-            )
+            LaurenFactory.create(CfgModule, global_exception_filters=[NotAFilter])
 
 
 # ---------------------------------------------------------------------------
@@ -508,7 +496,7 @@ class ComposeModule:
 
 class TestComposability:
     def test_route_inherits_class_guards_and_middleware(self):
-        client = TestClient(asyncio.run(LaurenFactory.create(ComposeModule)))
+        client = TestClient(LaurenFactory.create(ComposeModule))
         r = client.get("/compose/open")
         assert r.status_code == 200
         assert r.header("x-mw-a") == "1"
@@ -522,7 +510,7 @@ class TestComposability:
         # framework choice unrelated to composability; a guard rejection
         # short-circuits before middleware-after stages run, which is
         # the existing dispatcher contract.)
-        client = TestClient(asyncio.run(LaurenFactory.create(ComposeModule)))
+        client = TestClient(LaurenFactory.create(ComposeModule))
         r = client.get("/compose/locked")
         assert r.status_code == 403
 
@@ -611,11 +599,11 @@ class OrderModule:
 
 class TestOrderingWithinScope:
     def test_first_matching_wins(self):
-        client = TestClient(asyncio.run(LaurenFactory.create(OrderModule)))
+        client = TestClient(LaurenFactory.create(OrderModule))
         r = client.get("/order/precise")
         assert r.json() == {"who": "first"}
 
     def test_broad_handler_catches_subclass(self):
-        client = TestClient(asyncio.run(LaurenFactory.create(OrderModule)))
+        client = TestClient(LaurenFactory.create(OrderModule))
         r = client.get("/order/only-broad")
         assert r.json() == {"who": "fallback"}

@@ -18,7 +18,6 @@ reject malformed input at the edge.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from dataclasses import dataclass
 
@@ -87,8 +86,8 @@ class TestRfc7807Bench:
 
     def test_error_envelope_throughput(self) -> None:
         n = 500
-        app_default = asyncio.run(LaurenFactory.create(_ErrModule))
-        app_rfc = asyncio.run(LaurenFactory.create(_ErrModule, error_format="rfc7807"))
+        app_default = LaurenFactory.create(_ErrModule)
+        app_rfc = LaurenFactory.create(_ErrModule, error_format="rfc7807")
         default_secs = _drive(app_default, n)
         rfc_secs = _drive(app_rfc, n)
         results = [

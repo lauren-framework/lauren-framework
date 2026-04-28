@@ -15,7 +15,6 @@ A real :class:`LaurenApp` is assembled with a handler that accepts
 
 from __future__ import annotations
 
-import asyncio
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
@@ -71,7 +70,7 @@ class EventsModule:
 
 
 def _app():
-    return asyncio.run(LaurenFactory.create(EventsModule, openapi_url="/openapi.json"))
+    return LaurenFactory.create(EventsModule, openapi_url="/openapi.json")
 
 
 class TestDiscriminatedUnionDispatch:

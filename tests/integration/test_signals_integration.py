@@ -65,7 +65,8 @@ def test_startup_events_fire_in_order() -> None:
     def on_complete(event: StartupComplete) -> None:
         events.append(f"complete:{event.duration_s >= 0}")
 
-    app = asyncio.run(LaurenFactory.create(_PingModule, signals=bus))
+    app = LaurenFactory.create(_PingModule, signals=bus)
+    asyncio.run(app.startup())
     assert events == ["begin", "complete:True"]
     assert app.signals is bus
 
@@ -83,7 +84,7 @@ def test_request_events_fire_for_every_call() -> None:
     def on_done(event: RequestComplete) -> None:
         completed.append((event.request.path, event.status))
 
-    app = asyncio.run(LaurenFactory.create(_PingModule, signals=bus))
+    app = LaurenFactory.create(_PingModule, signals=bus)
     client = TestClient(app)
     client.get("/ping/")
     client.get("/ping/")
@@ -100,7 +101,7 @@ def test_request_complete_carries_duration() -> None:
     def on_done(event: RequestComplete) -> None:
         durations.append(event.duration_s)
 
-    app = asyncio.run(LaurenFactory.create(_PingModule, signals=bus))
+    app = LaurenFactory.create(_PingModule, signals=bus)
     TestClient(app).get("/ping/")
     assert len(durations) == 1
     # Duration must be non-negative and typically sub-second for a
@@ -139,7 +140,7 @@ def test_request_complete_captures_http_error() -> None:
             (event.status, type(event.error).__name__ if event.error else None)
         )
 
-    app = asyncio.run(LaurenFactory.create(_BoomModule, signals=bus))
+    app = LaurenFactory.create(_BoomModule, signals=bus)
     r = TestClient(app).get("/boom/")
     assert r.status_code == 418
     assert len(captured) == 1
@@ -157,7 +158,7 @@ def test_request_complete_fires_for_route_not_found() -> None:
         err = type(event.error).__name__ if event.error else None
         captured.append((event.status, err))
 
-    app = asyncio.run(LaurenFactory.create(_PingModule, signals=bus))
+    app = LaurenFactory.create(_PingModule, signals=bus)
     TestClient(app).get("/nonexistent")
     assert captured == [(404, "RouteNotFoundError")]
 
@@ -174,7 +175,7 @@ def test_broken_listener_does_not_affect_response() -> None:
     def misbehaving(event: RequestReceived) -> None:
         raise RuntimeError("observability outage")
 
-    app = asyncio.run(LaurenFactory.create(_PingModule, signals=bus))
+    app = LaurenFactory.create(_PingModule, signals=bus)
     r = TestClient(app).get("/ping/")
     # Despite the broken listener, the client gets its normal response.
     assert r.status_code == 200
@@ -193,8 +194,8 @@ def test_each_app_owns_its_own_bus_by_default() -> None:
     every app, registering a listener on one app's bus would leak
     to the sibling. We pin the opposite invariant here.
     """
-    app_a = asyncio.run(LaurenFactory.create(_PingModule))
-    app_b = asyncio.run(LaurenFactory.create(_PingModule))
+    app_a = LaurenFactory.create(_PingModule)
+    app_b = LaurenFactory.create(_PingModule)
     assert app_a.signals is not app_b.signals
 
     a_hits: list[str] = []
@@ -223,7 +224,7 @@ def test_explicit_bus_overrides_default() -> None:
     explicit_hits: list[str] = []
     explicit.on(RequestComplete)(lambda e: explicit_hits.append("e"))
 
-    app = asyncio.run(LaurenFactory.create(_PingModule, signals=explicit))
+    app = LaurenFactory.create(_PingModule, signals=explicit)
     TestClient(app).get("/ping/")
 
     assert explicit_hits == ["e"]
@@ -256,7 +257,7 @@ def test_module_level_on_decorator_seeds_new_apps() -> None:
         seen.append(event.status)
 
     try:
-        app = asyncio.run(LaurenFactory.create(_PingModule))
+        app = LaurenFactory.create(_PingModule)
         TestClient(app).get("/ping/")
         assert seen == [200]
     finally:

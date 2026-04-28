@@ -216,7 +216,7 @@ from lauren.testing import TestClient
 from lauren import LaurenFactory
 
 async def boot():
-    return await LaurenFactory.create(AppModule)
+    return LaurenFactory.create(AppModule)
 
 import asyncio
 app = asyncio.run(boot())

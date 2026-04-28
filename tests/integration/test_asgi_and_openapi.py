@@ -46,7 +46,7 @@ class PetModule:
 
 class TestOpenAPI:
     def test_openapi_shape(self):
-        app = asyncio.run(LaurenFactory.create(PetModule))
+        app = LaurenFactory.create(PetModule)
         schema = app.openapi()
         assert schema["openapi"].startswith("3.1")
         assert "/pets/{id}" in schema["paths"]
@@ -59,7 +59,7 @@ class TestOpenAPI:
 
 class TestLifespanProtocol:
     def test_full_lifespan_cycle(self):
-        app = asyncio.run(LaurenFactory.create(PetModule))
+        app = LaurenFactory.create(PetModule)
 
         events_sent: list[dict] = []
         lifespan_messages = [
@@ -82,12 +82,12 @@ class TestLifespanProtocol:
 
 class TestAppIntrospection:
     def test_routes_property(self):
-        app = asyncio.run(LaurenFactory.create(PetModule))
+        app = LaurenFactory.create(PetModule)
         routes = app.routes()
         paths = sorted({r.path_template for r in routes})
         assert paths == ["/pets", "/pets/{id}"]
 
     def test_container_accessible(self):
-        app = asyncio.run(LaurenFactory.create(PetModule))
+        app = LaurenFactory.create(PetModule)
         assert app.container is not None
         assert any(p.cls is PetController for p in app.container.all_providers())

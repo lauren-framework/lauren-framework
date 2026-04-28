@@ -210,9 +210,7 @@ class AppModule:
 
 
 def build():
-    app = asyncio.run(
-        LaurenFactory.create(AppModule, global_middleware=[RequestIdMiddleware])
-    )
+    app = LaurenFactory.create(AppModule, global_middleware=[RequestIdMiddleware])
     return app, TestClient(app)
 
 
@@ -307,9 +305,10 @@ class TestEndToEnd:
 
     def test_full_lifecycle(self):
         async def run():
-            app = await LaurenFactory.create(
+            app = LaurenFactory.create(
                 AppModule, global_middleware=[RequestIdMiddleware]
             )
+            await app.startup()
             repo = await app.container.resolve(InMemoryProductRepository)
             assert repo._started is True
             assert repo._stopped is False

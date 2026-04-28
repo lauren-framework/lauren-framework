@@ -55,7 +55,7 @@ class TestControllerLifecycleHooks:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         await app.handle(_make_request("/c/ping"))
         await app.handle(_make_request("/c/ping"))
         # Two requests \u2192 two constructions \u2192 two post hooks.
@@ -84,7 +84,7 @@ class TestControllerLifecycleHooks:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         await app.handle(_make_request("/c/x"))
         # Order: post \u2192 handle \u2192 pre (finalization in the request's finally)
         assert events == ["post", "handle", "pre"]
@@ -113,7 +113,7 @@ class TestControllerLifecycleHooks:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         await app.handle(_make_request("/c/"))
         assert events == ["post-begin", "post-end", "pre-begin", "pre-end"]
 
@@ -133,7 +133,7 @@ class TestControllerLifecycleHooks:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         # The broken pre_destruct must not propagate to the client.
         resp = await app.handle(_make_request("/c/"))
         assert resp.status == 200

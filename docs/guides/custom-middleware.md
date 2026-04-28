@@ -30,7 +30,7 @@ Lauren's `Response` is **immutable** — every `with_*` method returns a new ins
 
 ```python
 # 1. Global — wraps every request, outermost layer first:
-app = await LaurenFactory.create(
+app = LaurenFactory.create(
     AppModule,
     global_middleware=[RequestId, Timing, AuthMiddleware],
 )

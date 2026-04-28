@@ -10,7 +10,7 @@ reverse proxy, pass `root_path` to `LaurenFactory.create`.
 nginx strips nothing — `scope["path"]` arrives with the full prefix:
 
 ```python
-app = await LaurenFactory.create(AppModule, root_path="/api")
+app = LaurenFactory.create(AppModule, root_path="/api")
 ```
 
 Lauren automatically strips `/api` from every incoming path before routing,
@@ -38,7 +38,7 @@ OpenAPI document automatically includes a `servers` entry:
 Override this by supplying your own servers:
 
 ```python
-app = await LaurenFactory.create(
+app = LaurenFactory.create(
     AppModule,
     root_path="/api",
     openapi_servers=[{"url": "https://example.com/api"}],
@@ -67,7 +67,7 @@ from lauren.static_files import StaticFilesModule
 class AppModule:
     pass
 
-app = await LaurenFactory.create(AppModule)
+app = LaurenFactory.create(AppModule)
 ```
 
 - `GET /static` → serves `public/index.html`

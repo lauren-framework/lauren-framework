@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 
@@ -22,7 +21,7 @@ from lauren.exceptions import (
 
 
 def _run(mod: type):
-    return asyncio.run(LaurenFactory.create(mod))
+    return LaurenFactory.create(mod)
 
 
 class TestRouterConflicts:

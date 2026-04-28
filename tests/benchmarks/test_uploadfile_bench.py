@@ -16,7 +16,6 @@ regimes.
 
 from __future__ import annotations
 
-import asyncio
 import gc
 import os
 import time
@@ -95,9 +94,7 @@ class TestUploadFileBench:
         multipart_body, content_type = _build_multipart("f", payload, "small.bin")
         n = 200
 
-        app = asyncio.run(
-            LaurenFactory.create(_UploadModule, max_body_size=10 * 1024 * 1024)
-        )
+        app = LaurenFactory.create(_UploadModule, max_body_size=10 * 1024 * 1024)
         client = TestClient(app)
 
         for _ in range(5):
@@ -155,9 +152,7 @@ class TestUploadFileBench:
         multipart_body, content_type = _build_multipart("f", payload, "big.bin")
         n = 20
 
-        app = asyncio.run(
-            LaurenFactory.create(_UploadModule, max_body_size=10 * 1024 * 1024)
-        )
+        app = LaurenFactory.create(_UploadModule, max_body_size=10 * 1024 * 1024)
         client = TestClient(app)
 
         for _ in range(2):

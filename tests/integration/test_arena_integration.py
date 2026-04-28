@@ -62,14 +62,14 @@ class _HelloModule:
 
 
 def test_app_exposes_an_arena_by_default() -> None:
-    app = asyncio.run(LaurenFactory.create(_HelloModule))
+    app = LaurenFactory.create(_HelloModule)
     assert isinstance(app.arena, RequestArena)
     # Default capacity is 256 per the arena's own docs.
     assert app.arena.capacity == 256
 
 
 def test_single_request_produces_a_single_bundle_miss() -> None:
-    app = asyncio.run(LaurenFactory.create(_HelloModule))
+    app = LaurenFactory.create(_HelloModule)
     TestClient(app).get("/hello/world")
     stats = app.arena.stats
     assert stats.misses == 1
@@ -80,7 +80,7 @@ def test_single_request_produces_a_single_bundle_miss() -> None:
 
 
 def test_repeated_requests_reuse_pooled_bundles() -> None:
-    app = asyncio.run(LaurenFactory.create(_HelloModule))
+    app = LaurenFactory.create(_HelloModule)
     client = TestClient(app)
     for _ in range(10):
         r = client.get("/hello/world")
@@ -93,7 +93,7 @@ def test_repeated_requests_reuse_pooled_bundles() -> None:
 
 
 def test_request_instances_are_reused_across_requests() -> None:
-    app = asyncio.run(LaurenFactory.create(_HelloModule))
+    app = LaurenFactory.create(_HelloModule)
     client = TestClient(app)
     for _ in range(5):
         client.get("/hello/world")
@@ -139,7 +139,7 @@ def test_request_scoped_di_is_freshly_built_per_request() -> None:
     ``tick=2``. The arena contract demands that each lease yields an
     empty cache, so every request must observe ``tick=1``.
     """
-    app = asyncio.run(LaurenFactory.create(_TickModule))
+    app = LaurenFactory.create(_TickModule)
     client = TestClient(app)
     r1 = client.get("/ticks/once")
     r2 = client.get("/ticks/once")
@@ -160,7 +160,7 @@ def test_path_params_do_not_leak_between_pooled_requests() -> None:
     class EchoModule:
         pass
 
-    app = asyncio.run(LaurenFactory.create(EchoModule))
+    app = LaurenFactory.create(EchoModule)
     client = TestClient(app)
     assert client.get("/echo/alpha").json() == {"tag": "alpha"}
     assert client.get("/echo/beta").json() == {"tag": "beta"}
@@ -178,7 +178,7 @@ def test_query_params_do_not_leak_between_pooled_requests() -> None:
     class SearchModule:
         pass
 
-    app = asyncio.run(LaurenFactory.create(SearchModule))
+    app = LaurenFactory.create(SearchModule)
     client = TestClient(app)
     assert client.get("/search/?q=first").json() == {"q": "first"}
     assert client.get("/search/?q=second").json() == {"q": "second"}
@@ -220,7 +220,7 @@ def test_pre_destruct_runs_even_when_arena_clears_cache() -> None:
     stop running. This test pins that ordering.
     """
     _DESTRUCT_LOG.clear()
-    app = asyncio.run(LaurenFactory.create(_ResModule))
+    app = LaurenFactory.create(_ResModule)
     client = TestClient(app)
     client.get("/res/")
     client.get("/res/")
@@ -235,13 +235,13 @@ def test_pre_destruct_runs_even_when_arena_clears_cache() -> None:
 
 def test_user_supplied_arena_is_honoured() -> None:
     custom_arena = RequestArena(capacity=7)
-    app = asyncio.run(LaurenFactory.create(_HelloModule, arena=custom_arena))
+    app = LaurenFactory.create(_HelloModule, arena=custom_arena)
     assert app.arena is custom_arena
     assert app.arena.capacity == 7
 
 
 def test_user_supplied_capacity_shortcut_is_honoured() -> None:
-    app = asyncio.run(LaurenFactory.create(_HelloModule, arena_capacity=13))
+    app = LaurenFactory.create(_HelloModule, arena_capacity=13)
     assert app.arena.capacity == 13
 
 
@@ -250,9 +250,7 @@ def test_passing_both_arena_and_capacity_raises_startup_error() -> None:
 
     custom_arena = RequestArena()
     with pytest.raises(StartupError, match="either `arena` or `arena_capacity`"):
-        asyncio.run(
-            LaurenFactory.create(_HelloModule, arena=custom_arena, arena_capacity=5)
-        )
+        LaurenFactory.create(_HelloModule, arena=custom_arena, arena_capacity=5)
 
 
 def test_pooling_disabled_when_capacity_is_zero() -> None:
@@ -260,7 +258,7 @@ def test_pooling_disabled_when_capacity_is_zero() -> None:
     useful for benchmarks and A/B measurements. The request semantics
     must be identical to pooled mode.
     """
-    app = asyncio.run(LaurenFactory.create(_HelloModule, arena_capacity=0))
+    app = LaurenFactory.create(_HelloModule, arena_capacity=0)
     client = TestClient(app)
     for _ in range(5):
         assert client.get("/hello/world").status_code == 200
@@ -340,7 +338,7 @@ def test_concurrent_requests_do_not_share_bundles() -> None:
         # must not call it again. We drive the ASGI entry point
         # directly rather than through TestClient (which serialises
         # requests) so we can launch all five concurrently.
-        app = await LaurenFactory.create(ConcModule)
+        app = LaurenFactory.create(ConcModule)
         await asyncio.gather(*(run_one(app, t) for t in "ABCDE"))
         return app
 

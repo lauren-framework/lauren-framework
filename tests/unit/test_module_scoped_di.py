@@ -82,7 +82,7 @@ class RootModule:
 class TestExportedProviderVisible:
     @pytest.mark.asyncio
     async def test_controller_can_use_imported_exported_provider(self):
-        app = await LaurenFactory.create(RootModule)
+        app = LaurenFactory.create(RootModule)
         resp = await app.handle(_make_request(path="/feature/name"))
         assert resp.status == 200
         import json
@@ -127,7 +127,7 @@ class TestNonExportedProviderHidden:
             pass
 
         with pytest.raises(MissingProviderError) as ei:
-            await LaurenFactory.create(Root)
+            LaurenFactory.create(Root)
         assert "visible from module ConsumerModule" in str(ei.value)
 
 
@@ -166,7 +166,7 @@ class TestDependsEndpointAnnotation:
         class R:
             pass
 
-        app = await LaurenFactory.create(R)
+        app = LaurenFactory.create(R)
         r1 = await app.handle(_make_request(path="/api/bump"))
         r2 = await app.handle(_make_request(path="/api/bump"))
         import json
@@ -206,7 +206,7 @@ class TestDependsEndpointAnnotation:
         # But Depends[X] is explicit: it WILL attempt DI resolution and fail
         # with MissingProviderError at request time. Either outcome is a
         # security win; we just assert the app refuses to leak the value.
-        app = await LaurenFactory.create(Root)
+        app = LaurenFactory.create(Root)
         resp = await app.handle(_make_request(path="/leak/"))
         assert resp.status >= 400
         import json
@@ -249,7 +249,7 @@ class TestAutoInferredEndpointDI:
         class R:
             pass
 
-        app = await LaurenFactory.create(R)
+        app = LaurenFactory.create(R)
         resp = await app.handle(_make_request(path="/a/v"))
         assert resp.status == 200
         import json

@@ -21,7 +21,6 @@ codebase ends up with.
 
 from __future__ import annotations
 
-import asyncio
 
 from pydantic import BaseModel
 
@@ -63,7 +62,7 @@ class TestFieldAnnotationInjection:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/api/name")
         assert r.status_code == 200
         assert r.json() == {"name": "app-1"}
@@ -90,7 +89,7 @@ class TestFieldAnnotationInjection:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/api/prepared")
         assert r.json() == {"v": "HI"}
 
@@ -120,7 +119,7 @@ class TestFieldAnnotationInjection:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/mix/")
         assert r.json() == {"a": "A", "b": "B"}
 
@@ -155,7 +154,7 @@ class TestFunctionInjectable:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/api/sess")
         assert r.json() == {"sess": "AsyncSess(db.example.com)"}
 
@@ -176,7 +175,7 @@ class TestFunctionInjectable:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/api/t")
         assert r.json() == {"t": "ASYNC-OK"}
 
@@ -205,7 +204,7 @@ class TestFunctionInjectable:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/api/n")
         assert r.json() == {"n": 3}
 
@@ -237,7 +236,7 @@ class TestFunctionInjectable:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
         client = TestClient(app)
         r1 = client.get("/api/show").json()
         r2 = client.get("/api/show").json()
@@ -266,7 +265,7 @@ class TestStaticAndClassmethodRoutes:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/api/s")
         assert r.json() == {"kind": "static"}
 
@@ -282,7 +281,7 @@ class TestStaticAndClassmethodRoutes:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/api/c")
         assert r.json() == {"kind": "classmethod", "cls": "Api"}
 
@@ -305,7 +304,7 @@ class TestStaticAndClassmethodRoutes:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
         client = TestClient(app)
         assert client.get("/api/above").json() == {"order": "above"}
         assert client.get("/api/below").json() == {"order": "below"}
@@ -322,7 +321,7 @@ class TestStaticAndClassmethodRoutes:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/api/items/21")
         assert r.json() == {"id": 21, "doubled": 42}
 
@@ -346,7 +345,7 @@ class TestStaticAndClassmethodRoutes:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
         r = TestClient(app).post("/api/echo", json={"x": 7})
         assert r.json() == {"x": 7, "cls": "Api"}
 
@@ -404,7 +403,7 @@ class TestCombinedFeatures:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
         client = TestClient(app)
 
         # Static route works.
@@ -459,7 +458,7 @@ class TestCombinedFeatures:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/api/")
         assert r.json() == {
             "from_new": "new:tag-1",

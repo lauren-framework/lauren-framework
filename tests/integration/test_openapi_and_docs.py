@@ -101,7 +101,7 @@ class PetModule:
 class TestRichOpenAPI:
     @pytest.mark.asyncio
     async def test_path_param_has_integer_schema_and_constraints(self):
-        app = await LaurenFactory.create(
+        app = LaurenFactory.create(
             PetModule,
             openapi_info={"title": "Pet API", "version": "2.0.0"},
         )
@@ -116,7 +116,7 @@ class TestRichOpenAPI:
 
     @pytest.mark.asyncio
     async def test_query_parameters_are_documented(self):
-        app = await LaurenFactory.create(PetModule)
+        app = LaurenFactory.create(PetModule)
         schema = app.openapi()
         op = schema["paths"]["/pets"]["get"]
         params = {p["name"]: p for p in op["parameters"]}
@@ -132,7 +132,7 @@ class TestRichOpenAPI:
 
     @pytest.mark.asyncio
     async def test_headers_and_cookies_are_documented(self):
-        app = await LaurenFactory.create(PetModule)
+        app = LaurenFactory.create(PetModule)
         schema = app.openapi()
         op = schema["paths"]["/pets"]["get"]
         params = {(p["in"], p["name"]): p for p in op["parameters"]}
@@ -141,7 +141,7 @@ class TestRichOpenAPI:
 
     @pytest.mark.asyncio
     async def test_request_body_references_pydantic_model(self):
-        app = await LaurenFactory.create(PetModule)
+        app = LaurenFactory.create(PetModule)
         schema = app.openapi()
         op = schema["paths"]["/pets"]["post"]
         assert "requestBody" in op
@@ -152,7 +152,7 @@ class TestRichOpenAPI:
 
     @pytest.mark.asyncio
     async def test_response_model_referenced_in_200(self):
-        app = await LaurenFactory.create(PetModule)
+        app = LaurenFactory.create(PetModule)
         schema = app.openapi()
         op = schema["paths"]["/pets/{pet_id}"]["get"]
         ok = op["responses"]["200"]
@@ -162,14 +162,14 @@ class TestRichOpenAPI:
 
     @pytest.mark.asyncio
     async def test_tags_list_is_deduplicated(self):
-        app = await LaurenFactory.create(PetModule)
+        app = LaurenFactory.create(PetModule)
         schema = app.openapi()
         tag_names = {t["name"] for t in schema.get("tags", [])}
         assert {"pets", "search"} <= tag_names
 
     @pytest.mark.asyncio
     async def test_info_and_servers_customisation(self):
-        app = await LaurenFactory.create(
+        app = LaurenFactory.create(
             PetModule,
             openapi_info={
                 "title": "Pet API",
@@ -185,14 +185,14 @@ class TestRichOpenAPI:
 
     @pytest.mark.asyncio
     async def test_deprecated_routes_marked(self):
-        app = await LaurenFactory.create(PetModule)
+        app = LaurenFactory.create(PetModule)
         schema = app.openapi()
         op = schema["paths"]["/pets/{pet_id}"]["delete"]
         assert op.get("deprecated") is True
 
     @pytest.mark.asyncio
     async def test_operation_ids_preserved(self):
-        app = await LaurenFactory.create(PetModule)
+        app = LaurenFactory.create(PetModule)
         schema = app.openapi()
         op = schema["paths"]["/pets/{pet_id}"]["get"]
         assert op["operationId"] == "getPet"
@@ -202,7 +202,7 @@ class TestRichOpenAPI:
         """Guard against regressions: the emitted document must satisfy
         the official OpenAPI 3.1 JSON Schema."""
         openapi_spec_validator = pytest.importorskip("openapi_spec_validator")
-        app = await LaurenFactory.create(
+        app = LaurenFactory.create(
             PetModule,
             openapi_info={"title": "Pet", "version": "1.0"},
             openapi_servers=[{"url": "https://api.example.com"}],
@@ -228,7 +228,7 @@ class TestRichOpenAPI:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         schema = app.openapi()
         param = next(
             p
@@ -246,7 +246,7 @@ class TestRichOpenAPI:
 class TestDocsEndpoints:
     @pytest.mark.asyncio
     async def test_openapi_json_served(self):
-        app = await LaurenFactory.create(
+        app = LaurenFactory.create(
             PetModule,
             openapi_url="/openapi.json",
         )
@@ -259,7 +259,7 @@ class TestDocsEndpoints:
 
     @pytest.mark.asyncio
     async def test_swagger_ui_served(self):
-        app = await LaurenFactory.create(
+        app = LaurenFactory.create(
             PetModule,
             docs_url="/docs",
         )
@@ -273,7 +273,7 @@ class TestDocsEndpoints:
 
     @pytest.mark.asyncio
     async def test_redoc_served(self):
-        app = await LaurenFactory.create(
+        app = LaurenFactory.create(
             PetModule,
             redoc_url="/redoc",
         )
@@ -284,7 +284,7 @@ class TestDocsEndpoints:
 
     @pytest.mark.asyncio
     async def test_all_three_together(self):
-        app = await LaurenFactory.create(
+        app = LaurenFactory.create(
             PetModule,
             openapi_url="/openapi.json",
             docs_url="/docs",
@@ -303,13 +303,13 @@ class TestDocsEndpoints:
     @pytest.mark.asyncio
     async def test_docs_not_exposed_by_default(self):
         """Backward compatibility: apps that don't opt-in don't get /docs."""
-        app = await LaurenFactory.create(PetModule)
+        app = LaurenFactory.create(PetModule)
         r = TestClient(app).get("/docs")
         assert r.status_code == 404
 
     @pytest.mark.asyncio
     async def test_docs_endpoints_excluded_from_schema(self):
-        app = await LaurenFactory.create(
+        app = LaurenFactory.create(
             PetModule,
             openapi_url="/openapi.json",
             docs_url="/docs",
@@ -322,7 +322,7 @@ class TestDocsEndpoints:
 
     @pytest.mark.asyncio
     async def test_custom_docs_urls(self):
-        app = await LaurenFactory.create(
+        app = LaurenFactory.create(
             PetModule,
             openapi_url="/api/schema.json",
             docs_url="/api/swagger",

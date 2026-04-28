@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 
 from lauren import (
     CallNext,
@@ -73,7 +71,7 @@ class MwModule:
 
 def build():
     return TestClient(
-        asyncio.run(LaurenFactory.create(MwModule, global_middleware=[TraceMiddleware]))
+        LaurenFactory.create(MwModule, global_middleware=[TraceMiddleware])
     )
 
 
@@ -134,19 +132,19 @@ class GuardModule:
 
 class TestGuards:
     def test_forbidden_without_role(self):
-        app = asyncio.run(LaurenFactory.create(GuardModule))
+        app = LaurenFactory.create(GuardModule)
         client = TestClient(app)
         r = client.get("/admin/")
         assert r.status_code == 403
 
     def test_allowed_with_role(self):
-        app = asyncio.run(LaurenFactory.create(GuardModule))
+        app = LaurenFactory.create(GuardModule)
         client = TestClient(app)
         r = client.get("/admin/", headers={"x-role": "admin"})
         assert r.status_code == 200
 
     def test_metadata_overrides_guard_behaviour(self):
-        app = asyncio.run(LaurenFactory.create(GuardModule))
+        app = LaurenFactory.create(GuardModule)
         client = TestClient(app)
         r = client.get("/admin/special", headers={"x-role": "admin"})
         assert r.status_code == 403
@@ -197,7 +195,7 @@ class OrderModule:
 class TestMiddlewareOrder:
     def test_onion_order(self):
         calls.clear()
-        app = asyncio.run(LaurenFactory.create(OrderModule))
+        app = LaurenFactory.create(OrderModule)
         client = TestClient(app)
         client.get("/order/")
         assert calls == [

@@ -31,7 +31,7 @@ class _RootModule:
 
 
 def _build_app(root_path: str = "") -> LaurenApp:
-    return asyncio.run(LaurenFactory.create(_RootModule, root_path=root_path))
+    return LaurenFactory.create(_RootModule, root_path=root_path)
 
 
 # ---------------------------------------------------------------------------

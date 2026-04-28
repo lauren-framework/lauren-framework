@@ -14,7 +14,6 @@ and verifies the zero-copy body-streaming path works correctly across:
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import os
 
@@ -63,7 +62,7 @@ class _UploadModule:
 
 
 def test_bytestream_hashes_small_body_correctly() -> None:
-    app = asyncio.run(LaurenFactory.create(_UploadModule))
+    app = LaurenFactory.create(_UploadModule)
     payload = b"the quick brown fox jumps over the lazy dog"
     r = TestClient(app).post("/upload/sha256", content=payload)
     assert r.status_code == 200
@@ -77,9 +76,7 @@ def test_bytestream_hashes_large_body_correctly() -> None:
     """A 2 MiB upload — large enough to validate the zero-copy
     semantics matter in practice. The hash must match the one
     computed against the raw payload."""
-    app = asyncio.run(
-        LaurenFactory.create(_UploadModule, max_body_size=10 * 1024 * 1024)
-    )
+    app = LaurenFactory.create(_UploadModule, max_body_size=10 * 1024 * 1024)
     payload = os.urandom(2 * 1024 * 1024)
     r = TestClient(app).post("/upload/sha256", content=payload)
     assert r.status_code == 200
@@ -89,14 +86,14 @@ def test_bytestream_hashes_large_body_correctly() -> None:
 
 
 def test_bytestream_length_counter_matches_body_size() -> None:
-    app = asyncio.run(LaurenFactory.create(_UploadModule))
+    app = LaurenFactory.create(_UploadModule)
     payload = b"x" * 1024
     r = TestClient(app).post("/upload/length", content=payload)
     assert r.json() == {"bytes": len(payload)}
 
 
 def test_bytestream_empty_body_is_handled_gracefully() -> None:
-    app = asyncio.run(LaurenFactory.create(_UploadModule))
+    app = LaurenFactory.create(_UploadModule)
     r = TestClient(app).post("/upload/length", content=b"")
     assert r.status_code == 200
     assert r.json() == {"bytes": 0}
@@ -113,7 +110,7 @@ def test_bytestream_body_size_cap_is_enforced() -> None:
     produces — otherwise clients could defeat the cap by choosing
     the zero-copy endpoint.
     """
-    app = asyncio.run(LaurenFactory.create(_UploadModule, max_body_size=100))
+    app = LaurenFactory.create(_UploadModule, max_body_size=100)
     # 200 bytes — double the cap.
     r = TestClient(app).post("/upload/length", content=b"x" * 200)
     assert r.status_code == 413  # RequestBodyTooLarge
@@ -155,7 +152,7 @@ def test_buffered_and_streamed_produce_identical_digests() -> None:
     ``ByteStream`` silently dropped chunks — e.g. by skipping an
     empty intermediate frame incorrectly — the hashes would diverge.
     """
-    app = asyncio.run(LaurenFactory.create(_CompareModule))
+    app = LaurenFactory.create(_CompareModule)
     client = TestClient(app)
     payload = os.urandom(64 * 1024)
     buffered = client.post("/compare/buffered", content=payload).json()
@@ -189,7 +186,7 @@ def test_bytestream_alongside_path_extractor_works() -> None:
     streaming-body extractor. They run before the body is touched,
     so the ordering should be safe — this test pins that invariant.
     """
-    app = asyncio.run(LaurenFactory.create(_TaggedModule))
+    app = LaurenFactory.create(_TaggedModule)
     r = TestClient(app).post("/tagged/uploads", content=b"abcd" * 100)
     assert r.status_code == 200
     assert r.json() == {"tag": "uploads", "bytes": 400}
@@ -224,7 +221,7 @@ class _ValidatedModule:
 
 
 def test_bytestream_handler_can_abort_early_on_bad_content() -> None:
-    app = asyncio.run(LaurenFactory.create(_ValidatedModule))
+    app = LaurenFactory.create(_ValidatedModule)
     client = TestClient(app)
     # Happy path.
     r = client.post("/validated/", content=b"LAUREN!hello world")
@@ -264,7 +261,7 @@ def test_bytestream_under_arena_pooling_does_not_leak_state() -> None:
     would manifest as the second request's handler receiving zero
     bytes (a previously-consumed iterator).
     """
-    app = asyncio.run(LaurenFactory.create(_UploadModule))
+    app = LaurenFactory.create(_UploadModule)
     client = TestClient(app)
     first = client.post("/upload/length", content=b"alpha" * 100).json()
     second = client.post("/upload/length", content=b"beta" * 200).json()

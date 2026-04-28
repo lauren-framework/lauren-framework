@@ -763,7 +763,7 @@ def openapi_security(
     You must still register the scheme in the OpenAPI components.  Pass
     ``openapi_security_schemes`` to :func:`~lauren.LaurenFactory.create`::
 
-        app = await LaurenFactory.create(
+        app = LaurenFactory.create(
             AppModule,
             openapi_security_schemes={
                 "BearerAuth": {

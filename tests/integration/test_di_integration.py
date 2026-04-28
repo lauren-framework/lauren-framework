@@ -53,7 +53,7 @@ class CountModule:
 
 class TestSingletonInjection:
     def test_singleton_shared_across_requests(self):
-        app = asyncio.run(LaurenFactory.create(CountModule))
+        app = LaurenFactory.create(CountModule)
         client = TestClient(app)
         assert client.get("/count/").json()["count"] == 1
         assert client.get("/count/").json()["count"] == 2
@@ -100,7 +100,7 @@ class InfoModule:
 
 class TestDeepDI:
     def test_multi_level(self):
-        app = asyncio.run(LaurenFactory.create(InfoModule))
+        app = LaurenFactory.create(InfoModule)
         client = TestClient(app)
         r = client.get("/info/")
         assert r.json() == {"config": "prod"}
@@ -139,7 +139,7 @@ class GreetModule:
 
 class TestProtocol:
     def test_protocol_injection(self):
-        app = asyncio.run(LaurenFactory.create(GreetModule))
+        app = LaurenFactory.create(GreetModule)
         client = TestClient(app)
         assert client.get("/greet/").json() == {"msg": "Good day."}
 
@@ -178,7 +178,7 @@ class ReqModule:
 class TestRequestScope:
     def test_request_scope_single_instance_per_request(self):
         ReqScoped._counter = 0  # reset state
-        app = asyncio.run(LaurenFactory.create(ReqModule))
+        app = LaurenFactory.create(ReqModule)
         client = TestClient(app)
         r = client.get("/req/")
         assert r.json()["same"] is True
@@ -227,7 +227,7 @@ class TestLifecycleInApp:
         LifecycleProbe.calls = []
 
         async def run():
-            app = await LaurenFactory.create(LifecycleModule)
+            app = LaurenFactory.create(LifecycleModule)
             client = TestClient(app)
             r = client.get("/ok/")
             assert r.json() == {"ok": True}

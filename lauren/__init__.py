@@ -48,8 +48,7 @@ Minimal example
     class AppModule:
         pass
 
-    import asyncio
-    app = asyncio.run(LaurenFactory.create(AppModule))
+    app = LaurenFactory.create(AppModule)
     # `app` is an ASGI callable — serve with uvicorn.
 
 For a complete reference intended for LLM ingestion, see the top-level

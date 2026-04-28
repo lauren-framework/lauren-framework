@@ -205,7 +205,7 @@ class AppModule:
 
 
 async def main() -> None:
-    app = await LaurenFactory.create(AppModule)
+    app = LaurenFactory.create(AppModule)
     # `app` is a fully-typed ASGI 3 callable — serve with uvicorn:
     #   uvicorn main:app --reload
 

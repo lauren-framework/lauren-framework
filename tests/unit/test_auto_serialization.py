@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import datetime
 import enum
@@ -138,7 +137,7 @@ class SerializeModule:
 
 @pytest.fixture(scope="module")
 def client():
-    app = asyncio.run(LaurenFactory.create(SerializeModule))
+    app = LaurenFactory.create(SerializeModule)
     return TestClient(app)
 
 

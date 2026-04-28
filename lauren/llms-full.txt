@@ -78,12 +78,9 @@ class UserController:
 class AppModule:
     pass
 
-async def main():
-    app = await LaurenFactory.create(AppModule)
-    # `app` is an ASGI callable — use uvicorn/hypercorn to serve.
-    return app
-
-asyncio.run(main())
+app = LaurenFactory.create(AppModule)
+# `app` is an ASGI callable — use uvicorn/hypercorn to serve.
+# startup() is called automatically via the ASGI lifespan protocol.
 ```
 
 ---
@@ -92,17 +89,17 @@ asyncio.run(main())
 
 ### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middleware=None, max_body_size=1048576, app_state=None)`
 
-Async factory. Returns a fully-booted `LaurenApp`. Executes seven phases:
+Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
 1. **Module graph construction** — walk `@module(imports=[...])` edges, detect cycles.
 2. **Provider collection** — gather every `@injectable` from the graph.
 3. **Protocol binding** — resolve `provides=[Protocol]` declarations.
 4. **DI graph compilation** — detect circular deps, scope violations, protocol ambiguities.
 5. **Router compilation** — walk controllers, compile handler signatures into extraction plans, insert into the radix tree.
-6. **Lifecycle execution** — instantiate singletons in topological order, run `@post_construct` hooks.
-7. **Readiness** — seal `app_state`, app enters running state.
+6. **Lifecycle order computation** — build the topological `@post_construct` / `@pre_destruct` schedule.
+7. **Readiness** — build the `LaurenApp` object; `startup()` is deferred to the ASGI lifespan event (or the first HTTP request for servers without lifespan support).
 
-Failures in phases 1–5 raise a `StartupError` subclass immediately — the app never begins serving traffic with an invalid graph.
+Failures in phases 1–6 raise a `StartupError` subclass immediately — the app never begins serving traffic with an invalid graph.
 
 ### `LaurenApp`
 
@@ -113,7 +110,7 @@ Attributes & methods:
 - `app.app_state: AppState` — sealed, read-only app-level state.
 - `app.routes()` — list of `RouteEntry` objects.
 - `app.openapi()` — OpenAPI 3.1 schema dict.
-- `await app.startup()` — idempotent, mostly invoked by factory and lifespan protocol.
+- `await app.startup()` — idempotent; invoked automatically by the ASGI lifespan protocol (uvicorn) or lazily on the first HTTP request. Call explicitly in tests that check `@post_construct` state.
 - `await app.shutdown(drain_timeout=10.0)` — runs `@pre_destruct` hooks, awaits in-flight requests.
 - `await app(scope, receive, send)` — standard ASGI callable (HTTP + lifespan).
 
@@ -616,7 +613,7 @@ raise NotFoundError("user not found", detail={"id": user_id})
 ```python
 from lauren.testing import TestClient
 
-app = asyncio.run(LaurenFactory.create(AppModule))
+app = LaurenFactory.create(AppModule)
 c = TestClient(app)
 
 r = c.get("/users/42", headers={"Authorization": "Bearer ..."})
@@ -738,14 +735,14 @@ from lauren import LaurenFactory
 from lauren.logging import default_logger, ConsoleLogger, JsonLogger, LogLevel
 
 # Auto-choose based on TTY detection + LAUREN_LOG_FORMAT / LAUREN_LOG_LEVEL
-app = await LaurenFactory.create(AppModule, logger=default_logger())
+app = LaurenFactory.create(AppModule, logger=default_logger())
 
 # Or pick explicitly:
-app = await LaurenFactory.create(
+app = LaurenFactory.create(
     AppModule,
     logger=ConsoleLogger(level="DEBUG", name="MyApp"),
 )
-app = await LaurenFactory.create(
+app = LaurenFactory.create(
     AppModule,
     logger=JsonLogger(level=LogLevel.INFO),
 )
@@ -793,7 +790,7 @@ idempotent: concurrent or repeated ``shutdown()`` invocations return once
 the first shutdown has finished.
 
 ```python
-app = await LaurenFactory.create(AppModule, logger=default_logger())
+app = LaurenFactory.create(AppModule, logger=default_logger())
 
 # Register arbitrary cleanup (decorator form supported):
 @app.on_shutdown
@@ -1154,7 +1151,7 @@ class UserController: ...
 async def x(self): ...
 
 # Global — handles every request:
-app = await LaurenFactory.create(
+app = LaurenFactory.create(
     AppModule,
     global_exception_filters=[DomainErrors, AuditFailures],
 )
@@ -1423,7 +1420,7 @@ from lauren_middlewares import (
     cors, rate_limit, gzip, security_headers, request_id,
 )
 
-app = await LaurenFactory.create(
+app = LaurenFactory.create(
     AppModule,
     global_middleware=[
         request_id(),

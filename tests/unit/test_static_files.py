@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
 from pathlib import Path
 
@@ -58,7 +57,7 @@ def test_module_compiles_successfully(tmp_path: Path) -> None:
     class _App:
         pass
 
-    app = asyncio.run(LaurenFactory.create(_App))
+    app = LaurenFactory.create(_App)
     assert app is not None
 
 
@@ -79,7 +78,7 @@ def test_multiple_mounts_compile_successfully(tmp_path: Path) -> None:
     class _App:
         pass
 
-    app = asyncio.run(LaurenFactory.create(_App))
+    app = LaurenFactory.create(_App)
     assert app is not None
 
 

@@ -105,11 +105,7 @@ class AppModule:
     pass
 
 
-async def build_app():
-    return await LaurenFactory.create(AppModule, logger=default_logger())
-
-
-app = asyncio.run(build_app())
+app = LaurenFactory.create(AppModule, logger=default_logger())
 ```
 
 ## 5. Run it

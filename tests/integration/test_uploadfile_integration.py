@@ -18,7 +18,6 @@ These tests drive real :class:`LaurenApp` instances via
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import os
 
@@ -94,7 +93,7 @@ class _SingleUploadModule:
 
 
 def test_single_upload_delivers_file_contents() -> None:
-    app = asyncio.run(LaurenFactory.create(_SingleUploadModule))
+    app = LaurenFactory.create(_SingleUploadModule)
     payload = b"\x89PNG\r\n\x1a\n" + b"pretend-this-is-an-image" * 100
     body, content_type = _build_multipart(
         [("avatar", payload, {"filename": "me.png", "content_type": "image/png"})]
@@ -115,7 +114,7 @@ def test_single_upload_delivers_file_contents() -> None:
 
 def test_single_upload_missing_field_returns_422() -> None:
     """An upload endpoint that gets the wrong field name should\n    surface a clean 422 with a machine-readable detail dict,\n    not silently succeed with ``None``.\n"""
-    app = asyncio.run(LaurenFactory.create(_SingleUploadModule))
+    app = LaurenFactory.create(_SingleUploadModule)
     body, content_type = _build_multipart(
         [("wrong_name", b"data", {"filename": "x.txt"})]
     )
@@ -129,7 +128,7 @@ def test_single_upload_missing_field_returns_422() -> None:
 
 def test_single_upload_with_non_multipart_content_type_fails_cleanly() -> None:
     """Sending plain JSON to an upload endpoint must produce a\n    422 rather than a 500 \u2014 the framework should surface the\n    multipart parser's own ``ExtractorError``.\n"""
-    app = asyncio.run(LaurenFactory.create(_SingleUploadModule))
+    app = LaurenFactory.create(_SingleUploadModule)
     r = TestClient(app).post(
         "/upload/avatar",
         content=b'{"avatar": null}',
@@ -158,7 +157,7 @@ class _GalleryModule:
 
 
 def test_list_upload_collects_every_part_with_matching_name() -> None:
-    app = asyncio.run(LaurenFactory.create(_GalleryModule))
+    app = LaurenFactory.create(_GalleryModule)
     body, content_type = _build_multipart(
         [
             ("images", b"AAA", {"filename": "a.jpg", "content_type": "image/jpeg"}),
@@ -192,7 +191,7 @@ def test_list_upload_empty_form_returns_empty_list_when_default_given() -> None:
     class _OptModule:
         pass
 
-    app = asyncio.run(LaurenFactory.create(_OptModule))
+    app = LaurenFactory.create(_OptModule)
     body, content_type = _build_multipart(
         [
             ("other", b"x", {"filename": "x.txt"}),
@@ -233,7 +232,7 @@ class _MixedModule:
 
 def test_multiple_uploadfile_params_share_a_single_parse() -> None:
     """The multipart body must be parsed exactly once even when\n    the handler declares two ``UploadFile`` parameters. The\n    framework caches the parse on the request; if the cache were\n    missing, each parameter would trigger a separate parse and\n    large uploads would pay the cost twice.\n"""
-    app = asyncio.run(LaurenFactory.create(_MixedModule))
+    app = LaurenFactory.create(_MixedModule)
     body, content_type = _build_multipart(
         [
             ("file", b"first payload", {"filename": "one.txt"}),
@@ -258,9 +257,7 @@ def test_multiple_uploadfile_params_share_a_single_parse() -> None:
 
 
 def test_large_binary_upload_is_byte_exact() -> None:
-    app = asyncio.run(
-        LaurenFactory.create(_SingleUploadModule, max_body_size=10 * 1024 * 1024)
-    )
+    app = LaurenFactory.create(_SingleUploadModule, max_body_size=10 * 1024 * 1024)
     payload = os.urandom(2 * 1024 * 1024)
     body, content_type = _build_multipart(
         [
@@ -287,7 +284,7 @@ def test_large_binary_upload_is_byte_exact() -> None:
 
 
 def test_unicode_filename_survives_roundtrip() -> None:
-    app = asyncio.run(LaurenFactory.create(_SingleUploadModule))
+    app = LaurenFactory.create(_SingleUploadModule)
     fn = "r\u00e9sum\u00e9-\u65e5\u672c.pdf"
     body, content_type = _build_multipart(
         [("avatar", b"pdf-bytes", {"filename": fn, "content_type": "application/pdf"})]
@@ -325,7 +322,7 @@ def test_parse_cache_is_populated_exactly_once() -> None:
     class _ProbeMod:
         pass
 
-    app = asyncio.run(LaurenFactory.create(_ProbeMod))
+    app = LaurenFactory.create(_ProbeMod)
     body, content_type = _build_multipart(
         [
             ("a", b"aa", {"filename": "a"}),

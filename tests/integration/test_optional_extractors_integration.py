@@ -19,7 +19,6 @@ Each test pins one concrete user shape observed in the wild:
 
 from __future__ import annotations
 
-import asyncio
 from typing import Annotated, Optional
 
 from lauren import (
@@ -61,14 +60,14 @@ class _ItemModule:
 
 
 def test_outer_optional_path_param_present_coerces_to_int() -> None:
-    app = asyncio.run(LaurenFactory.create(_ItemModule))
+    app = LaurenFactory.create(_ItemModule)
     r = TestClient(app).get("/items/42")
     assert r.status_code == 200
     assert r.json() == {"id": 42}
 
 
 def test_outer_optional_path_param_absent_yields_none() -> None:
-    app = asyncio.run(LaurenFactory.create(_ItemModule))
+    app = LaurenFactory.create(_ItemModule)
     r = TestClient(app).get("/items/")
     assert r.status_code == 200
     assert r.json() == {"id": None}
@@ -96,27 +95,27 @@ class _SearchModule:
 
 
 def test_optional_query_returns_value_when_present() -> None:
-    app = asyncio.run(LaurenFactory.create(_SearchModule))
+    app = LaurenFactory.create(_SearchModule)
     r = TestClient(app).get("/search/?q=kittens")
     assert r.json() == {"q": "kittens"}
 
 
 def test_optional_query_returns_none_when_absent() -> None:
-    app = asyncio.run(LaurenFactory.create(_SearchModule))
+    app = LaurenFactory.create(_SearchModule)
     r = TestClient(app).get("/search/")
     assert r.status_code == 200
     assert r.json() == {"q": None}
 
 
 def test_pep604_optional_query_returns_none_when_absent() -> None:
-    app = asyncio.run(LaurenFactory.create(_SearchModule))
+    app = LaurenFactory.create(_SearchModule)
     r = TestClient(app).get("/search/pep604")
     assert r.status_code == 200
     assert r.json() == {"q": None}
 
 
 def test_pep604_optional_query_returns_value_when_present() -> None:
-    app = asyncio.run(LaurenFactory.create(_SearchModule))
+    app = LaurenFactory.create(_SearchModule)
     r = TestClient(app).get("/search/pep604?q=hello")
     assert r.json() == {"q": "hello"}
 
@@ -145,14 +144,14 @@ class _AuthModule:
 
 
 def test_optional_header_returns_anonymous_when_missing() -> None:
-    app = asyncio.run(LaurenFactory.create(_AuthModule))
+    app = LaurenFactory.create(_AuthModule)
     r = TestClient(app).get("/auth/whoami")
     assert r.status_code == 200
     assert r.json() == {"user": "anonymous"}
 
 
 def test_optional_header_extracts_value_when_present() -> None:
-    app = asyncio.run(LaurenFactory.create(_AuthModule))
+    app = LaurenFactory.create(_AuthModule)
     r = TestClient(app).get("/auth/whoami", headers={"authorization": "Bearer abc-123"})
     assert r.json() == {"user": "abc-123"}
 
@@ -178,13 +177,13 @@ class _SessionModule:
 
 
 def test_optional_cookie_returns_none_when_missing() -> None:
-    app = asyncio.run(LaurenFactory.create(_SessionModule))
+    app = LaurenFactory.create(_SessionModule)
     r = TestClient(app).get("/session/id")
     assert r.json() == {"session": None}
 
 
 def test_optional_cookie_returns_value_when_present() -> None:
-    app = asyncio.run(LaurenFactory.create(_SessionModule))
+    app = LaurenFactory.create(_SessionModule)
     r = TestClient(app).get("/session/id", headers={"cookie": "session=abc123"})
     assert r.json() == {"session": "abc123"}
 
@@ -214,13 +213,13 @@ class _InnerModule:
 
 
 def test_inner_optional_path_coerces_through_int() -> None:
-    app = asyncio.run(LaurenFactory.create(_InnerModule))
+    app = LaurenFactory.create(_InnerModule)
     r = TestClient(app).get("/inner/99")
     assert r.json() == {"id": 99, "type": "int"}
 
 
 def test_inner_optional_pep604_path_coerces_through_int() -> None:
-    app = asyncio.run(LaurenFactory.create(_InnerModule))
+    app = LaurenFactory.create(_InnerModule)
     r = TestClient(app).get("/inner/pep604/7")
     assert r.json() == {"id": 7, "type": "int"}
 
@@ -248,7 +247,7 @@ class _ConstrainedModule:
 
 
 def test_outer_optional_preserves_query_constraints_when_present() -> None:
-    app = asyncio.run(LaurenFactory.create(_ConstrainedModule))
+    app = LaurenFactory.create(_ConstrainedModule)
     client = TestClient(app)
     assert client.get("/constrained/?limit=50").json() == {"limit": 50}
     # Violates ge=1 — should be a validation error, not a silent pass.
@@ -257,7 +256,7 @@ def test_outer_optional_preserves_query_constraints_when_present() -> None:
 
 
 def test_outer_optional_preserves_query_constraints_when_absent() -> None:
-    app = asyncio.run(LaurenFactory.create(_ConstrainedModule))
+    app = LaurenFactory.create(_ConstrainedModule)
     r = TestClient(app).get("/constrained/")
     assert r.status_code == 200
     assert r.json() == {"limit": None}
@@ -286,7 +285,7 @@ class _DefaultedModule:
 
 
 def test_outer_optional_respects_user_supplied_default() -> None:
-    app = asyncio.run(LaurenFactory.create(_DefaultedModule))
+    app = LaurenFactory.create(_DefaultedModule)
     r = TestClient(app).get("/defaulted/")
     # The explicit default=10 takes precedence over the synthesised
     # None default — a user who went to the trouble of writing
@@ -317,7 +316,7 @@ class _MixedModule:
 
 
 def test_mixed_required_and_optional_params_in_one_handler() -> None:
-    app = asyncio.run(LaurenFactory.create(_MixedModule))
+    app = LaurenFactory.create(_MixedModule)
     client = TestClient(app)
     assert client.get("/mixed/books").json() == {
         "tag": "books",

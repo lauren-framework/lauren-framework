@@ -105,7 +105,7 @@ class HelloApp: ...
 
 @pytest.mark.asyncio
 async def test_same_file_forwardref_boots_and_routes() -> None:
-    app = await LaurenFactory.create(HelloApp)
+    app = LaurenFactory.create(HelloApp)
     r = TestClient(app).get("/hello/world")
     assert r.status_code == 200
     assert r.json() == {"msg": "hi world"}
@@ -169,7 +169,7 @@ async def test_cross_file_forwardref_resolves_at_compile_time() -> None:
     current.FakeBModule = FakeBModule  # type: ignore[attr-defined]
 
     try:
-        app = await LaurenFactory.create(FakeAModule)
+        app = LaurenFactory.create(FakeAModule)
         r = TestClient(app).get("/fakecross/")
         assert r.status_code == 200
         assert r.json() == {"v": "from_b"}
@@ -224,7 +224,7 @@ class MutualApp: ...
 
 @pytest.mark.asyncio
 async def test_mutual_forwardrefs_boot_cleanly() -> None:
-    app = await LaurenFactory.create(MutualApp)
+    app = LaurenFactory.create(MutualApp)
     r = TestClient(app).get("/mutual/")
     assert r.status_code == 200
     assert r.json() == {"ping": "pong", "pong": "ping"}
@@ -267,7 +267,7 @@ async def test_dotted_forwardref_resolves_unambiguously() -> None:
     class DottedApp: ...
 
     try:
-        app = await LaurenFactory.create(DottedApp)
+        app = LaurenFactory.create(DottedApp)
         r = TestClient(app).get("/dotted/")
         assert r.status_code == 200
         assert r.json() == {"answer": 42}
@@ -310,7 +310,7 @@ class ChainApp: ...
 
 @pytest.mark.asyncio
 async def test_three_level_forwardref_chain_resolves() -> None:
-    app = await LaurenFactory.create(ChainApp)
+    app = LaurenFactory.create(ChainApp)
     r = TestClient(app).get("/chain/")
     assert r.status_code == 200
     assert r.json() == {"v": "leaf"}
@@ -349,7 +349,7 @@ class DepConsumerApp: ...
 async def test_depends_extractor_resolves_across_forwardref_boundary() -> None:
     """``Depends[X]`` on an endpoint resolves X when the providing module was
     imported via ForwardRef rather than a direct class reference."""
-    app = await LaurenFactory.create(DepConsumerApp)
+    app = LaurenFactory.create(DepConsumerApp)
     r = TestClient(app).get("/dep/")
     assert r.status_code == 200
     assert r.json() == {"v": "dep_ok"}
@@ -379,4 +379,4 @@ async def test_unresolvable_forwardref_raises_at_startup() -> None:
     class BrokenApp: ...
 
     with pytest.raises((StartupError, ValueError)):
-        await LaurenFactory.create(BrokenApp)
+        LaurenFactory.create(BrokenApp)

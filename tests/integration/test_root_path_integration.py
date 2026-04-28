@@ -39,7 +39,7 @@ class _ProxyModule:
 
 
 def _build(root_path: str = "") -> LaurenApp:  # type: ignore[name-defined]
-    return asyncio.run(LaurenFactory.create(_ProxyModule, root_path=root_path))
+    return LaurenFactory.create(_ProxyModule, root_path=root_path)
 
 
 # ---------------------------------------------------------------------------
@@ -180,12 +180,10 @@ def test_no_root_path_scope_root_path_ignored() -> None:
 
 
 def test_openapi_servers_contains_root_path() -> None:
-    app = asyncio.run(
-        LaurenFactory.create(
-            _ProxyModule,
-            root_path="/api",
-            openapi_url="/openapi.json",
-        )
+    app = LaurenFactory.create(
+        _ProxyModule,
+        root_path="/api",
+        openapi_url="/openapi.json",
     )
     doc = app.openapi()
     servers = doc.get("servers", [])
@@ -194,11 +192,9 @@ def test_openapi_servers_contains_root_path() -> None:
 
 
 def test_openapi_no_servers_when_no_root_path() -> None:
-    app = asyncio.run(
-        LaurenFactory.create(
-            _ProxyModule,
-            openapi_url="/openapi.json",
-        )
+    app = LaurenFactory.create(
+        _ProxyModule,
+        openapi_url="/openapi.json",
     )
     doc = app.openapi()
     # Without a root_path there should be no auto-generated servers entry.
@@ -208,13 +204,11 @@ def test_openapi_no_servers_when_no_root_path() -> None:
 def test_explicit_openapi_servers_not_overridden() -> None:
     """Explicit openapi_servers must take precedence over root_path fallback."""
     custom_servers = [{"url": "https://example.com/v2"}]
-    app = asyncio.run(
-        LaurenFactory.create(
-            _ProxyModule,
-            root_path="/api",
-            openapi_servers=custom_servers,
-            openapi_url="/openapi.json",
-        )
+    app = LaurenFactory.create(
+        _ProxyModule,
+        root_path="/api",
+        openapi_servers=custom_servers,
+        openapi_url="/openapi.json",
     )
     doc = app.openapi()
     servers = doc.get("servers", [])

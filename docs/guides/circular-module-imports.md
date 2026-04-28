@@ -84,7 +84,7 @@ from orders.module import OrderModule
 @module(imports=[UserModule, OrderModule])
 class AppModule: ...
 
-app = await LaurenFactory.create(AppModule)
+app = LaurenFactory.create(AppModule)
 ```
 
 By the time `LaurenFactory.create(AppModule)` runs, both `UserModule` and `OrderModule` are in memory.  The compiler resolves `ForwardRef("OrderModule")` by scanning the loaded `sys.modules` and wires everything correctly.
@@ -229,7 +229,7 @@ from orders.module import OrderModule
 class AppModule: ...
 
 import asyncio
-app = asyncio.run(LaurenFactory.create(AppModule))
+app = LaurenFactory.create(AppModule)
 ```
 
 !!! note "Import order in main.py"

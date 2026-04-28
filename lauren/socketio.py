@@ -40,7 +40,7 @@ Quick start
     class App:
         pass
 
-    app = await LaurenFactory.create(App)
+    app = LaurenFactory.create(App)
 
 JavaScript client::
 

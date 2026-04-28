@@ -58,7 +58,7 @@ class TestAnnotatedPipes:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         c = TestClient(app)
         r = c.get("/c/5")
         assert r.status_code == 200
@@ -86,7 +86,7 @@ class TestAnnotatedPipes:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/c/5")
         assert r.json() == {"n": 45}
 
@@ -109,7 +109,7 @@ class TestAnnotatedPipes:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/c/7")
         assert r.json() == {"value": 7, "name": "n", "source": "path"}
 
@@ -138,7 +138,7 @@ class TestDefaultComposition:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         client = TestClient(app)
 
         ok = client.get("/c/4")
@@ -174,7 +174,7 @@ class TestDefaultComposition:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         TestClient(app).get("/c/1")
         assert events == ["ann", "default"]
 
@@ -200,7 +200,7 @@ class TestDefaultComposition:
             pass
 
         with pytest.raises(UnresolvableParameterError, match="both in the annotation"):
-            await LaurenFactory.create(M)
+            LaurenFactory.create(M)
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +224,7 @@ class TestAsyncAndClassPipes:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/c/3")
         assert r.json() == {"loaded": 3}
 
@@ -244,7 +244,7 @@ class TestAsyncAndClassPipes:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/c/x?q=hello")
         assert r.json() == {"q": "HELLO"}
 
@@ -289,7 +289,7 @@ class TestAsyncAndClassPipes:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         client = TestClient(app)
         ok = client.get("/u/1")
         assert ok.status_code == 200
@@ -337,7 +337,7 @@ class TestPipeModuleVisibility:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/u/42")
         assert r.json() == {"v": "user:42"}
 
@@ -369,6 +369,6 @@ class TestBodyPipes:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).post("/users/", json={"name": "  Alice ", "age": 30})
         assert r.json() == {"name": "alice", "age": 30}

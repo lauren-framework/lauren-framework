@@ -12,7 +12,7 @@ from lauren.logging import default_logger
 @module(controllers=[...], providers=[...])
 class AppModule: ...
 
-app = asyncio.run(LaurenFactory.create(AppModule, logger=default_logger()))
+app = LaurenFactory.create(AppModule, logger=default_logger())
 # Serve with uvicorn / hypercorn / granian.
 ```
 
@@ -181,7 +181,7 @@ class RequestId:
         return resp.with_header("x-request-id", request.state.rid)
 
 # Global:
-app = await LaurenFactory.create(AppModule, global_middleware=[RequestId])
+app = LaurenFactory.create(AppModule, global_middleware=[RequestId])
 
 # Controller / route:
 @use_middleware(Timing)
@@ -216,7 +216,7 @@ class X: ...
 async def y(self): ...
 
 # Or globally:
-app = await LaurenFactory.create(AppModule, global_exception_filters=[DomainErrors])
+app = LaurenFactory.create(AppModule, global_exception_filters=[DomainErrors])
 ```
 
 ## Custom extractors
@@ -290,9 +290,9 @@ return EventStream(producer(), keep_alive=15.0)
 ```python
 from lauren.logging import default_logger, ConsoleLogger, JsonLogger, LogLevel
 
-app = await LaurenFactory.create(AppModule, logger=default_logger())   # TTY-aware
-app = await LaurenFactory.create(AppModule, logger=ConsoleLogger(level="DEBUG"))
-app = await LaurenFactory.create(AppModule, logger=JsonLogger(level=LogLevel.INFO))
+app = LaurenFactory.create(AppModule, logger=default_logger())   # TTY-aware
+app = LaurenFactory.create(AppModule, logger=ConsoleLogger(level="DEBUG"))
+app = LaurenFactory.create(AppModule, logger=JsonLogger(level=LogLevel.INFO))
 ```
 
 Env vars: `LAUREN_LOG_LEVEL` (`DEBUG`/`VERBOSE`/`INFO`/`WARN`/`ERROR`), `LAUREN_LOG_FORMAT` (`console`/`json`).

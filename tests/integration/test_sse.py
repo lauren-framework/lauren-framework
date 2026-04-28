@@ -18,7 +18,6 @@ and resumable streams via ``Last-Event-ID``.
 
 from __future__ import annotations
 
-import asyncio
 from typing import AsyncIterator
 
 
@@ -103,7 +102,7 @@ class TestBasicSseEndpoint:
         class App:
             pass
 
-        app = asyncio.run(LaurenFactory.create(App))
+        app = LaurenFactory.create(App)
         client = TestClient(app)
         resp = client.get("/sse/feed")
 
@@ -137,7 +136,7 @@ class TestBasicSseEndpoint:
         class App:
             pass
 
-        app = asyncio.run(LaurenFactory.create(App))
+        app = LaurenFactory.create(App)
         client = TestClient(app)
         resp = client.get("/log/tail")
 
@@ -168,7 +167,7 @@ class TestRichEventEnvelope:
         class App:
             pass
 
-        app = asyncio.run(LaurenFactory.create(App))
+        app = LaurenFactory.create(App)
         client = TestClient(app)
         resp = client.get("/x/")
 
@@ -197,7 +196,7 @@ class TestRichEventEnvelope:
         class App:
             pass
 
-        app = asyncio.run(LaurenFactory.create(App))
+        app = LaurenFactory.create(App)
         client = TestClient(app)
         resp = client.get("/m/")
         assert resp.body == b"data: line1\ndata: line2\ndata: line3\n\n"
@@ -236,7 +235,7 @@ class TestSseWithDependencyInjection:
         class App:
             pass
 
-        app = asyncio.run(LaurenFactory.create(App))
+        app = LaurenFactory.create(App)
         client = TestClient(app)
         resp = client.get("/dep/feed")
 
@@ -273,7 +272,7 @@ class TestLastEventIdResumption:
         class App:
             pass
 
-        app = asyncio.run(LaurenFactory.create(App))
+        app = LaurenFactory.create(App)
         client = TestClient(app)
 
         # Initial subscription — no ``Last-Event-ID`` so cursor is 0.
@@ -313,7 +312,7 @@ class TestCustomHeadersAndStatus:
         class App:
             pass
 
-        app = asyncio.run(LaurenFactory.create(App))
+        app = LaurenFactory.create(App)
         client = TestClient(app)
         resp = client.get("/x/")
         # Defaults still present.
@@ -342,7 +341,7 @@ class TestCustomHeadersAndStatus:
         class App:
             pass
 
-        app = asyncio.run(LaurenFactory.create(App))
+        app = LaurenFactory.create(App)
         client = TestClient(app)
         resp = client.get("/x/")
         assert resp.status_code == 202
@@ -376,7 +375,7 @@ class TestErrorsDuringStreaming:
         class App:
             pass
 
-        app = asyncio.run(LaurenFactory.create(App))
+        app = LaurenFactory.create(App)
         client = TestClient(app)
         # Wrap in pytest.raises so an unhandled exception in the body
         # generator surfaces explicitly. The exact handling is a
@@ -413,7 +412,7 @@ class TestOpenApiDoesNotBreak:
         class App:
             pass
 
-        app = asyncio.run(LaurenFactory.create(App))
+        app = LaurenFactory.create(App)
         # The router-listing API should know about the route.
         paths = {entry.path_template for entry in app.routes()}
         assert "/api/events" in paths

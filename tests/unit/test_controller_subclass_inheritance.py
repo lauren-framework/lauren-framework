@@ -30,7 +30,6 @@ edge cases.
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import pytest
@@ -62,7 +61,7 @@ def _build_app(root_module: type) -> Any:
     that's a deliberate test-isolation choice the framework already
     uses elsewhere.
     """
-    return asyncio.run(LaurenFactory.create(root_module))
+    return LaurenFactory.create(root_module)
 
 
 # ---------------------------------------------------------------------------

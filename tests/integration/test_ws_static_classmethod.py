@@ -36,7 +36,7 @@ class TestWsStaticMethod:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run() -> None:
             async with WsTestClient(app).connect("/ws") as ws:
@@ -67,7 +67,7 @@ class TestWsStaticMethod:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run() -> None:
             async with WsTestClient(app).connect("/ws") as ws:
@@ -96,7 +96,7 @@ class TestWsStaticMethod:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run() -> None:
             async with WsTestClient(app).connect("/ws") as ws:
@@ -121,7 +121,7 @@ class TestWsClassmethod:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run() -> None:
             async with WsTestClient(app).connect("/ws") as ws:
@@ -167,7 +167,7 @@ class TestWsClassmethod:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run() -> None:
             async with WsTestClient(app).connect("/mix") as ws:

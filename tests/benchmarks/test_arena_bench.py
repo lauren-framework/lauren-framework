@@ -23,7 +23,6 @@ for operator inspection.
 
 from __future__ import annotations
 
-import asyncio
 import gc
 import time
 from dataclasses import dataclass
@@ -120,11 +119,11 @@ class TestArenaBench:
         n = 1_000
 
         # Mode 1: pooling disabled (capacity=0 \u2014 every request allocates fresh).
-        app_off = asyncio.run(LaurenFactory.create(_ArenaBenchModule, arena_capacity=0))
+        app_off = LaurenFactory.create(_ArenaBenchModule, arena_capacity=0)
         off_secs = _run_requests(app_off, n)
 
         # Mode 2: pooling enabled (default capacity=256).
-        app_on = asyncio.run(LaurenFactory.create(_ArenaBenchModule))
+        app_on = LaurenFactory.create(_ArenaBenchModule)
         on_secs = _run_requests(app_on, n)
 
         results = [
@@ -155,7 +154,7 @@ class TestArenaBench:
         too small (unlikely with capacity=256) or the release side
         isn't firing (a bug we want to catch immediately).
         """
-        app = asyncio.run(LaurenFactory.create(_ArenaBenchModule))
+        app = LaurenFactory.create(_ArenaBenchModule)
         client = TestClient(app)
         # Drive 500 sequential requests through one TestClient \u2014
         # serialised, so the pool never sees more than one in-flight
@@ -182,7 +181,7 @@ class TestArenaBench:
         hit rate is the most important arena signal to watch in
         production.
         """
-        app = asyncio.run(LaurenFactory.create(_ArenaBenchModule))
+        app = LaurenFactory.create(_ArenaBenchModule)
         client = TestClient(app)
         for _ in range(500):
             client.get("/arena/world")
@@ -202,7 +201,7 @@ class TestArenaBench:
         just the public API surface.
         """
         small = RequestArena(capacity=1)
-        app = asyncio.run(LaurenFactory.create(_ArenaBenchModule, arena=small))
+        app = LaurenFactory.create(_ArenaBenchModule, arena=small)
         client = TestClient(app)
         # Serial requests never overflow \u2014 each release repopulates
         # the 1-slot pool before the next acquire.

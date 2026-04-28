@@ -32,10 +32,8 @@ class _Mod:
 
 
 def _build(logger=None):
-    return asyncio.run(
-        LaurenFactory.create(
-            _Mod, logger=logger or InMemoryLogger(level=LogLevel.DEBUG)
-        )
+    return LaurenFactory.create(
+        _Mod, logger=logger or InMemoryLogger(level=LogLevel.DEBUG)
     )
 
 
@@ -147,7 +145,7 @@ class TestShutdownDuringInFlightTraffic:
         @module(controllers=[Slow])
         class SlowMod: ...
 
-        app = asyncio.run(LaurenFactory.create(SlowMod, logger=logger))
+        app = LaurenFactory.create(SlowMod, logger=logger)
 
         async def scenario():
             # Fire an ASGI call directly so we control timing.

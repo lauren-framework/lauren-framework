@@ -52,7 +52,7 @@ Generated operation:
 `@openapi_security` references a scheme by name.  You must still declare the scheme's definition in the OpenAPI components by passing `openapi_security_schemes` to `LaurenFactory.create`:
 
 ```python
-app = await LaurenFactory.create(
+app = LaurenFactory.create(
     AppModule,
     openapi_security_schemes={
         "BearerAuth": {

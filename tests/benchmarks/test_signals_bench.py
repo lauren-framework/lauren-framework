@@ -194,7 +194,7 @@ class TestSignalBusEndToEnd:
         n = 500
 
         # Baseline: no signals bus activity at all (fresh bus, zero listeners).
-        app_empty = asyncio.run(LaurenFactory.create(_SigModule))
+        app_empty = LaurenFactory.create(_SigModule)
         client_empty = TestClient(app_empty)
         for _ in range(10):
             client_empty.get("/sig/hi")
@@ -217,7 +217,7 @@ class TestSignalBusEndToEnd:
         def on_done(_: RequestComplete) -> None:
             counters["done"] += 1
 
-        app_loaded = asyncio.run(LaurenFactory.create(_SigModule, signals=bus))
+        app_loaded = LaurenFactory.create(_SigModule, signals=bus)
         client_loaded = TestClient(app_loaded)
         for _ in range(10):
             client_loaded.get("/sig/hi")

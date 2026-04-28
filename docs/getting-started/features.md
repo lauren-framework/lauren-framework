@@ -155,7 +155,7 @@ class RequestId:
         return resp.with_header("x-request-id", request.state.rid)
 
 # Global, controller, or route-level — pick your scope:
-app = await LaurenFactory.create(AppModule, global_middleware=[RequestId])
+app = LaurenFactory.create(AppModule, global_middleware=[RequestId])
 
 @use_middleware(AuthMiddleware)
 @controller("/private")
@@ -230,10 +230,10 @@ Field descriptors emit constraints (`ge`, `le`, `pattern`, `alias`, ...) into th
 from lauren.logging import default_logger, ConsoleLogger, JsonLogger, LogLevel
 
 # TTY-aware default + LAUREN_LOG_LEVEL / LAUREN_LOG_FORMAT env vars:
-app = await LaurenFactory.create(AppModule, logger=default_logger())
+app = LaurenFactory.create(AppModule, logger=default_logger())
 
 # Or pick explicitly:
-app = await LaurenFactory.create(AppModule, logger=JsonLogger(level=LogLevel.INFO))
+app = LaurenFactory.create(AppModule, logger=JsonLogger(level=LogLevel.INFO))
 ```
 
 Per-request traces fire at `DEBUG` for 2xx/3xx, `WARN` for 4xx, `ERROR` for 5xx. Production runs at `INFO` stay quiet unless something wants attention.

@@ -245,7 +245,7 @@ class TestChainEndToEnd:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/u/42")
         assert r.status_code == 200
         # Wire type is int (the handler annotation), pipes transform it.
@@ -272,7 +272,7 @@ class TestChainEndToEnd:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/c/7")
         assert r.json() == {"n": "7"}
 
@@ -293,7 +293,7 @@ class TestChainEndToEnd:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/c/9")
         assert r.json() == {"user": 9}
 
@@ -327,7 +327,7 @@ class TestChainEndToEnd:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/c/5")
         assert r.json() == {"tag": "user#5"}
 
@@ -354,7 +354,7 @@ class TestAnnotatedForm:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/c/x?q=hello")
         assert r.json() == {"q": "HELLO"}
 
@@ -375,7 +375,7 @@ class TestAnnotatedForm:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/c/7")
         assert r.json() == {"wrapped": 7}
 
@@ -413,7 +413,7 @@ class TestAnnotatedForm:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/u/42")
         assert r.status_code == 200
         # path_is_string ran first (int → str), UserLookup second.
@@ -444,7 +444,7 @@ class TestAnnotatedForm:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/c/5")
         # The un-marked callable is ignored — handler sees the raw int.
         assert r.json() == {"n": 5}
@@ -473,7 +473,7 @@ class TestAnnotatedForm:
         class M:
             pass
 
-        app = await LaurenFactory.create(M)
+        app = LaurenFactory.create(M)
         r = TestClient(app).get("/c/3")
         # (3 + 1) * 10 = 40
         assert r.json() == {"n": 40}

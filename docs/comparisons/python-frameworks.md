@@ -313,7 +313,7 @@ We're going to be honest. Lauren is **not** the right pick for:
     @module(controllers=[UserController], providers=[UserRepo])
     class AppModule: ...
 
-    app = await LaurenFactory.create(AppModule)
+    app = LaurenFactory.create(AppModule)
     ```
 
 === "FastAPI"

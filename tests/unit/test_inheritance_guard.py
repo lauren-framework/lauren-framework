@@ -7,7 +7,6 @@ decoration by inheritance alone is rejected at startup.
 
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 
@@ -23,7 +22,7 @@ from lauren.exceptions import MetadataInheritanceError
 
 
 def _build(root_module):
-    return asyncio.run(LaurenFactory.create(root_module))
+    return LaurenFactory.create(root_module)
 
 
 # ---------------------------------------------------------------------------

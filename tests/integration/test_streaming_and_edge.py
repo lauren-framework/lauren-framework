@@ -53,14 +53,14 @@ class StreamModule:
 
 class TestStreaming:
     def test_stream_chunks(self):
-        app = asyncio.run(LaurenFactory.create(StreamModule))
+        app = LaurenFactory.create(StreamModule)
         client = TestClient(app)
         r = client.get("/stream/plain")
         assert r.status_code == 200
         assert r.text == "chunk0\nchunk1\nchunk2\n"
 
     def test_sse_format(self):
-        app = asyncio.run(LaurenFactory.create(StreamModule))
+        app = LaurenFactory.create(StreamModule)
         client = TestClient(app)
         r = client.get("/stream/sse")
         assert "text/event-stream" in r.header("content-type")
@@ -89,7 +89,7 @@ class RawModule:
 
 class TestRawBytes:
     def test_raw_echo(self):
-        app = asyncio.run(LaurenFactory.create(RawModule))
+        app = LaurenFactory.create(RawModule)
         client = TestClient(app)
         r = client.post("/raw/", content=b"\x00\x01\x02rawdata")
         assert r.body == b"\x00\x01\x02rawdata"
@@ -115,14 +115,14 @@ class LimitModule:
 
 class TestBodyLimit:
     def test_limit_rejects_large_body(self):
-        app = asyncio.run(LaurenFactory.create(LimitModule, max_body_size=16))
+        app = LaurenFactory.create(LimitModule, max_body_size=16)
         client = TestClient(app)
         r = client.post("/limit/", content=b"x" * 100)
         assert r.status_code == 413
         assert r.json()["error"]["code"] == "request_body_too_large"
 
     def test_limit_accepts_small_body(self):
-        app = asyncio.run(LaurenFactory.create(LimitModule, max_body_size=128))
+        app = LaurenFactory.create(LimitModule, max_body_size=128)
         client = TestClient(app)
         r = client.post("/limit/", content=b"hi")
         assert r.json() == {"size": 2}
@@ -160,7 +160,7 @@ class FilesModule:
 
 class TestWildcards:
     def test_wildcard_captures_full_path(self):
-        app = asyncio.run(LaurenFactory.create(FilesModule))
+        app = LaurenFactory.create(FilesModule)
         client = TestClient(app)
         r = client.get("/files2/static/a/b/c.txt")
         assert r.json() == {"path": "a/b/c.txt"}

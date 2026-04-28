@@ -13,8 +13,6 @@ semantically identical to the pre-optimisation behaviour across:
 
 from __future__ import annotations
 
-import asyncio
-
 
 from lauren import (
     LaurenFactory,
@@ -58,7 +56,7 @@ class _StaticModule:
 
 
 def test_pure_static_app_populates_fast_table_completely() -> None:
-    app = asyncio.run(LaurenFactory.create(_StaticModule))
+    app = LaurenFactory.create(_StaticModule)
     router = app.router
     # Four methods registered (GET/GET/GET/POST), all fast-path.
     assert router.static_route_count == 4
@@ -68,7 +66,7 @@ def test_pure_static_app_populates_fast_table_completely() -> None:
 
 
 def test_pure_static_app_dispatches_correctly() -> None:
-    app = asyncio.run(LaurenFactory.create(_StaticModule))
+    app = LaurenFactory.create(_StaticModule)
     client = TestClient(app)
     assert client.get("/api/health").json() == {"status": "ok"}
     assert client.get("/api/metrics").json() == {"requests": 0}
@@ -77,14 +75,14 @@ def test_pure_static_app_dispatches_correctly() -> None:
 
 
 def test_pure_static_app_method_not_allowed() -> None:
-    app = asyncio.run(LaurenFactory.create(_StaticModule))
+    app = LaurenFactory.create(_StaticModule)
     r = TestClient(app).delete("/api/health")
     assert r.status_code == 405
     assert r.header("allow") == "GET"
 
 
 def test_pure_static_app_route_not_found() -> None:
-    app = asyncio.run(LaurenFactory.create(_StaticModule))
+    app = LaurenFactory.create(_StaticModule)
     r = TestClient(app).get("/api/unknown")
     assert r.status_code == 404
 
@@ -119,7 +117,7 @@ class _UsersModule:
 
 
 def test_mixed_app_fast_table_contains_only_static_routes() -> None:
-    app = asyncio.run(LaurenFactory.create(_UsersModule))
+    app = LaurenFactory.create(_UsersModule)
     router = app.router
     # ``/users`` (list) and ``/users/me`` are static. ``/users/{id}``
     # variants are dynamic.
@@ -130,14 +128,14 @@ def test_mixed_app_fast_table_contains_only_static_routes() -> None:
 
 
 def test_mixed_app_static_routes_dispatch_through_fast_path() -> None:
-    app = asyncio.run(LaurenFactory.create(_UsersModule))
+    app = LaurenFactory.create(_UsersModule)
     client = TestClient(app)
     assert client.get("/users").json() == {"users": []}
     assert client.get("/users/me").json() == {"user": "current"}
 
 
 def test_mixed_app_dynamic_routes_dispatch_through_radix() -> None:
-    app = asyncio.run(LaurenFactory.create(_UsersModule))
+    app = LaurenFactory.create(_UsersModule)
     client = TestClient(app)
     r = client.get("/users/42")
     assert r.status_code == 200
@@ -153,7 +151,7 @@ def test_mixed_app_static_priority_over_dynamic_sibling() -> None:
     of the dynamic handler (and fail). The fast path runs first and
     short-circuits before the dynamic handler is consulted.
     """
-    app = asyncio.run(LaurenFactory.create(_UsersModule))
+    app = LaurenFactory.create(_UsersModule)
     r = TestClient(app).get("/users/me")
     assert r.status_code == 200
     assert r.json() == {"user": "current"}
@@ -186,7 +184,7 @@ def test_static_path_with_dynamic_sibling_method_is_served_by_sibling() -> None:
     ``MethodNotAllowed`` \u2014 because a ``{param}`` route can legally
     pick it up.
     """
-    app = asyncio.run(LaurenFactory.create(_FallthroughModule))
+    app = LaurenFactory.create(_FallthroughModule)
     client = TestClient(app)
     assert client.get("/item").json() == {"via": "static"}
     r = client.post("/item")
@@ -216,14 +214,14 @@ class _FilesModule:
 
 
 def test_wildcard_app_static_index_wins_over_wildcard() -> None:
-    app = asyncio.run(LaurenFactory.create(_FilesModule))
+    app = LaurenFactory.create(_FilesModule)
     r = TestClient(app).get("/files/index")
     # Static priority rule: ``/files/index`` hits the static entry.
     assert r.json() == {"listing": []}
 
 
 def test_wildcard_app_captures_arbitrary_tail() -> None:
-    app = asyncio.run(LaurenFactory.create(_FilesModule))
+    app = LaurenFactory.create(_FilesModule)
     r = TestClient(app).get("/files/a/b/c.txt")
     assert r.json() == {"path": "a/b/c.txt"}
 
@@ -234,7 +232,7 @@ def test_wildcard_app_captures_arbitrary_tail() -> None:
 
 
 def test_trailing_slash_variations_hit_same_static_route() -> None:
-    app = asyncio.run(LaurenFactory.create(_StaticModule))
+    app = LaurenFactory.create(_StaticModule)
     client = TestClient(app)
     r1 = client.get("/api/health")
     r2 = client.get("/api/health/")
@@ -279,7 +277,7 @@ def test_large_static_table_dispatches_every_route() -> None:
     class _BigModule:
         pass
 
-    app = asyncio.run(LaurenFactory.create(_BigModule))
+    app = LaurenFactory.create(_BigModule)
     router = app.router
     assert router.static_route_count == 50
     assert router._has_dynamic_routes is False
@@ -303,6 +301,6 @@ def test_router_is_frozen_after_factory_create() -> None:
     ever stopped calling freeze, the fast table would silently stay
     empty and every lookup would hit the slow path.
     """
-    app = asyncio.run(LaurenFactory.create(_StaticModule))
+    app = LaurenFactory.create(_StaticModule)
     assert app.router.frozen is True
     assert app.router.static_route_count > 0

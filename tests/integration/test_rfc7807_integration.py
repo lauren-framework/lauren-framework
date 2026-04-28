@@ -23,7 +23,6 @@ These tests build real :class:`LaurenApp` instances via
 
 from __future__ import annotations
 
-import asyncio
 import json
 
 
@@ -86,7 +85,7 @@ class _ErrModule:
 
 
 def test_default_format_emits_classic_envelope() -> None:
-    app = asyncio.run(LaurenFactory.create(_ErrModule))
+    app = LaurenFactory.create(_ErrModule)
     r = TestClient(app).get("/errors/teapot")
     assert r.status_code == 418
     assert r.header(
@@ -104,7 +103,7 @@ def test_default_format_emits_classic_envelope() -> None:
 
 def test_default_format_not_problem_json_content_type() -> None:
     """Backwards compat: default envelope must NOT claim to be\n    problem+json, because existing clients parsing the classic\n    shape would misinterpret the content type.\n"""
-    app = asyncio.run(LaurenFactory.create(_ErrModule))
+    app = LaurenFactory.create(_ErrModule)
     r = TestClient(app).get("/errors/teapot")
     assert "problem" not in (r.header("content-type") or "")
 
@@ -115,7 +114,7 @@ def test_default_format_not_problem_json_content_type() -> None:
 
 
 def test_rfc7807_envelope_has_required_fields() -> None:
-    app = asyncio.run(LaurenFactory.create(_ErrModule, error_format="rfc7807"))
+    app = LaurenFactory.create(_ErrModule, error_format="rfc7807")
     r = TestClient(app).get("/errors/teapot")
     assert r.status_code == 418
     payload = r.json()
@@ -128,13 +127,13 @@ def test_rfc7807_envelope_has_required_fields() -> None:
 
 
 def test_rfc7807_content_type_is_problem_json() -> None:
-    app = asyncio.run(LaurenFactory.create(_ErrModule, error_format="rfc7807"))
+    app = LaurenFactory.create(_ErrModule, error_format="rfc7807")
     r = TestClient(app).get("/errors/teapot")
     assert (r.header("content-type") or "").startswith("application/problem+json")
 
 
 def test_rfc7807_default_type_is_iana_urn() -> None:
-    app = asyncio.run(LaurenFactory.create(_ErrModule, error_format="rfc7807"))
+    app = LaurenFactory.create(_ErrModule, error_format="rfc7807")
     r = TestClient(app).get("/errors/teapot")
     payload = r.json()
     # The framework's default ``type`` is a stable URN that does not
@@ -143,7 +142,7 @@ def test_rfc7807_default_type_is_iana_urn() -> None:
 
 
 def test_rfc7807_default_title_is_iana_reason_phrase() -> None:
-    app = asyncio.run(LaurenFactory.create(_ErrModule, error_format="rfc7807"))
+    app = LaurenFactory.create(_ErrModule, error_format="rfc7807")
     r = TestClient(app).get("/errors/teapot")
     payload = r.json()
     # "I'm a Teapot" is the IANA reason phrase for 418.
@@ -152,7 +151,7 @@ def test_rfc7807_default_title_is_iana_reason_phrase() -> None:
 
 def test_rfc7807_includes_lauren_code_extension() -> None:
     """RFC 7807 \u00a73.2 allows extensions. lauren adds ``code`` so\n    clients can match on the machine-readable error identifier\n    without scraping ``type``.\n"""
-    app = asyncio.run(LaurenFactory.create(_ErrModule, error_format="rfc7807"))
+    app = LaurenFactory.create(_ErrModule, error_format="rfc7807")
     r = TestClient(app).get("/errors/teapot")
     payload = r.json()
     assert payload["code"] == "teapot"
@@ -160,7 +159,7 @@ def test_rfc7807_includes_lauren_code_extension() -> None:
 
 def test_rfc7807_includes_detail_structured_extension() -> None:
     """Original structured detail dict rides alongside as ``errors``\n    so machine clients keep their full context (field names, etc.).\n"""
-    app = asyncio.run(LaurenFactory.create(_ErrModule, error_format="rfc7807"))
+    app = LaurenFactory.create(_ErrModule, error_format="rfc7807")
     r = TestClient(app).get("/errors/teapot")
     payload = r.json()
     assert payload["errors"] == {"reason": "brewing"}
@@ -172,7 +171,7 @@ def test_rfc7807_includes_detail_structured_extension() -> None:
 
 
 def test_rfc7807_honours_custom_problem_type_uri() -> None:
-    app = asyncio.run(LaurenFactory.create(_ErrModule, error_format="rfc7807"))
+    app = LaurenFactory.create(_ErrModule, error_format="rfc7807")
     r = TestClient(app).get("/errors/custom")
     payload = r.json()
     assert payload["type"] == "https://example.com/problems/quantum-state"
@@ -198,7 +197,7 @@ def test_rfc7807_detail_falls_back_to_title_when_message_empty() -> None:
     class _SilentMod:
         pass
 
-    app = asyncio.run(LaurenFactory.create(_SilentMod, error_format="rfc7807"))
+    app = LaurenFactory.create(_SilentMod, error_format="rfc7807")
     r = TestClient(app).get("/silent/")
     payload = r.json()
     # Detail falls back to the IANA reason phrase for 500.
@@ -212,7 +211,7 @@ def test_rfc7807_detail_falls_back_to_title_when_message_empty() -> None:
 
 
 def test_rfc7807_route_not_found() -> None:
-    app = asyncio.run(LaurenFactory.create(_ErrModule, error_format="rfc7807"))
+    app = LaurenFactory.create(_ErrModule, error_format="rfc7807")
     r = TestClient(app).get("/totally/unknown")
     assert r.status_code == 404
     payload = r.json()
@@ -222,7 +221,7 @@ def test_rfc7807_route_not_found() -> None:
 
 
 def test_rfc7807_method_not_allowed() -> None:
-    app = asyncio.run(LaurenFactory.create(_ErrModule, error_format="rfc7807"))
+    app = LaurenFactory.create(_ErrModule, error_format="rfc7807")
     r = TestClient(app).post("/errors/teapot")
     assert r.status_code == 405
     payload = r.json()
@@ -234,7 +233,7 @@ def test_rfc7807_method_not_allowed() -> None:
 
 def test_rfc7807_extractor_validation_error() -> None:
     """``/users/abc`` triggers a Path[int] coercion failure which\n    maps to an ``ExtractorFieldError`` with HTTP 422. The RFC\n    7807 shape must carry the underlying detail dict under the\n    ``errors`` extension.\n"""
-    app = asyncio.run(LaurenFactory.create(_ErrModule, error_format="rfc7807"))
+    app = LaurenFactory.create(_ErrModule, error_format="rfc7807")
     r = TestClient(app).get("/errors/users/not-a-number")
     assert r.status_code == 422
     payload = r.json()
@@ -249,7 +248,7 @@ def test_rfc7807_extractor_validation_error() -> None:
 
 def test_unknown_error_format_falls_back_to_default() -> None:
     """A typo in ``error_format`` must not kill startup. The\n    framework logs a warning and falls back to the classic\n    envelope so apps keep serving.\n"""
-    app = asyncio.run(LaurenFactory.create(_ErrModule, error_format="problem+json"))
+    app = LaurenFactory.create(_ErrModule, error_format="problem+json")
     # Framework silently corrected the value to "default".
     assert app.error_format == "default"
     r = TestClient(app).get("/errors/teapot")
@@ -277,7 +276,7 @@ def test_rfc7807_preserves_unicode_in_detail() -> None:
     class _UMod:
         pass
 
-    app = asyncio.run(LaurenFactory.create(_UMod, error_format="rfc7807"))
+    app = LaurenFactory.create(_UMod, error_format="rfc7807")
     r = TestClient(app).get("/u/")
     # Body must decode cleanly and preserve every character.
     payload = json.loads(r.body)
@@ -291,7 +290,7 @@ def test_rfc7807_preserves_unicode_in_detail() -> None:
 
 
 def test_error_format_property_exposes_configuration() -> None:
-    app_default = asyncio.run(LaurenFactory.create(_ErrModule))
+    app_default = LaurenFactory.create(_ErrModule)
     assert app_default.error_format == "default"
-    app_rfc = asyncio.run(LaurenFactory.create(_ErrModule, error_format="rfc7807"))
+    app_rfc = LaurenFactory.create(_ErrModule, error_format="rfc7807")
     assert app_rfc.error_format == "rfc7807"

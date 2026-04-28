@@ -17,7 +17,6 @@ silently corrupt data.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import os
 import time
@@ -99,7 +98,7 @@ class TestUploadFileBench:
         body, ct = _multipart_body(payload)
         n = 200
 
-        app = asyncio.run(LaurenFactory.create(_BenchModule))
+        app = LaurenFactory.create(_BenchModule)
         client = TestClient(app)
         for _ in range(10):
             client.post("/bench/single", content=body, headers={"content-type": ct})
@@ -128,9 +127,7 @@ class TestUploadFileBench:
         body, ct = _multipart_body(payload)
         n = 20
 
-        app = asyncio.run(
-            LaurenFactory.create(_BenchModule, max_body_size=len(body) + 4096)
-        )
+        app = LaurenFactory.create(_BenchModule, max_body_size=len(body) + 4096)
         client = TestClient(app)
         for _ in range(2):
             client.post("/bench/single", content=body, headers={"content-type": ct})

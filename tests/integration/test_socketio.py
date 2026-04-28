@@ -95,7 +95,7 @@ class TestHandshake:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 await _drain_handshake(ws)
@@ -112,7 +112,7 @@ class TestHandshake:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 open_frame = await ws.receive_text()
@@ -135,7 +135,7 @@ class TestHandshake:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             sids: list[str] = []
             for _ in range(3):
@@ -172,7 +172,7 @@ class TestLifecycleHooks:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 sid = await _drain_handshake(ws)
@@ -203,7 +203,7 @@ class TestLifecycleHooks:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 sid = await _drain_handshake(ws)
@@ -228,7 +228,7 @@ class TestLifecycleHooks:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 # OPEN + CONNECT arrive normally.
@@ -265,7 +265,7 @@ class TestEventDispatch:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 await _drain_handshake(ws)
@@ -291,7 +291,7 @@ class TestEventDispatch:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 await _drain_handshake(ws)
@@ -319,7 +319,7 @@ class TestEventDispatch:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 await _drain_handshake(ws)
@@ -345,7 +345,7 @@ class TestEventDispatch:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 await _drain_handshake(ws)
@@ -373,7 +373,7 @@ class TestEventDispatch:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 await _drain_handshake(ws)
@@ -400,7 +400,7 @@ class TestEventDispatch:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 await _drain_handshake(ws)
@@ -432,7 +432,7 @@ class TestHeartbeats:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 await _drain_handshake(ws)
@@ -472,7 +472,7 @@ class TestSocketIODI:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 await _drain_handshake(ws)
@@ -504,7 +504,7 @@ class TestErrorRecovery:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 await _drain_handshake(ws)
@@ -535,7 +535,7 @@ class TestErrorRecovery:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 await _drain_handshake(ws)
@@ -572,7 +572,7 @@ class TestServerInitiatedEmits:
             pass
 
         async def run():
-            app = await LaurenFactory.create(App)
+            app = LaurenFactory.create(App)
             client = WsTestClient(app)
             async with client.connect("/sio/") as ws:
                 await _drain_handshake(ws)

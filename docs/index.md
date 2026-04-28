@@ -72,7 +72,7 @@ class AppModule:
     pass
 
 async def main():
-    app = await LaurenFactory.create(AppModule)
+    app = LaurenFactory.create(AppModule)
     # `app` is an ASGI callable — serve with uvicorn / hypercorn.
 ```
 

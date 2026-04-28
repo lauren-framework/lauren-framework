@@ -57,7 +57,7 @@ class AppModule:
 
 
 def _build(logger):
-    return asyncio.run(LaurenFactory.create(AppModule, logger=logger))
+    return LaurenFactory.create(AppModule, logger=logger)
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ class TestStartupEvents:
 
     def test_silent_when_no_logger_passed(self):
         # Default logger is NullLogger; no exception and no records accessible.
-        app = asyncio.run(LaurenFactory.create(AppModule))
+        app = LaurenFactory.create(AppModule)
         # No assertion on "records" — just verify the app booted.
         assert len(app.routes()) == 4
 

@@ -22,7 +22,6 @@ Two flavours of measurement:
 
 from __future__ import annotations
 
-import asyncio
 import gc
 import time
 from dataclasses import dataclass
@@ -223,7 +222,7 @@ class TestRouterEndToEndBench:
 
     def test_static_vs_dynamic_end_to_end(self) -> None:
         n = 500
-        app = asyncio.run(LaurenFactory.create(_BenchAppModule))
+        app = LaurenFactory.create(_BenchAppModule)
         client = TestClient(app)
 
         # Warmup both paths.

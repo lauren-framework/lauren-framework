@@ -214,7 +214,7 @@ class AppModule:
 class TestMultiModuleApp:
     @pytest.mark.asyncio
     async def test_all_routes_are_registered(self):
-        app = await LaurenFactory.create(AppModule)
+        app = LaurenFactory.create(AppModule)
         paths = {(r.method, r.path_template) for r in app.routes()}
         assert ("GET", "/users/{uid}") in paths
         assert ("POST", "/orders/{uid}") in paths
@@ -222,7 +222,7 @@ class TestMultiModuleApp:
 
     @pytest.mark.asyncio
     async def test_user_endpoint_resolves_cross_module_deps(self):
-        app = await LaurenFactory.create(AppModule)
+        app = LaurenFactory.create(AppModule)
         client = TestClient(app)
         r = client.get("/users/1")
         assert r.status_code == 200
@@ -235,7 +235,7 @@ class TestMultiModuleApp:
     async def test_order_creation_traverses_three_modules(self):
         """OrderController -> OrderRepo -> UserRepo (from UserModule) ->
         Config (from CoreModule). Every hop crosses a module boundary."""
-        app = await LaurenFactory.create(AppModule)
+        app = LaurenFactory.create(AppModule)
         r = TestClient(app).post("/orders/2")  # user 2 = "bob"
         assert r.status_code == 200
         data = r.json()
@@ -244,7 +244,7 @@ class TestMultiModuleApp:
 
     @pytest.mark.asyncio
     async def test_authenticator_reachable_via_exported_module(self):
-        app = await LaurenFactory.create(AppModule)
+        app = LaurenFactory.create(AppModule)
         r = TestClient(app).get("/orders/lookup/admin-token")
         assert r.status_code == 200
         assert r.json() == {"who": "admin"}
@@ -253,7 +253,7 @@ class TestMultiModuleApp:
     async def test_clock_singleton_shared_across_modules(self):
         """A singleton declared in CoreModule must be the same instance
         for every consumer, regardless of which module they live in."""
-        app = await LaurenFactory.create(AppModule)
+        app = LaurenFactory.create(AppModule)
         client = TestClient(app)
         # UserController uses Clock via @post_construct; each request builds
         # a fresh controller so clock.calls increments monotonically.
@@ -284,13 +284,13 @@ class TestMultiModuleApp:
             pass
 
         with pytest.raises(MissingProviderError) as ei:
-            await LaurenFactory.create(BadRoot)
+            LaurenFactory.create(BadRoot)
         assert "TokenStore" in str(ei.value)
         assert "visible from module LeakMod" in str(ei.value)
 
     @pytest.mark.asyncio
     async def test_controller_lifecycle_fires_per_request(self):
-        app = await LaurenFactory.create(AppModule)
+        app = LaurenFactory.create(AppModule)
         OrderController.destroyed.clear()
         client = TestClient(app)
         client.post("/orders/1")
@@ -301,7 +301,7 @@ class TestMultiModuleApp:
 
     @pytest.mark.asyncio
     async def test_openapi_aggregates_all_modules(self):
-        app = await LaurenFactory.create(AppModule, openapi_url="/openapi.json")
+        app = LaurenFactory.create(AppModule, openapi_url="/openapi.json")
         schema = app.openapi()
         assert "/users/{uid}" in schema["paths"]
         assert "/orders/{uid}" in schema["paths"]
@@ -332,6 +332,6 @@ class TestMultiModuleApp:
         class R:
             pass
 
-        app = await LaurenFactory.create(R)
+        app = LaurenFactory.create(R)
         r = TestClient(app).get("/greet/1")
         assert r.json() == {"who": "alice"}

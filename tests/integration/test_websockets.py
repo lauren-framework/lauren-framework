@@ -115,7 +115,7 @@ class BasicModule:
 
 
 def _basic_app():
-    return asyncio.run(LaurenFactory.create(BasicModule))
+    return LaurenFactory.create(BasicModule)
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +218,7 @@ class TestHandshakeAndDispatch:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             async with WsTestClient(app).connect("/chat") as ws:
@@ -262,7 +262,7 @@ class TestExtractors:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             async with WsTestClient(app).connect(
@@ -304,7 +304,7 @@ class TestExtractors:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             async with WsTestClient(app).connect("/time") as ws:
@@ -338,7 +338,7 @@ class TestDiscriminatedUnionPayloads:
         class M:
             pass
 
-        return asyncio.run(LaurenFactory.create(M))
+        return LaurenFactory.create(M)
 
     def test_image_variant(self):
         app = self._build_app()
@@ -424,7 +424,7 @@ class TestWildcardAndBinary:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             async with WsTestClient(app).connect("/w") as ws:
@@ -451,7 +451,7 @@ class TestWildcardAndBinary:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             async with WsTestClient(app).connect("/b") as ws:
@@ -472,7 +472,7 @@ class TestWildcardAndBinary:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             async with WsTestClient(app).connect("/b") as ws:
@@ -500,7 +500,7 @@ class TestErrorHandling:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             async with WsTestClient(app).connect("/e") as ws:
@@ -521,7 +521,7 @@ class TestErrorHandling:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             async with WsTestClient(app).connect("/e") as ws:
@@ -547,7 +547,7 @@ class TestErrorHandling:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             async with WsTestClient(app).connect("/e") as ws:
@@ -580,7 +580,7 @@ class TestErrorHandling:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             async with WsTestClient(app).connect("/e") as ws:
@@ -613,7 +613,7 @@ class TestServerClose:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             async with WsTestClient(app).connect("/close") as ws:
@@ -643,7 +643,7 @@ class TestServerClose:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             # Bad token \u2014 connection closed immediately with 1008.
@@ -708,7 +708,7 @@ class TestBroadcastRoom:
         class M:
             pass
 
-        return asyncio.run(LaurenFactory.create(M))
+        return LaurenFactory.create(M)
 
     def test_message_fans_out_to_all_subscribers(self):
         app = self._build_app()
@@ -795,7 +795,7 @@ class TestSubprotocol:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             client = WsTestClient(app)
@@ -835,7 +835,7 @@ class TestInheritance:
             pass
 
         with pytest.raises(MetadataInheritanceError):
-            asyncio.run(LaurenFactory.create(BadModule))
+            LaurenFactory.create(BadModule)
 
     def test_explicitly_redecorated_subclass_works(self):
         @ws_controller("/base")
@@ -854,7 +854,7 @@ class TestInheritance:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             async with WsTestClient(app).connect("/derived") as ws:
@@ -903,7 +903,7 @@ class TestCoexistence:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         # HTTP first
         r = TestClient(app).get("/api/count")
@@ -941,7 +941,7 @@ class TestPureHttpAppRejectsWs:
         class M:
             pass
 
-        app = asyncio.run(LaurenFactory.create(M))
+        app = LaurenFactory.create(M)
 
         async def run():
             async with WsTestClient(app).connect("/anything") as ws:

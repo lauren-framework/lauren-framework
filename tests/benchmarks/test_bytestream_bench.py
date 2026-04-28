@@ -23,7 +23,6 @@ flagged.
 
 from __future__ import annotations
 
-import asyncio
 import gc
 import hashlib
 import time
@@ -170,15 +169,9 @@ class TestByteStreamBench:
 
         # Each app gets its own max_body_size budget large enough to
         # accept the payload without tripping the size cap.
-        app_buf = asyncio.run(
-            LaurenFactory.create(_BenchModule, max_body_size=body_size + 1024)
-        )
-        app_str = asyncio.run(
-            LaurenFactory.create(_BenchModule, max_body_size=body_size + 1024)
-        )
-        app_str_rd = asyncio.run(
-            LaurenFactory.create(_BenchModule, max_body_size=body_size + 1024)
-        )
+        app_buf = LaurenFactory.create(_BenchModule, max_body_size=body_size + 1024)
+        app_str = LaurenFactory.create(_BenchModule, max_body_size=body_size + 1024)
+        app_str_rd = LaurenFactory.create(_BenchModule, max_body_size=body_size + 1024)
 
         results = [
             _measure(TestClient(app_buf), "/bench/buffered", payload, n),
@@ -196,7 +189,7 @@ class TestByteStreamBench:
         payload = b"tiny" * 64  # 256 bytes
         n = 500
 
-        app = asyncio.run(LaurenFactory.create(_BenchModule))
+        app = LaurenFactory.create(_BenchModule)
         client = TestClient(app)
 
         buf = _measure(client, "/bench/buffered", payload, n)

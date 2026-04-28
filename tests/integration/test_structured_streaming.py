@@ -21,7 +21,6 @@ streaming contract:
 
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Annotated, AsyncIterator, Literal, Union
 
@@ -100,7 +99,7 @@ class StreamModule:
 
 
 def _app():
-    return asyncio.run(LaurenFactory.create(StreamModule, openapi_url="/openapi.json"))
+    return LaurenFactory.create(StreamModule, openapi_url="/openapi.json")
 
 
 def _make_ndjson(items: list[dict]) -> bytes:

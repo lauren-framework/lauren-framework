@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "httpx"]
+dev = ["pytest", "pytest-asyncio", "httpx", "uvicorn>=0.29"]
 
 [tool.ruff.lint]
 ignore = ["E741"]
@@ -48,4 +48,5 @@ asyncio_mode = "auto"
 [dependency-groups]
 dev = [
     "nox>=2026.4.10",
+    "uvicorn>=0.46.0",
 ]

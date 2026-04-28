@@ -40,7 +40,7 @@ class AppModule:
     pass
 
 import asyncio
-app = asyncio.run(LaurenFactory.create(AppModule))
+app = LaurenFactory.create(AppModule)
 # app is an ASGI callable — serve with uvicorn:  uvicorn app.main:app
 ```
 
@@ -413,7 +413,7 @@ class AppModule:
     pass
 
 async def test_ping_pong():
-    app = await LaurenFactory.create(AppModule)
+    app = LaurenFactory.create(AppModule)
     client = WsTestClient(app)
     async with client.connect("/echo") as ws:
         # ``hello`` event from @on_connect:

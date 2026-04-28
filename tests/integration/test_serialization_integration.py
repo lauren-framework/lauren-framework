@@ -17,7 +17,6 @@ These tests drive a real :class:`LaurenApp` produced by
 
 from __future__ import annotations
 
-import asyncio
 import json as stdlib_json
 from dataclasses import dataclass
 
@@ -62,7 +61,7 @@ class _EchoModule:
 def test_default_app_uses_stdlib_encoder() -> None:
     previous = set_active_encoder(StdlibJSONEncoder())
     try:
-        app = asyncio.run(LaurenFactory.create(_EchoModule))
+        app = LaurenFactory.create(_EchoModule)
         assert isinstance(app.json_encoder, StdlibJSONEncoder)
     finally:
         set_active_encoder(previous)
@@ -70,7 +69,7 @@ def test_default_app_uses_stdlib_encoder() -> None:
 
 def test_user_supplied_encoder_is_captured_at_build_time() -> None:
     custom = StdlibJSONEncoder()
-    app = asyncio.run(LaurenFactory.create(_EchoModule, json_encoder=custom))
+    app = LaurenFactory.create(_EchoModule, json_encoder=custom)
     assert app.json_encoder is custom
 
 
@@ -79,7 +78,7 @@ def test_process_wide_default_is_adopted_when_no_explicit_encoder() -> None:
     stub = OrjsonEncoder()
     previous = set_active_encoder(stub)
     try:
-        app = asyncio.run(LaurenFactory.create(_EchoModule))
+        app = LaurenFactory.create(_EchoModule)
         assert app.json_encoder is stub
     finally:
         set_active_encoder(previous)
@@ -141,7 +140,7 @@ def encoder(request: pytest.FixtureRequest) -> JSONEncoder:
 def test_pydantic_model_roundtrips_through_every_encoder(
     encoder: JSONEncoder,
 ) -> None:
-    app = asyncio.run(LaurenFactory.create(_ItemsModule, json_encoder=encoder))
+    app = LaurenFactory.create(_ItemsModule, json_encoder=encoder)
     r = TestClient(app).get("/items/one")
     assert r.status_code == 200
     assert r.json() == {"id": 1, "name": "alpha"}
@@ -152,7 +151,7 @@ def test_pydantic_model_roundtrips_through_every_encoder(
 def test_list_of_pydantic_models_roundtrips_through_every_encoder(
     encoder: JSONEncoder,
 ) -> None:
-    app = asyncio.run(LaurenFactory.create(_ItemsModule, json_encoder=encoder))
+    app = LaurenFactory.create(_ItemsModule, json_encoder=encoder)
     r = TestClient(app).get("/items/many")
     assert r.json() == [
         {"id": 0, "name": "item-0"},
@@ -164,7 +163,7 @@ def test_list_of_pydantic_models_roundtrips_through_every_encoder(
 def test_dataclass_roundtrips_through_every_encoder(
     encoder: JSONEncoder,
 ) -> None:
-    app = asyncio.run(LaurenFactory.create(_ItemsModule, json_encoder=encoder))
+    app = LaurenFactory.create(_ItemsModule, json_encoder=encoder)
     r = TestClient(app).get("/items/settings")
     assert r.json() == {"theme": "solarized", "dark_mode": True}
 
@@ -172,7 +171,7 @@ def test_dataclass_roundtrips_through_every_encoder(
 def test_primitive_dict_roundtrips_through_every_encoder(
     encoder: JSONEncoder,
 ) -> None:
-    app = asyncio.run(LaurenFactory.create(_ItemsModule, json_encoder=encoder))
+    app = LaurenFactory.create(_ItemsModule, json_encoder=encoder)
     r = TestClient(app).get("/items/primitives")
     assert r.json() == {"n": 42, "f": 3.14, "b": True, "none": None, "s": "café"}
 
@@ -201,7 +200,7 @@ class _ErrModule:
 
 
 def test_error_response_uses_configured_encoder(encoder: JSONEncoder) -> None:
-    app = asyncio.run(LaurenFactory.create(_ErrModule, json_encoder=encoder))
+    app = LaurenFactory.create(_ErrModule, json_encoder=encoder)
     r = TestClient(app).get("/err/boom")
     assert r.status_code == 418
     parsed = r.json()
@@ -223,7 +222,7 @@ def test_response_body_has_no_whitespace_with_any_encoder(
     silently added indentation (e.g. via ``json.dumps(indent=2)``)
     would be caught.
     """
-    app = asyncio.run(LaurenFactory.create(_ItemsModule, json_encoder=encoder))
+    app = LaurenFactory.create(_ItemsModule, json_encoder=encoder)
     r = TestClient(app).get("/items/primitives")
     body = r.body
     # Walking the byte string: any space character that is NOT between
@@ -254,7 +253,7 @@ def test_response_body_has_no_whitespace_with_any_encoder(
 
 
 def test_auto_encoder_wired_through_factory_produces_valid_responses() -> None:
-    app = asyncio.run(LaurenFactory.create(_ItemsModule, json_encoder=auto_encoder()))
+    app = LaurenFactory.create(_ItemsModule, json_encoder=auto_encoder())
     r = TestClient(app).get("/items/one")
     assert r.status_code == 200
     assert r.json() == {"id": 1, "name": "alpha"}
@@ -284,7 +283,7 @@ def test_raw_bytes_handler_bypasses_json_encoder(
     """If the encoder was mistakenly invoked on already-encoded
     bytes we'd get a string-escaped nested value, not a dict.
     """
-    app = asyncio.run(LaurenFactory.create(_RawModule, json_encoder=encoder))
+    app = LaurenFactory.create(_RawModule, json_encoder=encoder)
     r = TestClient(app).get("/raw/bytes")
     assert r.status_code == 200
     # Body is the raw bytes from the handler, served as octet-stream.
@@ -317,7 +316,7 @@ def test_unicode_query_roundtrips_through_every_encoder(
     break byte-length assumptions downstream)."""
     from urllib.parse import quote
 
-    app = asyncio.run(LaurenFactory.create(_SearchModule, json_encoder=encoder))
+    app = LaurenFactory.create(_SearchModule, json_encoder=encoder)
     value = "café 日本"
     r = TestClient(app).get(f"/search/?q={quote(value)}")
     assert r.status_code == 200

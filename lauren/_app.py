@@ -362,7 +362,7 @@ class Lauren:
             openapi_info["description"] = self._description
 
         # --- Build via the canonical 7-phase pipeline ---------------------
-        app = await LaurenFactory.create(
+        app = LaurenFactory.create(
             synth_module,
             strict_lifecycle=self._strict_lifecycle,
             global_middlewares=list(self._middleware),

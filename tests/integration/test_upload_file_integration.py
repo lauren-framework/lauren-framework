@@ -22,7 +22,6 @@ and verifies that:
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import os
 
@@ -97,7 +96,7 @@ class _UploadModule:
 
 
 def test_single_upload_delivers_file_with_metadata() -> None:
-    app = asyncio.run(LaurenFactory.create(_UploadModule))
+    app = LaurenFactory.create(_UploadModule)
     payload = b"hello multipart world"
     body, ct = _multipart_body(
         [("file", payload, {"filename": "greeting.txt", "content_type": "text/plain"})]
@@ -119,7 +118,7 @@ def test_single_upload_preserves_binary_integrity() -> None:
     must survive the multipart round-trip byte-for-byte. A bug in
     the parser's CRLF handling would show up as a digest mismatch.
     """
-    app = asyncio.run(LaurenFactory.create(_UploadModule))
+    app = LaurenFactory.create(_UploadModule)
     payload = os.urandom(64 * 1024)
     body, ct = _multipart_body(
         [
@@ -160,7 +159,7 @@ class _BulkModule:
 
 
 def test_list_upload_file_collects_every_matching_part() -> None:
-    app = asyncio.run(LaurenFactory.create(_BulkModule))
+    app = LaurenFactory.create(_BulkModule)
     body, ct = _multipart_body(
         [
             ("files", b"alpha", {"filename": "a.txt"}),
@@ -194,7 +193,7 @@ def test_list_upload_file_with_zero_files_returns_empty_list() -> None:
     class _OptBulkModule:
         pass
 
-    app = asyncio.run(LaurenFactory.create(_OptBulkModule))
+    app = LaurenFactory.create(_OptBulkModule)
     # Valid multipart body but no ``files`` field in it.
     body, ct = _multipart_body([("other", b"x", {})])
     r = TestClient(app).post("/optbulk/", content=body, headers={"content-type": ct})
@@ -229,7 +228,7 @@ class _SideModule:
 
 
 def test_multiple_upload_parameters_dispatch_correctly() -> None:
-    app = asyncio.run(LaurenFactory.create(_SideModule))
+    app = LaurenFactory.create(_SideModule)
     body, ct = _multipart_body(
         [
             ("avatar", b"A", {"filename": "profile.png"}),
@@ -268,7 +267,7 @@ class _AliasModule:
 
 
 def test_upload_file_respects_alias() -> None:
-    app = asyncio.run(LaurenFactory.create(_AliasModule))
+    app = LaurenFactory.create(_AliasModule)
     body, ct = _multipart_body(
         [("uploaded_document", b"pdf-data", {"filename": "report.pdf"})]
     )
@@ -283,7 +282,7 @@ def test_upload_file_respects_alias() -> None:
 
 
 def test_missing_required_upload_returns_422() -> None:
-    app = asyncio.run(LaurenFactory.create(_UploadModule))
+    app = LaurenFactory.create(_UploadModule)
     # Valid multipart body but the expected ``file`` field is absent.
     body, ct = _multipart_body([("other_field", b"ignored", {})])
     r = TestClient(app).post(
@@ -300,7 +299,7 @@ def test_missing_required_upload_returns_422() -> None:
 
 
 def test_missing_boundary_parameter_returns_422() -> None:
-    app = asyncio.run(LaurenFactory.create(_UploadModule))
+    app = LaurenFactory.create(_UploadModule)
     # Claim multipart content type but omit the boundary.
     r = TestClient(app).post(
         "/upload/single",
@@ -311,7 +310,7 @@ def test_missing_boundary_parameter_returns_422() -> None:
 
 
 def test_corrupt_multipart_body_returns_422() -> None:
-    app = asyncio.run(LaurenFactory.create(_UploadModule))
+    app = LaurenFactory.create(_UploadModule)
     r = TestClient(app).post(
         "/upload/single",
         content=b"definitely not a multipart body",
@@ -348,7 +347,7 @@ class _MixedModule:
 
 
 def test_unreferenced_text_fields_are_ignored() -> None:
-    app = asyncio.run(LaurenFactory.create(_MixedModule))
+    app = LaurenFactory.create(_MixedModule)
     body, ct = _multipart_body(
         [
             ("description", b"A short description of the upload", {}),
@@ -385,7 +384,7 @@ class _InspectModule:
 
 
 def test_upload_file_exposes_expected_api() -> None:
-    app = asyncio.run(LaurenFactory.create(_InspectModule))
+    app = LaurenFactory.create(_InspectModule)
     body, ct = _multipart_body(
         [("file", b"hello", {"filename": "h.txt", "content_type": "text/plain"})]
     )
@@ -407,7 +406,7 @@ def test_upload_file_exposes_expected_api() -> None:
 
 def test_upload_parse_cache_does_not_leak_across_requests() -> None:
     """The parse cache is stored as an attribute on the Request\n    object. Because the arena pools Request instances, we need to\n    confirm the cache doesn't leak: request N+1 must see its own\n    uploaded file, not request N's.\n"""
-    app = asyncio.run(LaurenFactory.create(_UploadModule))
+    app = LaurenFactory.create(_UploadModule)
     client = TestClient(app)
 
     body1, ct = _multipart_body([("file", b"first-request", {"filename": "one.txt"})])

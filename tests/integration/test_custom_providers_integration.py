@@ -81,7 +81,7 @@ class TestUseValueAsMock:
         class AppModule:
             pass
 
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         r = client.get("/cats/")
         assert r.status_code == 200
         assert r.json() == {"sound": "mock"}
@@ -136,7 +136,7 @@ class TestUseValueWithStringToken:
         class AppModule:
             pass
 
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         r = client.get("/cats/")
         assert r.json() == {
             "result": "executed SELECT * FROM cats on postgres://localhost",
@@ -172,7 +172,7 @@ class TestUseValueWithStringToken:
         class AppModule:
             pass
 
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         assert client.get("/info/").json() == {"db": "sqlite://memory"}
 
     def test_string_token_injected_directly_into_route_handler(self):
@@ -197,7 +197,7 @@ class TestUseValueWithStringToken:
         class AppModule:
             pass
 
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         assert client.get("/cfg/").json() == {
             "feature_x": True,
             "max_uploads": 10,
@@ -255,12 +255,12 @@ class TestUseClassEnvironmentSwap:
 
     def test_dev_env(self):
         AppModule = self._build("development")
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         assert client.get("/env/").json() == {"env": "development"}
 
     def test_prod_env(self):
         AppModule = self._build("production")
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         assert client.get("/env/").json() == {"env": "production"}
 
 
@@ -304,7 +304,7 @@ class TestUseFactory:
         class AppModule:
             pass
 
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         assert client.get("/db/").json() == {"host": "localhost"}
 
     def test_factory_with_optional_dep_present(self):
@@ -338,7 +338,7 @@ class TestUseFactory:
         class AppModule:
             pass
 
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         assert client.get("/db/").json() == {"prefix": "[trace-1]"}
 
     def test_factory_with_optional_dep_missing(self):
@@ -367,7 +367,7 @@ class TestUseFactory:
         class AppModule:
             pass
 
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         assert client.get("/db/").json() == {"prefix": "[no-trace]"}
 
     def test_async_factory(self):
@@ -389,7 +389,7 @@ class TestUseFactory:
         class AppModule:
             pass
 
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         assert client.get("/msg/").json() == {"message": "from-async"}
 
     def test_factory_with_request_scope(self):
@@ -420,7 +420,7 @@ class TestUseFactory:
         class AppModule:
             pass
 
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         a = client.get("/r/").json()
         b = client.get("/r/").json()
         assert a["request_id"] == 1
@@ -464,7 +464,7 @@ class TestUseExisting:
         class AppModule:
             pass
 
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         a = client.get("/log/via-class").json()["id"]
         b = client.get("/log/via-alias").json()["id"]
         assert a == b
@@ -498,7 +498,7 @@ class TestNonServiceProvider:
         class AppModule:
             pass
 
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         assert client.get("/config/").json() == dev_config
 
 
@@ -545,7 +545,7 @@ class TestExports:
         class AppModule:
             pass
 
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         assert client.get("/repo/").json() == {"url": "postgres://shared"}
 
     def test_export_unknown_token_rejected(self):
@@ -557,7 +557,7 @@ class TestExports:
             pass
 
         with pytest.raises(ModuleExportViolation, match="NOT_DECLARED"):
-            asyncio.run(LaurenFactory.create(BadModule))
+            LaurenFactory.create(BadModule)
 
 
 # ---------------------------------------------------------------------------
@@ -592,7 +592,7 @@ class TestModuleEncapsulation:
         # The graph compiles, but resolving Consumer fails because
         # ``HIDDEN`` is invisible from AppModule.
         with pytest.raises(MissingProviderError, match="HIDDEN"):
-            asyncio.run(LaurenFactory.create(AppModule))
+            LaurenFactory.create(AppModule)
 
 
 # ---------------------------------------------------------------------------
@@ -623,7 +623,7 @@ class TestComposition:
         class AppModule:
             pass
 
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         assert client.get("/c/").json() == {"value": 20}
 
 
@@ -665,5 +665,5 @@ class TestCanonicalNestJSExample:
         class AppModule:
             pass
 
-        client = TestClient(asyncio.run(LaurenFactory.create(AppModule)))
+        client = TestClient(LaurenFactory.create(AppModule))
         assert client.get("/cats/").json() == {"cats": ["fluffy", "whiskers"]}

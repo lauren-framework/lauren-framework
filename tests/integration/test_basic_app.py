@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 
 from pydantic import BaseModel
 
@@ -32,7 +31,7 @@ from lauren.testing import TestClient
 
 
 def build_app(root_module: type) -> TestClient:
-    app = asyncio.run(LaurenFactory.create(root_module))
+    app = LaurenFactory.create(root_module)
     return TestClient(app)
 
 

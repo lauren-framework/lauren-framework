@@ -1689,7 +1689,7 @@ class LaurenFactory:
     """Produces :class:`LaurenApp` instances via the 7-phase pipeline."""
 
     @staticmethod
-    async def create(
+    def create(
         root_module: type,
         *,
         strict_lifecycle: bool = True,
@@ -2119,7 +2119,12 @@ class LaurenFactory:
         for compiled in compiled_handlers.values():
             if getattr(compiled.handler_fn, "__lauren_docs_stub__", False):
                 compiled.handler_fn.__lauren_app__ = app  # type: ignore[attr-defined]
-        await app.startup()
+        _log.verbose(
+            f"Phase 7/7 app built: {len(compiled_handlers)} route(s) — "
+            "awaiting startup() to run lifecycle hooks",
+            context="LaurenApp",
+            routes=len(compiled_handlers),
+        )
         _log.log(
             f"LaurenFactory.create completed "
             f"({format_duration_ms(time.perf_counter() - overall_t0)} total)",

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 
 from lauren import (
     ExecutionContext,
@@ -51,7 +49,7 @@ class TestClassLevelGuards:
         @module(controllers=[C])
         class Mod: ...
 
-        client = TestClient(asyncio.run(LaurenFactory.create(Mod)))
+        client = TestClient(LaurenFactory.create(Mod))
         r = client.get("/x1/")
         assert r.status_code == 403
 
@@ -68,7 +66,7 @@ class TestClassLevelGuards:
         @module(controllers=[C])
         class Mod: ...
 
-        client = TestClient(asyncio.run(LaurenFactory.create(Mod)))
+        client = TestClient(LaurenFactory.create(Mod))
         r = client.get("/x2/")
         assert r.status_code == 403
 
@@ -87,7 +85,7 @@ class TestClassLevelGuards:
         @module(controllers=[C])
         class Mod: ...
 
-        client = TestClient(asyncio.run(LaurenFactory.create(Mod)))
+        client = TestClient(LaurenFactory.create(Mod))
         assert client.get("/x3/a").status_code == 403
         assert client.get("/x3/b").status_code == 403
 
@@ -117,7 +115,7 @@ class TestClassLevelGuards:
         @module(controllers=[C])
         class Mod: ...
 
-        client = TestClient(asyncio.run(LaurenFactory.create(Mod)))
+        client = TestClient(LaurenFactory.create(Mod))
         client.get("/x4/")
         assert order == ["class", "method", "handler"]
 
@@ -134,7 +132,7 @@ class TestClassLevelMiddleware:
         @module(controllers=[C])
         class Mod: ...
 
-        client = TestClient(asyncio.run(LaurenFactory.create(Mod)))
+        client = TestClient(LaurenFactory.create(Mod))
         r = client.get("/m1/")
         assert r.header("x-stamp") == "class-level"
 
@@ -161,6 +159,6 @@ class TestSubclassDoesNotInheritGuards:
         @module(controllers=[Parent, Child])
         class Mod: ...
 
-        client = TestClient(asyncio.run(LaurenFactory.create(Mod)))
+        client = TestClient(LaurenFactory.create(Mod))
         assert client.get("/p/").status_code == 403  # parent guarded
         assert client.get("/q/").status_code == 200  # child is guard-free

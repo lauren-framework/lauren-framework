@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
 from pathlib import Path
 
@@ -43,7 +42,7 @@ def _build(static_dir: Path, prefix: str = "/static") -> TestClient:
     class _App:
         pass
 
-    app = asyncio.run(LaurenFactory.create(_App))
+    app = LaurenFactory.create(_App)
     return TestClient(app)
 
 
@@ -164,7 +163,7 @@ def test_cache_control_custom_max_age(tmp_path: Path) -> None:
     class _App:
         pass
 
-    client = TestClient(asyncio.run(LaurenFactory.create(_App)))
+    client = TestClient(LaurenFactory.create(_App))
     resp = client.request("GET", "/s/f.txt")
     assert "max-age=86400" in (resp.header("cache-control") or "")
 
@@ -191,7 +190,7 @@ def test_two_mounts_coexist(tmp_path: Path) -> None:
     class _App:
         pass
 
-    client = TestClient(asyncio.run(LaurenFactory.create(_App)))
+    client = TestClient(LaurenFactory.create(_App))
     assert client.request("GET", "/public").status_code == 200
     assert client.request("GET", "/assets/logo.png").status_code == 200
 
@@ -212,7 +211,7 @@ def test_path_traversal_blocked(tmp_path: Path) -> None:
     class _App:
         pass
 
-    client = TestClient(asyncio.run(LaurenFactory.create(_App)))
+    client = TestClient(LaurenFactory.create(_App))
     # Path traversal attempt — the router normalises the path, so this
     # typically results in a 404 (route not found) rather than reaching the
     # controller, which is also safe.

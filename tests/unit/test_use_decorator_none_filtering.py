@@ -112,8 +112,8 @@ class TestUseMiddlewareFiltersNone:
 
             return M
 
-        on = await LaurenFactory.create(build_app(True))
-        off = await LaurenFactory.create(build_app(False))
+        on = LaurenFactory.create(build_app(True))
+        off = LaurenFactory.create(build_app(False))
 
         r_on = TestClient(on).get("/c/")
         assert r_on.header("x-a") == "1"
@@ -166,8 +166,8 @@ class TestUseGuardsFiltersNone:
 
             return M
 
-        normal = await LaurenFactory.create(build_app(False))
-        locked = await LaurenFactory.create(build_app(True))
+        normal = LaurenFactory.create(build_app(False))
+        locked = LaurenFactory.create(build_app(True))
 
         assert TestClient(normal).get("/resource/").status_code == 200
         # DenyGuard makes this forbidden.
