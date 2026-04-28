@@ -415,6 +415,8 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
     if security_schemes:
         components["securitySchemes"] = dict(security_schemes)
     tag_set: dict[str, dict[str, Any]] = {}
+    
+    app_global_guards = getattr(app, "_global_guards", ())
 
     for entry in app.router.routes():
         rmeta: RouteMeta = entry.metadata["route_meta"]
@@ -478,8 +480,8 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             # Feature 7 — vendor extension telling OpenAPI tooling this
             # operation yields a structured, typed stream.
             op["x-streaming"] = True
-        if app._global_guards:
-            guard_sec = _collect_guard_security(app._global_guards)
+        if app_global_guards:
+            guard_sec = _collect_guard_security(app_global_guards)
             if guard_sec is not None:
                 op["security"] = guard_sec
         elif ctrl_meta.security:
