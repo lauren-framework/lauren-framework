@@ -478,7 +478,11 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             # Feature 7 — vendor extension telling OpenAPI tooling this
             # operation yields a structured, typed stream.
             op["x-streaming"] = True
-        if ctrl_meta.security:
+        if app._global_guards:
+            guard_sec = _collect_guard_security(app._global_guards)
+            if guard_sec is not None:
+                op["security"] = guard_sec
+        elif ctrl_meta.security:
             # Explicit @controller(security=[...]) always takes precedence.
             op["security"] = [dict(s) for s in ctrl_meta.security]
         elif compiled is not None and compiled.guards:
