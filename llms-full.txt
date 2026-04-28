@@ -1463,10 +1463,10 @@ from lauren_logging import (
 )
 
 # Development: one-liner, pretty coloured console at DEBUG
-LogModule = LoggingModule.configure(LoggingConfig.for_development())
+LogModule = LoggingModule.for_root(LoggingConfig.for_development())
 
 # Production: JSON stdlib backend with global tags
-LogModule = LoggingModule.configure(
+LogModule = LoggingModule.for_root(
     LoggingConfig.for_production(
         StdlibBackend(format="json"),
         processors=[ContextvarsProcessor(), RedactSecrets()],
@@ -1476,12 +1476,12 @@ LogModule = LoggingModule.configure(
 
 # Testing: capture records for assertions
 config, backend = LoggingConfig.for_testing()
-LogModule = LoggingModule.configure(config)
+LogModule = LoggingModule.for_root(config)
 # … run the app …
 assert any("charged" in r.message for r in backend.records)
 
 # Manual construction still works for full control:
-LogModule = LoggingModule.configure(
+LogModule = LoggingModule.for_root(
     LoggingConfig(
         backend=ConsoleBackend(),
         processors=[ContextvarsProcessor(), RedactSecrets()],
