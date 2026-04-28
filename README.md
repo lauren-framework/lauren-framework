@@ -76,7 +76,7 @@ The key features are:
   reflection thanks to a fully pre-compiled execution graph.
 * **Fast to code**: NestJS-style decorators (`@controller`, `@injectable`,
   `@module`) and Axum-style extractors (`Path[int]`, `Json[Model]`,
-  `State[T]`) keep boilerplate to a minimum.
+  `Depends[T]`) keep boilerplate to a minimum.
 * **Fewer bugs**: Strict metadata inheritance, cycle detection, and
   Pydantic-validated extractors reduce a class of errors by design.
 * **Intuitive**: Great editor support. Completion everywhere. Less time
@@ -117,15 +117,10 @@ testimonials.)
 
 ## Requirements
 
-lauren stands on the shoulders of giants:
+Python **3.11**, **3.12**, and **3.13** are supported. Core requirements:
 
-* [Starlette](https://www.starlette.dev/) for the ASGI plumbing under the
-  hood (re-exported via `lauren.types`; you don't import Starlette
-  directly).
 * [Pydantic](https://docs.pydantic.dev/) for request validation and
   response serialisation.
-
-Python **3.11**, **3.12**, and **3.13** are supported.
 
 ## Installation
 
@@ -145,8 +140,8 @@ You'll also want an ASGI server such as
 $ pip install "lauren[standard]"
 ```
 
-The `standard` extra installs Uvicorn, the recommended JSON extractor
-deps, and the docs CLI.
+The `standard` extra installs Uvicorn, the recommended JSON encoder deps,
+and optional form-parsing support.
 
 ## Example
 
@@ -155,7 +150,6 @@ deps, and the docs CLI.
 Create a file `main.py` with:
 
 ```python
-import asyncio
 from pydantic import BaseModel
 
 from lauren import (
@@ -204,13 +198,14 @@ class AppModule:
     pass
 
 
-async def main() -> None:
-    app = LaurenFactory.create(AppModule)
-    # `app` is a fully-typed ASGI 3 callable — serve with uvicorn:
-    #   uvicorn main:app --reload
-
-
-asyncio.run(main())
+# LaurenFactory.create() is synchronous — build the app at module level
+# so uvicorn / hypercorn / granian can import it directly.
+app = LaurenFactory.create(
+    AppModule,
+    openapi_url="/openapi.json",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
 ```
 
 ### Run it
@@ -245,7 +240,7 @@ You already created an API that:
 * The path `/users/` accepts `POST` with a JSON body validated against
   the `CreateUser` Pydantic model.
 * The path `/users/admin` is gated by a class-based guard and returns
-  401 unless the `x-role: admin` header is present.
+  403 unless the `x-role: admin` header is present.
 
 ### Interactive API docs
 
@@ -267,20 +262,20 @@ You will see the alternative automatic documentation (provided by
 
 ## Example upgrade
 
-Now modify the file `main.py` to wire up dependency injection, a
-lifecycle hook, and an `update` route on `UserController`.
+Now modify `main.py` to wire up dependency injection, a lifecycle hook,
+and an `update` route on `UserController`.
 
 ```python
-from lauren import injectable, post_construct, pre_destruct
+from lauren import injectable, post_construct, pre_destruct, Scope
 
 
-@injectable()
+@injectable(scope=Scope.SINGLETON)
 class UserRepository:
     @post_construct
     async def warm(self) -> None:
         self.cache: dict[int, str] = {}
 
-    @pre_destruct(timeout=5.0)
+    @pre_destruct
     async def flush(self) -> None:
         self.cache.clear()
 
@@ -313,15 +308,29 @@ class UserController:
 @module(providers=[UserRepository], controllers=[UserController])
 class AppModule:
     pass
+
+
+app = LaurenFactory.create(AppModule, docs_url="/docs")
 ```
 
-### Interactive API docs upgrade
+### Mounting sub-applications
 
-Now reload your browser at <a href="http://127.0.0.1:8000/docs" target="_blank">http://127.0.0.1:8000/docs</a>.
+`LaurenApp.mount()` lets you attach any ASGI sub-application at a path
+prefix. The most-specific prefix wins; the stripped path and updated
+`root_path` are forwarded to the sub-application:
 
-The interactive API docs will be automatically updated, including
-the new request body for the `POST /users/` route &mdash; lauren generated
-the JSON Schema directly from your Pydantic model.
+```python
+from starlette.staticfiles import StaticFiles
+
+app = LaurenFactory.create(AppModule, docs_url="/docs")
+app.mount("/static", StaticFiles(directory="static"))
+
+# Equivalently, via the factory:
+app = LaurenFactory.create(
+    AppModule,
+    mounts={"/static": StaticFiles(directory="static")},
+)
+```
 
 ### Recap
 
@@ -367,7 +376,7 @@ the startup cost, every request is allocation-light and predictable.
 
 ## Dependencies
 
-lauren depends on Pydantic and Starlette.
+lauren depends on Pydantic.
 
 ### `standard` Dependencies
 
@@ -380,7 +389,7 @@ with the following extras:
 * [`orjson`](https://github.com/ijl/orjson) &mdash; faster JSON
   serialisation.
 * [`python-multipart`](https://github.com/Kludex/python-multipart) &mdash;
-  required for `Form[...]` and `File[...]` extractors.
+  required for `Form[...]` extractors.
 
 ### Without `standard` dependencies
 
@@ -388,8 +397,6 @@ If you don't want the optional `standard` dependencies, you can install
 with `pip install lauren` instead.
 
 ### Additional optional dependencies
-
-There are some additional dependencies you might want to install:
 
 * [`httpx`](https://www.python-httpx.org/) &mdash; required for the test
   client (`lauren.testing`).
@@ -416,7 +423,7 @@ The full development loop is one command:
 ```console
 $ uv tool install prek      # one-time, optional but recommended
 $ prek install              # wires up the git hook
-$ nox                       # lint + tests + typecheck
+$ nox                       # lint + tests (1381 passing) + typecheck
 ```
 
 ## License
