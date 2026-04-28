@@ -564,6 +564,9 @@ class LaurenApp:
             )
             error_format = "default"
         self._error_format = error_format
+        # Mounted sub-applications, ordered by descending prefix length so the
+        # most-specific prefix wins when multiple prefixes could match.
+        self._mounts: list[tuple[str, Any]] = []
 
     # -- Introspection -----------------------------------------------------
 
@@ -652,6 +655,44 @@ class LaurenApp:
         """
         self._on_shutdown_callbacks.append(callback)
         return callback
+
+    # -- Sub-application mounting ------------------------------------------
+
+    def mount(self, path: str, app: Any) -> None:
+        """Mount an ASGI sub-application at *path*.
+
+        All requests whose path starts with *path* (or equals it exactly) are
+        forwarded to *app* after stripping the prefix.  The stripped portion
+        is appended to ``scope["root_path"]`` so the sub-application can
+        reconstruct absolute URLs correctly.
+
+        Mounts are checked in descending prefix-length order so a more-specific
+        prefix (``/api/v2``) always wins over a shorter one (``/api``).
+
+        Example::
+
+            app = LaurenFactory.create(AppModule)
+            app.mount("/legacy", legacy_asgi_app)
+            app.mount("/files", static_files_app)
+
+        The same result can be achieved at build time via
+        ``LaurenFactory.create(..., mounts={"/legacy": legacy_asgi_app})``.
+        """
+        if not path:
+            raise ValueError("mount path must not be empty")
+        if not path.startswith("/"):
+            path = "/" + path
+        # Normalise: drop trailing slashes so prefix matching is uniform.
+        path = path.rstrip("/")
+        self._mounts.append((path, app))
+        # Keep longest prefix first — stable sort preserves insertion order
+        # among equal-length prefixes.
+        self._mounts.sort(key=lambda t: len(t[0]), reverse=True)
+
+    @property
+    def mounts(self) -> list[tuple[str, Any]]:
+        """Read-only snapshot of ``(path_prefix, sub_app)`` pairs."""
+        return list(self._mounts)
 
     # -- Startup / Shutdown ------------------------------------------------
 
@@ -1217,6 +1258,19 @@ class LaurenApp:
         if scope["type"] == "lifespan":
             await self._lifespan(scope, receive, send)
             return
+        # Check mounted sub-applications before lauren's own routing.  Only
+        # HTTP and WebSocket scopes can match a path prefix; other ASGI types
+        # (e.g. custom extensions) are left to fall through to the normal path.
+        if scope["type"] in ("http", "websocket") and self._mounts:
+            raw = scope.get("path", "/")
+            for prefix, sub in self._mounts:
+                if raw == prefix or raw.startswith(prefix + "/"):
+                    stripped = raw[len(prefix) :] or "/"
+                    child_scope = dict(scope)
+                    child_scope["path"] = stripped
+                    child_scope["root_path"] = scope.get("root_path", "") + prefix
+                    await sub(child_scope, receive, send)
+                    return
         if scope["type"] == "websocket":
             await self._websocket(scope, receive, send)
             return
@@ -1712,6 +1766,7 @@ class LaurenFactory:
         signals: SignalBus | None = None,
         error_format: str = "default",
         root_path: str = "",
+        mounts: dict[str, Any] | None = None,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -2125,6 +2180,11 @@ class LaurenFactory:
             context="LaurenApp",
             routes=len(compiled_handlers),
         )
+        # Apply user-supplied mounts (path → sub-app).  This is a convenience
+        # alternative to calling ``app.mount(...)`` after the factory returns;
+        # both are fully equivalent.
+        for mount_path, mount_app in (mounts or {}).items():
+            app.mount(mount_path, mount_app)
         _log.log(
             f"LaurenFactory.create completed "
             f"({format_duration_ms(time.perf_counter() - overall_t0)} total)",

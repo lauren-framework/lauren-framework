@@ -415,7 +415,7 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
     if security_schemes:
         components["securitySchemes"] = dict(security_schemes)
     tag_set: dict[str, dict[str, Any]] = {}
-    
+
     app_global_guards = getattr(app, "_global_guards", ())
 
     for entry in app.router.routes():
