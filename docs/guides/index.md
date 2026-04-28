@@ -19,6 +19,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Build domain extractors like `CurrentUser`, `TenantId`, or `RequestSpan` and use them as parameter annotations.
 
+-   :material-pipe: [__Pipes__](pipes.md)
+
+    ---
+    Post-extraction transforms: validate, coerce, enrich, or replace extracted values before they reach your handler. Function-based, class-based, chainable, and DI-aware.
+
 -   :material-shield-key: [__Custom Guards__](custom-guards.md)
 
     ---

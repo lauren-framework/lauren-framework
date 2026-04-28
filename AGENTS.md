@@ -146,10 +146,8 @@ small on purpose; cross-cutting concerns live next door.
   - `LoggingConfig.for_testing()` → `(config, InMemoryBackend)` for assertions.
 - `lauren-guards` — Authentication and authorization guards. All guard
   classes are decorated with `@injectable(scope=Scope.SINGLETON)` so
-  the DI container manages them. Every guard respects the `@public`
-  metadata marker from `lauren_guards`:
-  - `@public` on a controller or route exempts it from ALL guards in
-    this package. Implemented as `set_metadata(IS_PUBLIC_KEY, True)`.
+  the DI container manages them. Guards are designed to be subclassed
+  for application-specific extensions (e.g. a public-route bypass).
   - Authentication guards: `bearer_token`, `jwt_bearer`, `api_key`,
     `basic_auth`, `oauth2_introspection`, `session_cookie`.
   - Authorization guards: `require_authenticated`, `require_roles`,

@@ -1514,7 +1514,8 @@ request.
 
 Authentication and authorization guards. Every guard class is decorated
 with `@injectable(scope=Scope.SINGLETON)` so the DI container manages
-its lifecycle. All guards honour the `@public` marker.
+its lifecycle. Guards are plain classes — subclass any of them to add
+application-specific logic such as a public-route bypass.
 
 ```bash
 pip install lauren-guards           # core (bearer, api_key, basic, session, authz, csrf, ip)
@@ -1523,36 +1524,6 @@ pip install lauren-guards[http]     # adds oauth2_introspection (requires httpx)
 pip install lauren-guards[bcrypt]   # BcryptHasher
 pip install lauren-guards[argon2]   # Argon2Hasher
 ```
-
-**`@public` — bypass all guards on a route or controller**
-
-```python
-from lauren import controller, get, post, use_guards
-from lauren_guards import bearer_token, require_scopes, public
-
-@use_guards(bearer_token(verify=lookup_token))
-@controller("/api/v1")
-class ApiController:
-
-    @public          # no token required
-    @get("/health")
-    async def health(self): return {"status": "ok"}
-
-    @public          # no token required
-    @get("/version")
-    async def version(self): return {"version": "1.0"}
-
-    @get("/me")      # protected — bearer_token runs
-    async def me(self): ...
-
-    @post("/charge")
-    @use_guards(require_scopes("billing.write"))  # also protected
-    async def charge(self): ...
-```
-
-`@public` is `set_metadata(IS_PUBLIC_KEY, True)`. Every `can_activate`
-checks `ctx.get_metadata(IS_PUBLIC_KEY)` first and returns `True`
-immediately when set.
 
 **Authentication guards** (write `AuthUser` to `request.state.user`):
 
