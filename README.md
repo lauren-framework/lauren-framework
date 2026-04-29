@@ -74,21 +74,27 @@ The key features are:
 
 * **Fast**: Performance comparable to Starlette, with zero per-request
   reflection thanks to a fully pre-compiled execution graph.
-* **Fast to code**: NestJS-style decorators (`@controller`, `@injectable`,
-  `@module`) and Axum-style extractors (`Path[int]`, `Json[Model]`,
-  `Depends[T]`) keep boilerplate to a minimum.
+* **Implicit extractors**: Path params, query strings, and JSON bodies
+  are auto-detected from type annotations — write `id: int`, `q: str`,
+  `body: MyModel` with no `Path[...]`/`Query[...]`/`Json[...]` boilerplate
+  unless you need the explicit form.
+* **Three-scope DI**: `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes with
+  Protocol bindings, multi-bindings (`list[T]`), and custom token providers
+  (NestJS-style `use_value` / `use_class` / `use_factory` / `use_existing`).
+* **Pipes**: Post-extraction value transforms — validate, coerce, or enrich
+  extracted parameter values before they reach your handler. Function-based,
+  class-based, chainable, and DI-aware.
+* **WebSockets & SSE**: First-class `@ws_controller` gateways with typed
+  Pydantic frames and `BroadcastGroup` rooms; one-way streaming with
+  `EventStream` and `Last-Event-ID` resumability for AI text-streaming
+  patterns.
+* **Static files**: `StaticFilesModule.for_root("/static", directory="./public")`
+  with ETag caching, `Cache-Control`, and path-traversal protection.
 * **Fewer bugs**: Strict metadata inheritance, cycle detection, and
   Pydantic-validated extractors reduce a class of errors by design.
-* **Intuitive**: Great editor support. Completion everywhere. Less time
-  debugging.
-* **Easy**: Designed to be easy to use and learn. Less time reading docs.
-* **Short**: Minimize code duplication. Each parameter declaration carries
-  its own validation.
-* **Robust**: Get production-ready code. With automatic interactive
-  documentation. 7-phase startup, lifespan, graceful drain.
 * **Standards-based**: Built on top of the [ASGI](https://asgi.readthedocs.io/)
-  spec, [Pydantic](https://docs.pydantic.dev/), and full [OpenAPI 3.1](https://www.openapis.org/)
-  generation.
+  spec, [Pydantic](https://docs.pydantic.dev/), and full
+  [OpenAPI 3.1](https://www.openapis.org/) generation.
 
 ## Sponsors
 
@@ -129,19 +135,14 @@ and then install lauren:
 
 ```console
 $ pip install lauren
-
----> 100%
 ```
 
 You'll also want an ASGI server such as
 [Uvicorn](https://www.uvicorn.org/) or [Hypercorn](https://hypercorn.readthedocs.io/):
 
 ```console
-$ pip install "lauren[standard]"
+$ pip install "uvicorn[standard]"
 ```
-
-The `standard` extra installs Uvicorn, the recommended JSON encoder deps,
-and optional form-parsing support.
 
 ## Example
 
@@ -158,10 +159,8 @@ from lauren import (
     get,
     post,
     module,
-    Path,
-    Json,
-    use_guards,
     ExecutionContext,
+    use_guards,
 )
 
 
@@ -178,13 +177,14 @@ class AdminGuard:
 @controller("/users", tags=["users"])
 class UserController:
     @get("/{id}")
-    async def get_user(self, id: Path[int]) -> dict:
-        # Return a dict — auto-serialised to JSON.
+    async def get_user(self, id: int) -> dict:
+        # `id` is auto-detected as a path parameter (name matches `{id}`).
         return {"id": id, "found": True}
 
     @post("/")
-    async def create(self, body: Json[CreateUser]):
-        # Tuple form: body + status code.
+    async def create(self, body: CreateUser):
+        # `body` is auto-detected as a JSON body (Pydantic model).
+        # Tuple form: (body, status_code).
         return body.model_dump(), 201
 
     @get("/admin")
@@ -207,6 +207,11 @@ app = LaurenFactory.create(
     redoc_url="/redoc",
 )
 ```
+
+Explicit extractor markers (`Path[int]`, `Json[CreateUser]`) are always
+accepted too — lauren auto-detects sources only when no explicit marker is
+present. See [Implicit Parameter Extraction](https://lauren.dev/guides/implicit-params/)
+for the full rules.
 
 ### Run it
 
@@ -236,9 +241,12 @@ You already created an API that:
 
 * Receives HTTP requests on the path `/users/{id}`.
 * Both paths take `GET` operations (also known as HTTP *methods*).
-* The path `/users/{id}` has a *path parameter* `id` that is validated as an `int`.
+* The path `/users/{id}` has a *path parameter* `id` that is validated as
+  an `int` — auto-detected because the parameter name matches `{id}` in
+  the URL template.
 * The path `/users/` accepts `POST` with a JSON body validated against
-  the `CreateUser` Pydantic model.
+  the `CreateUser` Pydantic model — auto-detected because `CreateUser` is
+  a Pydantic `BaseModel`.
 * The path `/users/admin` is gated by a class-based guard and returns
   403 unless the `x-role: admin` header is present.
 
@@ -262,8 +270,7 @@ You will see the alternative automatic documentation (provided by
 
 ## Example upgrade
 
-Now modify `main.py` to wire up dependency injection, a lifecycle hook,
-and an `update` route on `UserController`.
+Now modify `main.py` to wire up dependency injection and a lifecycle hook:
 
 ```python
 from lauren import injectable, post_construct, pre_destruct, Scope
@@ -293,14 +300,14 @@ class UserController:
         self.repo = repo
 
     @get("/{id}")
-    async def get_user(self, id: Path[int]) -> dict:
+    async def get_user(self, id: int) -> dict:
         name = await self.repo.find(id)
         if name is None:
             return {"id": id, "found": False}, 404
         return {"id": id, "name": name}
 
     @post("/")
-    async def create(self, body: Json[CreateUser]):
+    async def create(self, body: CreateUser):
         await self.repo.upsert(body.age, body.name)
         return body.model_dump(), 201
 
@@ -332,13 +339,27 @@ app = LaurenFactory.create(
 )
 ```
 
+For serving your own static files directly from a Lauren module, use
+`StaticFilesModule` instead:
+
+```python
+from lauren.static_files import StaticFilesModule
+
+@module(
+    controllers=[...],
+    imports=[StaticFilesModule.for_root("/static", directory="./public")],
+)
+class AppModule:
+    pass
+```
+
 ### Recap
 
 In summary, you declare **once** the types of parameters, body, and
 guards as decorators or `Annotated` markers. lauren takes care of:
 
 * Reading the request payload, validating it, and converting it to the
-  right Python type.
+  right Python type — automatically inferred from the type annotation.
 * Resolving the controller's constructor dependencies through the DI
   graph that was compiled at startup.
 * Running guards and middleware in the right order.
@@ -376,36 +397,31 @@ the startup cost, every request is allocation-light and predictable.
 
 ## Dependencies
 
-lauren depends on Pydantic.
+lauren's only hard dependency is Pydantic.
 
-### `standard` Dependencies
+### Optional dependencies
 
-When you install lauren with `pip install "lauren[standard]"`, it comes
-with the following extras:
+Install these separately as your project needs them:
 
-* [`uvicorn`](https://www.uvicorn.org/) &mdash; the recommended ASGI server.
-* [`uvicorn[standard]`](https://www.uvicorn.org/) &mdash; with
-  `uvloop`, `httptools`, and `websockets`.
-* [`orjson`](https://github.com/ijl/orjson) &mdash; faster JSON
-  serialisation.
-* [`python-multipart`](https://github.com/Kludex/python-multipart) &mdash;
-  required for `Form[...]` extractors.
-
-### Without `standard` dependencies
-
-If you don't want the optional `standard` dependencies, you can install
-with `pip install lauren` instead.
-
-### Additional optional dependencies
-
-* [`httpx`](https://www.python-httpx.org/) &mdash; required for the test
-  client (`lauren.testing`).
-* [`pytest`](https://docs.pytest.org/) and
-  [`pytest-asyncio`](https://pytest-asyncio.readthedocs.io/) &mdash; if
-  you want to use the test client in your test suite.
-* [`msgspec`](https://jcristharif.com/msgspec/) &mdash; if you prefer
-  msgspec over Pydantic for hot-path serialisation, install it and use
-  `MsgspecEncoder` from `lauren.serialization`.
+* **ASGI server** &mdash;
+  [`uvicorn`](https://www.uvicorn.org/),
+  [`hypercorn`](https://hypercorn.readthedocs.io/), or
+  [`granian`](https://github.com/emmett-framework/granian).
+  None is bundled so you can pick whichever fits your deployment.
+* **Test client** &mdash; [`httpx`](https://www.python-httpx.org/)
+  is required for `lauren.testing`. Install it together with the
+  test runner via `pip install "lauren[dev]"` which also pulls in
+  `pytest` and `pytest-asyncio`.
+* **Faster JSON** &mdash; [`orjson`](https://github.com/ijl/orjson)
+  is auto-detected at import time. When present, all JSON
+  serialisation goes through orjson at no code change.
+* **Faster JSON (msgspec)** &mdash; install
+  [`msgspec`](https://jcristharif.com/msgspec/) and use
+  `MsgspecEncoder` from `lauren.serialization` if you prefer
+  msgspec over Pydantic for hot-path serialisation.
+* **Form parsing** &mdash;
+  [`python-multipart`](https://github.com/Kludex/python-multipart)
+  is required for `Form[...]` extractors.
 
 ## Contributing
 
@@ -423,7 +439,7 @@ The full development loop is one command:
 ```console
 $ uv tool install prek      # one-time, optional but recommended
 $ prek install              # wires up the git hook
-$ nox                       # lint + tests (1381 passing) + typecheck
+$ nox                       # lint + tests (1460 passing) + typecheck
 ```
 
 ## License
