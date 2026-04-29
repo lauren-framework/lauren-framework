@@ -47,6 +47,67 @@ app = LaurenFactory.create(
 
 ---
 
+## Mounting ASGI Sub-Applications
+
+`app.mount(path, sub_app)` attaches any ASGI application at a path prefix.
+Requests whose path starts with that prefix are forwarded to the sub-app;
+Lauren strips the prefix from `scope["path"]` and appends it to
+`scope["root_path"]` before forwarding.
+
+```python
+from starlette.staticfiles import StaticFiles
+
+app = LaurenFactory.create(AppModule)
+app.mount("/static", StaticFiles(directory="static"))
+app.mount("/admin", admin_app)   # any ASGI app
+```
+
+Alternatively, pass a `mounts` dict to the factory:
+
+```python
+app = LaurenFactory.create(
+    AppModule,
+    mounts={
+        "/static": StaticFiles(directory="static"),
+        "/admin": admin_app,
+    },
+)
+```
+
+Prefix matching uses **longest-prefix-first** ordering regardless of the
+registration order, so `/api/v2` always wins over `/api` when both are mounted.
+
+### How the scope is modified
+
+| Field | Before | After |
+|---|---|---|
+| `scope["path"]` | `/static/logo.png` | `/logo.png` |
+| `scope["root_path"]` | `""` (or upstream value) | `"" + "/static"` |
+
+The sub-app therefore sees itself as serving from the root, while browsers and
+CDNs see the full `root_path` for relative-URL generation.
+
+### lifespan
+
+Lifespan events (`startup` / `shutdown`) of the sub-app are **not** forwarded.
+If your sub-app needs lifespan, wire it up separately or wrap it:
+
+```python
+from contextlib import asynccontextmanager
+from starlette.applications import Starlette
+
+@asynccontextmanager
+async def sub_lifespan(app):
+    await db.connect()
+    yield
+    await db.disconnect()
+
+sub = Starlette(routes=[...], lifespan=sub_lifespan)
+app.mount("/sub", sub)
+```
+
+---
+
 ## Serving Static Files
 
 `StaticFilesModule` is a NestJS-inspired feature module that registers a

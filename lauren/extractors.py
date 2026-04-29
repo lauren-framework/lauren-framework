@@ -805,6 +805,58 @@ def parse_extractor_hint(
     return None, annotation, False, None, None, ()
 
 
+def _is_pydantic_model_type(annotation: Any) -> bool:
+    """Return ``True`` when *annotation* (possibly ``Optional[T]``) is a Pydantic model.
+
+    Used by :func:`lauren._asgi._compile_handler_signature` to auto-promote
+    bare model parameters to JSON body extraction.  Always returns ``False``
+    when pydantic is not installed.
+    """
+    if _BaseModel is None:
+        return False
+    inner, _ = _peel_optional(annotation)
+    return isinstance(inner, type) and issubclass(inner, _BaseModel)
+
+
+#: Primitive Python types that can be meaningfully coerced from a query-string
+#: segment without any DI or body-parsing machinery.
+_SCALAR_TYPES: frozenset[type] = frozenset({int, float, str, bool, bytes, complex})
+
+
+def _is_implicit_query_type(annotation: Any) -> bool:
+    """Return ``True`` when *annotation* should be auto-promoted to a query param.
+
+    Recognised shapes (all can optionally be wrapped in ``Optional[...]``
+    / ``T | None``):
+
+    * Any member of :data:`_SCALAR_TYPES` (``int``, ``float``, ``str``,
+      ``bool``, ``bytes``, ``complex``).
+    * ``list[scalar]`` / ``tuple[scalar, ...]`` — multi-value query params.
+
+    Note: bare ``inspect.Parameter.empty`` (no annotation at all) intentionally
+    returns ``False`` so that completely unannotated parameters still raise
+    :class:`~lauren.exceptions.UnresolvableParameterError` at startup.
+    An annotation of ``str`` must be written explicitly.
+
+    Deliberately narrow so that unregistered DI tokens (protocols, services)
+    and multi-binding ``list[Service]`` patterns still fail loudly at startup
+    rather than silently becoming empty query parameters.
+    """
+    import inspect as _inspect
+
+    if annotation is _inspect.Parameter.empty:
+        return False
+    inner, _ = _peel_optional(annotation)
+    if inner in _SCALAR_TYPES:
+        return True
+    origin = get_origin(inner)
+    if origin in (list, tuple):
+        args = get_args(inner)
+        if args and args[0] in _SCALAR_TYPES:
+            return True
+    return False
+
+
 def _is_discriminator_fieldinfo(obj: Any) -> bool:
     """Detect a ``pydantic.Field(discriminator=...)`` metadata entry.
 
@@ -1062,6 +1114,34 @@ async def _extract_raw(
             return fd.validate(extraction.name, value) if fd else value
 
         if source == "query":
+            # Pydantic model from query string: collect individual fields
+            # by name so ``Query[Filters]`` works as an inline collection of
+            # query params rather than looking for a single ``?filters=…``
+            # key.  Pydantic handles type coercion when validating the dict.
+            peeled_inner, _inner_opt = _peel_optional(inner)
+            if (
+                _PYDANTIC_AVAILABLE
+                and isinstance(peeled_inner, type)
+                and issubclass(peeled_inner, _BaseModel)
+            ):
+                fields_dict: dict[str, Any] = {}
+                for f_name, f_info in peeled_inner.model_fields.items():
+                    f_alias = (
+                        f_info.alias  # type: ignore[attr-defined]
+                        if getattr(f_info, "alias", None)
+                        else f_name
+                    )
+                    raw = request.query_params.get(
+                        f_alias, request.query_params.get(f_name, [])
+                    )
+                    if raw:
+                        fields_dict[f_name] = raw[0] if len(raw) == 1 else raw
+                if not fields_dict and _inner_opt:
+                    if extraction.has_default:
+                        return extraction.default
+                    return None
+                return _validate_pydantic(fields_dict, peeled_inner, extraction.name)
+
             key = fd.alias if fd and fd.alias else extraction.name
             raw_list = request.query_params.get(key, [])
             origin = get_origin(inner)

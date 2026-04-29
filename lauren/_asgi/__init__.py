@@ -56,6 +56,9 @@ from ..extractors import (
     FieldDescriptor,
     _Extraction,
     _ParamSpec,
+    _is_pydantic_model_type,
+    _is_implicit_query_type,
+    _peel_optional,
     extract_parameter,
     is_pipe,
     parse_extractor_hint,
@@ -301,10 +304,65 @@ def _compile_handler_signature(
                 )
                 param_names.append(name)
                 continue
+
+            # ---------------------------------------------------------------------------
+            # Implicit parameter detection: auto-promote bare (un-marked) parameters
+            # that the user did not wrap in an extractor marker and that are not
+            # resolvable via DI.
+            #
+            # Rules (in priority order):
+            #   1. Pydantic BaseModel (possibly Optional[Model]) → JSON body.
+            #      Rationale: a model type carries field-level schema, so the natural
+            #      extraction point is the request body.
+            #   2. Scalar type (int, str, float, bool, bytes, list[scalar], …) or bare
+            #      unannotated parameter → query string parameter.
+            #      Rationale: primitives are cheapest to pass as query params; this
+            #      mirrors FastAPI and other typed-route frameworks.
+            #   3. Everything else → raise (preserve old behaviour so that unregistered
+            #      DI tokens and multi-binding patterns still fail loudly at startup).
+            #
+            # Both promotions can be overridden with explicit markers:
+            # ``Query[MyModel]`` to pull model fields from the query string, or
+            # ``Json[int]`` if a scalar should come from the body.
+            # ---------------------------------------------------------------------------
+            if _is_pydantic_model_type(ann):
+                # Peel Optional[Model] so the extraction layer sees the plain
+                # model type (not Optional[Model]) when calling _validate_json.
+                body_inner, _ = _peel_optional(ann)
+                extractions.append(
+                    _Extraction(
+                        name=name,
+                        source="json",
+                        inner_type=body_inner,
+                        field_descriptor=fd,
+                        default=default,
+                        has_default=has_default,
+                        reads_body=True,
+                        pipes=pipes,
+                    )
+                )
+                param_names.append(name)
+                continue
+            if _is_implicit_query_type(ann):
+                inner_type = ann
+                extractions.append(
+                    _Extraction(
+                        name=name,
+                        source="query",
+                        inner_type=inner_type,
+                        field_descriptor=fd,
+                        default=default,
+                        has_default=has_default,
+                        pipes=pipes,
+                    )
+                )
+                param_names.append(name)
+                continue
             from ..exceptions import UnresolvableParameterError
 
             raise UnresolvableParameterError(
-                f"Cannot resolve parameter {name!r} in {controller_cls.__name__}.{fn.__name__}",
+                f"Cannot resolve parameter {name!r} in "
+                f"{controller_cls.__name__}.{fn.__name__}",
                 detail={
                     "class": controller_cls.__name__,
                     "handler": fn.__name__,

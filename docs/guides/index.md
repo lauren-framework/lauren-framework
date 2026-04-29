@@ -14,6 +14,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     `use_value`, `use_class`, `use_factory`, `use_existing`, `Token`, and `Inject` — when `@injectable` isn't enough.
 
+-   :material-auto-fix: [__Implicit Parameter Extraction__](implicit-params.md)
+
+    ---
+    Path params, query params, and JSON bodies auto-detected from type annotations — no `Path[…]`/`Query[…]`/`Json[…]` boilerplate unless you need it.
+
 -   :material-magnify-plus: [__Custom Extractors__](custom-extractors.md)
 
     ---

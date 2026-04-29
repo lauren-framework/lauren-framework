@@ -5,7 +5,14 @@
 ## Anatomy of a controller
 
 ```python
-from lauren import controller, get, post, Path, Json
+from lauren import controller, get, post
+from pydantic import BaseModel
+
+
+class CreateUser(BaseModel):
+    name: str
+    email: str
+
 
 @controller("/users", tags=["users"])
 class UserController:
@@ -14,14 +21,16 @@ class UserController:
         self.log = log
 
     @get("/{id}")
-    async def show(self, id: Path[int]) -> UserOut:
+    async def show(self, id: int) -> UserOut:           # id auto-detected as Path[int]
         return UserOut(**self.repo.get(id))
 
     @post("/")
-    async def create(self, body: Json[CreateUser]) -> tuple[UserOut, int]:
+    async def create(self, body: CreateUser) -> tuple[UserOut, int]:  # body auto-detected as Json
         user = self.repo.create(body)
         return UserOut(**user), 201
 ```
+
+Explicit extractor markers (`Path[int]`, `Json[CreateUser]`) are always accepted too — Lauren auto-detects sources only when no explicit marker is present. See [Implicit Parameter Extraction](../guides/implicit-params.md) for the full rules.
 
 What `@controller` does:
 
