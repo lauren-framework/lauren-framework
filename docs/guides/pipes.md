@@ -123,7 +123,12 @@ async def get(
 
 ## Writing a pipe class
 
-Class-based pipes define a `transform(self, value, ctx)` method. The `Pipe` base class is optional — it only documents the expected interface.
+Class-based pipes define a `transform` method. The `Pipe` base class is optional — it only documents the expected interface.
+
+Lauren infers the calling convention from the method's parameter count (same as function pipes):
+
+- `transform(self, value)` — for simple transforms that don't need the request context.
+- `transform(self, value, ctx)` — to access the request, DI container, or parameter metadata.
 
 ```python
 from lauren import injectable, Scope
@@ -159,15 +164,26 @@ class UserLookup(Pipe):
 
 `UserRepository` must be provided by the controller's module for the DI resolution to succeed.
 
+Both `transform(self, value, ctx)` and `transform(self, value)` are valid on injectable pipes — omit `ctx` when you only need the injected constructor dependencies.
+
 ### Without DI injection
 
-If the class isn't registered with the DI container, Lauren instantiates it once (process-wide) and reuses that instance. This is fine for stateless pipes:
+If the class isn't registered with the DI container, Lauren instantiates it once (process-wide cache) and reuses that instance. This is fine for stateless pipes — and note that unlike injectable extractors, **Lauren never raises `StartupError` for pipes**; fallback instantiation is always attempted at request time:
 
 ```python
 @pipe()
 class TrimWhitespace(Pipe):
     def transform(self, value: str, ctx) -> str:
         return value.strip()
+```
+
+The `ctx` argument can be omitted for simple one-value transforms:
+
+```python
+@pipe()
+class Uppercase(Pipe):
+    def transform(self, value: str) -> str:  # no ctx needed
+        return value.upper()
 ```
 
 ## Chaining pipes

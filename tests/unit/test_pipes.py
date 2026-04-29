@@ -372,3 +372,118 @@ class TestBodyPipes:
         app = LaurenFactory.create(M)
         r = TestClient(app).post("/users/", json={"name": "  Alice ", "age": 30})
         assert r.json() == {"name": "alice", "age": 30}
+
+
+# ---------------------------------------------------------------------------
+# Pipe inheritance edge cases (D1, D2, D3)
+# ---------------------------------------------------------------------------
+
+
+class TestPipeInheritance:
+    """Verify that class-based pipes work correctly with inheritance.
+
+    The pipe dispatch uses ``hasattr(instance, 'transform')`` which walks the
+    full MRO automatically — these tests confirm that behaviour.
+    """
+
+    @pytest.mark.asyncio
+    async def test_transform_inherited_from_parent(self):
+        """D1 — transform defined on parent class; child inherits it."""
+
+        class Parent:
+            def transform(self, value, ctx):
+                return value * 10
+
+        class Child(Parent):
+            pass  # inherits transform
+
+        @controller("/c")
+        class C:
+            @get("/{n}")
+            async def h(self, n: Annotated[Path[int], pipe(Child)]) -> dict:
+                return {"n": n}
+
+        @module(controllers=[C])
+        class M:
+            pass
+
+        app = LaurenFactory.create(M)
+        assert TestClient(app).get("/c/3").json() == {"n": 30}
+
+    @pytest.mark.asyncio
+    async def test_transform_override_child_version_used(self):
+        """D2 — child overrides parent's transform; child version should run."""
+
+        class Parent:
+            def transform(self, value, ctx):
+                return value + 100  # would give 103 for input 3
+
+        class Child(Parent):
+            def transform(self, value, ctx):
+                return value * 5  # should give 15 for input 3
+
+        @controller("/c")
+        class C:
+            @get("/{n}")
+            async def h(self, n: Annotated[Path[int], pipe(Child)]) -> dict:
+                return {"n": n}
+
+        @module(controllers=[C])
+        class M:
+            pass
+
+        app = LaurenFactory.create(M)
+        assert TestClient(app).get("/c/3").json() == {"n": 15}
+
+    @pytest.mark.asyncio
+    async def test_missing_transform_raises_extractor_error(self):
+        """D3 — class pipe without transform raises ExtractorError at request time."""
+
+        class NoTransform:
+            pass  # deliberately missing transform
+
+        @controller("/c")
+        class C:
+            @get("/{n}")
+            async def h(self, n: Annotated[Path[int], pipe(NoTransform)]) -> dict:
+                return {"n": n}
+
+        @module(controllers=[C])
+        class M:
+            pass
+
+        # Factory succeeds — pipe validation is runtime, not startup.
+        app = LaurenFactory.create(M)
+        client = TestClient(app)
+        r = client.get("/c/5")
+        # The framework maps ExtractorError to 422.
+        assert r.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_injectable_transform_inherited_from_parent(self):
+        """DI-resolved class pipe inherits transform from parent correctly."""
+
+        @injectable()
+        class ParentPipe:
+            def __init__(self) -> None:
+                self.factor = 7
+
+            def transform(self, value, ctx):
+                return value * self.factor
+
+        @injectable()
+        class ChildPipe(ParentPipe):
+            pass  # inherits transform; also @injectable for DI resolution
+
+        @controller("/c")
+        class C:
+            @get("/{n}")
+            async def h(self, n: Annotated[Path[int], pipe(ChildPipe)]) -> dict:
+                return {"n": n}
+
+        @module(controllers=[C], providers=[ParentPipe, ChildPipe])
+        class M:
+            pass
+
+        app = LaurenFactory.create(M)
+        assert TestClient(app).get("/c/4").json() == {"n": 28}

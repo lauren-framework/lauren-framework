@@ -396,6 +396,615 @@ class TestCustomExtractor:
         assert cls is Marker
 
 
+class TestInjectableExtractor:
+    """Verify the injectable instance-method extractor dispatch path.
+
+    These tests use a minimal mock DI container so they stay pure-unit with
+    no real module graph needed.
+    """
+
+    # ------------------------------------------------------------------
+    # Minimal mock container
+    # ------------------------------------------------------------------
+
+    class _MockContainer:
+        """Minimal stand-in for a DI container."""
+
+        def __init__(self, instances: dict) -> None:
+            self._instances = instances  # {cls: pre-built instance}
+
+        def has_provider(self, token, owning_module=None) -> bool:
+            return token in self._instances
+
+        async def resolve(
+            self,
+            token,
+            *,
+            request_cache=None,
+            framework_values=None,
+            owning_module=None,
+        ):
+            if token in self._instances:
+                return self._instances[token]
+            raise KeyError(f"No provider for {token!r}")
+
+    # ------------------------------------------------------------------
+    # Tests
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_injectable_instance_method_called(self):
+        """@injectable extractor with instance method receives no container."""
+        from lauren import injectable
+        from lauren.extractors import _ExtractorMarker
+
+        @injectable()
+        class HeaderEcho(_ExtractorMarker):
+            source = "header_echo"
+
+            def __init__(self, prefix: str = "echo") -> None:
+                self._prefix = prefix
+
+            async def extract(self, request, extraction):
+                return f"{self._prefix}:{extraction.name}:{request.method}"
+
+        instance = HeaderEcho(prefix="test")
+        container = self._MockContainer({HeaderEcho: instance})
+
+        req = make_request(method="DELETE")
+        ext = _Extraction(
+            name="x",
+            source="header_echo",
+            inner_type=str,
+            field_descriptor=None,
+            default=None,
+            has_default=False,
+            marker_cls=HeaderEcho,
+        )
+        value = await extract_parameter(req, ext, container=container)
+        assert value == "test:x:DELETE"
+
+    @pytest.mark.asyncio
+    async def test_injectable_extractor_receives_injected_deps(self):
+        """The instance returned by the container carries its own state."""
+        from lauren import injectable
+        from lauren.extractors import _ExtractorMarker
+
+        @injectable()
+        class SentinelExtractor(_ExtractorMarker):
+            source = "sentinel"
+
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            async def extract(self, request, extraction):
+                self.calls.append(extraction.name)
+                return len(self.calls)
+
+        inst = SentinelExtractor()
+        container = self._MockContainer({SentinelExtractor: inst})
+
+        req = make_request()
+        ext = _Extraction(
+            name="n",
+            source="sentinel",
+            inner_type=int,
+            field_descriptor=None,
+            default=None,
+            has_default=False,
+            marker_cls=SentinelExtractor,
+        )
+        assert await extract_parameter(req, ext, container=container) == 1
+        assert await extract_parameter(req, ext, container=container) == 2
+        # Confirm same instance was used both times:
+        assert inst.calls == ["n", "n"]
+
+    @pytest.mark.asyncio
+    async def test_injectable_extractor_no_container_raises(self):
+        """Missing container raises MissingProviderError, not a confusing crash."""
+        from lauren import injectable
+        from lauren.exceptions import MissingProviderError
+        from lauren.extractors import _ExtractorMarker
+
+        @injectable()
+        class NoContainer(_ExtractorMarker):
+            source = "no_container"
+
+            async def extract(self, request, extraction):
+                return "never"
+
+        req = make_request()
+        ext = _Extraction(
+            name="x",
+            source="no_container",
+            inner_type=str,
+            field_descriptor=None,
+            default=None,
+            has_default=False,
+            marker_cls=NoContainer,
+        )
+        with pytest.raises(MissingProviderError, match="@injectable"):
+            await extract_parameter(req, ext, container=None)
+
+    @pytest.mark.asyncio
+    async def test_injectable_extractor_httperror_propagates(self):
+        """HTTPErrors raised inside inject-method extractors bubble up unchanged."""
+        from lauren import injectable
+        from lauren.exceptions import ForbiddenError
+        from lauren.extractors import _ExtractorMarker
+
+        @injectable()
+        class StrictExtractor(_ExtractorMarker):
+            source = "strict"
+
+            async def extract(self, request, extraction):
+                raise ForbiddenError("not allowed")
+
+        inst = StrictExtractor()
+        container = self._MockContainer({StrictExtractor: inst})
+
+        req = make_request()
+        ext = _Extraction(
+            name="u",
+            source="strict",
+            inner_type=object,
+            field_descriptor=None,
+            default=None,
+            has_default=False,
+            marker_cls=StrictExtractor,
+        )
+        with pytest.raises(ForbiddenError):
+            await extract_parameter(req, ext, container=container)
+
+    @pytest.mark.asyncio
+    async def test_classmethod_extractor_unchanged(self):
+        """Existing classmethod extractors are unaffected by the new path."""
+        from lauren.extractors import _ExtractorMarker
+
+        class Classic(_ExtractorMarker):
+            source = "classic"
+
+            @classmethod
+            async def extract(cls, request, extraction, *, container, request_cache):
+                return "classic_ok"
+
+        req = make_request()
+        ext = _Extraction(
+            name="y",
+            source="classic",
+            inner_type=str,
+            field_descriptor=None,
+            default=None,
+            has_default=False,
+            marker_cls=Classic,
+        )
+        # No container needed — classmethod dispatch handles None gracefully.
+        assert await extract_parameter(req, ext) == "classic_ok"
+
+    @pytest.mark.asyncio
+    async def test_injectable_classmethod_extractor_uses_classmethod_path(self):
+        """@injectable + @classmethod keeps using the classmethod path."""
+        from lauren import injectable
+        from lauren.extractors import _ExtractorMarker
+
+        @injectable()
+        class Hybrid(_ExtractorMarker):
+            source = "hybrid"
+
+            @classmethod
+            async def extract(cls, request, extraction, *, container, request_cache):
+                return "hybrid_classmethod"
+
+        req = make_request()
+        ext = _Extraction(
+            name="z",
+            source="hybrid",
+            inner_type=str,
+            field_descriptor=None,
+            default=None,
+            has_default=False,
+            marker_cls=Hybrid,
+        )
+        assert await extract_parameter(req, ext) == "hybrid_classmethod"
+
+
+class TestExtractMethodDetectionInheritance:
+    """Unit tests for MRO-based classmethod/instance-method detection.
+
+    Every case exercises the detection logic in ``_extract_raw`` (and, where
+    noted, the startup validation in ``_compile_handler_signature``).  A
+    minimal mock container is used throughout so there is no module graph.
+    """
+
+    class _MockContainer:
+        def __init__(self, instances: dict) -> None:
+            self._instances = instances
+
+        def has_provider(self, token, owning_module=None) -> bool:
+            return token in self._instances
+
+        async def resolve(
+            self,
+            token,
+            *,
+            request_cache=None,
+            framework_values=None,
+            owning_module=None,
+        ):
+            if token in self._instances:
+                return self._instances[token]
+            raise KeyError(f"No provider for {token!r}")
+
+    def _ext(self, source: str, marker_cls) -> "_Extraction":
+        return _Extraction(
+            name="x",
+            source=source,
+            inner_type=str,
+            field_descriptor=None,
+            default=None,
+            has_default=False,
+            marker_cls=marker_cls,
+        )
+
+    # ------------------------------------------------------------------
+    # A1 — classmethod defined on parent, child inherits (no override)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_inherited_classmethod_uses_classmethod_path(self):
+        from lauren.extractors import _ExtractorMarker
+
+        class Parent(_ExtractorMarker):
+            source = "a1"
+
+            @classmethod
+            async def extract(cls, request, extraction, *, container, request_cache):
+                return "parent_cm"
+
+        class Child(Parent):
+            source = "a1"
+            # inherits extract — no override
+
+        req = make_request()
+        assert await extract_parameter(req, self._ext("a1", Child)) == "parent_cm"
+
+    # ------------------------------------------------------------------
+    # A2a — instance method on parent, child explicitly @injectable
+    # A2b — instance method on parent, child inherits @injectable via MRO
+    #        (hasattr traverses MRO, so no explicit @injectable needed on child)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_inherited_instance_method_child_explicit_injectable(self):
+        from lauren import injectable
+        from lauren.extractors import _ExtractorMarker
+
+        @injectable()
+        class Parent(_ExtractorMarker):
+            source = "a2a"
+
+            async def extract(self, request, extraction):
+                return "parent_im"
+
+        @injectable()
+        class Child(Parent):
+            source = "a2a"
+
+        inst = Child()
+        container = self._MockContainer({Child: inst})
+        req = make_request()
+        assert (
+            await extract_parameter(req, self._ext("a2a", Child), container=container)
+            == "parent_im"
+        )
+
+    def test_injectable_own_dict_check_not_hasattr(self):
+        """__dict__ check: Child that inherits @injectable is NOT treated as injectable.
+
+        The DI container enforces a no-inheritance rule (MetadataInheritanceError),
+        so the extractor uses ``marker_cls.__dict__`` to check injectable — not
+        ``hasattr``.  A class that merely inherits ``__lauren_injectable__`` is not
+        injectable for the purposes of extractor dispatch.  The startup validator
+        (in ``_compile_handler_signature``) catches this at factory time; here we
+        confirm the attribute check directly without going through the full factory.
+        """
+        from lauren import injectable
+        from lauren.extractors import _ExtractorMarker
+
+        @injectable()
+        class Parent(_ExtractorMarker):
+            source = "a2b"
+
+            async def extract(self, request, extraction):
+                return "from_parent"
+
+        class Child(Parent):
+            source = "a2b"
+
+        # Parent has it in own dict; Child does not.
+        assert "__lauren_injectable__" in Parent.__dict__
+        assert "__lauren_injectable__" not in Child.__dict__
+        # hasattr still returns True (MRO), but the extractor doesn't use hasattr.
+        import builtins
+
+        assert builtins.hasattr(Child, "__lauren_injectable__")
+
+    # ------------------------------------------------------------------
+    # A3 — grandparent defines classmethod; parent + child just inherit
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_grandparent_classmethod_found_via_mro(self):
+        from lauren.extractors import _ExtractorMarker
+
+        class Grandparent(_ExtractorMarker):
+            source = "a3"
+
+            @classmethod
+            async def extract(cls, request, extraction, *, container, request_cache):
+                return "grandparent"
+
+        class Parent(Grandparent):
+            pass
+
+        class Child(Parent):
+            source = "a3"
+
+        req = make_request()
+        assert await extract_parameter(req, self._ext("a3", Child)) == "grandparent"
+
+    # ------------------------------------------------------------------
+    # A4 — child overrides parent classmethod with instance method (@injectable)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_override_classmethod_with_instance_method(self):
+        from lauren import injectable
+        from lauren.extractors import _ExtractorMarker
+
+        class Parent(_ExtractorMarker):
+            source = "a4"
+
+            @classmethod
+            async def extract(cls, request, extraction, *, container, request_cache):
+                return "parent_cm"
+
+        @injectable()
+        class Child(Parent):
+            source = "a4"
+
+            async def extract(self, request, extraction):
+                return "child_im"
+
+        inst = Child()
+        container = self._MockContainer({Child: inst})
+        req = make_request()
+        result = await extract_parameter(
+            req, self._ext("a4", Child), container=container
+        )
+        assert result == "child_im"
+
+    # ------------------------------------------------------------------
+    # A5 — child overrides parent instance method with classmethod
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_override_instance_method_with_classmethod(self):
+        from lauren import injectable
+        from lauren.extractors import _ExtractorMarker
+
+        @injectable()
+        class Parent(_ExtractorMarker):
+            source = "a5"
+
+            async def extract(self, request, extraction):
+                return "parent_im"
+
+        class Child(Parent):
+            source = "a5"
+
+            @classmethod
+            async def extract(cls, request, extraction, *, container, request_cache):
+                return "child_cm"
+
+        req = make_request()
+        # No container needed — child's classmethod path is used.
+        assert await extract_parameter(req, self._ext("a5", Child)) == "child_cm"
+
+    # ------------------------------------------------------------------
+    # A6 — both parent and child define classmethod; child's version wins
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_override_classmethod_child_wins(self):
+        from lauren.extractors import _ExtractorMarker
+
+        class Parent(_ExtractorMarker):
+            source = "a6"
+
+            @classmethod
+            async def extract(cls, request, extraction, *, container, request_cache):
+                return "parent"
+
+        class Child(Parent):
+            source = "a6"
+
+            @classmethod
+            async def extract(cls, request, extraction, *, container, request_cache):
+                return "child"
+
+        req = make_request()
+        assert await extract_parameter(req, self._ext("a6", Child)) == "child"
+
+    # ------------------------------------------------------------------
+    # A7 — both parent and child define instance method (@injectable); child wins
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_override_instance_method_child_wins(self):
+        from lauren import injectable
+        from lauren.extractors import _ExtractorMarker
+
+        @injectable()
+        class Parent(_ExtractorMarker):
+            source = "a7"
+
+            async def extract(self, request, extraction):
+                return "parent"
+
+        @injectable()
+        class Child(Parent):
+            source = "a7"
+
+            async def extract(self, request, extraction):
+                return "child"
+
+        inst = Child()
+        container = self._MockContainer({Child: inst})
+        req = make_request()
+        result = await extract_parameter(
+            req, self._ext("a7", Child), container=container
+        )
+        assert result == "child"
+
+    # ------------------------------------------------------------------
+    # B1 — @staticmethod: treated as non-instance → classmethod path
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_staticmethod_takes_classmethod_path(self):
+        from lauren.extractors import _ExtractorMarker
+
+        class StaticExt(_ExtractorMarker):
+            source = "b1"
+
+            @staticmethod
+            async def extract(request, extraction, *, container, request_cache):
+                return "static_ok"
+
+        req = make_request()
+        assert await extract_parameter(req, self._ext("b1", StaticExt)) == "static_ok"
+
+    # ------------------------------------------------------------------
+    # B2 — parent classmethod overridden by child @staticmethod
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_override_classmethod_with_staticmethod(self):
+        from lauren.extractors import _ExtractorMarker
+
+        class Parent(_ExtractorMarker):
+            source = "b2"
+
+            @classmethod
+            async def extract(cls, request, extraction, *, container, request_cache):
+                return "parent_cm"
+
+        class Child(Parent):
+            source = "b2"
+
+            @staticmethod
+            async def extract(request, extraction, *, container, request_cache):
+                return "child_static"
+
+        req = make_request()
+        assert await extract_parameter(req, self._ext("b2", Child)) == "child_static"
+
+    # ------------------------------------------------------------------
+    # B3 — parent @staticmethod overridden by child @staticmethod
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_override_staticmethod_child_wins(self):
+        from lauren.extractors import _ExtractorMarker
+
+        class Parent(_ExtractorMarker):
+            source = "b3"
+
+            @staticmethod
+            async def extract(request, extraction, *, container, request_cache):
+                return "parent_static"
+
+        class Child(Parent):
+            source = "b3"
+
+            @staticmethod
+            async def extract(request, extraction, *, container, request_cache):
+                return "child_static"
+
+        req = make_request()
+        assert await extract_parameter(req, self._ext("b3", Child)) == "child_static"
+
+    # ------------------------------------------------------------------
+    # F1 — inherited classmethod declares owning_module param; it is forwarded
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_inherited_classmethod_owning_module_forwarded(self):
+        from lauren.extractors import _ExtractorMarker
+
+        received: list = []
+
+        class Parent(_ExtractorMarker):
+            source = "f1"
+
+            @classmethod
+            async def extract(
+                cls,
+                request,
+                extraction,
+                *,
+                container,
+                request_cache,
+                owning_module=None,
+            ):
+                received.append(owning_module)
+                return "f1_ok"
+
+        class Child(Parent):
+            source = "f1"
+
+        sentinel = object()
+        req = make_request()
+        await extract_parameter(req, self._ext("f1", Child), owning_module=sentinel)
+        assert received == [sentinel]
+
+    # ------------------------------------------------------------------
+    # F2 — inherited instance method declares owning_module param; it is forwarded
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_inherited_instance_method_owning_module_forwarded(self):
+        from lauren import injectable
+        from lauren.extractors import _ExtractorMarker
+
+        received: list = []
+
+        @injectable()
+        class Parent(_ExtractorMarker):
+            source = "f2"
+
+            async def extract(self, request, extraction, owning_module=None):
+                received.append(owning_module)
+                return "f2_ok"
+
+        @injectable()
+        class Child(Parent):
+            source = "f2"
+
+        inst = Child()
+        container = self._MockContainer({Child: inst})
+        sentinel = object()
+        req = make_request()
+        await extract_parameter(
+            req,
+            self._ext("f2", Child),
+            container=container,
+            owning_module=sentinel,
+        )
+        assert received == [sentinel]
+
+
 class TestFormExtraction:
     @pytest.mark.asyncio
     async def test_form_basic(self):
