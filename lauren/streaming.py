@@ -41,7 +41,7 @@ from typing import (
 )
 
 from .exceptions import ExtractorError
-from .extractors import _ExtractorMarker
+from .extractors import ExtractionMarker
 
 try:
     import pydantic
@@ -123,7 +123,7 @@ def negotiate_stream_format(
 # ---------------------------------------------------------------------------
 
 
-class Stream(_ExtractorMarker):
+class Stream(ExtractionMarker):
     """Inbound streaming extractor.
 
     Usage::
@@ -331,7 +331,7 @@ def _sse_extract_data(block: bytes) -> bytes:
 class _StreamingResponseMeta(type):
     """Metaclass that makes ``StreamingResponse[T]`` return an Annotated alias.
 
-    This mirrors how :class:`_ExtractorMarker` produces ``Annotated[T, Marker]``
+    This mirrors how :class:`ExtractionMarker` produces ``Annotated[T, Marker]``
     so the runtime can detect the return-type marker on a handler without
     requiring a wrapper at call time.
     """

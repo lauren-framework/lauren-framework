@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING, get_args, get_origin
 
 from ..decorators import OPENAPI_SECURITY_META, ControllerMeta, RouteMeta
-from ..extractors import FieldDescriptor, _Extraction
+from ..extractors import FieldDescriptor, Extraction
 from ..streaming import (
     FORMAT_TO_MEDIA_TYPE,
     discriminator_key,
@@ -204,7 +204,7 @@ def _variant_tag_value(variant: type, key: str | None) -> Any:
 
 
 def _schema_for_extraction(
-    ext: _Extraction, components: dict[str, Any]
+    ext: Extraction, components: dict[str, Any]
 ) -> dict[str, Any]:
     """Build a JSON-Schema fragment describing an extraction's input shape.
 
@@ -244,7 +244,7 @@ _PARAM_LOCATIONS = {
 
 
 def _build_parameter(
-    ext: _Extraction, components: dict[str, Any]
+    ext: Extraction, components: dict[str, Any]
 ) -> dict[str, Any] | None:
     loc = _PARAM_LOCATIONS.get(ext.source)
     if loc is None:
@@ -269,7 +269,7 @@ def _build_parameter(
 
 
 def _build_request_body(
-    ext: _Extraction, components: dict[str, Any]
+    ext: Extraction, components: dict[str, Any]
 ) -> dict[str, Any] | None:
     """Build a ``requestBody`` fragment from a body-reading extraction."""
     if ext.source == "json":

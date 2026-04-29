@@ -13,7 +13,7 @@ Core capabilities
   Protocol binding, multi-bindings, cycle detection.
 * Typed extractors: ``Path[T]``, ``Query[T]``, ``Header[T]``, ``Cookie[T]``,
   ``Json[T]`` (Pydantic), ``Form[T]``, ``Bytes``, ``State``, ``Depends[T]``,
-  plus user-defined extractors via a ``_ExtractorMarker.extract`` classmethod.
+  plus user-defined extractors via a ``ExtractionMarker.extract`` classmethod.
 * Modules with imports / exports and circular-import detection.
 * Lifecycle hooks (``@post_construct``, ``@pre_destruct``) in topological
   order with timeouts.
@@ -143,6 +143,7 @@ from .extractors import (
     Cookie,
     CookieField,
     Depends,
+    ExtractionMarker,
     FieldDescriptor,
     Form,
     Header,
@@ -299,6 +300,7 @@ __all__ = [
     "ShutdownBegin",
     "SignalBus",
     "Depends",
+    "ExtractionMarker",
     "StateExtractor",
     "FieldDescriptor",
     "PathField",

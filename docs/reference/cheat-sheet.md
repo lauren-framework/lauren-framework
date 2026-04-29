@@ -222,14 +222,23 @@ app = LaurenFactory.create(AppModule, global_exception_filters=[DomainErrors])
 ## Custom extractors
 
 ```python
-from lauren.extractors import _ExtractorMarker
+from lauren import DIContainer
+from lauren.extractors import Extraction, ExtractionMarker
 from lauren.exceptions import UnauthorizedError
+from lauren.types import Request
 
-class CurrentUser(_ExtractorMarker):
+class CurrentUser(ExtractionMarker):
     source = "app.current_user"
 
     @classmethod
-    async def extract(cls, request, extraction, *, container, request_cache):
+    async def extract(
+        cls,
+        request: Request,
+        extraction: Extraction,
+        *,
+        container: DIContainer,
+        request_cache: dict[type, object] | None,
+    ) -> object:
         uid = request.state.get("user_id")
         if uid is None:
             raise UnauthorizedError("missing auth")

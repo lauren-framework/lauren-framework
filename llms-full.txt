@@ -660,17 +660,26 @@ Method-level decorators (`@get`, `@post`, etc.) DO propagate through inheritance
 
 ## Custom Extractors (plugin API)
 
-Any subclass of `_ExtractorMarker` with an async `extract` classmethod can participate in handler signatures.
+Any subclass of `ExtractionMarker` with an async `extract` classmethod can participate in handler signatures.
 
 ```python
-from lauren.extractors import _ExtractorMarker
+from lauren import DIContainer
+from lauren.extractors import Extraction, ExtractionMarker
 from lauren.exceptions import UnauthorizedError
+from lauren.types import Request
 
-class CurrentUser(_ExtractorMarker):
+class CurrentUser(ExtractionMarker):
     source = "app.current_user"  # any unique string
 
     @classmethod
-    async def extract(cls, request, extraction, *, container, request_cache):
+    async def extract(
+        cls,
+        request: Request,
+        extraction: Extraction,
+        *,
+        container: DIContainer,
+        request_cache: dict[type, object] | None,
+    ) -> object:
         uid = request.state.get("user_id")
         if uid is None:
             raise UnauthorizedError("missing auth")
@@ -692,7 +701,7 @@ async def me(self, user: CurrentUser) -> dict:
 
 The extractor receives:
 - `request` — the current `Request`
-- `extraction` — an `_Extraction` with `name`, `default`, `has_default`, etc.
+- `extraction` — an `Extraction` with `name`, `default`, `has_default`, etc.
 - `container` — the DI container (use to resolve sessions, services)
 - `request_cache` — the per-request cache; pass it when resolving request-scoped deps.
 
@@ -847,7 +856,7 @@ Lauren's runtime awaits `aclose()` on every request-scoped instance after each r
 ### Pattern: extract the user at the handler level
 
 ```python
-class CurrentUser(_ExtractorMarker):
+class CurrentUser(ExtractionMarker):
     source = "app.current_user"
     @classmethod
     async def extract(cls, request, extraction, *, container, request_cache):
@@ -1563,4 +1572,3 @@ from lauren_guards import (
     basic_auth_challenge_handler,  # @exception_handler adds WWW-Authenticate header
 )
 ```
-

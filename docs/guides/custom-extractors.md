@@ -1,6 +1,6 @@
 # Custom Extractors
 
-> Extractors decompose a request into typed Python values. Lauren ships nine built-ins (`Path`, `Query`, `Header`, `Cookie`, `Json`, `Form`, `Bytes`, `State`, `Depends`); the rest is up to you. A **custom extractor** is any subclass of `_ExtractorMarker` that implements an async `extract` method. Use them as parameter annotations and you've created a typed, reusable, declarative way to pull domain data into your handlers.
+> Extractors decompose a request into typed Python values. Lauren ships nine built-ins (`Path`, `Query`, `Header`, `Cookie`, `Json`, `Form`, `Bytes`, `State`, `Depends`); the rest is up to you. A **custom extractor** is any subclass of `ExtractionMarker` that implements an async `extract` method. Use them as parameter annotations and you've created a typed, reusable, declarative way to pull domain data into your handlers.
 
 ## Why custom extractors?
 
@@ -33,14 +33,23 @@ Lauren supports two forms. Choose the one that fits your extractor's complexity.
 ### Classmethod form
 
 ```python
-from lauren.extractors import _ExtractorMarker
+from lauren import DIContainer
+from lauren.extractors import Extraction, ExtractionMarker
 from lauren.exceptions import UnauthorizedError
+from lauren.types import Request
 
-class CurrentUser(_ExtractorMarker):
+class CurrentUser(ExtractionMarker):
     source = "app.current_user"      # any unique string id (used in errors / logs)
 
     @classmethod
-    async def extract(cls, request, extraction, *, container, request_cache):
+    async def extract(
+        cls,
+        request: Request,
+        extraction: Extraction,
+        *,
+        container: DIContainer,
+        request_cache: dict[type, object] | None,
+    ) -> object:
         uid = request.state.get("user_id")
         if uid is None:
             raise UnauthorizedError("missing auth")
@@ -60,7 +69,7 @@ The classmethod receives:
 | Param | Type | What it is |
 |---|---|---|
 | `request` | `Request` | The current request object. |
-| `extraction` | `_Extraction` | Metadata about the parameter (`name`, `default`, `has_default`, ...). |
+| `extraction` | `Extraction` | Metadata about the parameter (`name`, `default`, `has_default`, ...). |
 | `container` | `DIContainer` | The DI container. Prefer the injectable form for service dependencies; use this only for dynamic/conditional resolution. |
 | `request_cache` | `dict` | Per-request DI cache. Pass to `container.resolve(...)` if you do use it, to avoid creating duplicate request-scoped instances. |
 
@@ -72,17 +81,18 @@ When the extractor needs services injected via the DI container, mark it with `@
 
 ```python
 from lauren import injectable, Scope
-from lauren.extractors import _ExtractorMarker
+from lauren.extractors import Extraction, ExtractionMarker
 from lauren.exceptions import UnauthorizedError
+from lauren.types import Request
 
 @injectable(scope=Scope.SINGLETON)
-class CurrentUser(_ExtractorMarker):
+class CurrentUser(ExtractionMarker):
     source = "app.current_user"
 
     def __init__(self, session: DbSession) -> None:
         self._session = session
 
-    async def extract(self, request, extraction) -> User:
+    async def extract(self, request: Request, extraction: Extraction) -> User:
         uid = request.state.get("user_id")
         if uid is None:
             if extraction.has_default:
@@ -143,21 +153,22 @@ Since this extractor depends on `TenantRepository`, the injectable form is the r
 
 ```python
 from lauren import injectable, Scope
-from lauren.extractors import _ExtractorMarker
+from lauren.extractors import Extraction, ExtractionMarker
 from lauren.exceptions import HTTPError
+from lauren.types import Request
 
 class BadTenantError(HTTPError):
     status_code = 400
     code = "bad_tenant"
 
 @injectable(scope=Scope.SINGLETON)
-class TenantId(_ExtractorMarker):
+class TenantId(ExtractionMarker):
     source = "app.tenant_id"
 
     def __init__(self, repo: TenantRepository) -> None:
         self._repo = repo
 
-    async def extract(self, request, extraction):
+    async def extract(self, request: Request, extraction: Extraction) -> Tenant:
         raw = request.headers.get("x-tenant")
         if not raw:
             raise BadTenantError("missing x-tenant header")
@@ -194,10 +205,17 @@ If the extractor is expensive, lean on the `request_cache`. Lauren passes the sa
 You can also key your own cache off `request.state` if you need finer control:
 
 ```python
-class CurrentUser(_ExtractorMarker):
+class CurrentUser(ExtractionMarker):
     source = "app.current_user"
     @classmethod
-    async def extract(cls, request, extraction, *, container, request_cache):
+    async def extract(
+        cls,
+        request: Request,
+        extraction: Extraction,
+        *,
+        container: DIContainer,
+        request_cache: dict[type, object] | None,
+    ) -> User:
         cached = request.state.get("__current_user")
         if cached is not None:
             return cached
@@ -211,10 +229,17 @@ class CurrentUser(_ExtractorMarker):
 Use the `extraction.has_default` / `extraction.default` to support `: User | None = None` style:
 
 ```python
-class CurrentUser(_ExtractorMarker):
+class CurrentUser(ExtractionMarker):
     source = "app.current_user"
     @classmethod
-    async def extract(cls, request, extraction, *, container, request_cache):
+    async def extract(
+        cls,
+        request: Request,
+        extraction: Extraction,
+        *,
+        container: DIContainer,
+        request_cache: dict[type, object] | None,
+    ) -> User | None:
         uid = request.state.get("user_id")
         if uid is None:
             if extraction.has_default:
@@ -235,10 +260,17 @@ async def search(self, user: CurrentUser | None = None) -> dict: ...  # optional
 If you need a Pydantic-validated body *and* some side-effect, write a small wrapper extractor instead of doing it inline:
 
 ```python
-class IdempotentCreate(_ExtractorMarker):
+class IdempotentCreate(ExtractionMarker):
     source = "app.idempotent_create"
     @classmethod
-    async def extract(cls, request, extraction, *, container, request_cache):
+    async def extract(
+        cls,
+        request: Request,
+        extraction: Extraction,
+        *,
+        container: DIContainer,
+        request_cache: dict[type, object] | None,
+    ) -> tuple[dict, str]:
         key = request.headers.get("idempotency-key")
         if not key:
             raise HTTPError("missing idempotency-key", status_code=400)
@@ -252,10 +284,17 @@ class IdempotentCreate(_ExtractorMarker):
 For large uploads, take the streaming primitives:
 
 ```python
-class CSVRows(_ExtractorMarker):
+class CSVRows(ExtractionMarker):
     source = "app.csv_rows"
     @classmethod
-    async def extract(cls, request, extraction, *, container, request_cache):
+    async def extract(
+        cls,
+        request: Request,
+        extraction: Extraction,
+        *,
+        container: DIContainer,
+        request_cache: dict[type, object] | None,
+    ):
         async def rows():
             buf = b""
             async for chunk in request.stream():
@@ -309,10 +348,10 @@ Custom extractors thrive when each application has a small "extractors" module w
 
 ```python
 # app/extractors.py
-class CurrentUser(_ExtractorMarker): ...
-class TenantId(_ExtractorMarker): ...
-class IdempotencyKey(_ExtractorMarker): ...
-class Pagination(_ExtractorMarker): ...
+class CurrentUser(ExtractionMarker): ...
+class TenantId(ExtractionMarker): ...
+class IdempotencyKey(ExtractionMarker): ...
+class Pagination(ExtractionMarker): ...
 ```
 
 Now any new handler that wants the current user, tenant, idempotency key, or pagination cursor just imports and annotates. No copy-pasted authorization logic. No "did I forget to fetch the user this time?" bugs.

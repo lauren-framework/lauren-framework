@@ -29,8 +29,9 @@ from lauren import (
     post_construct,
 )
 from lauren.exceptions import StartupError, UnauthorizedError
-from lauren.extractors import _ExtractorMarker
+from lauren.extractors import Extraction, ExtractionMarker
 from lauren.testing import TestClient
+from lauren.types import Request
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +58,7 @@ class TokenStore:
 
 
 @injectable(scope=Scope.SINGLETON)
-class BearerPrincipal(_ExtractorMarker):
+class BearerPrincipal(ExtractionMarker):
     """Validate an Authorization: Bearer <token> header via TokenStore."""
 
     source = "bearer_principal"
@@ -65,7 +66,11 @@ class BearerPrincipal(_ExtractorMarker):
     def __init__(self, store: TokenStore) -> None:
         self._store = store
 
-    async def extract(self, request, extraction):
+    async def extract(
+        self,
+        request: Request,
+        extraction: Extraction,
+    ) -> object:
         header = request.headers.get("authorization", "")
         if not header.startswith("Bearer "):
             raise UnauthorizedError("missing or malformed Authorization header")
@@ -80,11 +85,18 @@ class BearerPrincipal(_ExtractorMarker):
 # ---------------------------------------------------------------------------
 
 
-class EchoExtractor(_ExtractorMarker):
+class EchoExtractor(ExtractionMarker):
     source = "echo_marker"
 
     @classmethod
-    async def extract(cls, request, extraction, *, container, request_cache):
+    async def extract(
+        cls,
+        request: Request,
+        extraction: Extraction,
+        *,
+        container: object | None,
+        request_cache: dict[type, object] | None,
+    ) -> object:
         return f"echo:{extraction.name}"
 
 
@@ -201,10 +213,14 @@ class TestStartupValidation:
     """Instance-method extractor without @injectable raises at startup."""
 
     def test_non_injectable_instance_method_raises_startup_error(self):
-        class BadExtractor(_ExtractorMarker):
+        class BadExtractor(ExtractionMarker):
             source = "bad"
 
-            async def extract(self, request, extraction):
+            async def extract(
+                self,
+                request: Request,
+                extraction: Extraction,
+            ) -> object:
                 return "never"
 
         @controller("/bad")
@@ -224,10 +240,14 @@ class TestStartupValidation:
         """Control: @injectable + instance method is valid — no StartupError."""
 
         @injectable()
-        class GoodExtractor(_ExtractorMarker):
+        class GoodExtractor(ExtractionMarker):
             source = "good_ext"
 
-            async def extract(self, request, extraction):
+            async def extract(
+                self,
+                request: Request,
+                extraction: Extraction,
+            ) -> object:
                 return "ok"
 
         @controller("/good")
@@ -250,11 +270,18 @@ class TestStartupValidation:
     def test_classmethod_without_injectable_still_valid(self):
         """@classmethod extractors without @injectable remain valid."""
 
-        class LegacyExtractor(_ExtractorMarker):
+        class LegacyExtractor(ExtractionMarker):
             source = "legacy_ext"
 
             @classmethod
-            async def extract(cls, request, extraction, *, container, request_cache):
+            async def extract(
+                cls,
+                request: Request,
+                extraction: Extraction,
+                *,
+                container: object | None,
+                request_cache: dict[type, object] | None,
+            ) -> object:
                 return "legacy"
 
         @controller("/legacy")
@@ -288,10 +315,14 @@ class TestStartupValidation:
         """Child inherits instance-method extract but @injectable is on parent only."""
 
         @injectable()
-        class Parent(_ExtractorMarker):
+        class Parent(ExtractionMarker):
             source = "e1"
 
-            async def extract(self, request, extraction):
+            async def extract(
+                self,
+                request: Request,
+                extraction: Extraction,
+            ) -> object:
                 return "from_parent"
 
         class Child(Parent):
@@ -315,10 +346,14 @@ class TestStartupValidation:
         """Child re-decorates with @injectable and inherits extract → valid."""
 
         @injectable()
-        class Parent(_ExtractorMarker):
+        class Parent(ExtractionMarker):
             source = "e1_ok"
 
-            async def extract(self, request, extraction):
+            async def extract(
+                self,
+                request: Request,
+                extraction: Extraction,
+            ) -> object:
                 return "from_parent_im"
 
         @injectable()  # explicit re-decoration on Child
@@ -348,10 +383,14 @@ class TestStartupValidation:
         """Grandparent's @injectable does NOT count for Child without re-decoration."""
 
         @injectable()
-        class Grandparent(_ExtractorMarker):
+        class Grandparent(ExtractionMarker):
             source = "e2"
 
-            async def extract(self, request, extraction):
+            async def extract(
+                self,
+                request: Request,
+                extraction: Extraction,
+            ) -> object:
                 return "grandparent"
 
         class Parent(Grandparent):
@@ -377,10 +416,14 @@ class TestStartupValidation:
     def test_instance_method_no_injectable_anywhere_in_mro_raises(self):
         """Standalone class with no @injectable anywhere raises at startup."""
 
-        class Standalone(_ExtractorMarker):
+        class Standalone(ExtractionMarker):
             source = "standalone_bad"
 
-            async def extract(self, request, extraction):
+            async def extract(
+                self,
+                request: Request,
+                extraction: Extraction,
+            ) -> object:
                 return "never"
 
         @controller("/sb")
@@ -401,17 +444,28 @@ class TestStartupValidation:
     # ------------------------------------------------------------------
 
     def test_override_classmethod_with_instance_no_injectable_raises(self):
-        class Parent(_ExtractorMarker):
+        class Parent(ExtractionMarker):
             source = "override_bad"
 
             @classmethod
-            async def extract(cls, request, extraction, *, container, request_cache):
+            async def extract(
+                cls,
+                request: Request,
+                extraction: Extraction,
+                *,
+                container: object | None,
+                request_cache: dict[type, object] | None,
+            ) -> object:
                 return "parent_cm"
 
         class Child(Parent):
             source = "override_bad"
 
-            async def extract(self, request, extraction):
+            async def extract(
+                self,
+                request: Request,
+                extraction: Extraction,
+            ) -> object:
                 return "child_im"  # instance method but no @injectable
 
         @controller("/override_bad")
@@ -433,17 +487,28 @@ class TestStartupValidation:
 
     def test_override_instance_method_with_classmethod_no_startup_error(self):
         @injectable()
-        class Parent(_ExtractorMarker):
+        class Parent(ExtractionMarker):
             source = "override_ok"
 
-            async def extract(self, request, extraction):
+            async def extract(
+                self,
+                request: Request,
+                extraction: Extraction,
+            ) -> object:
                 return "parent_im"
 
         class Child(Parent):
             source = "override_ok"
 
             @classmethod
-            async def extract(cls, request, extraction, *, container, request_cache):
+            async def extract(
+                cls,
+                request: Request,
+                extraction: Extraction,
+                *,
+                container: object | None,
+                request_cache: dict[type, object] | None,
+            ) -> object:
                 return "child_cm"
 
         @controller("/override_ok")
@@ -466,11 +531,17 @@ class TestStartupValidation:
     # ------------------------------------------------------------------
 
     def test_staticmethod_without_injectable_no_startup_error(self):
-        class StaticExt(_ExtractorMarker):
+        class StaticExt(ExtractionMarker):
             source = "static_valid"
 
             @staticmethod
-            async def extract(request, extraction, *, container, request_cache):
+            async def extract(
+                request: Request,
+                extraction: Extraction,
+                *,
+                container: object | None,
+                request_cache: dict[type, object] | None,
+            ) -> object:
                 return "static_ok"
 
         @controller("/static_valid")
@@ -497,11 +568,18 @@ class TestInheritanceDetectionEndToEnd:
     # ------------------------------------------------------------------
 
     def test_override_classmethod_with_injectable_instance_method(self):
-        class Parent(_ExtractorMarker):
+        class Parent(ExtractionMarker):
             source = "a4_e2e"
 
             @classmethod
-            async def extract(cls, request, extraction, *, container, request_cache):
+            async def extract(
+                cls,
+                request: Request,
+                extraction: Extraction,
+                *,
+                container: object | None,
+                request_cache: dict[type, object] | None,
+            ) -> object:
                 return "parent_cm"
 
         @injectable(scope=Scope.SINGLETON)
@@ -511,7 +589,11 @@ class TestInheritanceDetectionEndToEnd:
             def __init__(self) -> None:
                 self.call_count = 0
 
-            async def extract(self, request, extraction):
+            async def extract(
+                self,
+                request: Request,
+                extraction: Extraction,
+            ) -> object:
                 self.call_count += 1
                 return f"child_im:{self.call_count}"
 
@@ -536,17 +618,28 @@ class TestInheritanceDetectionEndToEnd:
 
     def test_override_instance_method_with_classmethod_end_to_end(self):
         @injectable()
-        class Parent(_ExtractorMarker):
+        class Parent(ExtractionMarker):
             source = "a5_e2e"
 
-            async def extract(self, request, extraction):
+            async def extract(
+                self,
+                request: Request,
+                extraction: Extraction,
+            ) -> object:
                 return "parent_im"
 
         class Child(Parent):
             source = "a5_e2e"
 
             @classmethod
-            async def extract(cls, request, extraction, *, container, request_cache):
+            async def extract(
+                cls,
+                request: Request,
+                extraction: Extraction,
+                *,
+                container: object | None,
+                request_cache: dict[type, object] | None,
+            ) -> object:
                 return "child_cm"
 
         @controller("/a5")
@@ -567,11 +660,18 @@ class TestInheritanceDetectionEndToEnd:
     # ------------------------------------------------------------------
 
     def test_inherited_classmethod_end_to_end(self):
-        class Parent(_ExtractorMarker):
+        class Parent(ExtractionMarker):
             source = "a1_e2e"
 
             @classmethod
-            async def extract(cls, request, extraction, *, container, request_cache):
+            async def extract(
+                cls,
+                request: Request,
+                extraction: Extraction,
+                *,
+                container: object | None,
+                request_cache: dict[type, object] | None,
+            ) -> object:
                 return request.method
 
         class Child(Parent):

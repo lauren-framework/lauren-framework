@@ -10,7 +10,7 @@ Placement rules
 
 * **Extractor markers** (``Path``, ``Query``, ``Header``, ``Cookie``, ``Json``,
   ``Form``, ``Bytes``, ``Depends``, ``State``, and user-defined subclasses of
-  :class:`_ExtractorMarker`) declare the *source* of a parameter's value and
+  :class:`ExtractionMarker`) declare the *source* of a parameter's value and
   must appear in the type annotation. They never appear as defaults.
 
 * **Field descriptors** (``PathField``, ``QueryField``, ``HeaderField``,
@@ -61,7 +61,7 @@ T = TypeVar("T")
 # ---------------------------------------------------------------------------
 
 
-class _ExtractorMarker:
+class ExtractionMarker:
     """Base class for extractor markers.
 
     Built-in markers (``Path``, ``Query``, ``Json``, ...) use the ``source``
@@ -74,11 +74,22 @@ class _ExtractorMarker:
 
     ::
 
-        class CurrentUser(_ExtractorMarker):
+        from lauren import DIContainer
+        from lauren.types import Request
+        from lauren.extractors import Extraction
+
+        class CurrentUser(ExtractionMarker):
             source = "current_user"  # any unique string
 
             @classmethod
-            async def extract(cls, request, extraction, *, container, request_cache):
+            async def extract(
+                cls,
+                request: Request,
+                extraction: Extraction,
+                *,
+                container: DIContainer,
+                request_cache: dict[type, object] | None,
+            ) -> object:
                 # manually resolve deps from the container when needed
                 repo = await container.resolve(UserRepository, request_cache=request_cache)
                 ...
@@ -91,15 +102,21 @@ class _ExtractorMarker:
     no manual ``container.resolve()`` calls inside ``extract``::
 
         from lauren import injectable, Scope
+        from lauren.types import Request
+        from lauren.extractors import Extraction
 
         @injectable(scope=Scope.SINGLETON)
-        class CurrentUser(_ExtractorMarker):
+        class CurrentUser(ExtractionMarker):
             source = "current_user"
 
             def __init__(self, repo: UserRepository) -> None:
                 self._repo = repo
 
-            async def extract(self, request, extraction):
+            async def extract(
+                self,
+                request: Request,
+                extraction: Extraction,
+            ) -> object:
                 # deps are already available via self._repo
                 ...
 
@@ -126,41 +143,41 @@ class _ExtractorMarker:
     # ------------------------------------------------------------------
 
 
-class Path(_ExtractorMarker):
+class Path(ExtractionMarker):
     source = "path"
 
 
-class Query(_ExtractorMarker):
+class Query(ExtractionMarker):
     source = "query"
 
 
-class Header(_ExtractorMarker):
+class Header(ExtractionMarker):
     source = "header"
 
 
-class Cookie(_ExtractorMarker):
+class Cookie(ExtractionMarker):
     source = "cookie"
 
 
-class Json(_ExtractorMarker):
+class Json(ExtractionMarker):
     source = "json"
     reads_body = True
 
 
-class Form(_ExtractorMarker):
+class Form(ExtractionMarker):
     source = "form"
     reads_body = True
 
 
-class State(_ExtractorMarker):
+class State(ExtractionMarker):
     source = "state"
 
 
-class Depends(_ExtractorMarker):
+class Depends(ExtractionMarker):
     source = "depends"
 
 
-class Bytes(_ExtractorMarker):
+class Bytes(ExtractionMarker):
     """Raw bytes body extractor.
 
     Use as ``body: Bytes`` — no type parameter required.
@@ -176,7 +193,7 @@ class Bytes(_ExtractorMarker):
     reads_body = True
 
 
-class UploadFile(_ExtractorMarker):
+class UploadFile(ExtractionMarker):
     """Multipart file upload extractor — FastAPI-compatible ergonomics.
 
     Declare a handler parameter as ``file: UploadFile`` and the
@@ -222,7 +239,7 @@ class UploadFile(_ExtractorMarker):
     reads_body = True
 
 
-class ByteStream(_ExtractorMarker):
+class ByteStream(ExtractionMarker):
     """Zero-copy streaming body extractor.
 
     Use as ``body: ByteStream`` — the handler receives a
@@ -526,7 +543,7 @@ class _ParamSpec:
     pipe callables (each of which carries ``__lauren_pipe__``). Accepted
     anywhere a ``FieldDescriptor`` default would be; the compiler
     (:func:`_compile_handler_signature`) pulls the pieces out and attaches
-    them to the :class:`_Extraction`.
+    them to the :class:`Extraction`.
     """
 
     field_descriptor: FieldDescriptor | None = None
@@ -583,7 +600,7 @@ class _ParamSpec:
 
 
 @dataclass
-class _Extraction:
+class Extraction:
     """A single parameter extraction step."""
 
     name: str
@@ -664,7 +681,7 @@ def parse_extractor_hint(
 
     Recognised ``Annotated`` metadata items:
 
-    * An :class:`_ExtractorMarker` (class or instance) — picks the source.
+    * An :class:`ExtractionMarker` (class or instance) — picks the source.
     * A :class:`FieldDescriptor` — contributes validation/aliasing.
     * Anything carrying ``__lauren_pipe__`` — appended to the pipe chain
       in declaration order (produced by :func:`pipe` or ``@pipe()``).
@@ -757,7 +774,7 @@ def parse_extractor_hint(
             candidate = extra if isinstance(extra, type) else type(extra)
             if (
                 isinstance(candidate, type)
-                and issubclass(candidate, _ExtractorMarker)
+                and issubclass(candidate, ExtractionMarker)
                 and source is None
             ):
                 source = candidate.source
@@ -800,7 +817,7 @@ def parse_extractor_hint(
                 inner = Annotated[(inner, *preserved_metadata)]  # type: ignore[valid-type]
             return source, inner, reads_body, marker_cls, fd, tuple(pipes)
     # Bare marker class used as type (e.g. ``body: Bytes`` or ``user: CurrentUser``).
-    if isinstance(annotation, type) and issubclass(annotation, _ExtractorMarker):
+    if isinstance(annotation, type) and issubclass(annotation, ExtractionMarker):
         return (
             annotation.source,
             annotation,
@@ -816,7 +833,7 @@ def parse_extractor_hint(
     # matching part rather than returning just the first one.
     if get_origin(annotation) in (list, tuple):
         args = get_args(annotation)
-        if args and isinstance(args[0], type) and issubclass(args[0], _ExtractorMarker):
+        if args and isinstance(args[0], type) and issubclass(args[0], ExtractionMarker):
             marker = args[0]
             return (
                 marker.source,
@@ -963,7 +980,7 @@ def _coerce_scalar(value: str, target: Any) -> Any:
 
 async def _run_pipes(
     value: Any,
-    extraction: _Extraction,
+    extraction: Extraction,
     *,
     request: Request,
     container: Any,
@@ -1071,7 +1088,7 @@ async def _invoke_pipe(target: Any, value: Any, ctx: PipeContext) -> Any:
 
 async def extract_parameter(
     request: Request,
-    extraction: _Extraction,
+    extraction: Extraction,
     *,
     container: Any = None,
     request_cache: dict[type, Any] | None = None,
@@ -1107,7 +1124,7 @@ async def extract_parameter(
 
 async def _extract_raw(
     request: Request,
-    extraction: _Extraction,
+    extraction: Extraction,
     *,
     container: Any = None,
     request_cache: dict[type, Any] | None = None,
@@ -1442,7 +1459,7 @@ async def _parse_multipart_once(request: Request) -> dict[str, list[Any]]:
 
 async def _extract_upload_file(
     request: Request,
-    extraction: _Extraction,
+    extraction: Extraction,
     fd: "FieldDescriptor | None",
     inner: Any,
 ) -> Any:
@@ -1533,6 +1550,7 @@ def _validate_pydantic(data: Any, model: type, field_name: str) -> Any:
 
 
 __all__ = [
+    "ExtractionMarker",
     "Path",
     "Query",
     "Header",
@@ -1557,5 +1575,5 @@ __all__ = [
     "is_pipe",
     "parse_extractor_hint",
     "extract_parameter",
-    "_Extraction",
+    "Extraction",
 ]

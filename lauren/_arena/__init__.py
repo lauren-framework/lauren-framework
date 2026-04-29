@@ -87,7 +87,7 @@ class RequestAllocation:
     framework_values: dict[type, Any] = field(default_factory=dict)
 
     #: kwargs dict handed to the handler. Built by the extractor loop
-    #: from compiled ``_Extraction`` entries.
+    #: from compiled ``Extraction`` entries.
     kwargs: dict[str, Any] = field(default_factory=dict)
 
     #: Working scratch dict for ephemeral mapping needs inside

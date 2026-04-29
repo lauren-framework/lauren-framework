@@ -12,7 +12,7 @@ in :mod:`lauren.websockets` and the ASGI app produced by
    record per gateway.
 
 2. **Typed dispatch plan** — for every ``@on_message("x")`` we inspect
-   the handler's signature once and build an :class:`_Extraction` list
+   the handler's signature once and build an :class:`Extraction` list
    that the request path replays without reflection. The ``body`` /
    ``Json[Model]`` extractor is special-cased to validate through a
    :class:`pydantic.TypeAdapter` so discriminated unions from
@@ -41,7 +41,7 @@ from .exceptions import (
     UnresolvableParameterError,
 )
 from .extractors import (
-    _Extraction,
+    Extraction,
     _ParamSpec,
     FieldDescriptor,
     extract_parameter,
@@ -95,7 +95,7 @@ class CompiledMessage:
 
     event: str
     handler_fn: Callable[..., Any]
-    extractions: tuple[_Extraction, ...]
+    extractions: tuple[Extraction, ...]
     message_meta: WsMessageMeta
     #: Pydantic :class:`TypeAdapter` built for the handler's ``body``
     #: extractor inner type (if any). ``None`` when the handler doesn't
@@ -118,11 +118,11 @@ class CompiledGateway:
     controller_meta: WsControllerMeta
     owning_module: type | None
     on_connect: Callable[..., Any] | None
-    on_connect_extractions: tuple[_Extraction, ...]
+    on_connect_extractions: tuple[Extraction, ...]
     on_disconnect: Callable[..., Any] | None
-    on_disconnect_extractions: tuple[_Extraction, ...]
+    on_disconnect_extractions: tuple[Extraction, ...]
     on_error: Callable[..., Any] | None
-    on_error_extractions: tuple[_Extraction, ...] = ()
+    on_error_extractions: tuple[Extraction, ...] = ()
     messages: dict[str, CompiledMessage] = field(default_factory=dict)
     #: All message metas in declaration order — preserved so AsyncAPI
     #: generators can enumerate every declared event even when several
@@ -186,7 +186,7 @@ def compile_gateways(
         # Compile @on_connect / @on_disconnect signatures. They share
         # the same extractor plan as HTTP handlers with one addition:
         # ``ws: WebSocket`` is auto-resolved by the dispatcher.
-        on_connect_ext: tuple[_Extraction, ...] = ()
+        on_connect_ext: tuple[Extraction, ...] = ()
         if hooks["on_connect"] is not None:
             on_connect_ext = _compile_ws_signature(
                 cls,
@@ -196,7 +196,7 @@ def compile_gateways(
                 owning_module=owning_module,
                 is_message_handler=False,
             )
-        on_disconnect_ext: tuple[_Extraction, ...] = ()
+        on_disconnect_ext: tuple[Extraction, ...] = ()
         if hooks["on_disconnect"] is not None:
             on_disconnect_ext = _compile_ws_signature(
                 cls,
@@ -210,7 +210,7 @@ def compile_gateways(
         # Compile @on_error if declared. Its signature is the same as
         # @on_message minus the payload parameter — the raised exception
         # arrives via the ``ws_error`` pseudo-source.
-        on_error_extractions: tuple[_Extraction, ...] = ()
+        on_error_extractions: tuple[Extraction, ...] = ()
         if hooks["on_error"] is not None:
             on_error_extractions = _compile_ws_signature(
                 cls,
@@ -375,7 +375,7 @@ def _compile_ws_signature(
     is_message_handler: bool,
     is_error_handler: bool = False,
     is_binary_handler: bool = False,
-) -> tuple[_Extraction, ...]:
+) -> tuple[Extraction, ...]:
     """Build the extraction plan for a WebSocket hook method.
 
     Parameter handling rules (in order of precedence):
@@ -390,7 +390,7 @@ def _compile_ws_signature(
     5. Type matches a registered DI provider — resolved via ``depends``.
     6. Nothing else fits — :class:`UnresolvableParameterError`.
 
-    The same :class:`_Extraction` dataclass is reused so
+    The same :class:`Extraction` dataclass is reused so
     :func:`extract_parameter` handles actual value production; we just
     tag WebSocket-only sources (``"websocket"``) that ``_extract_raw``
     doesn't know about and resolve them ourselves in
@@ -401,7 +401,7 @@ def _compile_ws_signature(
         hints = _inspect.get_annotations(fn, eval_str=True)
     except Exception:
         hints = {}
-    extractions: list[_Extraction] = []
+    extractions: list[Extraction] = []
 
     # Both ``self`` (instance methods) and ``cls`` (classmethods) are
     # skipped; the dispatcher wires them in based on binding style.
@@ -422,7 +422,7 @@ def _compile_ws_signature(
         # Rule 2: the live WebSocket connection.
         if ann is WebSocket or (isinstance(ann, type) and issubclass(ann, WebSocket)):
             extractions.append(
-                _Extraction(
+                Extraction(
                     name=name,
                     source="websocket",
                     inner_type=ann,
@@ -438,7 +438,7 @@ def _compile_ws_signature(
         # forwards it via the ``ws_error`` pseudo-source.
         if is_error_handler and name in ("error", "exc", "exception"):
             extractions.append(
-                _Extraction(
+                Extraction(
                     name=name,
                     source="ws_error",
                     inner_type=ann
@@ -458,7 +458,7 @@ def _compile_ws_signature(
         # the binary path.
         if is_binary_handler and (ann is bytes or ann is bytearray):
             extractions.append(
-                _Extraction(
+                Extraction(
                     name=name,
                     source="ws_binary",
                     inner_type=ann,
@@ -493,7 +493,7 @@ def _compile_ws_signature(
         if source is None and name in path_param_names:
             inner_type = ann if ann is not _inspect.Parameter.empty else str
             extractions.append(
-                _Extraction(
+                Extraction(
                     name=name,
                     source="path",
                     inner_type=inner_type,
@@ -507,7 +507,7 @@ def _compile_ws_signature(
         # Rule 4: declared extractor marker — trust the parser.
         if source is not None:
             extractions.append(
-                _Extraction(
+                Extraction(
                     name=name,
                     source=source,
                     inner_type=inner,
@@ -528,7 +528,7 @@ def _compile_ws_signature(
             isinstance(ann, type) or (callable(ann) and not isinstance(ann, type))
         ) and container.has_provider(ann, owning_module=owning_module):
             extractions.append(
-                _Extraction(
+                Extraction(
                     name=name,
                     source="depends",
                     inner_type=ann,
@@ -553,7 +553,7 @@ def _compile_ws_signature(
 
 
 def _find_payload_adapter(
-    extractions: tuple[_Extraction, ...],
+    extractions: tuple[Extraction, ...],
     *,
     binary: bool,
 ) -> tuple[str | None, Any]:
@@ -657,7 +657,7 @@ async def handle_websocket(
 
     async def _run_hook(
         fn: Callable[..., Any] | None,
-        extractions: tuple[_Extraction, ...],
+        extractions: tuple[Extraction, ...],
         *,
         extra_values: dict[str, Any] | None = None,
     ) -> Any:
@@ -957,7 +957,7 @@ async def _finalize_scope(
 
 async def _bind_ws_kwargs(
     ws: WebSocket,
-    extractions: tuple[_Extraction, ...],
+    extractions: tuple[Extraction, ...],
     container: DIContainer,
     request_cache: dict[type, Any],
     owning_module: type | None,

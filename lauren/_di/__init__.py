@@ -1749,7 +1749,7 @@ def _looks_injectable(ann: Any) -> bool:
       injection. These arrive here wrapped in
       ``Annotated[T, Depends]``; we unwrap and recurse so the inner
       type is inspected on its own terms.
-    * Other ``_ExtractorMarker`` subclasses attached via ``Annotated``
+    * Other ``ExtractionMarker`` subclasses attached via ``Annotated``
       (``Path[int]``, ``Header[str]``, ...) — accepted on field level
       for symmetry with handler-parameter extractors.
 
@@ -1817,12 +1817,12 @@ def _is_extractor_marker(obj: Any) -> bool:
     import path).
     """
     try:
-        from ..extractors import _ExtractorMarker
+        from ..extractors import ExtractionMarker
     except Exception:  # pragma: no cover - defensive
         return False
-    if isinstance(obj, type) and issubclass(obj, _ExtractorMarker):
+    if isinstance(obj, type) and issubclass(obj, ExtractionMarker):
         return True
-    if isinstance(obj, _ExtractorMarker):
+    if isinstance(obj, ExtractionMarker):
         return True
     return False
 

@@ -54,7 +54,7 @@ from ..exceptions import (
 )
 from ..extractors import (
     FieldDescriptor,
-    _Extraction,
+    Extraction,
     _ParamSpec,
     _is_pydantic_model_type,
     _is_implicit_query_type,
@@ -101,7 +101,7 @@ class CompiledHandler:
     handler_fn: Callable[..., Any]
     route_meta: RouteMeta
     path_template: str
-    extractions: tuple[_Extraction, ...]
+    extractions: tuple[Extraction, ...]
     middleware_chain: tuple[type, ...]
     guards: tuple[type, ...]
     metadata: dict[str, Any]
@@ -134,7 +134,7 @@ def _compile_handler_signature(
     container: DIContainer,
     path_param_names: set[str] | None = None,
     owning_module: type | None = None,
-) -> tuple[tuple[_Extraction, ...], list[str]]:
+) -> tuple[tuple[Extraction, ...], list[str]]:
     """Introspect a handler and produce its extraction plan.
 
     Handles three metadata-placement styles and combines them:
@@ -152,7 +152,7 @@ def _compile_handler_signature(
     sig = inspect.signature(fn)
     hints = _safe_type_hints(fn)
     path_param_names = path_param_names or set()
-    extractions: list[_Extraction] = []
+    extractions: list[Extraction] = []
     param_names: list[str] = []
     # Classmethod handlers have ``cls`` as their first argument — skip it
     # along with ``self`` so the DI plan starts at the first user
@@ -221,7 +221,7 @@ def _compile_handler_signature(
         if source is None and name in path_param_names:
             inner_type = ann if ann is not inspect.Parameter.empty else str
             extractions.append(
-                _Extraction(
+                Extraction(
                     name=name,
                     source="path",
                     inner_type=inner_type,
@@ -237,7 +237,7 @@ def _compile_handler_signature(
             # Could be Request or app-state / DI dep
             if ann is Request or (isinstance(ann, type) and issubclass(ann, Request)):
                 extractions.append(
-                    _Extraction(
+                    Extraction(
                         name=name,
                         source="request",
                         inner_type=ann,
@@ -269,7 +269,7 @@ def _compile_handler_signature(
                 inject_token, owning_module=owning_module
             ):
                 extractions.append(
-                    _Extraction(
+                    Extraction(
                         name=name,
                         source="depends",
                         inner_type=inject_token,
@@ -292,7 +292,7 @@ def _compile_handler_signature(
                 ann, owning_module=owning_module
             ):
                 extractions.append(
-                    _Extraction(
+                    Extraction(
                         name=name,
                         source="depends",
                         inner_type=ann,
@@ -330,7 +330,7 @@ def _compile_handler_signature(
                 # model type (not Optional[Model]) when calling _validate_json.
                 body_inner, _ = _peel_optional(ann)
                 extractions.append(
-                    _Extraction(
+                    Extraction(
                         name=name,
                         source="json",
                         inner_type=body_inner,
@@ -346,7 +346,7 @@ def _compile_handler_signature(
             if _is_implicit_query_type(ann):
                 inner_type = ann
                 extractions.append(
-                    _Extraction(
+                    Extraction(
                         name=name,
                         source="query",
                         inner_type=inner_type,
@@ -370,7 +370,7 @@ def _compile_handler_signature(
                 },
             )
         extractions.append(
-            _Extraction(
+            Extraction(
                 name=name,
                 source=source,
                 inner_type=inner,
