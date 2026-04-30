@@ -480,15 +480,20 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             # Feature 7 — vendor extension telling OpenAPI tooling this
             # operation yields a structured, typed stream.
             op["x-streaming"] = True
-        if app_global_guards:
-            guard_sec = _collect_guard_security(app_global_guards)
+        
+        # Calculates the OpenAPI `security` requirements for this operation by inspecting
+        # the compiled handler's guards and the app's global guards. Resolution rules:
+        # * Guards without `@openapi_security` metadata are ignored.
+        # * A single decorated guard → its requirements are returned verbatim (preserving OR semantics
+        #   e.g. `[{"BearerAuth": []}, {"ApiKey": []}]`).
+        if compiled is not None and compiled.guards:
+            guard_sec = _collect_guard_security(compiled.guards)
             if guard_sec is not None:
                 op["security"] = guard_sec
         elif ctrl_meta.security:
-            # Explicit @controller(security=[...]) always takes precedence.
             op["security"] = [dict(s) for s in ctrl_meta.security]
-        elif compiled is not None and compiled.guards:
-            guard_sec = _collect_guard_security(compiled.guards)
+        elif app_global_guards:
+            guard_sec = _collect_guard_security(app_global_guards)
             if guard_sec is not None:
                 op["security"] = guard_sec
 
