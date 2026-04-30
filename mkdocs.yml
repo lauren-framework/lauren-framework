@@ -127,6 +127,8 @@ nav:
     - Circular Module Imports: guides/circular-module-imports.md
     - OpenAPI Security from Guards: guides/openapi-security.md
     - Proxy & Static Files: guides/proxy-and-static-files.md
+  - Concepts:
+    - Extractors vs Dependencies vs Guards vs Middlewares: concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md
   - Comparisons:
     - comparisons/index.md
     - vs FastAPI, Litestar & BlackSheep: comparisons/python-frameworks.md

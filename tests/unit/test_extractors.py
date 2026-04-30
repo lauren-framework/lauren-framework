@@ -19,7 +19,7 @@ from lauren.extractors import (
     extract_parameter,
     parse_extractor_hint,
 )
-from lauren.types import Headers, Request
+from lauren.types import ExecutionContext, Headers, Request
 
 
 def make_request(
@@ -448,7 +448,7 @@ class TestInjectableExtractor:
 
     @pytest.mark.asyncio
     async def test_injectable_instance_method_called(self):
-        """@injectable extractor with instance method receives no container."""
+        """@injectable extractor receives (ExecutionContext, Extraction)."""
         from lauren import injectable
         from lauren.extractors import ExtractionMarker
 
@@ -461,15 +461,19 @@ class TestInjectableExtractor:
 
             async def extract(
                 self,
-                request: Request,
+                execution_context: ExecutionContext,
                 extraction: Extraction,
             ) -> object:
-                return f"{self._prefix}:{extraction.name}:{request.method}"
+                return (
+                    f"{self._prefix}:{extraction.name}"
+                    f":{execution_context.request.method}"
+                )
 
         instance = HeaderEcho(prefix="test")
         container = self._MockContainer({HeaderEcho: instance})
 
         req = make_request(method="DELETE")
+        ctx = ExecutionContext(request=req)
         ext = Extraction(
             name="x",
             source="header_echo",
@@ -479,7 +483,9 @@ class TestInjectableExtractor:
             has_default=False,
             marker_cls=HeaderEcho,
         )
-        value = await extract_parameter(req, ext, container=container)
+        value = await extract_parameter(
+            req, ext, container=container, execution_context=ctx
+        )
         assert value == "test:x:DELETE"
 
     @pytest.mark.asyncio
@@ -1111,15 +1117,16 @@ class TestExtractMethodDetectionInheritance:
         assert received == [sentinel]
 
     # ------------------------------------------------------------------
-    # F2 — inherited instance method declares owning_module param; it is forwarded
+    # F2 — inherited instance method receives ExecutionContext correctly
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_inherited_instance_method_owning_module_forwarded(self):
+    async def test_inherited_instance_method_receives_execution_context(self):
+        """ExecutionContext is passed as the first arg to inherited instance methods."""
         from lauren import injectable
         from lauren.extractors import ExtractionMarker
 
-        received: list = []
+        received_ctxs: list = []
 
         @injectable()
         class Parent(ExtractionMarker):
@@ -1127,11 +1134,10 @@ class TestExtractMethodDetectionInheritance:
 
             async def extract(
                 self,
-                request: Request,
+                execution_context: ExecutionContext,
                 extraction: Extraction,
-                owning_module: type | None = None,
             ) -> object:
-                received.append(owning_module)
+                received_ctxs.append(execution_context)
                 return "f2_ok"
 
         @injectable()
@@ -1140,15 +1146,216 @@ class TestExtractMethodDetectionInheritance:
 
         inst = Child()
         container = self._MockContainer({Child: inst})
-        sentinel = object()
-        req = make_request()
+        req = make_request(method="PATCH")
+        ctx = ExecutionContext(request=req, route_template="/f2/{id}")
         await extract_parameter(
             req,
             self._ext("f2", Child),
             container=container,
-            owning_module=sentinel,
+            execution_context=ctx,
         )
-        assert received == [sentinel]
+        assert len(received_ctxs) == 1
+        assert received_ctxs[0] is ctx
+        assert received_ctxs[0].request.method == "PATCH"
+        assert received_ctxs[0].route_template == "/f2/{id}"
+
+
+class TestUnifiedExtractorSignature:
+    """Unit tests for the canonical extract(self, execution_context, extraction) API.
+
+    Covers:
+    - Non-injectable extractors (no-arg, process-wide cache)
+    - Injectable extractors with the new unified signature
+    - ExecutionContext fields are propagated correctly
+    - Error handling for both forms
+    """
+
+    def _ext(self, source: str, marker_cls) -> Extraction:
+        return Extraction(
+            name="v",
+            source=source,
+            inner_type=str,
+            field_descriptor=None,
+            default=None,
+            has_default=False,
+            marker_cls=marker_cls,
+        )
+
+    # ------------------------------------------------------------------
+    # Non-injectable instance-method extractor (no-arg cache)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_non_injectable_extractor_works(self):
+        """Instance-method extractor without @injectable is instantiated no-arg."""
+        from lauren.extractors import ExtractionMarker
+
+        class Echo(ExtractionMarker):
+            source = "echo_plain"
+
+            async def extract(
+                self,
+                execution_context: ExecutionContext,
+                extraction: Extraction,
+            ) -> object:
+                return f"echo:{extraction.name}"
+
+        req = make_request()
+        assert await extract_parameter(req, self._ext("echo_plain", Echo)) == "echo:v"
+
+    @pytest.mark.asyncio
+    async def test_non_injectable_extractor_same_instance_reused(self):
+        """Non-injectable extractors reuse the same process-wide instance."""
+        from lauren.extractors import ExtractionMarker, _EXTRACTOR_INSTANCE_CACHE
+
+        class CallCounter(ExtractionMarker):
+            source = "call_counter"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def extract(
+                self,
+                execution_context: ExecutionContext,
+                extraction: Extraction,
+            ) -> object:
+                self.calls += 1
+                return self.calls
+
+        # Clear cache in case a prior test left a stale entry
+        _EXTRACTOR_INSTANCE_CACHE.pop(CallCounter, None)
+
+        req = make_request()
+        ext = self._ext("call_counter", CallCounter)
+        v1 = await extract_parameter(req, ext)
+        v2 = await extract_parameter(req, ext)
+        assert v1 == 1
+        assert v2 == 2  # same instance, counter persisted
+
+    @pytest.mark.asyncio
+    async def test_non_injectable_extractor_httperror_propagates(self):
+        """HTTPErrors from non-injectable extractors bubble up unchanged."""
+        from lauren.exceptions import UnauthorizedError
+        from lauren.extractors import ExtractionMarker
+
+        class AlwaysDeny(ExtractionMarker):
+            source = "always_deny"
+
+            async def extract(
+                self,
+                execution_context: ExecutionContext,
+                extraction: Extraction,
+            ) -> object:
+                raise UnauthorizedError("denied")
+
+        req = make_request()
+        with pytest.raises(UnauthorizedError):
+            await extract_parameter(req, self._ext("always_deny", AlwaysDeny))
+
+    # ------------------------------------------------------------------
+    # ExecutionContext fields received correctly
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_execution_context_fields_propagated(self):
+        """ExecutionContext is passed as the first arg with all fields intact."""
+        from lauren.extractors import ExtractionMarker
+
+        captured: list = []
+
+        class CtxCapture(ExtractionMarker):
+            source = "ctx_capture"
+
+            async def extract(
+                self,
+                execution_context: ExecutionContext,
+                extraction: Extraction,
+            ) -> object:
+                captured.append(execution_context)
+                return "ok"
+
+        sentinel_handler = lambda: None  # noqa: E731
+        req = make_request(method="POST")
+        ctx = ExecutionContext(
+            request=req,
+            handler_class=object,
+            handler_func=sentinel_handler,
+            route_template="/items/{id}",
+        )
+        await extract_parameter(
+            req,
+            self._ext("ctx_capture", CtxCapture),
+            execution_context=ctx,
+        )
+        assert len(captured) == 1
+        assert captured[0] is ctx
+        assert captured[0].request is req
+        assert captured[0].handler_class is object
+        assert captured[0].handler_func is sentinel_handler
+        assert captured[0].route_template == "/items/{id}"
+
+    @pytest.mark.asyncio
+    async def test_injectable_extractor_receives_execution_context(self):
+        """@injectable extractor also receives ExecutionContext as first arg."""
+        from lauren import injectable
+        from lauren.extractors import ExtractionMarker
+
+        class _MockContainer:
+            def __init__(self, inst):
+                self._inst = inst
+
+            async def resolve(self, token, **_):
+                return self._inst
+
+        captured: list = []
+
+        @injectable()
+        class InjectableCapture(ExtractionMarker):
+            source = "inj_capture"
+
+            async def extract(
+                self,
+                execution_context: ExecutionContext,
+                extraction: Extraction,
+            ) -> object:
+                captured.append(execution_context)
+                return "inj_ok"
+
+        inst = InjectableCapture()
+        container = _MockContainer(inst)
+        req = make_request()
+        ctx = ExecutionContext(request=req, route_template="/inj/{x}")
+        await extract_parameter(
+            req,
+            self._ext("inj_capture", InjectableCapture),
+            container=container,
+            execution_context=ctx,
+        )
+        assert captured[0].route_template == "/inj/{x}"
+
+    @pytest.mark.asyncio
+    async def test_execution_context_none_does_not_crash_for_classmethods(self):
+        """Classmethod extractors are unaffected when execution_context is None."""
+        from lauren.extractors import ExtractionMarker
+
+        class CM(ExtractionMarker):
+            source = "cm_no_ctx"
+
+            @classmethod
+            async def extract(
+                cls,
+                request: Request,
+                extraction: Extraction,
+                *,
+                container: object | None,
+                request_cache: object | None,
+            ) -> object:
+                return request.method
+
+        req = make_request(method="PATCH")
+        # No execution_context passed — classmethod path ignores it
+        result = await extract_parameter(req, self._ext("cm_no_ctx", CM))
+        assert result == "PATCH"
 
 
 class TestFormExtraction:

@@ -28,10 +28,10 @@ from lauren import (
     post,
     post_construct,
 )
-from lauren.exceptions import StartupError, UnauthorizedError
+from lauren.exceptions import UnauthorizedError
 from lauren.extractors import Extraction, ExtractionMarker
 from lauren.testing import TestClient
-from lauren.types import Request
+from lauren.types import ExecutionContext, Request
 
 
 # ---------------------------------------------------------------------------
@@ -68,10 +68,10 @@ class BearerPrincipal(ExtractionMarker):
 
     async def extract(
         self,
-        request: Request,
+        execution_context: ExecutionContext,
         extraction: Extraction,
     ) -> object:
-        header = request.headers.get("authorization", "")
+        header = execution_context.request.headers.get("authorization", "")
         if not header.startswith("Bearer "):
             raise UnauthorizedError("missing or malformed Authorization header")
         token = header[len("Bearer ") :]
@@ -210,34 +210,38 @@ class TestInjectablePipeEndToEnd:
 
 
 class TestStartupValidation:
-    """Instance-method extractor without @injectable raises at startup."""
+    """Startup validation: classmethod backward compat, injectable rules."""
 
-    def test_non_injectable_instance_method_raises_startup_error(self):
-        class BadExtractor(ExtractionMarker):
-            source = "bad"
+    def test_non_injectable_instance_method_valid(self):
+        """Non-injectable instance-method extractors start up and handle requests."""
+
+        class SimpleExtractor(ExtractionMarker):
+            source = "simple_ni"
 
             async def extract(
                 self,
-                request: Request,
+                execution_context: ExecutionContext,
                 extraction: Extraction,
             ) -> object:
-                return "never"
+                return f"simple:{extraction.name}"
 
-        @controller("/bad")
-        class BadController:
+        @controller("/simple_ni")
+        class SimpleController:
             @get("/")
-            async def handler(self, x: BadExtractor) -> Response:
-                return Response.json({})
+            async def handler(self, x: SimpleExtractor) -> Response:
+                return Response.json({"x": x})
 
-        @module(controllers=[BadController])
-        class BadModule:
+        @module(controllers=[SimpleController])
+        class SimpleModule:
             pass
 
-        with pytest.raises(StartupError, match="instance method.*@injectable"):
-            LaurenFactory.create(BadModule)
+        app = LaurenFactory.create(SimpleModule)
+        r = TestClient(app).get("/simple_ni/")
+        assert r.status_code == 200
+        assert r.json()["x"] == "simple:x"
 
-    def test_injectable_instance_method_does_not_raise(self):
-        """Control: @injectable + instance method is valid — no StartupError."""
+    def test_injectable_instance_method_valid(self):
+        """@injectable + instance method is valid — no StartupError."""
 
         @injectable()
         class GoodExtractor(ExtractionMarker):
@@ -245,7 +249,7 @@ class TestStartupValidation:
 
             async def extract(
                 self,
-                request: Request,
+                execution_context: ExecutionContext,
                 extraction: Extraction,
             ) -> object:
                 return "ok"
@@ -260,15 +264,13 @@ class TestStartupValidation:
         class GoodModule:
             pass
 
-        # Should not raise
         app = LaurenFactory.create(GoodModule)
-        client = TestClient(app)
-        r = client.get("/good/")
+        r = TestClient(app).get("/good/")
         assert r.status_code == 200
         assert r.json()["x"] == "ok"
 
     def test_classmethod_without_injectable_still_valid(self):
-        """@classmethod extractors without @injectable remain valid."""
+        """@classmethod extractors without @injectable remain valid (backward compat)."""
 
         class LegacyExtractor(ExtractionMarker):
             source = "legacy_ext"
@@ -294,25 +296,19 @@ class TestStartupValidation:
         class LegacyModule:
             pass
 
-        # Should not raise
         app = LaurenFactory.create(LegacyModule)
-        client = TestClient(app)
-        r = client.get("/legacy/")
+        r = TestClient(app).get("/legacy/")
         assert r.status_code == 200
         assert r.json()["x"] == "legacy"
 
     # ------------------------------------------------------------------
-    # E1 — inherited instance method without @injectable in child's own dict
-    #
-    # Lauren's DI container enforces a strict no-inheritance rule for
-    # @injectable (MetadataInheritanceError).  The extractor startup
-    # validator uses the same __dict__-only check so misconfigurations
-    # are caught at startup rather than producing a confusing 500 at
-    # request time.
+    # E1 — child inherits instance method; parent has @injectable
+    # With the new design, the child itself doesn't need @injectable —
+    # it will be instantiated no-arg via the process-wide cache.
     # ------------------------------------------------------------------
 
-    def test_inherited_instance_method_no_injectable_in_own_dict_raises(self):
-        """Child inherits instance-method extract but @injectable is on parent only."""
+    def test_inherited_instance_method_no_injectable_in_own_dict_valid(self):
+        """Child inherits instance-method extract; no @injectable → no-arg cache."""
 
         @injectable()
         class Parent(ExtractionMarker):
@@ -320,30 +316,32 @@ class TestStartupValidation:
 
             async def extract(
                 self,
-                request: Request,
+                execution_context: ExecutionContext,
                 extraction: Extraction,
             ) -> object:
                 return "from_parent"
 
         class Child(Parent):
             source = "e1"
-            # @injectable is in Parent.__dict__, not Child.__dict__ → StartupError
+            # @injectable only in Parent.__dict__ — Child uses no-arg cache
 
         @controller("/e1")
         class E1Controller:
             @get("/")
             async def handler(self, x: Child) -> Response:
-                return Response.json({})
+                return Response.json({"x": x})
 
         @module(controllers=[E1Controller])
         class E1Module:
             pass
 
-        with pytest.raises(StartupError, match="instance method.*@injectable"):
-            LaurenFactory.create(E1Module)
+        app = LaurenFactory.create(E1Module)
+        r = TestClient(app).get("/e1/")
+        assert r.status_code == 200
+        assert r.json()["x"] == "from_parent"
 
     def test_explicitly_injectable_child_with_inherited_extract_valid(self):
-        """Child re-decorates with @injectable and inherits extract → valid."""
+        """Child re-decorates with @injectable and inherits extract → DI-resolved."""
 
         @injectable()
         class Parent(ExtractionMarker):
@@ -351,12 +349,12 @@ class TestStartupValidation:
 
             async def extract(
                 self,
-                request: Request,
+                execution_context: ExecutionContext,
                 extraction: Extraction,
             ) -> object:
                 return "from_parent_im"
 
-        @injectable()  # explicit re-decoration on Child
+        @injectable()  # explicit re-decoration so DI resolves Child
         class Child(Parent):
             source = "e1_ok"
 
@@ -376,11 +374,11 @@ class TestStartupValidation:
         assert r.json()["x"] == "from_parent_im"
 
     # ------------------------------------------------------------------
-    # E2 — multi-level: child not explicitly @injectable → StartupError
+    # E2 — multi-level: child without @injectable → no-arg cache
     # ------------------------------------------------------------------
 
-    def test_multi_level_inherited_instance_method_no_injectable_raises(self):
-        """Grandparent's @injectable does NOT count for Child without re-decoration."""
+    def test_multi_level_inherited_instance_method_valid(self):
+        """Multi-level inheritance: child without @injectable uses no-arg cache."""
 
         @injectable()
         class Grandparent(ExtractionMarker):
@@ -388,7 +386,7 @@ class TestStartupValidation:
 
             async def extract(
                 self,
-                request: Request,
+                execution_context: ExecutionContext,
                 extraction: Extraction,
             ) -> object:
                 return "grandparent"
@@ -398,54 +396,58 @@ class TestStartupValidation:
 
         class Child(Parent):
             source = "e2"
-            # @injectable only on Grandparent's __dict__, not Child's
+            # No @injectable anywhere in own dict → no-arg cache
 
         @controller("/e2")
         class E2Controller:
             @get("/")
             async def handler(self, x: Child) -> Response:
-                return Response.json({})
+                return Response.json({"x": x})
 
         @module(controllers=[E2Controller])
         class E2Module:
             pass
 
-        with pytest.raises(StartupError, match="instance method.*@injectable"):
-            LaurenFactory.create(E2Module)
+        app = LaurenFactory.create(E2Module)
+        r = TestClient(app).get("/e2/")
+        assert r.status_code == 200
+        assert r.json()["x"] == "grandparent"
 
-    def test_instance_method_no_injectable_anywhere_in_mro_raises(self):
-        """Standalone class with no @injectable anywhere raises at startup."""
+    def test_instance_method_no_injectable_valid(self):
+        """Standalone extractor with no @injectable uses no-arg cache."""
 
         class Standalone(ExtractionMarker):
-            source = "standalone_bad"
+            source = "standalone_ni"
 
             async def extract(
                 self,
-                request: Request,
+                execution_context: ExecutionContext,
                 extraction: Extraction,
             ) -> object:
-                return "never"
+                return "standalone_value"
 
-        @controller("/sb")
+        @controller("/sb_ni")
         class SBController:
             @get("/")
             async def handler(self, x: Standalone) -> Response:
-                return Response.json({})
+                return Response.json({"x": x})
 
         @module(controllers=[SBController])
         class SBModule:
             pass
 
-        with pytest.raises(StartupError, match="instance method.*@injectable"):
-            LaurenFactory.create(SBModule)
+        app = LaurenFactory.create(SBModule)
+        r = TestClient(app).get("/sb_ni/")
+        assert r.status_code == 200
+        assert r.json()["x"] == "standalone_value"
 
     # ------------------------------------------------------------------
-    # Override: classmethod overridden by instance method — no @injectable → error
+    # Override: classmethod overridden by instance method — no @injectable → no-arg cache
     # ------------------------------------------------------------------
 
-    def test_override_classmethod_with_instance_no_injectable_raises(self):
+    def test_override_classmethod_with_instance_valid(self):
         class Parent(ExtractionMarker):
-            source = "override_bad"
+            source = "override_ni"
 
             @classmethod
             async def extract(
@@ -459,30 +461,32 @@ class TestStartupValidation:
                 return "parent_cm"
 
         class Child(Parent):
-            source = "override_bad"
+            source = "override_ni"
 
             async def extract(
                 self,
-                request: Request,
+                execution_context: ExecutionContext,
                 extraction: Extraction,
             ) -> object:
-                return "child_im"  # instance method but no @injectable
+                return "child_im"  # instance method, no @injectable → no-arg cache
 
-        @controller("/override_bad")
+        @controller("/override_ni")
         class OBController:
             @get("/")
             async def handler(self, x: Child) -> Response:
-                return Response.json({})
+                return Response.json({"x": x})
 
         @module(controllers=[OBController])
         class OBModule:
             pass
 
-        with pytest.raises(StartupError, match="instance method.*@injectable"):
-            LaurenFactory.create(OBModule)
+        app = LaurenFactory.create(OBModule)
+        r = TestClient(app).get("/override_ni/")
+        assert r.status_code == 200
+        assert r.json()["x"] == "child_im"
 
     # ------------------------------------------------------------------
-    # Override: instance method overridden by classmethod → no error
+    # Override: instance method overridden by classmethod → classmethod path
     # ------------------------------------------------------------------
 
     def test_override_instance_method_with_classmethod_no_startup_error(self):
@@ -492,7 +496,7 @@ class TestStartupValidation:
 
             async def extract(
                 self,
-                request: Request,
+                execution_context: ExecutionContext,
                 extraction: Extraction,
             ) -> object:
                 return "parent_im"
@@ -591,7 +595,7 @@ class TestInheritanceDetectionEndToEnd:
 
             async def extract(
                 self,
-                request: Request,
+                execution_context: ExecutionContext,
                 extraction: Extraction,
             ) -> object:
                 self.call_count += 1
@@ -623,7 +627,7 @@ class TestInheritanceDetectionEndToEnd:
 
             async def extract(
                 self,
-                request: Request,
+                execution_context: ExecutionContext,
                 extraction: Extraction,
             ) -> object:
                 return "parent_im"
@@ -689,3 +693,166 @@ class TestInheritanceDetectionEndToEnd:
 
         app = LaurenFactory.create(A1Module)
         assert TestClient(app).get("/a1/").json()["method"] == "GET"
+
+
+class TestExecutionContextInExtractors:
+    """Verify that the ExecutionContext passed to extract() carries correct fields.
+
+    The handler info (handler_class, handler_func, route_template, metadata)
+    should be the same as what guards receive — extractors are now first-class
+    participants in the execution pipeline.
+    """
+
+    def test_execution_context_has_request(self):
+        """execution_context.request is the current request object."""
+        received: list[ExecutionContext] = []
+
+        class MethodEcho(ExtractionMarker):
+            source = "method_echo"
+
+            async def extract(
+                self,
+                execution_context: ExecutionContext,
+                extraction: Extraction,
+            ) -> object:
+                received.append(execution_context)
+                return execution_context.request.method
+
+        @controller("/method_echo")
+        class MEController:
+            @get("/")
+            async def handler(self, m: MethodEcho) -> Response:
+                return Response.json({"m": m})
+
+        @module(controllers=[MEController])
+        class MEModule:
+            pass
+
+        app = LaurenFactory.create(MEModule)
+        r = TestClient(app).get("/method_echo/")
+        assert r.json()["m"] == "GET"
+        assert received[0].request.method == "GET"
+
+    def test_execution_context_has_handler_class_and_func(self):
+        """execution_context carries the controller class and handler function."""
+        received: list[ExecutionContext] = []
+
+        class HandlerInfo(ExtractionMarker):
+            source = "handler_info"
+
+            async def extract(
+                self,
+                execution_context: ExecutionContext,
+                extraction: Extraction,
+            ) -> object:
+                received.append(execution_context)
+                return "captured"
+
+        @controller("/hinfo")
+        class HInfoController:
+            @get("/")
+            async def my_handler(self, info: HandlerInfo) -> Response:
+                return Response.json({"info": info})
+
+        @module(controllers=[HInfoController])
+        class HInfoModule:
+            pass
+
+        app = LaurenFactory.create(HInfoModule)
+        TestClient(app).get("/hinfo/")
+        ctx = received[0]
+        assert ctx.handler_class is HInfoController
+        assert ctx.handler_func.__name__ == "my_handler"
+
+    def test_execution_context_has_route_template(self):
+        """execution_context.route_template matches the declared path."""
+        received: list[ExecutionContext] = []
+
+        class TemplateCapture(ExtractionMarker):
+            source = "tpl_capture"
+
+            async def extract(
+                self,
+                execution_context: ExecutionContext,
+                extraction: Extraction,
+            ) -> object:
+                received.append(execution_context)
+                return "ok"
+
+        @controller("/items")
+        class ItemController:
+            @get("/{item_id}")
+            async def get_item(self, info: TemplateCapture) -> Response:
+                return Response.json({"info": info})
+
+        @module(controllers=[ItemController])
+        class ItemModule:
+            pass
+
+        app = LaurenFactory.create(ItemModule)
+        TestClient(app).get("/items/42")
+        assert received[0].route_template == "/items/{item_id}"
+
+    def test_execution_context_has_route_metadata(self):
+        """execution_context.metadata carries handler-level metadata."""
+        from lauren import set_metadata
+
+        MY_KEY = "test.my_meta"
+        received: list[ExecutionContext] = []
+
+        class MetaCapture(ExtractionMarker):
+            source = "meta_capture"
+
+            async def extract(
+                self,
+                execution_context: ExecutionContext,
+                extraction: Extraction,
+            ) -> object:
+                received.append(execution_context)
+                return execution_context.get_metadata(MY_KEY)
+
+        @controller("/meta_test")
+        class MetaController:
+            @get("/")
+            @set_metadata(MY_KEY, "hello-from-meta")
+            async def handler(self, tag: MetaCapture) -> Response:
+                return Response.json({"tag": tag})
+
+        @module(controllers=[MetaController])
+        class MetaModule:
+            pass
+
+        app = LaurenFactory.create(MetaModule)
+        r = TestClient(app).get("/meta_test/")
+        assert r.json()["tag"] == "hello-from-meta"
+
+    def test_injectable_extractor_also_receives_execution_context(self):
+        """@injectable extractors receive ExecutionContext identical to guards."""
+
+        @injectable(scope=Scope.SINGLETON)
+        class RouteAwareExtractor(ExtractionMarker):
+            source = "route_aware"
+
+            async def extract(
+                self,
+                execution_context: ExecutionContext,
+                extraction: Extraction,
+            ) -> object:
+                return execution_context.route_template or "unknown"
+
+        @controller("/route_aware")
+        class RAController:
+            @get("/{slug}")
+            async def handler(self, template: RouteAwareExtractor) -> Response:
+                return Response.json({"template": template})
+
+        @module(
+            providers=[RouteAwareExtractor],
+            controllers=[RAController],
+        )
+        class RAModule:
+            pass
+
+        app = LaurenFactory.create(RAModule)
+        r = TestClient(app).get("/route_aware/hello")
+        assert r.json()["template"] == "/route_aware/{slug}"

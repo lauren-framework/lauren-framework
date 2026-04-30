@@ -1,6 +1,6 @@
 # Custom Extractors
 
-> Extractors decompose a request into typed Python values. Lauren ships nine built-ins (`Path`, `Query`, `Header`, `Cookie`, `Json`, `Form`, `Bytes`, `State`, `Depends`); the rest is up to you. A **custom extractor** is any subclass of `ExtractionMarker` that implements an async `extract` method. Use them as parameter annotations and you've created a typed, reusable, declarative way to pull domain data into your handlers.
+> Extractors decompose a request into typed Python values. Lauren ships nine built-ins (`Path`, `Query`, `Header`, `Cookie`, `Json`, `Form`, `Bytes`, `State`, `Depends`); the rest is up to you. A **custom extractor** is any subclass of `ExtractionMarker` that implements an `extract` method. Use them as parameter annotations and you've created a typed, reusable, declarative way to pull domain data into your handlers.
 
 ## Why custom extractors?
 
@@ -28,112 +28,98 @@ Authorization, repo lookup, error handling — all handled by the extractor, dec
 
 ## Anatomy of a custom extractor
 
-Lauren supports two forms. Choose the one that fits your extractor's complexity.
-
-### Classmethod form
+Every custom extractor subclasses `ExtractionMarker` and overrides `extract`:
 
 ```python
-from lauren import DIContainer
 from lauren.extractors import Extraction, ExtractionMarker
-from lauren.exceptions import UnauthorizedError
-from lauren.types import Request
+from lauren.types import ExecutionContext
 
 class CurrentUser(ExtractionMarker):
-    source = "app.current_user"      # any unique string id (used in errors / logs)
+    source = "app.current_user"   # any unique string id (used in errors / logs)
 
-    @classmethod
     async def extract(
-        cls,
-        request: Request,
+        self,
+        execution_context: ExecutionContext,
         extraction: Extraction,
-        *,
-        container: DIContainer,
-        request_cache: dict[type, object] | None,
-    ) -> object:
-        uid = request.state.get("user_id")
+    ) -> User:
+        uid = execution_context.request.state.get("user_id")
         if uid is None:
-            raise UnauthorizedError("missing auth")
-        session = await container.resolve(
-            DbSession,
-            request_cache=request_cache,
-            framework_values={type(request): request},
-        )
-        user = await session.get(User, uid)
-        if user is None:
-            raise UnauthorizedError("user vanished")
-        return user
+            if extraction.has_default:
+                return extraction.default
+            raise UnauthorizedError("not authenticated")
+        ...
 ```
 
-The classmethod receives:
+The method receives:
 
 | Param | Type | What it is |
 |---|---|---|
-| `request` | `Request` | The current request object. |
-| `extraction` | `Extraction` | Metadata about the parameter (`name`, `default`, `has_default`, ...). |
-| `container` | `DIContainer` | The DI container. Prefer the injectable form for service dependencies; use this only for dynamic/conditional resolution. |
-| `request_cache` | `dict` | Per-request DI cache. Pass to `container.resolve(...)` if you do use it, to avoid creating duplicate request-scoped instances. |
+| `execution_context` | `ExecutionContext` | Full context for the in-flight request: the request object, the matched controller class, the matched handler function, the route template, and any handler-level metadata. |
+| `extraction` | `Extraction` | Metadata about the parameter: `name`, `default`, `has_default`, `inner_type`, etc. |
 
 **Return** the value the handler should receive. **Raise** any `HTTPError` subclass to short-circuit with the matching status.
 
-### Injectable instance-method form
+### `ExecutionContext` reference
 
-When the extractor needs services injected via the DI container, mark it with `@injectable` and write `extract` as a regular instance method. Constructor dependencies are injected automatically — no manual `container.resolve()` calls inside `extract`:
+By the time `extract` runs, the route has already been matched and the handler is known. `ExecutionContext` carries everything extractors and guards need:
+
+| Field | Type | Description |
+|---|---|---|
+| `ctx.request` | `Request` | The current request object. |
+| `ctx.handler_class` | `type \| None` | The controller class (e.g. `UserController`). |
+| `ctx.handler_func` | `Callable \| None` | The handler function (e.g. `get_user`). |
+| `ctx.route_template` | `str \| None` | The declared path template, e.g. `"/users/{id}"`. |
+| `ctx.metadata` | `dict[str, Any]` | Handler-level metadata set by `@set_metadata(...)`. |
+| `ctx.get_metadata(key, default)` | `Any` | Convenience accessor for `ctx.metadata`. |
+
+`ExecutionContext` is the same object guards receive via `can_activate(ctx)`, so extractor code that inspects metadata (e.g. to check a `@public` marker) works identically.
+
+### DI in extractors — `@injectable` is optional
+
+By default the framework instantiates the extractor class **once with no constructor arguments** and reuses that instance across all requests (process-wide cache). This is fine for stateless extractors.
+
+When the extractor needs services, decorate it with `@injectable`:
 
 ```python
 from lauren import injectable, Scope
 from lauren.extractors import Extraction, ExtractionMarker
-from lauren.exceptions import UnauthorizedError
-from lauren.types import Request
+from lauren.types import ExecutionContext
 
-@injectable(scope=Scope.SINGLETON)
+@injectable(scope=Scope.REQUEST)
 class CurrentUser(ExtractionMarker):
     source = "app.current_user"
 
     def __init__(self, session: DbSession) -> None:
         self._session = session
 
-    async def extract(self, request: Request, extraction: Extraction) -> User:
-        uid = request.state.get("user_id")
+    async def extract(
+        self,
+        execution_context: ExecutionContext,
+        extraction: Extraction,
+    ) -> User:
+        uid = execution_context.request.state.get("user_id")
         if uid is None:
             if extraction.has_default:
                 return extraction.default
-            raise UnauthorizedError("missing auth")
+            raise UnauthorizedError("not authenticated")
         user = await self._session.get(User, uid)
         if user is None:
             raise UnauthorizedError("user vanished")
         return user
 ```
 
-The instance method receives only `request` and `extraction` — the same semantics as the classmethod form, but deps come from `__init__`.
+With `@injectable`, the DI container resolves the extractor instance, injecting constructor dependencies automatically. The `extract` method signature stays the same regardless.
 
-**Rules:**
-
-- Declare the extractor in the module's `providers` list so the DI container can resolve it.
-- `@injectable` is **not inherited**. Each subclass must be decorated independently; Lauren raises `StartupError` at startup (not at request time) if an instance-method extractor lacks its own `@injectable`.
-- If the extractor is request-scoped, use `Scope.REQUEST`; for process-wide singletons use `Scope.SINGLETON` (the default).
-
-```python
-@module(
-    providers=[DbSession, CurrentUser],  # extractor must be in providers
-    controllers=[ProfileController],
-)
-class AppModule: ...
-```
-
-#### Choosing between the two forms
-
-| | Classmethod form | Injectable instance-method form |
+| | Stateless (no `@injectable`) | Injectable |
 |---|---|---|
-| **Dependencies** | None, or dynamic/conditional via `container.resolve(...)` | Declared in `__init__`, injected automatically |
-| **Boilerplate** | Minimal for stateless use; verbose when calling `container.resolve()` | None — constructor args declared normally |
-| **Startup check** | No | Yes — missing `@injectable` raises `StartupError` |
-| **When to use** | Stateless extractors (header/state reads, no services needed) | Anything that depends on a service |
-
-> **Rule of thumb:** if your classmethod `extract` calls `container.resolve(...)`, rewrite it as an injectable instead. The only reason to keep `container` in a classmethod is *dynamic* or *conditional* resolution — resolving different types at runtime based on request content — which constructor injection cannot express.
+| **Instance lifecycle** | Created once (no-arg), shared process-wide | Resolved by DI container per scope |
+| **Constructor deps** | None (no-arg `__init__`) | Injected automatically |
+| **`providers` list** | Not required | Must be in module's `providers` |
+| **`@injectable` inheritance** | N/A | Not inherited — re-decorate each subclass |
 
 ## Step-by-step: build a `TenantId` extractor
 
-Suppose your service is multi-tenant and every authenticated request carries an `x-tenant` header. The handler shouldn't care about the header lookup or the validation — it just wants a `TenantId`.
+Suppose your service is multi-tenant and every authenticated request carries an `x-tenant` header. The handler shouldn't care about the header lookup or the validation — it just wants a `Tenant`.
 
 ### Step 1 — model the value type
 
@@ -149,27 +135,31 @@ class Tenant:
 
 ### Step 2 — write the extractor
 
-Since this extractor depends on `TenantRepository`, the injectable form is the right choice:
+Since this extractor depends on `TenantRepository`, mark it with `@injectable`:
 
 ```python
 from lauren import injectable, Scope
 from lauren.extractors import Extraction, ExtractionMarker
 from lauren.exceptions import HTTPError
-from lauren.types import Request
+from lauren.types import ExecutionContext
 
 class BadTenantError(HTTPError):
     status_code = 400
     code = "bad_tenant"
 
-@injectable(scope=Scope.SINGLETON)
+@injectable(scope=Scope.REQUEST)
 class TenantId(ExtractionMarker):
     source = "app.tenant_id"
 
     def __init__(self, repo: TenantRepository) -> None:
         self._repo = repo
 
-    async def extract(self, request: Request, extraction: Extraction) -> Tenant:
-        raw = request.headers.get("x-tenant")
+    async def extract(
+        self,
+        execution_context: ExecutionContext,
+        extraction: Extraction,
+    ) -> Tenant:
+        raw = execution_context.request.headers.get("x-tenant")
         if not raw:
             raise BadTenantError("missing x-tenant header")
         tenant = await self._repo.find(raw)
@@ -198,61 +188,56 @@ That's it. Every handler that takes `tenant: TenantId` gets a fully-validated `T
 
 ## Patterns
 
-### Cached value within a request
-
-If the extractor is expensive, lean on the `request_cache`. Lauren passes the same cache to every extractor in the same request, so two handlers depending on `CurrentUser` end up running the lookup once.
-
-You can also key your own cache off `request.state` if you need finer control:
-
-```python
-class CurrentUser(ExtractionMarker):
-    source = "app.current_user"
-    @classmethod
-    async def extract(
-        cls,
-        request: Request,
-        extraction: Extraction,
-        *,
-        container: DIContainer,
-        request_cache: dict[type, object] | None,
-    ) -> User:
-        cached = request.state.get("__current_user")
-        if cached is not None:
-            return cached
-        # ... resolve once, store on state ...
-        request.state.set("__current_user", user)
-        return user
-```
-
 ### Optional values
 
-Use the `extraction.has_default` / `extraction.default` to support `: User | None = None` style:
+Use `extraction.has_default` / `extraction.default` to support `User | None = None` style:
 
 ```python
 class CurrentUser(ExtractionMarker):
     source = "app.current_user"
-    @classmethod
+
     async def extract(
-        cls,
-        request: Request,
+        self,
+        execution_context: ExecutionContext,
         extraction: Extraction,
-        *,
-        container: DIContainer,
-        request_cache: dict[type, object] | None,
     ) -> User | None:
-        uid = request.state.get("user_id")
+        uid = execution_context.request.state.get("user_id")
         if uid is None:
             if extraction.has_default:
                 return extraction.default
-            raise UnauthorizedError("missing auth")
+            raise UnauthorizedError("not authenticated")
         ...
 ```
 
 Now both work:
 
 ```python
-async def me(self, user: CurrentUser) -> dict: ...                 # required
-async def search(self, user: CurrentUser | None = None) -> dict: ...  # optional
+async def me(self, user: CurrentUser) -> dict: ...                     # required
+async def search(self, user: CurrentUser | None = None) -> dict: ...   # optional
+```
+
+### Reading route metadata
+
+The `execution_context.get_metadata(key)` method lets extractors read handler-level metadata set by `@set_metadata`. This is exactly the same API guards use, so patterns like `@public` extend naturally to extractors:
+
+```python
+from lauren import set_metadata
+
+TENANT_REQUIRED_KEY = "app.tenant_required"
+require_tenant = set_metadata(TENANT_REQUIRED_KEY, True)
+
+class TenantId(ExtractionMarker):
+    source = "app.tenant_id"
+
+    async def extract(
+        self,
+        execution_context: ExecutionContext,
+        extraction: Extraction,
+    ) -> Tenant | None:
+        if not execution_context.get_metadata(TENANT_REQUIRED_KEY):
+            return None   # opt-out route
+        raw = execution_context.request.headers.get("x-tenant")
+        ...
 ```
 
 ### Composing on top of built-in extractors
@@ -262,20 +247,17 @@ If you need a Pydantic-validated body *and* some side-effect, write a small wrap
 ```python
 class IdempotentCreate(ExtractionMarker):
     source = "app.idempotent_create"
-    @classmethod
+
     async def extract(
-        cls,
-        request: Request,
+        self,
+        execution_context: ExecutionContext,
         extraction: Extraction,
-        *,
-        container: DIContainer,
-        request_cache: dict[type, object] | None,
     ) -> tuple[dict, str]:
-        key = request.headers.get("idempotency-key")
+        req = execution_context.request
+        key = req.headers.get("idempotency-key")
         if not key:
             raise HTTPError("missing idempotency-key", status_code=400)
-        # Could check Redis here for a previous response and short-circuit.
-        body = await request.json()
+        body = await req.json()
         return body, key
 ```
 
@@ -286,18 +268,15 @@ For large uploads, take the streaming primitives:
 ```python
 class CSVRows(ExtractionMarker):
     source = "app.csv_rows"
-    @classmethod
+
     async def extract(
-        cls,
-        request: Request,
+        self,
+        execution_context: ExecutionContext,
         extraction: Extraction,
-        *,
-        container: DIContainer,
-        request_cache: dict[type, object] | None,
     ):
         async def rows():
             buf = b""
-            async for chunk in request.stream():
+            async for chunk in execution_context.request.stream():
                 buf += chunk
                 while b"\n" in buf:
                     line, _, buf = buf.partition(b"\n")
@@ -305,7 +284,20 @@ class CSVRows(ExtractionMarker):
         return rows()
 ```
 
-The handler receives an async iterator and can stream over the upload without buffering it all in memory.
+### Legacy classmethod form (backward compat)
+
+If you have an existing extractor that uses the `@classmethod` form with explicit `container` and `request_cache`, it still works unchanged:
+
+```python
+class MyExtractor(ExtractionMarker):
+    source = "my.extractor"
+
+    @classmethod
+    async def extract(cls, request, extraction, *, container, request_cache):
+        ...
+```
+
+New extractors should use the instance-method form documented above.
 
 ## Testing custom extractors
 
@@ -332,19 +324,36 @@ assert r.status_code == 400
 assert r.json()["error"]["detail"]["id"] == "ghost"
 ```
 
+For unit-testing an extractor in isolation, construct an `ExecutionContext` directly:
+
+```python
+import pytest
+from lauren.types import ExecutionContext
+from lauren.testing import make_request   # or any Request factory
+
+async def test_bad_tenant_header():
+    repo = MockTenantRepository(returns=None)
+    extractor = TenantId(repo=repo)
+
+    ctx = ExecutionContext(request=make_request(headers=[("x-tenant", "ghost")]))
+    ext = Extraction(name="tenant", source="app.tenant_id", ...)
+
+    with pytest.raises(BadTenantError):
+        await extractor.extract(ctx, ext)
+```
+
 ## Things to avoid
 
 | Don't... | Because... |
 |---|---|
 | ... use `inspect`, `get_type_hints`, or `typing.get_args` inside `extract()` | The dispatch path is reflection-free. Resolve types at startup, not at request time. |
-| ... store extractor state on the class | Class state is shared across requests — race conditions at scale. Use `request_cache` or `request.state`. |
+| ... store per-request state on `self` in a stateless (non-injectable) extractor | The same instance is shared process-wide. Use `execution_context.request.state` for per-request state. |
 | ... hand-build a `Response` from inside an extractor | Raise an `HTTPError` instead. Extractors produce *values*; middleware/exception-handlers produce responses. |
-| ... resolve request-scoped deps without `request_cache` | They'll be built fresh every time. Always pass `request_cache=request_cache` to `container.resolve(...)`. |
-| ... inherit `@injectable` from a parent extractor | `@injectable` is **not inherited**. The DI container enforces a strict no-inheritance rule; a subclass that uses an instance-method `extract` but lacks its own `@injectable` raises `StartupError` at startup. Re-decorate each subclass explicitly, or use the `@classmethod` form which needs no `@injectable`. |
+| ... inherit `@injectable` from a parent extractor | `@injectable` is **not inherited**. The DI container enforces a strict no-inheritance rule. Re-decorate each subclass with `@injectable`, or keep `extract` stateless so `@injectable` is unnecessary. |
 
 ## Discoverability — making extractors part of your stdlib
 
-Custom extractors thrive when each application has a small "extractors" module with the project's domain-specific decoders:
+Custom extractors thrive when each application has a small `extractors.py` module with the project's domain-specific decoders:
 
 ```python
 # app/extractors.py
@@ -358,6 +367,7 @@ Now any new handler that wants the current user, tenant, idempotency key, or pag
 
 ## See also
 
-* [Core Concepts → Request & Response](../core-concepts/request-response.md) — the `Request` API your `extract` method will use.
-* [Custom Guards](custom-guards.md) — for authorization decisions; extractors are about *parsing*, guards are about *allowing or denying*.
+* [Core Concepts → Request & Response](../core-concepts/request-response.md) — the `Request` API available via `execution_context.request`.
+* [Custom Guards](custom-guards.md) — guards share the same `ExecutionContext`; extractors are about *parsing*, guards are about *allowing or denying*.
 * [Custom Exception Handlers](custom-exception-handlers.md) — pair with extractors to turn raised `HTTPError`s into structured responses.
+* [Extractors vs Dependencies vs Guards vs Middlewares](../concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md) — when to use each tool.

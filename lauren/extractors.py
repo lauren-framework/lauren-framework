@@ -42,7 +42,7 @@ from typing import (
 )
 
 from .exceptions import ExtractorError, ExtractorFieldError, MissingProviderError
-from .types import Request
+from .types import ExecutionContext, Request
 
 try:
     import pydantic
@@ -66,46 +66,39 @@ class ExtractionMarker:
 
     Built-in markers (``Path``, ``Query``, ``Json``, ...) use the ``source``
     attribute for dispatch inside :func:`extract_parameter`. User-defined
-    extractors can instead override the :meth:`extract` classmethod **or**
-    define an instance method combined with ``@injectable`` to plug
-    custom extraction logic without modifying the framework.
+    extractors override the :meth:`extract` instance method to plug custom
+    extraction logic.
 
-    **Classic form — classmethod with explicit container access:**
+    **Canonical form — instance method, DI optional:**
 
     ::
 
-        from lauren import DIContainer
-        from lauren.types import Request
-        from lauren.extractors import Extraction
+        from lauren.extractors import Extraction, ExtractionMarker
+        from lauren.types import ExecutionContext
 
         class CurrentUser(ExtractionMarker):
             source = "current_user"  # any unique string
 
-            @classmethod
             async def extract(
-                cls,
-                request: Request,
+                self,
+                execution_context: ExecutionContext,
                 extraction: Extraction,
-                *,
-                container: DIContainer,
-                request_cache: dict[type, object] | None,
             ) -> object:
-                # manually resolve deps from the container when needed
-                repo = await container.resolve(UserRepository, request_cache=request_cache)
-                ...
+                uid = execution_context.request.state.get("user_id")
+                if uid is None:
+                    raise UnauthorizedError("not authenticated")
+                return uid
 
-    **Injectable form — constructor DI, simpler extract signature:**
-
-    When the marker class is decorated with ``@injectable``, define
-    ``extract`` as a plain instance method. Lauren will resolve the instance
-    via the DI container so all constructor dependencies are available with
-    no manual ``container.resolve()`` calls inside ``extract``::
+    The framework instantiates the extractor once with no arguments and
+    reuses the same instance across requests.  When the extractor needs
+    constructor dependencies, decorate it with ``@injectable`` and the DI
+    container will resolve and inject them::
 
         from lauren import injectable, Scope
-        from lauren.types import Request
-        from lauren.extractors import Extraction
+        from lauren.extractors import Extraction, ExtractionMarker
+        from lauren.types import ExecutionContext
 
-        @injectable(scope=Scope.SINGLETON)
+        @injectable(scope=Scope.REQUEST)
         class CurrentUser(ExtractionMarker):
             source = "current_user"
 
@@ -114,14 +107,28 @@ class ExtractionMarker:
 
             async def extract(
                 self,
-                request: Request,
+                execution_context: ExecutionContext,
                 extraction: Extraction,
             ) -> object:
-                # deps are already available via self._repo
-                ...
+                uid = execution_context.request.state.get("user_id")
+                return await self._repo.get(uid)
 
     The injectable form requires the extractor class to be listed in the
     ``providers=`` of at least one module in the DI graph.
+
+    **Legacy classmethod form (backward compat only):**
+
+    ::
+
+        class MyExtractor(ExtractionMarker):
+            source = "legacy"
+
+            @classmethod
+            async def extract(cls, request, extraction, *, container, request_cache):
+                ...
+
+    The classmethod form is still dispatched correctly but is superseded by
+    the instance method form above.
     """
 
     source: str = "unknown"
@@ -133,10 +140,11 @@ class ExtractionMarker:
         return Annotated[item, cls]  # type: ignore[valid-type]
 
     # ------------------------------------------------------------------
-    # Custom extractor hook. Subclasses may override this as either:
-    #   • a @classmethod — legacy, receives container/request_cache kwargs
-    #   • an instance method — only valid when the class is @injectable;
-    #     constructor deps are resolved by the DI container automatically.
+    # Custom extractor hook. Subclasses may override this as an instance
+    # method (canonical) or a @classmethod (legacy / backward compat).
+    #
+    # Instance method form: extract(self, execution_context, extraction)
+    # Legacy classmethod form: extract(cls, request, extraction, *, container, request_cache)
     #
     # NOTE: intentionally not defined on the base class so that
     # ``hasattr(marker, 'extract')`` reliably distinguishes custom markers.
@@ -1011,6 +1019,10 @@ async def _run_pipes(
 #: because it only grows with the number of distinct pipe classes declared
 #: across the whole application.
 _PIPE_INSTANCE_CACHE: dict[type, Any] = {}
+# Process-wide cache for non-injectable instance-method extractors.
+# Mirrors _PIPE_INSTANCE_CACHE: the extractor class is instantiated once
+# (no-arg constructor) and the same instance is reused across all requests.
+_EXTRACTOR_INSTANCE_CACHE: dict[type, Any] = {}
 
 
 async def _invoke_pipe(target: Any, value: Any, ctx: PipeContext) -> Any:
@@ -1093,12 +1105,18 @@ async def extract_parameter(
     container: Any = None,
     request_cache: dict[type, Any] | None = None,
     owning_module: type | None = None,
+    execution_context: ExecutionContext | None = None,
 ) -> Any:
     """Execute a single extraction. Raises :class:`ExtractorError` on failure.
 
     ``owning_module`` is the module class that declared the controller whose
     endpoint is being invoked. It is forwarded to the DI container so that
     ``Depends[X]`` resolution honours module visibility.
+
+    ``execution_context`` is the :class:`~lauren.types.ExecutionContext`
+    built for the current request.  It is passed to instance-method
+    extractors as their first positional argument, giving them access to
+    the request, matched handler, route template, and route metadata.
 
     After the source-specific extraction (and any ``FieldDescriptor``
     validation) the value flows through every pipe on the extraction, in
@@ -1111,6 +1129,7 @@ async def extract_parameter(
         container=container,
         request_cache=request_cache,
         owning_module=owning_module,
+        execution_context=execution_context,
     )
     return await _run_pipes(
         value,
@@ -1129,6 +1148,7 @@ async def _extract_raw(
     container: Any = None,
     request_cache: dict[type, Any] | None = None,
     owning_module: type | None = None,
+    execution_context: ExecutionContext | None = None,
 ) -> Any:
     """Source-specific extraction without pipe application."""
     source = extraction.source
@@ -1313,11 +1333,17 @@ async def _extract_raw(
 
     # Custom extractor: dispatch to the marker's extract() method.
     #
-    # Two dispatch paths:
-    #   • @injectable + instance method → resolve instance from DI container
-    #     so constructor-injected deps are available; call instance.extract(req, extraction).
-    #   • classmethod (legacy) → call marker_cls.extract(req, extraction,
-    #     container=..., request_cache=...) as before.
+    # Three dispatch paths (in priority order):
+    #
+    # 1. Instance method (canonical new form):
+    #      extract(self, execution_context: ExecutionContext, extraction: Extraction)
+    #    • @injectable → resolve instance from DI container (constructor deps injected).
+    #    • No @injectable → get/create a no-arg instance from _EXTRACTOR_INSTANCE_CACHE.
+    #    Both call instance.extract(execution_context, extraction).
+    #
+    # 2. Legacy classmethod form (backward compat):
+    #      extract(cls, request, extraction, *, container, request_cache)
+    #    Still dispatched correctly; no changes to the call site.
     marker_cls = extraction.marker_cls
     if marker_cls is not None and hasattr(marker_cls, "extract"):
         try:
@@ -1332,39 +1358,36 @@ async def _extract_raw(
             _is_instance_method = not isinstance(
                 _extract_attr, (classmethod, staticmethod)
             )
-            # Check own __dict__ only — the DI container enforces the same
-            # no-inheritance rule via MetadataInheritanceError, so a class
-            # that merely inherits __lauren_injectable__ from a parent cannot
-            # actually be resolved by the container.
-            _is_injectable = "__lauren_injectable__" in marker_cls.__dict__
 
-            if _is_injectable and _is_instance_method:
-                # Injectable extractor: the DI container injects constructor
-                # deps so extract() only needs (self, request, extraction).
-                if container is None:
-                    raise MissingProviderError(
-                        f"Extractor {marker_cls.__name__!r} is @injectable but "
-                        "no DI container is available; ensure it is registered in "
-                        "a module's providers list.",
-                    )
-                instance = await container.resolve(
-                    marker_cls,
-                    request_cache=request_cache,
-                    framework_values={Request: request, type(request): request},
-                    owning_module=owning_module,
-                )
-                try:
-                    _sig = _inspect.signature(instance.extract)
-                    _params = _sig.parameters
-                except (TypeError, ValueError):
-                    _params = {}
-                if "owning_module" in _params:
-                    return await instance.extract(
-                        request, extraction, owning_module=owning_module
-                    )
-                return await instance.extract(request, extraction)
+            if _is_instance_method:
+                # ── Instance method form ────────────────────────────────────
+                # Check own __dict__ only — the DI container enforces the same
+                # no-inheritance rule via MetadataInheritanceError.
+                _is_injectable = "__lauren_injectable__" in marker_cls.__dict__
 
-            # Classic classmethod form — forward owning_module when declared.
+                if _is_injectable:
+                    if container is None:
+                        raise MissingProviderError(
+                            f"Extractor {marker_cls.__name__!r} is @injectable but "
+                            "no DI container is available; ensure it is registered "
+                            "in a module's providers list.",
+                        )
+                    instance = await container.resolve(
+                        marker_cls,
+                        request_cache=request_cache,
+                        framework_values={Request: request, type(request): request},
+                        owning_module=owning_module,
+                    )
+                else:
+                    # Non-injectable: use a process-wide no-arg instance.
+                    instance = _EXTRACTOR_INSTANCE_CACHE.get(marker_cls)
+                    if instance is None:
+                        instance = marker_cls()
+                        _EXTRACTOR_INSTANCE_CACHE[marker_cls] = instance
+
+                return await instance.extract(execution_context, extraction)
+
+            # ── Legacy classmethod form (backward compat) ──────────────────
             try:
                 sig = _inspect.signature(marker_cls.extract)  # type: ignore[attr-defined]
                 params = sig.parameters

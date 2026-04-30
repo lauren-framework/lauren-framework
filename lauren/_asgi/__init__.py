@@ -382,35 +382,8 @@ def _compile_handler_signature(
                 pipes=pipes,
             )
         )
-        # Validate: instance-method extractors must be @injectable so the
-        # framework can inject their constructor dependencies at call time.
-        if marker_cls is not None and hasattr(marker_cls, "extract"):
-            _attr: Any = None
-            for _mro_cls in marker_cls.__mro__:
-                if "extract" in _mro_cls.__dict__:
-                    _attr = _mro_cls.__dict__["extract"]
-                    break
-            # Check own __dict__ only — the DI container enforces the same
-            # no-inheritance rule; a class that merely inherits
-            # __lauren_injectable__ cannot be resolved and must re-decorate.
-            if not isinstance(_attr, (classmethod, staticmethod)) and (
-                "__lauren_injectable__" not in marker_cls.__dict__
-            ):
-                from ..exceptions import StartupError
-
-                raise StartupError(
-                    f"Custom extractor {marker_cls.__name__!r} defines 'extract' "
-                    "as an instance method but is not decorated with @injectable. "
-                    "Either add @injectable(...) to the extractor class so the "
-                    "framework can inject its constructor dependencies, or keep "
-                    "'extract' as a @classmethod.",
-                    detail={
-                        "extractor": marker_cls.__name__,
-                        "param": name,
-                        "handler": fn.__name__,
-                        "controller": controller_cls.__name__,
-                    },
-                )
+        # No startup restriction on instance-method extractors: both
+        # @injectable (DI-resolved) and plain (no-arg cache) forms are valid.
         param_names.append(name)
     return tuple(extractions), param_names
 
@@ -1148,6 +1121,7 @@ class LaurenApp:
                                 container=self._container,
                                 request_cache=request_cache,
                                 owning_module=owning_module,
+                                execution_context=ctx,
                             )
                     # ``kwargs`` below re-aliases the same pooled dict so
                     # the existing dispatch branches stay identical.
