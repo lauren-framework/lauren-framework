@@ -480,7 +480,7 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             # Feature 7 — vendor extension telling OpenAPI tooling this
             # operation yields a structured, typed stream.
             op["x-streaming"] = True
-        
+
         # Calculates the OpenAPI `security` requirements for this operation by inspecting
         # the compiled handler's guards and the app's global guards. Resolution rules:
         # * Guards without `@openapi_security` metadata are ignored.
@@ -490,6 +490,9 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             guard_sec = _collect_guard_security(compiled.guards)
             if guard_sec is not None:
                 op["security"] = guard_sec
+                # If controller specifies the 'security', it overrides what the guards have
+            if ctrl_meta.security:
+                op["security"] = [dict(s) for s in ctrl_meta.security]
         elif ctrl_meta.security:
             op["security"] = [dict(s) for s in ctrl_meta.security]
         elif app_global_guards:
