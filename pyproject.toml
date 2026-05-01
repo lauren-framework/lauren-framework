@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "lauren"
-version = "1.0.0"
+dynamic = ["version"]
 description = "A metadata-first Python web framework inspired by Axum and NestJS."
 readme = "README.md"
 license = {text = "MIT"}
@@ -41,9 +41,20 @@ include = ["lauren*"]
 [tool.setuptools.package-data]
 lauren = ["py.typed", "llms.txt", "llms-full.txt"]
 
+[tool.setuptools_scm]
+# Version is derived from git tags (e.g. "v1.2.3" -> "1.2.3").
+# Falls back to "0.0.0+unknown" on un-tagged commits.
+fallback_version = "0.0.0+unknown"
+version_scheme = "post-release"
+local_scheme = "dirty-tag"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+addopts = "-m 'not benchmark'"
+markers = [
+    "benchmark: performance benchmarks (excluded from the default run)",
+]
 
 [dependency-groups]
 dev = [

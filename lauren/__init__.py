@@ -216,7 +216,12 @@ from .types import (
     State,
 )
 
-__version__ = "1.0.0"
+try:
+    from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+    __version__: str = _pkg_version("lauren")
+except PackageNotFoundError:  # editable install without a tag
+    __version__ = "0.0.0+unknown"
 
 __all__ = [
     # app

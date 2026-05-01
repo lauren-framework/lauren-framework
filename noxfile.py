@@ -138,6 +138,31 @@ def coverage(session: nox.Session) -> None:
     )
 
 
+@nox.session(python=PRIMARY_PYTHON)
+def benchmark(session: nox.Session) -> None:
+    """Run performance benchmarks (excluded from the default test run).
+
+    Benchmarks live under ``tests/benchmarks/`` and are marked with
+    ``@pytest.mark.benchmark``.  They are excluded from the normal ``tests``
+    session via ``addopts = "-m 'not benchmark'"`` in ``pyproject.toml``.
+
+    Run all benchmarks::
+
+        nox -s benchmark
+
+    Run a specific benchmark and save baseline JSON::
+
+        nox -s benchmark -- --benchmark-save=baseline tests/benchmarks/test_routing_bench.py
+
+    Compare against a saved baseline::
+
+        nox -s benchmark -- --benchmark-compare=baseline
+    """
+    session.install("-e", ".[dev]", "pytest-benchmark>=4.0")
+    args = session.posargs or ["-v", "-m", "benchmark", "tests/benchmarks/"]
+    session.run("pytest", *args)
+
+
 # ---------------------------------------------------------------------------
 # Lint / type-check
 # ---------------------------------------------------------------------------
@@ -426,6 +451,7 @@ def help_session(session: nox.Session) -> None:
             and not getattr(fn, "python", None)
             and name
             not in {
+                "benchmark",
                 "tests",
                 "tests_unit",
                 "tests_integration",
@@ -443,6 +469,7 @@ def help_session(session: nox.Session) -> None:
                 "release_test",
                 "clean",
                 "llms_check",
+                "prek",
                 "ci",
                 "help_session",
             }
@@ -458,6 +485,7 @@ def help_session(session: nox.Session) -> None:
 # Sanity check: ensure every expected session is defined so `nox -l` is
 # stable for tooling that parses it.
 __all__ = [
+    "benchmark",
     "build",
     "build_check",
     "ci",
@@ -470,6 +498,7 @@ __all__ = [
     "help_session",
     "lint",
     "llms_check",
+    "prek",
     "release",
     "release_test",
     "tests",

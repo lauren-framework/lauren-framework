@@ -136,3 +136,7 @@ nav:
     - reference/index.md
     - Error Catalog: reference/errors.md
     - Cheat Sheet: reference/cheat-sheet.md
+  - Development:
+    - development/index.md
+    - Release Guide: development/release.md
+    - Versioning: development/versioning.md
