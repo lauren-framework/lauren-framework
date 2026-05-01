@@ -15,7 +15,7 @@ from lauren import (
     module,
     set_metadata,
     use_guards,
-    use_middleware,
+    use_middlewares,
 )
 from lauren.exceptions import UnauthorizedError
 from lauren.testing import TestClient
@@ -51,7 +51,7 @@ class PublicController:
         return Response.json({"public": True})
 
 
-@use_middleware(AuthMiddleware)
+@use_middlewares(AuthMiddleware)
 @controller("/priv")
 class PrivateController:
     @get("/")
@@ -59,7 +59,7 @@ class PrivateController:
         return Response.json({"token": request.state.token})
 
     @get("/extra")
-    @use_middleware(TraceMiddleware)
+    @use_middlewares(TraceMiddleware)
     async def extra(self, request: Request) -> Response:
         return Response.json({"trace": request.state.get("trace")})
 
@@ -71,7 +71,7 @@ class MwModule:
 
 def build():
     return TestClient(
-        LaurenFactory.create(MwModule, global_middleware=[TraceMiddleware])
+        LaurenFactory.create(MwModule, global_middlewares=[TraceMiddleware])
     )
 
 
@@ -178,7 +178,7 @@ class M2:
         return resp
 
 
-@use_middleware(M1, M2)
+@use_middlewares(M1, M2)
 @controller("/order")
 class OrderController:
     @get("/")

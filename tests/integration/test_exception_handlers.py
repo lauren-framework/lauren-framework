@@ -7,7 +7,7 @@ These cover:
 * DI injection on handlers (they're injectable like middleware/guards);
 * multi-exception tuples;
 * the new ``LaurenFactory.create`` globals (``global_middlewares``,
-  ``global_guards``, ``global_exception_filters``);
+  ``global_guards``, ``global_exception_handlers``);
 * the equivalent imperative API on :class:`Lauren`
   (``add_exception_handler`` / ``add_guard``).
 """
@@ -33,7 +33,7 @@ from lauren import (
     module,
     use_exception_handlers,
     use_guards,
-    use_middleware,
+    use_middlewares,
 )
 from lauren.exceptions import (
     ExceptionHandlerConfigError,
@@ -241,7 +241,7 @@ def _build_domain_app(*, with_global_tenant_filter: bool = True):
     return TestClient(
         LaurenFactory.create(
             DomainModule,
-            global_exception_filters=[TenantErrorHandler]
+            global_exception_handlers=[TenantErrorHandler]
             if with_global_tenant_filter
             else None,
         )
@@ -404,29 +404,12 @@ class CfgModule:
 
 
 class TestLaurenFactoryGlobals:
-    def test_global_middlewares_alias_runs(self):
+    def test_global_middlewares_runs(self):
         app = LaurenFactory.create(CfgModule, global_middlewares=[StampMiddleware])
         client = TestClient(app)
         r = client.get("/cfg/")
         assert r.status_code == 200
         assert r.header("x-global-mw") == "1"
-
-    def test_legacy_singular_global_middleware_still_works(self):
-        # The original kwarg must keep working for backward compatibility.
-        app = LaurenFactory.create(CfgModule, global_middleware=[StampMiddleware])
-        client = TestClient(app)
-        r = client.get("/cfg/")
-        assert r.header("x-global-mw") == "1"
-
-    def test_passing_both_singular_and_plural_raises(self):
-        from lauren.exceptions import StartupError
-
-        with pytest.raises(StartupError):
-            LaurenFactory.create(
-                CfgModule,
-                global_middleware=[StampMiddleware],
-                global_middlewares=[StampMiddleware],
-            )
 
     def test_global_guards_run_for_every_route(self):
         app = LaurenFactory.create(CfgModule, global_guards=[GlobalAdminGuard])
@@ -435,17 +418,17 @@ class TestLaurenFactoryGlobals:
         assert client.get("/cfg/").status_code == 403
         assert client.get("/cfg/", headers={"x-admin": "yes"}).status_code == 200
 
-    def test_global_exception_filter_must_be_decorated(self):
+    def test_global_exception_handler_must_be_decorated(self):
         class NotAFilter:
             async def catch(self, exc, request):
                 return Response.no_content()
 
         with pytest.raises(ExceptionHandlerConfigError):
-            LaurenFactory.create(CfgModule, global_exception_filters=[NotAFilter])
+            LaurenFactory.create(CfgModule, global_exception_handlers=[NotAFilter])
 
 
 # ---------------------------------------------------------------------------
-# Composability sanity check: @use_guards / @use_middleware on routes
+# Composability sanity check: @use_guards / @use_middlewares on routes
 # (this was already supported but the docs implied it; locking it in).
 # ---------------------------------------------------------------------------
 
@@ -475,7 +458,7 @@ class MwB:
 
 
 @use_guards(AllowGuard)
-@use_middleware(MwA)
+@use_middlewares(MwA)
 @controller("/compose")
 class ComposeController:
     @get("/open")
@@ -484,7 +467,7 @@ class ComposeController:
 
     @get("/locked")
     @use_guards(DenyGuard)  # adds to AllowGuard
-    @use_middleware(MwB)  # adds to MwA
+    @use_middlewares(MwB)  # adds to MwA
     async def locked(self) -> dict:
         return {"area": "locked"}
 

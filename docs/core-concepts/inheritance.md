@@ -13,7 +13,7 @@
 | `@exception_handler` | ❌ No — re-decorate explicitly |
 | `@get` / `@post` / ... (route methods) | ✅ Yes — plain Python MRO |
 | `@post_construct` / `@pre_destruct` | ✅ Yes — plain Python MRO |
-| `@use_guards` / `@use_middleware` / `@use_exception_handlers` | ❌ Attached to exact target only |
+| `@use_guards` / `@use_middlewares` / `@use_exception_handlers` | ❌ Attached to exact target only |
 
 If you try to register a class that has inherited a parent's decoration without redeclaring it, Lauren raises `MetadataInheritanceError` at startup.
 
@@ -108,7 +108,7 @@ A practical pattern: a `BaseModule` class exists only to share a class body (e.g
 
 ### Middleware, guards, and exception handlers
 
-`@middleware` and `@exception_handler` follow the same rule — re-decorate the subclass. `@use_guards`, `@use_middleware`, and `@use_exception_handlers` attach to **the exact target** (class or method) only — a subclass that wants the parent's attached guards must re-declare them:
+`@middleware` and `@exception_handler` follow the same rule — re-decorate the subclass. `@use_guards`, `@use_middlewares`, and `@use_exception_handlers` attach to **the exact target** (class or method) only — a subclass that wants the parent's attached guards must re-declare them:
 
 ```python
 @use_guards(AuthGuard)

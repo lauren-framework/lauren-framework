@@ -39,7 +39,7 @@ from lauren import (
     set_metadata,
     use_guards,
     use_interceptors,
-    use_middleware,
+    use_middlewares,
 )
 from lauren.exceptions import InterceptorConfigError
 from lauren.testing import TestClient
@@ -584,7 +584,7 @@ class TestInterceptorCoexistence:
                 events.append("inter-post")
                 return r
 
-        @use_middleware(MW)
+        @use_middlewares(MW)
         @use_guards(Guard)
         @use_interceptors(Inter)
         @controller("/c")

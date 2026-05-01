@@ -155,9 +155,9 @@ class RequestId:
         return resp.with_header("x-request-id", request.state.rid)
 
 # Global, controller, or route-level — pick your scope:
-app = LaurenFactory.create(AppModule, global_middleware=[RequestId])
+app = LaurenFactory.create(AppModule, global_middlewares=[RequestId])
 
-@use_middleware(AuthMiddleware)
+@use_middlewares(AuthMiddleware)
 @controller("/private")
 class P: ...
 ```
@@ -190,7 +190,7 @@ async def handle_value_error(exc, request) -> Response:
     return Response.json({"detail": str(exc)}, status=422)
 ```
 
-Attach with `@use_exception_handlers(...)` per controller / route, or globally via `LaurenFactory.create(..., global_exception_filters=[...])`. Full guide: [Custom Exception Handlers](../guides/custom-exception-handlers.md).
+Attach with `@use_exception_handlers(...)` per controller / route, or globally via `LaurenFactory.create(..., global_exception_handlers=[...])`. Full guide: [Custom Exception Handlers](../guides/custom-exception-handlers.md).
 
 ## 11. Custom providers (NestJS-style recipes)
 

@@ -27,7 +27,7 @@ from lauren import (
     # Decorators
     controller, module, injectable, middleware, exception_handler,
     get, post, put, patch, delete, head, options,
-    use_guards, use_middleware, use_exception_handlers, set_metadata,
+    use_guards, use_middlewares, use_exception_handlers, set_metadata,
     post_construct, pre_destruct,
     # DI
     Scope, DIContainer, Inject, OptionalDep, Token,

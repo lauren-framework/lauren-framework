@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from lauren import get
 from lauren._asgi import _unwrap_handler_descriptor
-from lauren.decorators import ROUTE_META, USE_MIDDLEWARE
+from lauren.decorators import ROUTE_META, USE_MIDDLEWARES
 
 
 class TestUnwrapDescriptor:
@@ -113,9 +113,9 @@ class TestMarkerPropagation:
 
     def test_middleware_marker_propagated(self):
         # Any marker attribute on the descriptor must flow through, not
-        # just the route marker \u2014 we rely on this for @use_middleware /
+        # just the route marker — we rely on this for @use_middlewares /
         # @use_guards stacked above @staticmethod.
-        from lauren import use_middleware, middleware, CallNext, Request, Response
+        from lauren import use_middlewares, middleware, CallNext, Request, Response
 
         @middleware
         class MW:
@@ -123,11 +123,11 @@ class TestMarkerPropagation:
                 return await call_next(request)
 
         class C:
-            @use_middleware(MW)
+            @use_middlewares(MW)
             @staticmethod
             async def h():
                 return None
 
         raw = C.__dict__["h"]
         out, _ = _unwrap_handler_descriptor(raw)
-        assert getattr(out, USE_MIDDLEWARE, []) == [MW]
+        assert getattr(out, USE_MIDDLEWARES, []) == [MW]

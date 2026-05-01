@@ -32,17 +32,17 @@ Lauren's `Response` is **immutable** — every `with_*` method returns a new ins
 # 1. Global — wraps every request, outermost layer first:
 app = LaurenFactory.create(
     AppModule,
-    global_middleware=[RequestId, Timing, AuthMiddleware],
+    global_middlewares=[RequestId, Timing, AuthMiddleware],
 )
 
 # 2. Controller — wraps every handler on the class:
-@use_middleware(TenantScope)
+@use_middlewares(TenantScope)
 @controller("/api")
 class ApiController: ...
 
 # 3. Route — wraps a single handler:
 @get("/expensive")
-@use_middleware(CacheControl)
+@use_middlewares(CacheControl)
 async def slow(self): ...
 ```
 
@@ -239,7 +239,7 @@ class StreamSafe:
 
 ## Inheritance
 
-`@use_middleware` attaches to the exact target. A subclass doesn't inherit the parent's class-level middleware. See [Class Inheritance Rules](../core-concepts/inheritance.md). To compose the same middleware across many controllers, prefer **global middleware** in `LaurenFactory.create(...)`.
+`@use_middlewares` attaches to the exact target. A subclass doesn't inherit the parent's class-level middleware. See [Class Inheritance Rules](../core-concepts/inheritance.md). To compose the same middleware across many controllers, prefer **global middleware** in `LaurenFactory.create(...)`.
 
 ## Testing middleware
 

@@ -72,6 +72,10 @@ class Lauren:
         strict_lifecycle: bool = True,
         app_state: AppState | None = None,
         logger: Any | None = None,
+        global_middlewares: list[type] | None = None,
+        global_guards: list[type] | None = None,
+        global_interceptors: list[type] | None = None,
+        global_exception_handlers: list[Any] | None = None,
     ) -> None:
         self._title = title
         self._version = version
@@ -87,12 +91,13 @@ class Lauren:
         self._app_state: AppState = app_state or AppState()
         self._logger = logger
 
-        # Pending registrations \u2014 flushed on first compile().
+        # Pending registrations — flushed on first compile().
         self._route_buffer: list[_PendingRoute] = []
         self._modules: list[type] = []
-        self._middleware: list[type] = []
-        self._guards: list[type] = []
-        self._exception_filters: list[Any] = []
+        self._middleware: list[type] = list(global_middlewares or [])
+        self._guards: list[type] = list(global_guards or [])
+        self._interceptors: list[type] = list(global_interceptors or [])
+        self._exception_filters: list[Any] = list(global_exception_handlers or [])
         self._startup_handlers: list[Callable[[], Any]] = []
         self._shutdown_handlers: list[Callable[[], Any]] = []
 
@@ -252,6 +257,17 @@ class Lauren:
         if cls not in self._guards:
             self._guards.append(cls)
 
+    def add_interceptor(self, cls: type) -> None:
+        """Register an interceptor class globally.
+
+        The class must be decorated with ``@interceptor``. Global interceptors
+        run after guards and before route handlers on every request. Equivalent
+        to passing ``global_interceptors=[...]`` to :meth:`LaurenFactory.create`.
+        """
+        self._assert_not_compiled("add a global interceptor")
+        if cls not in self._interceptors:
+            self._interceptors.append(cls)
+
     def add_exception_handler(self, handler: Any) -> None:
         """Register an exception handler globally.
 
@@ -367,7 +383,8 @@ class Lauren:
             strict_lifecycle=self._strict_lifecycle,
             global_middlewares=list(self._middleware),
             global_guards=list(self._guards),
-            global_exception_filters=list(self._exception_filters),
+            global_interceptors=list(self._interceptors),
+            global_exception_handlers=list(self._exception_filters),
             max_body_size=self._max_body_size,
             app_state=self._app_state,
             logger=self._logger,
@@ -548,12 +565,12 @@ def _wrap_function_as_method(fn: Callable[..., Any]) -> Callable[..., Any]:
     method.__name__ = fn.__name__
     method.__doc__ = fn.__doc__
     # Forward lauren's marker attributes so decorators applied to the user
-    # function before @app.get (e.g. @use_guards, @use_middleware,
+    # function before @app.get (e.g. @use_guards, @use_middlewares,
     # @use_exception_handlers, @set_metadata, @post_construct) survive the
     # wrap and reach Phase 5.
     for marker in (
         "__lauren_use_guards__",
-        "__lauren_use_middleware__",
+        "__lauren_use_middlewares__",
         "__lauren_use_exception_handlers__",
         "__lauren_metadata__",
     ):

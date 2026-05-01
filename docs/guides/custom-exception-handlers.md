@@ -61,7 +61,7 @@ class UserController: ...
 # 3. Global — handles every request:
 app = LaurenFactory.create(
     AppModule,
-    global_exception_filters=[DomainErrors, AuditFailures],
+    global_exception_handlers=[DomainErrors, AuditFailures],
 )
 ```
 
@@ -148,7 +148,7 @@ class NotFoundFromOrm:
         )
 
 # Register globally so every controller benefits:
-app = LaurenFactory.create(AppModule, global_exception_filters=[NotFoundFromOrm])
+app = LaurenFactory.create(AppModule, global_exception_handlers=[NotFoundFromOrm])
 ```
 
 Now any handler can write `db.scalar(stmt).one()` without try/except — missing rows automatically render as 404s.
@@ -218,7 +218,7 @@ class CrashHandler:
             status=500,
         )
 
-app = LaurenFactory.create(AppModule, global_exception_filters=[CrashHandler])
+app = LaurenFactory.create(AppModule, global_exception_handlers=[CrashHandler])
 ```
 
 A catch-all handler should always be the **last** registration — more specific handlers should win first.

@@ -141,7 +141,7 @@ class TestMiddlewareInheritance:
             pass
 
         # When the framework tries to auto-register ChildMW as injectable for
-        # use_middleware, it must raise to prevent silent inheritance.
+        # use_middlewares, it must raise to prevent silent inheritance.
         from lauren._asgi import _ensure_injectable
 
         with pytest.raises(MetadataInheritanceError):

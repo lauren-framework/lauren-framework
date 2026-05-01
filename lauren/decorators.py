@@ -60,7 +60,7 @@ CONTROLLER_META = "__lauren_controller__"
 MODULE_META = "__lauren_module__"
 ROUTE_META = "__lauren_route__"
 MIDDLEWARE_META = "__lauren_middleware__"
-USE_MIDDLEWARE = "__lauren_use_middleware__"
+USE_MIDDLEWARES = "__lauren_use_middlewares__"
 USE_GUARDS = "__lauren_use_guards__"
 USE_EXCEPTION_HANDLERS = "__lauren_use_exception_handlers__"
 EXCEPTION_HANDLER_META = "__lauren_exception_handler__"
@@ -386,7 +386,7 @@ def middleware(cls: C) -> C:
     return cls
 
 
-def use_middleware(*classes: type | None) -> Callable[[Any], Any]:
+def use_middlewares(*classes: type | None) -> Callable[[Any], Any]:
     """Attach middleware(s) to a controller class or route function.
 
     Works on both:
@@ -395,13 +395,13 @@ def use_middleware(*classes: type | None) -> Callable[[Any], Any]:
       class
     * **handler methods** — the middleware runs only for that route
 
-    Composes cleanly across decoration orders: applying ``@use_middleware``
+    Composes cleanly across decoration orders: applying ``@use_middlewares``
     multiple times (or on both a class and a method) appends to the chain.
 
     ``None`` entries are silently dropped so callers can build the
     middleware list inline using conditionals::
 
-        @use_middleware(
+        @use_middlewares(
             RequestIdMiddleware,
             TracingMiddleware if settings.tracing_enabled else None,
             AuthMiddleware,
@@ -419,12 +419,12 @@ def use_middleware(*classes: type | None) -> Callable[[Any], Any]:
         # Read own dict when target is a class so subclasses don't silently
         # share the parent's middleware list.
         if isinstance(target, type):
-            existing = list(target.__dict__.get(USE_MIDDLEWARE, []))
+            existing = list(target.__dict__.get(USE_MIDDLEWARES, []))
         else:
-            existing = list(getattr(target, USE_MIDDLEWARE, []))
+            existing = list(getattr(target, USE_MIDDLEWARES, []))
         existing.extend(filtered)
         try:
-            setattr(target, USE_MIDDLEWARE, existing)
+            setattr(target, USE_MIDDLEWARES, existing)
         except (AttributeError, TypeError):  # pragma: no cover
             raise MiddlewareConfigError(f"Cannot attach middleware to {target!r}")
         return target
@@ -653,7 +653,7 @@ def exception_handler(
 
     Compose handlers onto controllers / routes via
     :func:`use_exception_handlers`, or register them globally via
-    ``LaurenFactory.create(global_exception_filters=[...])``.
+    ``LaurenFactory.create(global_exception_handlers=[...])``.
 
     ``@exception_handler`` must be invoked with at least one exception
     type. Bare usage (``@exception_handler``) and empty parentheses
@@ -735,7 +735,7 @@ def use_exception_handlers(
 ) -> Callable[[Any], Any]:
     """Attach exception handler(s) to a controller class or route function.
 
-    Mirrors :func:`use_guards` / :func:`use_middleware`:
+    Mirrors :func:`use_guards` / :func:`use_middlewares`:
 
     * **controller classes** — every handler on the class is covered;
     * **handler methods** — only that route is covered.
@@ -955,7 +955,7 @@ __all__ = [
     "post_construct",
     "pre_destruct",
     "middleware",
-    "use_middleware",
+    "use_middlewares",
     "use_guards",
     "exception_handler",
     "use_exception_handlers",
@@ -970,7 +970,7 @@ __all__ = [
     "MODULE_META",
     "ROUTE_META",
     "MIDDLEWARE_META",
-    "USE_MIDDLEWARE",
+    "USE_MIDDLEWARES",
     "USE_GUARDS",
     "USE_EXCEPTION_HANDLERS",
     "EXCEPTION_HANDLER_META",

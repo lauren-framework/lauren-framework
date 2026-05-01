@@ -181,15 +181,15 @@ class RequestId:
         return resp.with_header("x-request-id", request.state.rid)
 
 # Global:
-app = LaurenFactory.create(AppModule, global_middleware=[RequestId])
+app = LaurenFactory.create(AppModule, global_middlewares=[RequestId])
 
 # Controller / route:
-@use_middleware(Timing)
+@use_middlewares(Timing)
 @controller("/api")
 class API: ...
 
 @get("/x")
-@use_middleware(CacheControl)
+@use_middlewares(CacheControl)
 async def x(self): ...
 ```
 
@@ -216,7 +216,7 @@ class X: ...
 async def y(self): ...
 
 # Or globally:
-app = LaurenFactory.create(AppModule, global_exception_filters=[DomainErrors])
+app = LaurenFactory.create(AppModule, global_exception_handlers=[DomainErrors])
 ```
 
 ## Custom extractors

@@ -27,7 +27,7 @@ from lauren import (
     set_metadata,
     use_guards,
     use_interceptors,
-    use_middleware,
+    use_middlewares,
 )
 from lauren.exceptions import HTTPError
 from lauren.types import CallHandler, ExecutionContext
@@ -521,7 +521,7 @@ class TestInterceptorWithGuardsAndMiddleware:
                 log.append("inter-out")
                 return r
 
-        @use_middleware(MW)
+        @use_middlewares(MW)
         @use_guards(AllowGuard)
         @use_interceptors(Inter)
         @controller("/c")

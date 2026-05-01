@@ -1,4 +1,4 @@
-"""Tests for ``@use_guards`` and ``@use_middleware`` applied to controllers."""
+"""Tests for ``@use_guards`` and ``@use_middlewares`` applied to controllers."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from lauren import (
     middleware,
     module,
     use_guards,
-    use_middleware,
+    use_middlewares,
 )
 from lauren.exceptions import ForbiddenError
 from lauren.testing import TestClient
@@ -122,7 +122,7 @@ class TestClassLevelGuards:
 
 class TestClassLevelMiddleware:
     def test_middleware_on_controller(self):
-        @use_middleware(StampMW)
+        @use_middlewares(StampMW)
         @controller("/m1")
         class C:
             @get("/")

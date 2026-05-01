@@ -41,7 +41,7 @@ from ..decorators import (
     USE_EXCEPTION_HANDLERS,
     USE_GUARDS,
     USE_INTERCEPTORS,
-    USE_MIDDLEWARE,
+    USE_MIDDLEWARES,
     ControllerMeta,
     ExceptionHandlerMeta,
     RouteMeta,
@@ -490,7 +490,7 @@ def _unwrap_handler_descriptor(
     """
     _MARKER_ATTRS = (
         "__lauren_route__",
-        "__lauren_use_middleware__",
+        "__lauren_use_middlewares__",
         "__lauren_use_guards__",
         "__lauren_use_interceptors__",
         "__lauren_metadata__",
@@ -558,7 +558,7 @@ class LaurenApp:
         module_graph: ModuleGraph,
         lifecycle: LifecycleScheduler,
         compiled_handlers: dict[tuple[str, str], CompiledHandler],
-        global_middleware: list[type],
+        global_middlewares: list[type],
         app_state: AppState,
         strict_lifecycle: bool = True,
         max_body_size: int = 1_048_576,
@@ -569,7 +569,7 @@ class LaurenApp:
         signals: SignalBus | None = None,
         error_format: str = "default",
         global_guards: list[type] | None = None,
-        global_exception_filters: list[Any] | None = None,
+        global_exception_handlers: list[Any] | None = None,
         global_interceptors: list[type] | None = None,
     ) -> None:
         self._router = router
@@ -577,9 +577,9 @@ class LaurenApp:
         self._module_graph = module_graph
         self._lifecycle = lifecycle
         self._handlers = compiled_handlers
-        self._global_middleware = list(global_middleware)
+        self._global_middlewares = list(global_middlewares)
         self._global_guards = list(global_guards or [])
-        self._global_exception_filters = list(global_exception_filters or [])
+        self._global_exception_handlers = list(global_exception_handlers or [])
         self._global_interceptors: list[type] = list(global_interceptors or [])
         self._app_state = app_state
         self._strict_lifecycle = strict_lifecycle
@@ -923,7 +923,7 @@ class LaurenApp:
                     # request)``. Per-route handlers resolve in the
                     # controller's module; globals have no module
                     # restriction.
-                    is_global = handler in self._global_exception_filters
+                    is_global = handler in self._global_exception_handlers
                     handler_owning = None if is_global else owning_module
                     instance = await self._container.resolve(
                         handler,
@@ -1053,7 +1053,9 @@ class LaurenApp:
             request._route_template = entry.path_template
 
             # Build effective middleware list: global -> controller -> route
-            mw_classes = list(self._global_middleware) + list(compiled.middleware_chain)
+            mw_classes = list(self._global_middlewares) + list(
+                compiled.middleware_chain
+            )
 
             # Effective guard chain: global guards run FIRST, then the
             # route's compiled chain (which itself is class-then-method).
@@ -1074,7 +1076,7 @@ class LaurenApp:
             # configuration mutable without having to recompile every
             # CompiledHandler when globals change in tests.
             effective_exception_handlers = list(compiled.exception_handlers) + list(
-                self._global_exception_filters
+                self._global_exception_handlers
             )
 
             owning_module = compiled.owning_module
@@ -1883,11 +1885,10 @@ class LaurenFactory:
         root_module: type,
         *,
         strict_lifecycle: bool = True,
-        global_middleware: Iterable[type] | None = None,
         global_middlewares: Iterable[type] | None = None,
         global_guards: Iterable[type] | None = None,
         global_interceptors: Iterable[type] | None = None,
-        global_exception_filters: Iterable[Any] | None = None,
+        global_exception_handlers: Iterable[Any] | None = None,
         max_body_size: int = 1_048_576,
         app_state: AppState | None = None,
         logger: Logger | None = None,
@@ -1918,30 +1919,19 @@ class LaurenFactory:
         pattern is ``openapi_url='/openapi.json'``, ``docs_url='/docs'``,
         ``redoc_url='/redoc'`` — matching FastAPI conventions.
 
-        ``global_middlewares`` is a plural alias for ``global_middleware``;
-        passing both raises :class:`StartupError`. ``global_guards`` and
-        ``global_exception_filters`` mirror NestJS's app-level guards and
-        exception filters: every request runs through them after the route
-        is resolved (guards) or whenever the handler raises (filters).
-        Per-route ``@use_guards`` and ``@use_exception_handlers`` declarations
-        compose with these globals — route handlers are tried first, then
-        globals.
+        ``global_guards`` and ``global_exception_handlers`` mirror NestJS's
+        app-level guards and exception handlers: every request runs through
+        them after the route is resolved (guards) or whenever the handler
+        raises (handlers). Per-route ``@use_guards`` and
+        ``@use_exception_handlers`` declarations compose with these globals —
+        route handlers are tried first, then globals.
         """
         _log: Logger = logger or NullLogger()
 
-        # Reconcile the singular/plural middleware kwargs.
-        if global_middleware is not None and global_middlewares is not None:
-            raise StartupError(
-                "pass either `global_middleware` or `global_middlewares`, not both",
-            )
-        effective_global_middleware = list(
-            global_middlewares
-            if global_middlewares is not None
-            else (global_middleware or [])
-        )
+        effective_global_middlewares = list(global_middlewares or [])
         effective_global_guards = list(global_guards or [])
         effective_global_interceptors = list(global_interceptors or [])
-        effective_global_exception_filters = list(global_exception_filters or [])
+        effective_global_exception_handlers = list(global_exception_handlers or [])
         overall_t0 = time.perf_counter()
         _log.log(
             f"Starting application (root={root_module.__name__})",
@@ -1998,7 +1988,7 @@ class LaurenFactory:
                 )
         # Global middleware lives outside any module — it is registered
         # without an owning module so it is universally visible.
-        for mw in effective_global_middleware:
+        for mw in effective_global_middlewares:
             if mw not in {pp.cls for pp in container.all_providers()}:
                 _ensure_injectable(mw)
                 container.register(mw)
@@ -2026,10 +2016,10 @@ class LaurenFactory:
             if inter not in {pp.cls for pp in container.all_providers()}:
                 _ensure_injectable(inter)
                 container.register(inter)
-        # Global exception filters — must already be decorated with
+        # Global exception handlers — must already be decorated with
         # ``@exception_handler``. We surface configuration mistakes
         # loudly at startup rather than at the first error response.
-        for ef in effective_global_exception_filters:
+        for ef in effective_global_exception_handlers:
             if not hasattr(ef, EXCEPTION_HANDLER_META):
                 raise ExceptionHandlerConfigError(
                     f"global exception filter {getattr(ef, '__name__', repr(ef))} "
@@ -2089,7 +2079,7 @@ class LaurenFactory:
             ctrl_meta = _own_controller_meta(ctrl_cls)
             # Read own-class middleware/guards/interceptors/metadata so a
             # subclass doesn't silently inherit attributes it hasn't opted into.
-            ctrl_mw = list(ctrl_cls.__dict__.get(USE_MIDDLEWARE, []))
+            ctrl_mw = list(ctrl_cls.__dict__.get(USE_MIDDLEWARES, []))
             ctrl_guards = list(ctrl_cls.__dict__.get(USE_GUARDS, []))
             ctrl_interceptors = list(ctrl_cls.__dict__.get(USE_INTERCEPTORS, []))
             ctrl_exc_handlers = list(ctrl_cls.__dict__.get(USE_EXCEPTION_HANDLERS, []))
@@ -2139,7 +2129,7 @@ class LaurenFactory:
                 route_metas: list[RouteMeta] = getattr(fn, ROUTE_META, [])
                 if not route_metas:
                     continue
-                fn_mw = list(getattr(fn, USE_MIDDLEWARE, []))
+                fn_mw = list(getattr(fn, USE_MIDDLEWARES, []))
                 fn_guards = list(getattr(fn, USE_GUARDS, []))
                 fn_interceptors = list(getattr(fn, USE_INTERCEPTORS, []))
                 fn_exc_handlers = list(getattr(fn, USE_EXCEPTION_HANDLERS, []))
@@ -2295,10 +2285,10 @@ class LaurenFactory:
             module_graph=graph,
             lifecycle=lifecycle,
             compiled_handlers=compiled_handlers,
-            global_middleware=effective_global_middleware,
+            global_middlewares=effective_global_middlewares,
             global_guards=effective_global_guards,
             global_interceptors=effective_global_interceptors,
-            global_exception_filters=effective_global_exception_filters,
+            global_exception_handlers=effective_global_exception_handlers,
             app_state=final_state,
             strict_lifecycle=strict_lifecycle,
             max_body_size=max_body_size,

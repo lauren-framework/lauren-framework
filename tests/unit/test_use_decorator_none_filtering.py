@@ -1,4 +1,4 @@
-"""Tests for ``@use_guards`` / ``@use_middleware`` None-filtering.
+"""Tests for ``@use_guards`` / ``@use_middlewares`` None-filtering.
 
 The pattern we support::
 
@@ -29,7 +29,7 @@ from lauren import (
     middleware,
     module,
     use_guards,
-    use_middleware,
+    use_middlewares,
 )
 from lauren.testing import TestClient
 from lauren.types import ExecutionContext
@@ -65,32 +65,32 @@ class DenyGuard:
 
 
 # ---------------------------------------------------------------------------
-# use_middleware None-filtering
+# use_middlewares None-filtering
 # ---------------------------------------------------------------------------
 
 
 class TestUseMiddlewareFiltersNone:
     def test_none_entries_dropped_from_attached_list(self):
-        @use_middleware(StampA, None, StampB, None)
+        @use_middlewares(StampA, None, StampB, None)
         class Ctrl:
             pass
 
         # The marker attribute only contains the real middleware classes.
-        assert getattr(Ctrl, "__lauren_use_middleware__") == [StampA, StampB]
+        assert getattr(Ctrl, "__lauren_use_middlewares__") == [StampA, StampB]
 
     def test_all_none_yields_empty_list(self):
-        @use_middleware(None, None, None)
+        @use_middlewares(None, None, None)
         class Ctrl:
             pass
 
-        assert getattr(Ctrl, "__lauren_use_middleware__") == []
+        assert getattr(Ctrl, "__lauren_use_middlewares__") == []
 
     def test_none_never_hits_validation(self):
         """Validation runs only on non-None entries so ``None.dispatch``
         is never probed."""
         # If filtering were broken, this would raise AttributeError or
         # MiddlewareConfigError because ``None`` lacks ``dispatch``.
-        decorator = use_middleware(None, StampA, None)
+        decorator = use_middlewares(None, StampA, None)
         assert callable(decorator)
 
     @pytest.mark.asyncio
@@ -99,7 +99,7 @@ class TestUseMiddlewareFiltersNone:
         middleware is attached to a controller."""
 
         def build_app(feature_flag: bool):
-            @use_middleware(StampA, StampB if feature_flag else None)
+            @use_middlewares(StampA, StampB if feature_flag else None)
             @controller("/c")
             class Ctrl:
                 @get("/")
@@ -250,4 +250,4 @@ class TestInvalidNonNoneStillRejected:
         from lauren.exceptions import MiddlewareConfigError
 
         with pytest.raises(MiddlewareConfigError):
-            use_middleware(42)  # type: ignore[arg-type]
+            use_middlewares(42)  # type: ignore[arg-type]

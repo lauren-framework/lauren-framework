@@ -100,7 +100,7 @@ from .decorators import (
     use_exception_handlers,
     use_guards,
     use_interceptors,
-    use_middleware,
+    use_middlewares,
     OpenAPISecurityMeta,
 )
 from .exceptions import (
@@ -271,7 +271,7 @@ __all__ = [
     "options",
     "post_construct",
     "pre_destruct",
-    "use_middleware",
+    "use_middlewares",
     "use_guards",
     "exception_handler",
     "use_exception_handlers",

@@ -31,7 +31,7 @@ from lauren import (
     pre_destruct,
     set_metadata,
     use_guards,
-    use_middleware,
+    use_middlewares,
 )
 from lauren.exceptions import UnauthorizedError
 from lauren.testing import TestClient
@@ -161,13 +161,13 @@ class ProductController:
         return Response.json(p.model_dump())
 
     @post("/", summary="Create product")
-    @use_middleware(AuthMiddleware)
+    @use_middlewares(AuthMiddleware)
     async def create(self, body: Json[CreateProduct]) -> Response:
         p = self.repo.create(body)
         return Response.created(p.model_dump(), location=f"/api/products/{p.id}")
 
     @delete("/{pid}")
-    @use_middleware(AuthMiddleware)
+    @use_middlewares(AuthMiddleware)
     @use_guards(AdminGuard)
     @set_metadata("required_role", "admin")
     async def delete(self, pid: Path[int]) -> Response:
@@ -210,7 +210,7 @@ class AppModule:
 
 
 def build():
-    app = LaurenFactory.create(AppModule, global_middleware=[RequestIdMiddleware])
+    app = LaurenFactory.create(AppModule, global_middlewares=[RequestIdMiddleware])
     return app, TestClient(app)
 
 
@@ -306,7 +306,7 @@ class TestEndToEnd:
     def test_full_lifecycle(self):
         async def run():
             app = LaurenFactory.create(
-                AppModule, global_middleware=[RequestIdMiddleware]
+                AppModule, global_middlewares=[RequestIdMiddleware]
             )
             await app.startup()
             repo = await app.container.resolve(InMemoryProductRepository)
