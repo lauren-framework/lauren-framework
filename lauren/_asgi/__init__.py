@@ -126,6 +126,12 @@ class CompiledHandler:
     #: (no receiver). Detected once at startup from the class's own
     #: ``__dict__`` so descriptors don't lose their identity at call time.
     binding: str = "instance"
+    #: ``True`` when ``handler_fn`` is a coroutine function (``async def``).
+    #: Detected once at startup; the dispatcher uses this to decide whether
+    #: to ``await`` directly or to offload to a thread pool via
+    #: ``asyncio.to_thread`` so that blocking sync handlers do not stall the
+    #: event loop.
+    is_coroutine: bool = False
 
 
 def _compile_handler_signature(
@@ -1126,7 +1132,9 @@ class LaurenApp:
                     # ``kwargs`` below re-aliases the same pooled dict so
                     # the existing dispatch branches stay identical.
                     kwargs = kwargs_dict
-                    # Invoke the handler according to its detected binding.
+                    # Invoke the handler according to its binding style and
+                    # whether it is a coroutine function.
+                    #
                     # ``instance`` — normal method: pass the DI-built controller
                     # as the implicit ``self``.
                     # ``classmethod`` — pass the class itself; the handler
@@ -1134,14 +1142,30 @@ class LaurenApp:
                     # instance for lifecycle purposes (field injection runs,
                     # ``@post_construct`` fires, etc.).
                     # ``static`` — no receiver at all.
+                    #
+                    # Sync handlers are offloaded to a thread pool via
+                    # ``asyncio.to_thread`` so that a blocking ``time.sleep``
+                    # (or any other blocking I/O) does not stall the event loop
+                    # and prevent other requests from being served concurrently.
+                    _fn = compiled.handler_fn
                     if compiled.binding == "static":
-                        result = compiled.handler_fn(**kwargs)
+                        if compiled.is_coroutine:
+                            result = await _fn(**kwargs)
+                        else:
+                            _kw = kwargs
+                            result = await asyncio.to_thread(lambda: _fn(**_kw))
                     elif compiled.binding == "classmethod":
-                        result = compiled.handler_fn(compiled.controller_cls, **kwargs)
+                        if compiled.is_coroutine:
+                            result = await _fn(compiled.controller_cls, **kwargs)
+                        else:
+                            _cls, _kw = compiled.controller_cls, kwargs
+                            result = await asyncio.to_thread(lambda: _fn(_cls, **_kw))
                     else:
-                        result = compiled.handler_fn(controller, **kwargs)
-                    if inspect.isawaitable(result):
-                        result = await result
+                        if compiled.is_coroutine:
+                            result = await _fn(controller, **kwargs)
+                        else:
+                            _ctrl, _kw = controller, kwargs
+                            result = await asyncio.to_thread(lambda: _fn(_ctrl, **_kw))
                     # StreamingResponse[T] path — the handler returns an async
                     # iterable of ``T`` which we must frame according to the
                     # request's Accept header. Falls back to the generic coercer
@@ -2113,6 +2137,7 @@ class LaurenFactory:
                         owning_module=ctrl_owning_module,
                         streaming_item_type=streaming_item,
                         binding=binding,
+                        is_coroutine=inspect.iscoroutinefunction(fn),
                     )
                     compiled_handlers[(entry.method, entry.path_template)] = compiled
                     _log.log(
@@ -2431,6 +2456,7 @@ def _register_docs_routes(
             guards=(),
             metadata={},
             owning_module=None,
+            is_coroutine=inspect.iscoroutinefunction(fn),
         )
         compiled_handlers[(method, entry.path_template)] = compiled
 
