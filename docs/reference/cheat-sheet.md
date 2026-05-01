@@ -173,7 +173,7 @@ async def x(self): ...
 ## Middleware
 
 ```python
-@middleware
+@middleware()
 class RequestId:
     async def dispatch(self, request, call_next):
         request.state.rid = uuid.uuid4().hex

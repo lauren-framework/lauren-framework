@@ -500,7 +500,7 @@ class TestInterceptorWithGuardsAndMiddleware:
         from lauren import middleware
         from lauren.types import CallNext, Request, Response
 
-        @middleware
+        @middleware()
         class MW:
             async def dispatch(self, req: Request, call_next: CallNext) -> Response:
                 log.append("mw-in")

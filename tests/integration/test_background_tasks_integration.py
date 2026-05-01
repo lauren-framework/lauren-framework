@@ -622,7 +622,7 @@ class TestBackgroundTasksAdditional:
 
         results: list[str] = []
 
-        @middleware
+        @middleware()
         class LogMiddleware:
             async def dispatch(self, req: Request, call_next: CallNext) -> Response:
                 return await call_next(req)

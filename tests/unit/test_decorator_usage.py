@@ -21,6 +21,7 @@ from lauren import (
     get,
     head,
     injectable,
+    middleware,
     module,
     options,
     patch,
@@ -60,6 +61,15 @@ class TestBareDecoratorUsage:
 
         assert "@module must be used with parentheses" in str(ei.value)
 
+    def test_middleware_bare_rejected(self):
+        with pytest.raises(DecoratorUsageError) as ei:
+
+            @middleware
+            class MW:
+                async def dispatch(self, req, call_next): ...
+
+        assert "@middleware must be used with parentheses" in str(ei.value)
+
     @pytest.mark.parametrize(
         "decorator, name",
         [
@@ -96,6 +106,10 @@ class TestCorrectUsageStillWorks:
         class M1:
             pass
 
+        @middleware()
+        class MW1:
+            async def dispatch(self, req, call_next): ...
+
         @get()
         def h_get():
             pass
@@ -108,6 +122,7 @@ class TestCorrectUsageStillWorks:
         assert hasattr(C1, "__lauren_controller__")
         assert hasattr(I1, "__lauren_injectable__")
         assert hasattr(M1, "__lauren_module__")
+        assert hasattr(MW1, "__lauren_middleware__")
         assert h_get.__lauren_route__[0].method == "GET"
         assert h_post.__lauren_route__[0].method == "POST"
 

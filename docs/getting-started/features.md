@@ -128,7 +128,7 @@ The default JSON encoder handles Pydantic models, enums, datetimes, UUIDs, `Deci
 
 ## 8. Strict decorator inheritance
 
-Subclasses of `@injectable` / `@controller` / `@module` / `@middleware` classes are **not** automatically of the same role. You must opt in.
+Subclasses of `@injectable` / `@controller` / `@module` / `@middleware()` classes are **not** automatically of the same role. You must opt in.
 
 ```python
 @injectable()
@@ -147,7 +147,7 @@ This is one of Lauren's most opinionated calls — and one developers thank us f
 ## 9. Onion-model middleware + class/route guards
 
 ```python
-@middleware
+@middleware()
 class RequestId:
     async def dispatch(self, request, call_next):
         request.state.rid = uuid.uuid4().hex

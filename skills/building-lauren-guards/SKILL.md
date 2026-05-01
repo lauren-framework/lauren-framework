@@ -1,6 +1,6 @@
 ---
 name: building-lauren-guards
-description: Writes Lauren guards, interceptors, and middlewares. Covers @guard, can_activate, ExecutionContext, @interceptor, intercept/CallHandler, @middleware, dispatch/call_next, use_guards, use_interceptors, use_middlewares, and set_metadata. Use when protecting routes, transforming responses, or adding cross-cutting logic to a Lauren app.
+description: Writes Lauren guards, interceptors, and middlewares. Covers @guard, can_activate, ExecutionContext, @interceptor, intercept/CallHandler, @middleware() (parentheses required), dispatch/call_next, use_guards, use_interceptors, use_middlewares, and set_metadata. Use when protecting routes, transforming responses, or adding cross-cutting logic to a Lauren app.
 ---
 
 # Lauren Guards, Interceptors & Middlewares

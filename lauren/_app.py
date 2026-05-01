@@ -237,7 +237,7 @@ class Lauren:
     def add_middleware(self, cls: type) -> None:
         """Register a middleware class globally.
 
-        The class must be decorated with ``@middleware`` (defining a
+        The class must be decorated with ``@middleware()`` (defining a
         ``dispatch(request, call_next)`` coroutine). Middleware runs in
         insertion order around every request.
         """

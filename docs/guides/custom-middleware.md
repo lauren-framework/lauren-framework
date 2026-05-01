@@ -7,7 +7,7 @@
 ```python
 from lauren import middleware
 
-@middleware
+@middleware()
 class RequestId:
     async def dispatch(self, request, call_next):
         import uuid
@@ -16,7 +16,7 @@ class RequestId:
         return response.with_header("x-request-id", request.state.rid)
 ```
 
-The `@middleware` decorator marks the class as middleware (it must implement `async dispatch(request, call_next)`). The contract is precisely:
+The `@middleware()` decorator marks the class as middleware (it must implement `async dispatch(request, call_next)`). The contract is precisely:
 
 * Receive the `request` and a `call_next(request) -> Response` callable.
 * Do whatever you want before calling `call_next`.
@@ -65,7 +65,7 @@ Middleware classes are auto-marked as injectables. They can take constructor dep
 ```python
 from lauren.logging import Logger
 
-@middleware
+@middleware()
 class AccessLog:
     def __init__(self, log: Logger) -> None:
         self.log = log
@@ -90,7 +90,7 @@ The middleware lifetime depends on what it depends on — pure singletons stay s
 ### Request ID propagation
 
 ```python
-@middleware
+@middleware()
 class RequestId:
     async def dispatch(self, request, call_next):
         import uuid
@@ -105,7 +105,7 @@ Now any log line, any downstream service call, any error report can include `req
 ### Timing / metrics
 
 ```python
-@middleware
+@middleware()
 class Timing:
     def __init__(self, metrics: MetricsClient) -> None:
         self.metrics = metrics
@@ -129,7 +129,7 @@ Note `request.get_route_template()` — using the templated path (`/users/{id}`)
 ### Security headers
 
 ```python
-@middleware
+@middleware()
 class SecurityHeaders:
     async def dispatch(self, request, call_next):
         response = await call_next(request)
@@ -144,7 +144,7 @@ class SecurityHeaders:
 ### CORS
 
 ```python
-@middleware
+@middleware()
 class CORS:
     def __init__(self, allowed: list[str]) -> None:
         self.allowed = allowed
@@ -173,7 +173,7 @@ class CORS:
 Middleware doesn't *have* to invoke `call_next`. Skip it to short-circuit:
 
 ```python
-@middleware
+@middleware()
 class Maintenance:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
@@ -192,7 +192,7 @@ class Maintenance:
 Catch unhandled exceptions and turn them into standard envelopes (this is what Lauren's built-in error pipeline does — the example below is mostly for illustration; in practice prefer [exception handlers](custom-exception-handlers.md) for domain errors):
 
 ```python
-@middleware
+@middleware()
 class CrashGuard:
     def __init__(self, log: Logger) -> None:
         self.log = log
@@ -230,7 +230,7 @@ Middleware is the *most general* — it can do everything the others can — but
 Middleware works the same way with streaming responses (`Response.stream`, `Response.sse`, `EventStream`). Just remember: the `Response` you receive from `call_next` may not have buffered its body yet. Don't read or rewrite the body content of streaming responses. Adding/removing headers is fine.
 
 ```python
-@middleware
+@middleware()
 class StreamSafe:
     async def dispatch(self, request, call_next):
         response = await call_next(request)

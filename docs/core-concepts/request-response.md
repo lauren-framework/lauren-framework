@@ -213,7 +213,7 @@ The reason `Response` is immutable is the same reason Axum's response type is im
 You'll find this pattern especially helpful when implementing observability:
 
 ```python
-@middleware
+@middleware()
 class TraceHeaders:
     async def dispatch(self, request, call_next):
         resp = await call_next(request)

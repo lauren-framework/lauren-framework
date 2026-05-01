@@ -1,7 +1,7 @@
 """Tests: decorators do NOT leak via class inheritance.
 
 The rule: a subclass is ``@controller`` / ``@injectable`` / ``@module`` /
-``@middleware`` ONLY if it is decorated explicitly. Re-using a parent's
+``@middleware()`` ONLY if it is decorated explicitly. Re-using a parent's
 decoration by inheritance alone is rejected at startup.
 """
 
@@ -18,7 +18,7 @@ from lauren import (
     middleware,
     module,
 )
-from lauren.exceptions import MetadataInheritanceError
+from lauren.exceptions import DecoratorUsageError, MetadataInheritanceError
 
 
 def _build(root_module):
@@ -126,13 +126,13 @@ class TestModuleInheritance:
 
 
 # ---------------------------------------------------------------------------
-# @middleware: subclass must re-decorate to be auto-registered
+# @middleware(): subclass must re-decorate to be auto-registered
 # ---------------------------------------------------------------------------
 
 
 class TestMiddlewareInheritance:
     def test_subclass_of_middleware_is_not_middleware(self):
-        @middleware
+        @middleware()
         class BaseMW:
             async def dispatch(self, request, call_next):
                 return await call_next(request)
@@ -146,3 +146,12 @@ class TestMiddlewareInheritance:
 
         with pytest.raises(MetadataInheritanceError):
             _ensure_injectable(ChildMW)
+
+    def test_middleware_bare_usage_raises(self):
+        with pytest.raises(DecoratorUsageError) as ei:
+
+            @middleware
+            class Bad:
+                async def dispatch(self, req, call_next): ...
+
+        assert "@middleware must be used with parentheses" in str(ei.value)

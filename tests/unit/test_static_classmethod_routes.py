@@ -117,7 +117,7 @@ class TestMarkerPropagation:
         # @use_guards stacked above @staticmethod.
         from lauren import use_middlewares, middleware, CallNext, Request, Response
 
-        @middleware
+        @middleware()
         class MW:
             async def dispatch(self, request: Request, call_next: CallNext) -> Response:
                 return await call_next(request)

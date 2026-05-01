@@ -28,7 +28,7 @@ class AllowGuard:
         return True
 
 
-@middleware
+@middleware()
 class StampMW:
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)

@@ -40,14 +40,14 @@ from lauren.types import ExecutionContext
 # ---------------------------------------------------------------------------
 
 
-@middleware
+@middleware()
 class StampA:
     async def dispatch(self, request: Request, call_next: CallNext) -> Response:
         resp = await call_next(request)
         return resp.with_header("x-a", "1")
 
 
-@middleware
+@middleware()
 class StampB:
     async def dispatch(self, request: Request, call_next: CallNext) -> Response:
         resp = await call_next(request)

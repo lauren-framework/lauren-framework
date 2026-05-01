@@ -221,7 +221,7 @@ class Db:
 
 ### Middleware & guard decorators
 
-- `@middleware` — marks a class with a `dispatch(request, call_next)` method as middleware.
+- `@middleware()` — marks a class with a `dispatch(request, call_next)` method as middleware. Must be invoked with parentheses.
 - `@use_middlewares(*classes)` — attach middleware to a **controller class** OR a **handler method**.
 - `@use_guards(*classes)` — attach guards to a **controller class** OR a **handler method**.
 - `@interceptor()` — marks a class with an `intercept(ctx, call_handler)` method as an interceptor.
@@ -492,7 +492,7 @@ class RoleGuard:
 ### Middleware (`MiddlewareProtocol`)
 
 ```python
-@middleware
+@middleware()
 class RequestId:
     async def dispatch(self, request, call_next):
         import uuid
@@ -666,7 +666,7 @@ assert r.json()["id"] == 42
 
 ## Strict Decorator Inheritance
 
-**Rule:** subclassing does not inherit `@controller`, `@module`, `@injectable`, or `@middleware` status. Every class must be decorated explicitly.
+**Rule:** subclassing does not inherit `@controller`, `@module`, `@injectable`, or `@middleware()` status. Every class must be decorated explicitly.
 
 ```python
 @injectable()
@@ -1505,7 +1505,7 @@ companion packages that depend on stock `lauren>=1.0`.
 ### `lauren-middlewares`
 
 Production-grade middlewares, each as a factory function returning a
-`@middleware`-decorated class:
+`@middleware()`-decorated class:
 
 * `cors(...)` — W3C CORS with origin allow-lists, regex,
   credentials, expose-headers, preflight short-circuit.

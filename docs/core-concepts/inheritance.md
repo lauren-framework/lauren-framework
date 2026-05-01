@@ -9,7 +9,7 @@
 | `@injectable` | ❌ No — re-decorate explicitly |
 | `@controller` | ❌ No — re-decorate explicitly |
 | `@module` | ❌ No — re-decorate explicitly |
-| `@middleware` | ❌ No — re-decorate explicitly |
+| `@middleware()` | ❌ No — re-decorate explicitly |
 | `@exception_handler` | ❌ No — re-decorate explicitly |
 | `@get` / `@post` / ... (route methods) | ✅ Yes — plain Python MRO |
 | `@post_construct` / `@pre_destruct` | ✅ Yes — plain Python MRO |
@@ -108,7 +108,7 @@ A practical pattern: a `BaseModule` class exists only to share a class body (e.g
 
 ### Middleware, guards, and exception handlers
 
-`@middleware` and `@exception_handler` follow the same rule — re-decorate the subclass. `@use_guards`, `@use_middlewares`, and `@use_exception_handlers` attach to **the exact target** (class or method) only — a subclass that wants the parent's attached guards must re-declare them:
+`@middleware()` and `@exception_handler` follow the same rule — re-decorate the subclass. `@use_guards`, `@use_middlewares`, and `@use_exception_handlers` attach to **the exact target** (class or method) only — a subclass that wants the parent's attached guards must re-declare them:
 
 ```python
 @use_guards(AuthGuard)

@@ -374,16 +374,47 @@ def pre_destruct(fn: F) -> F:
 # ---------------------------------------------------------------------------
 
 
-def middleware(cls: C) -> C:
-    """Mark a class as a middleware provider."""
-    if not hasattr(cls, "dispatch"):
-        raise MiddlewareConfigError(
-            f"@middleware class {cls.__name__} must define 'dispatch(request, call_next)'"
-        )
-    setattr(cls, MIDDLEWARE_META, True)
-    if not hasattr(cls, INJECTABLE_META):
-        setattr(cls, INJECTABLE_META, InjectableMeta(scope=Scope.SINGLETON))
-    return cls
+def middleware(*args: Any) -> Any:
+    """Mark a class as a middleware provider.
+
+    Must be invoked with parentheses: ``@middleware()``.
+
+    Usage::
+
+        @middleware()
+        class TraceMiddleware:
+            async def dispatch(self, request: Request, call_next: CallNext) -> Response:
+                request.state.trace = "on"
+                return await call_next(request)
+
+    The decorated class must define::
+
+        async def dispatch(self, request: Request, call_next: CallNext) -> Response: ...
+
+    Middleware is automatically registered as a singleton in the DI container.
+    To use a narrower scope or inject dependencies, combine with ``@injectable``::
+
+        @middleware()
+        @injectable(scope=Scope.REQUEST)
+        class AuthMiddleware:
+            def __init__(self, repo: UserRepository) -> None: ...
+
+            async def dispatch(self, request, call_next): ...
+    """
+    if args:
+        _reject_bare_usage("middleware", args[0])
+
+    def _apply(cls: C) -> C:
+        if not hasattr(cls, "dispatch"):
+            raise MiddlewareConfigError(
+                f"@middleware() class {cls.__name__} must define 'dispatch(request, call_next)'"
+            )
+        setattr(cls, MIDDLEWARE_META, True)
+        if not hasattr(cls, INJECTABLE_META):
+            setattr(cls, INJECTABLE_META, InjectableMeta(scope=Scope.SINGLETON))
+        return cls
+
+    return _apply
 
 
 def use_middlewares(*classes: type | None) -> Callable[[Any], Any]:

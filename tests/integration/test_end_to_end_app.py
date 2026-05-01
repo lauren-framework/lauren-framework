@@ -104,7 +104,7 @@ class InMemoryProductRepository:
 # ---------------------------------------------------------------------------
 
 
-@middleware
+@middleware()
 class RequestIdMiddleware:
     async def dispatch(self, request: Request, call_next: CallNext) -> Response:
         rid = request.headers.get("x-request-id", "auto")
@@ -113,7 +113,7 @@ class RequestIdMiddleware:
         return response.with_header("x-request-id", rid)
 
 
-@middleware
+@middleware()
 class AuthMiddleware:
     async def dispatch(self, request: Request, call_next: CallNext) -> Response:
         token = request.headers.get("authorization", "")

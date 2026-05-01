@@ -123,7 +123,7 @@ make build-check             # twine check
   `{"error": {"code": "...", "message": "...", "detail": {...}}}` —
   the envelope is stable across the entire framework.
 - Subclasses do NOT inherit `@injectable` / `@controller` / `@module`
-  / `@middleware` / `@ws_controller` / `@exception_handler` decoration.
+  / `@middleware()` / `@ws_controller` / `@exception_handler` decoration.
 
 ## Companion Packages
 
@@ -134,7 +134,7 @@ small on purpose; cross-cutting concerns live next door.
 - `lauren-middlewares` — CORS, rate limit, GZip, security headers,
   request id, trusted hosts, request log, HTTPS redirect, body size
   limit, timeout. Each ships as a factory function returning a
-  `@middleware`-decorated class.
+  `@middleware()`-decorated class.
 - `lauren-logging` — Configurable logging module (a NestJS-style
   `LoggerModule.forRoot(...)`). Processor pipeline, contextvars
   binding, request-logging middleware, pluggable backends. Built on

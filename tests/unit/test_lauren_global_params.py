@@ -34,7 +34,7 @@ from lauren.types import CallHandler, ExecutionContext
 # ---------------------------------------------------------------------------
 
 
-@middleware
+@middleware()
 class GlobalMW:
     async def dispatch(self, request: Request, call_next: CallNext) -> Response:
         resp = await call_next(request)
@@ -106,7 +106,7 @@ class TestLaurenGlobalMiddlewares:
     def test_constructor_and_add_middleware_accumulate(self):
         """Constructor list + add_middleware() both contribute."""
 
-        @middleware
+        @middleware()
         class ExtraMW:
             async def dispatch(self, request: Request, call_next: CallNext) -> Response:
                 resp = await call_next(request)

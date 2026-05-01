@@ -26,7 +26,7 @@ from lauren.testing import TestClient
 # ---------------------------------------------------------------------------
 
 
-@middleware
+@middleware()
 class TraceMiddleware:
     async def dispatch(self, request: Request, call_next: CallNext) -> Response:
         request.state.trace = "on"
@@ -34,7 +34,7 @@ class TraceMiddleware:
         return response.with_header("x-trace", "1")
 
 
-@middleware
+@middleware()
 class AuthMiddleware:
     async def dispatch(self, request: Request, call_next: CallNext) -> Response:
         token = request.headers.get("x-token")
@@ -160,7 +160,7 @@ class TestGuards:
 calls: list[str] = []
 
 
-@middleware
+@middleware()
 class M1:
     async def dispatch(self, request, call_next):
         calls.append("M1:before")
@@ -169,7 +169,7 @@ class M1:
         return resp
 
 
-@middleware
+@middleware()
 class M2:
     async def dispatch(self, request, call_next):
         calls.append("M2:before")

@@ -246,7 +246,7 @@ class TestIncludeModule:
 class TestAddMiddleware:
     @pytest.mark.asyncio
     async def test_middleware_runs_around_every_request(self):
-        @middleware
+        @middleware()
         class Stamp:
             async def dispatch(self, request: Request, call_next: CallNext) -> Response:
                 resp = await call_next(request)
@@ -379,7 +379,7 @@ class TestIncludeRouter:
 
     @pytest.mark.asyncio
     async def test_router_module_and_middleware_merged(self):
-        @middleware
+        @middleware()
         class Tag:
             async def dispatch(self, request: Request, call_next: CallNext) -> Response:
                 r = await call_next(request)

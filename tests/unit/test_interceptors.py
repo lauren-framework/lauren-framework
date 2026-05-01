@@ -563,7 +563,7 @@ class TestInterceptorCoexistence:
         from lauren import middleware
         from lauren.types import CallNext, Request, Response
 
-        @middleware
+        @middleware()
         class MW:
             async def dispatch(self, request: Request, call_next: CallNext) -> Response:
                 events.append("mw-pre")

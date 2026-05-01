@@ -379,7 +379,7 @@ class TestHandlerDI:
 # ---------------------------------------------------------------------------
 
 
-@middleware
+@middleware()
 class StampMiddleware:
     async def dispatch(self, request: Request, call_next: CallNext) -> Response:
         resp = await call_next(request)
@@ -443,14 +443,14 @@ class DenyGuard:
         raise ForbiddenError("nope")
 
 
-@middleware
+@middleware()
 class MwA:
     async def dispatch(self, request: Request, call_next: CallNext) -> Response:
         resp = await call_next(request)
         return resp.with_header("x-mw-a", "1")
 
 
-@middleware
+@middleware()
 class MwB:
     async def dispatch(self, request: Request, call_next: CallNext) -> Response:
         resp = await call_next(request)

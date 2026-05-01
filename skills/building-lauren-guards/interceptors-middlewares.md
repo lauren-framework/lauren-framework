@@ -78,7 +78,7 @@ Middlewares run **before routing** (global) or **per-route** (controller/method)
 from lauren import middleware
 from lauren.types import Request, Response, CallNext
 
-@middleware
+@middleware()
 class LoggingMiddleware:
     async def dispatch(self, request: Request, call_next: CallNext) -> Response:
         print(f"→ {request.method} {request.path}")
@@ -87,7 +87,7 @@ class LoggingMiddleware:
         return response
 ```
 
-`@middleware` marks the class as `SINGLETON` automatically.
+`@middleware()` marks the class as `SINGLETON` automatically. Must be invoked with parentheses.
 
 ### Attaching middlewares
 
