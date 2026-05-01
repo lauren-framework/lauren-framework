@@ -16,14 +16,22 @@ Placement rules
 * **Field descriptors** (``PathField``, ``QueryField``, ``HeaderField``,
   ``CookieField``) and **pipes** (:func:`pipe`) are *behavioural*: they
   validate, re-alias, and transform the extracted value. They may appear
-  either inside ``Annotated[...]`` alongside the extractor marker **or** as
-  the parameter default (composed with ``&``) — whichever reads better.
+  in three equivalent positions:
 
-  ::
+  1. **Subscript** — extra type arguments after the base type (most compact)::
 
-      # Both forms are equivalent:
-      def a(self, id: Annotated[Path[int], PathField(ge=1), pipe(lookup)]): ...
-      def b(self, id: Path[int] = PathField(ge=1) & pipe(lookup)): ...
+         def a(self, id: Path[int, PathField(ge=1), pipe(lookup)]): ...
+
+  2. **Annotated metadata** — inside ``Annotated[...]`` alongside the marker::
+
+         def b(self, id: Annotated[Path[int], PathField(ge=1), pipe(lookup)]): ...
+
+  3. **Parameter default** — composed with ``|``::
+
+         def c(self, id: Path[int] = PathField(ge=1) | pipe(lookup)): ...
+
+  All three forms produce the same extraction plan. Subscript and default
+  forms can be combined; subscript pipes run first.
 """
 
 from __future__ import annotations
@@ -137,6 +145,31 @@ class ExtractionMarker:
     def __class_getitem__(cls, item: Any) -> Any:
         # Returns ``Annotated[item, marker_instance]`` so user code can write
         # ``user_id: Path[int]`` and we can detect it in type hints.
+        #
+        # Subscript pipe syntax: ``Path[int, pipe1, pipe2]`` expands to
+        # ``Annotated[int, Path, pipe1, pipe2]``.  Extra items may be:
+        #   * objects already marked with ``__lauren_pipe__`` (used as-is)
+        #   * plain callables / classes (auto-wrapped with ``pipe()``)
+        #   * :class:`FieldDescriptor` instances (passed through unchanged)
+        # A trailing-comma single-element tuple (``Path[int,]``) is treated
+        # like the simple ``Path[int]`` form.
+        if isinstance(item, tuple):
+            if len(item) == 1:
+                return Annotated[item[0], cls]  # type: ignore[valid-type]
+            base_type = item[0]
+            extras: list[Any] = []
+            for extra in item[1:]:
+                if isinstance(extra, FieldDescriptor):
+                    extras.append(extra)
+                elif is_pipe(extra):
+                    extras.append(extra)
+                elif callable(extra) or isinstance(extra, type):
+                    # Auto-wrap plain callables so users can write
+                    # ``Path[int, my_fn]`` without the ``pipe(my_fn)`` boilerplate.
+                    extras.append(pipe(extra))
+                else:
+                    extras.append(extra)
+            return Annotated[(base_type, cls, *extras)]  # type: ignore[valid-type]
         return Annotated[item, cls]  # type: ignore[valid-type]
 
     # ------------------------------------------------------------------

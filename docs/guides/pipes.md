@@ -38,18 +38,26 @@ class ArticleController:
 
 `GET /articles/Hello World` → handler receives `"hello-world"`.
 
-## Declaring pipes — two equivalent syntaxes
+## Declaring pipes — three equivalent syntaxes
 
-Pipes can be placed in either of two positions for any extractor:
+Pipes can be expressed in any of three positions for any extractor:
 
 ```python
 from typing import Annotated
 from lauren.extractors import Path, PathField, pipe
 
+# ── Subscript form ────────────────────────────────────────────────
+# Pipes are extra type arguments after the base type.
+# Most compact. Ideal when the type + pipes read naturally together.
+async def get_a(
+    self,
+    id: Path[int, validate_positive, lookup],
+): ...
+
 # ── Annotated form ────────────────────────────────────────────────
 # All metadata lives in the annotation. Preferred when you also
 # have a FieldDescriptor or multiple pipes to express in one place.
-async def get_a(
+async def get_b(
     self,
     id: Annotated[Path[int], PathField(ge=1), pipe(lookup)],
 ): ...
@@ -57,13 +65,22 @@ async def get_a(
 # ── Default form ──────────────────────────────────────────────────
 # Uses the | operator to chain. Preferred for short one-pipe cases
 # where the annotation would become unwieldy.
-async def get_b(
+async def get_c(
     self,
     id: Path[int] = PathField(ge=1) | pipe(lookup),
 ): ...
 ```
 
-Both forms produce the same extraction plan at startup. Use whichever reads better.
+All three forms produce the same extraction plan at startup. Use whichever reads best.
+
+Subscript and default forms can also be combined — subscript pipes run first:
+
+```python
+async def get_d(
+    self,
+    id: Path[int, validate_positive] = pipe(lookup),
+): ...
+```
 
 ## Writing a pipe function
 
@@ -186,9 +203,78 @@ class Uppercase(Pipe):
         return value.upper()
 ```
 
+## Subscript pipe syntax
+
+The most concise way to attach pipes to an extractor is to pass them as extra type arguments in the subscript:
+
+```python
+from lauren.extractors import Path, Query, pipe
+from lauren.exceptions import ExtractorFieldError
+from lauren.extractors import PipeContext
+
+@pipe()
+def ensure_int(v: int) -> int:
+    return v  # coercion already done by the extractor; add further checks here
+
+@pipe()
+def ensure_gt_zero(v: int, ctx: PipeContext) -> int:
+    if v <= 0:
+        raise ExtractorFieldError(f"{ctx.name} must be > 0")
+    return v
+
+@pipe()
+def ensure_less_than_fifty(v: int, ctx: PipeContext) -> int:
+    if v >= 50:
+        raise ExtractorFieldError(f"{ctx.name} must be < 50")
+    return v
+
+@controller("/users")
+class UserController:
+    @get("/{user_id}")
+    async def get_user(
+        self,
+        user_id: Path[int, ensure_int, ensure_gt_zero],
+        q: Query[int, ensure_int, ensure_gt_zero, ensure_less_than_fifty],
+    ) -> dict:
+        return {"user_id": user_id, "q": q}
+```
+
+`Path[int, ensure_int, ensure_gt_zero]` expands internally to
+`Annotated[int, Path, ensure_int, ensure_gt_zero]` — the same plan the Annotated
+form would produce.
+
+### FieldDescriptor in the subscript
+
+A `PathField` / `QueryField` can appear anywhere in the extra arguments:
+
+```python
+async def get(
+    self,
+    id: Path[int, PathField(ge=1), lookup],
+) -> dict: ...
+```
+
+Validation runs in the same order as always: extraction → field descriptor → pipes.
+
+### Plain functions (no `@pipe` decorator)
+
+If a callable hasn't been decorated with `@pipe()`, passing it in the subscript
+auto-wraps it for you:
+
+```python
+def double(v: int) -> int:
+    return v * 2
+
+async def h(self, n: Path[int, double]) -> dict: ...  # double is auto-wrapped
+```
+
+This is a convenience for quick inline usage. For reusable pipes in a shared module,
+the explicit `@pipe()` decorator is preferred so the pipe is clearly marked.
+
 ## Chaining pipes
 
-Multiple pipes execute in **declaration order** — each receives the output of the previous:
+Multiple pipes execute in **declaration order** — each receives the output of the previous.
+All three syntax forms respect this rule:
 
 ```python
 from typing import Annotated
@@ -211,16 +297,18 @@ class ArticleController:
     @get("/{slug}")
     async def get(
         self,
-        # trim → lowercase → lookup_article, in that order
-        slug: Annotated[Path[str], pipe(trim), pipe(lowercase), pipe(lookup_article)],
+        # Any of the three forms; all execute trim → lowercase → lookup_article:
+
+        # Subscript form (most compact):
+        slug: Path[str, trim, lowercase, lookup_article],
+
+        # Annotated form:
+        # slug: Annotated[Path[str], pipe(trim), pipe(lowercase), pipe(lookup_article)],
+
+        # Default form:
+        # slug: Path[str] = pipe(trim) | pipe(lowercase) | pipe(lookup_article),
     ) -> dict:
         ...
-```
-
-Equivalently with the default form:
-
-```python
-slug: Path[str] = pipe(trim) | pipe(lowercase) | pipe(lookup_article)
 ```
 
 ## `PipeContext`
@@ -437,7 +525,7 @@ async def test_lookup_user_not_found():
 | … store mutable state on a pipe class | Class-based pipes may be shared across requests. Use `ctx.request_cache` or `ctx.request.state` for per-request state. |
 | … return a `Response` from a pipe | Pipes produce *values* for the handler. Raise an `HTTPError` instead; the exception handler turns it into a response. |
 | … resolve request-scoped services without `request_cache` | Each call creates a fresh instance, defeating the per-request cache. Always pass `request_cache=ctx.request_cache`. |
-| … put business logic in a one-off lambda | Lambdas can't be marked with `@pipe()`. Wrap them in a named function or class so the pipe is discoverable and testable. |
+| … put business logic in a one-off lambda | Lambdas can't be marked with `@pipe()` and are harder to test in isolation. Wrap logic in a named function or class instead. In the subscript syntax, plain callables (including lambdas) are auto-wrapped, but named pipes are easier to discover and unit-test. |
 
 ## See also
 

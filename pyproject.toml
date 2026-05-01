@@ -31,7 +31,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "httpx", "uvicorn>=0.29"]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+    "uvicorn>=0.29",
+    "sqlalchemy>=2.0",
+    "sqlmodel>=0.0.14",
+]
 
 [tool.ruff.lint]
 ignore = ["E741"]
