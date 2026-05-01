@@ -13,7 +13,7 @@ convention.
 ```bash
 pip install -e ".[dev]"
 
-# All tests (1247 pass, 11 skipped, ~16s on a modern laptop):
+# All tests (1518+ pass, 24 skipped, ~30s on a modern laptop):
 pytest -q
 
 # Single layer:
@@ -36,7 +36,7 @@ make build-check             # twine check
 ## What Agents Should Always Do
 
 1. **Run the full test suite before and after every change.** The
-   suite is fast (~16s for 1247 tests). A green `pytest -q` is the
+   suite runs in ~30s for 1518+ tests. A green `pytest -q` is the
    objective acceptance signal for every pull request.
 2. **Read `.CLAUDE.md` first.** It contains the design invariants. An
    agent proposal that violates those invariants should be rejected
@@ -174,7 +174,7 @@ Agents should not silently ship RFC-sized patches; always split them.
 
 A change is ready for merge when:
 
-- [ ] `pytest -q` passes (1247+ tests).
+- [ ] `pytest -q` passes (1518+ tests).
 - [ ] New behaviour has at least one test in the matching layer.
 - [ ] Public API changes are reflected in `__all__`, `llms.txt`,
       and `llms-full.txt`.
@@ -194,8 +194,8 @@ path to "I understand what I'm doing":
 2. Skim `tests/integration/`. Each file is a real-world usage pattern
    for one feature. The shapes there are the shapes the framework
    actually supports.
-3. Run `pytest -q` once. If it doesn't pass on a fresh clone, that's a
-   bug to report before doing anything else.
+3. Run `pytest -q` once. If it doesn't pass on a fresh clone (1518+
+   tests), that's a bug to report before doing anything else.
 4. Read `.CLAUDE.md` rules 3 (strict inheritance) and 8 (28-class
    error catalog). They explain decisions that look strange until you
    know why.

@@ -45,7 +45,9 @@ pip install lauren
 pip install pydantic
 ```
 
-Python 3.11+ required. `py.typed` marker ships for full static-analysis support.
+Python 3.11+ required. `anyio>=4.0` is a required dependency (used to
+offload sync handlers to a thread pool). `py.typed` marker ships for
+full static-analysis support.
 
 ---
 
@@ -510,7 +512,9 @@ Registration paths (onion order, outermost first):
 
 ## Auto-Serialization
 
-Handlers can return any of the following — lauren builds the `Response`:
+Handlers can return any of the following — lauren builds the `Response`.
+Both `async def` and plain `def` handlers coerce their return values
+identically (see *Sync vs Async Handlers* below).
 
 ```python
 @get("/r1")
@@ -544,6 +548,54 @@ async def r7(self) -> list[BaseModel]:
 @get("/r8")
 async def r8(self):
     return Response.html("<h1>hi</h1>")     # raw Response is honored
+```
+
+## Sync vs Async Handlers
+
+Handler methods may be `async def` **or** plain `def`:
+
+```python
+@controller("/items")
+class ItemController:
+    @get("/async/{id}")
+    async def get_async(self, id: Path[int]) -> dict:
+        return await self._repo.find(id)    # awaits async I/O
+
+    @get("/sync/{id}")
+    def get_sync(self, id: Path[int]) -> dict:
+        return self._repo.find_sync(id)     # blocking call — offloaded to thread pool
+```
+
+Sync handlers are **automatically offloaded** to
+`anyio.to_thread.run_sync` at dispatch time (the `is_coroutine` flag is
+set once at startup via `inspect.iscoroutinefunction`).  The event loop
+stays free to serve other requests while the sync function executes.
+
+**Thread-safety rules for sync handlers:**
+
+- `Scope.SINGLETON` services are shared across threads — protect mutable
+  state with `threading.Lock`.
+- `Scope.REQUEST` and `Scope.TRANSIENT` instances are per-request — safe
+  to mutate freely inside one handler.
+- Do **not** call asyncio primitives (e.g. `asyncio.Queue.put_nowait`)
+  directly from a sync handler.  Use
+  `asyncio.get_running_loop().call_soon_threadsafe(fn)` instead.
+
+All binding styles work with sync handlers:
+
+```python
+@controller("/demo")
+class DemoController:
+    @get("/instance")
+    def instance_handler(self) -> dict: ...     # sync instance method
+
+    @staticmethod
+    @get("/static")
+    def static_handler() -> dict: ...           # sync static method
+
+    @classmethod
+    @get("/cls")
+    def class_handler(cls) -> dict: ...         # sync classmethod
 ```
 
 The default JSON encoder handles: Pydantic v2 models, enums (`Enum.value`), `datetime` / `date` / `time` (`isoformat()`), `timedelta` (total seconds), `UUID`, `pathlib.PurePath`, `Decimal`, `set` / `frozenset` (as list), `bytes` (UTF-8 decoded), and dataclass instances.
@@ -900,6 +952,39 @@ class Bad:
 ```
 
 Either make `Bad` request-scoped too, or refactor so it receives the session per-method.
+
+### Pattern: sync handler wrapping a blocking library
+
+```python
+import httpx as _httpx  # sync client
+
+@controller("/proxy")
+class ProxyController:
+    @get("/data")
+    def fetch(self) -> dict:
+        # time.sleep / requests.get / blocking DB calls are all safe here —
+        # the sync handler runs in a thread pool, not on the event loop.
+        resp = _httpx.get("https://api.example.com/data")
+        return resp.json()
+```
+
+### Anti-pattern: calling asyncio primitives from a sync handler
+
+```python
+import asyncio
+
+_queue: asyncio.Queue = asyncio.Queue()
+
+@controller("/events")
+class EventController:
+    @post("/")
+    def push(self, body: Json[Event]) -> None:
+        # ❌ NOT safe — asyncio.Queue is not thread-safe
+        _queue.put_nowait(body)
+
+        # ✅ Safe — schedules work back on the event loop
+        asyncio.get_running_loop().call_soon_threadsafe(_queue.put_nowait, body)
+```
 
 ### Anti-pattern: building `Response.json(...)` manually for every handler
 

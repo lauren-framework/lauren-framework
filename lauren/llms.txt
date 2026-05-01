@@ -16,6 +16,7 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 - **Typed streaming** — `StreamingResponse[T]` content-negotiates between SSE / NDJSON / JSON Lines from the `Accept` header.
 - **Socket.IO compatibility** — Engine.IO v4 / Socket.IO v5 adapter with `@socketio_controller` and `@on_socketio_event`.
 - **ASGI runtime** with `LaurenFactory.create()` seven-phase startup, lifespan protocol, graceful drain.
+- **Sync handler support**: plain `def` handlers are automatically offloaded to a thread pool via `anyio.to_thread.run_sync`; they never block the event loop. All extractors, return-type coercion, and binding styles (instance / classmethod / static) work identically for sync and async handlers.
 - **OpenAPI 3.1** generation from Pydantic models; Swagger UI / ReDoc-ready schemas.
 - **Middleware (onion)**, **Guards**, and **Exception Handlers** — all attachable globally, per-controller, or per-route.
 - **Auto-serialization**: return dicts, Pydantic models, dataclasses, or `(body, status)` tuples and lauren builds the Response for you.

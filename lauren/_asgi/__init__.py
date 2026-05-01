@@ -9,6 +9,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Iterable
 
+import anyio.to_thread
+
 from .._typing import resolve_type_hints
 
 from .._arena import RequestArena
@@ -1144,28 +1146,35 @@ class LaurenApp:
                     # ``static`` — no receiver at all.
                     #
                     # Sync handlers are offloaded to a thread pool via
-                    # ``asyncio.to_thread`` so that a blocking ``time.sleep``
-                    # (or any other blocking I/O) does not stall the event loop
-                    # and prevent other requests from being served concurrently.
+                    # ``anyio.to_thread.run_sync`` so that a blocking
+                    # ``time.sleep`` (or any other blocking I/O) does not stall
+                    # the event loop and prevent other requests from being
+                    # served concurrently.  anyio works across both asyncio
+                    # and trio back-ends; it is already a transitive dependency
+                    # of pytest-asyncio so it is always present.
                     _fn = compiled.handler_fn
                     if compiled.binding == "static":
                         if compiled.is_coroutine:
                             result = await _fn(**kwargs)
                         else:
                             _kw = kwargs
-                            result = await asyncio.to_thread(lambda: _fn(**_kw))
+                            result = await anyio.to_thread.run_sync(lambda: _fn(**_kw))
                     elif compiled.binding == "classmethod":
                         if compiled.is_coroutine:
                             result = await _fn(compiled.controller_cls, **kwargs)
                         else:
                             _cls, _kw = compiled.controller_cls, kwargs
-                            result = await asyncio.to_thread(lambda: _fn(_cls, **_kw))
+                            result = await anyio.to_thread.run_sync(
+                                lambda: _fn(_cls, **_kw)
+                            )
                     else:
                         if compiled.is_coroutine:
                             result = await _fn(controller, **kwargs)
                         else:
                             _ctrl, _kw = controller, kwargs
-                            result = await asyncio.to_thread(lambda: _fn(_ctrl, **_kw))
+                            result = await anyio.to_thread.run_sync(
+                                lambda: _fn(_ctrl, **_kw)
+                            )
                     # StreamingResponse[T] path — the handler returns an async
                     # iterable of ``T`` which we must frame according to the
                     # request's Accept header. Falls back to the generic coercer
