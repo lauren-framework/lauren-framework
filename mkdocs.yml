@@ -129,6 +129,7 @@ nav:
     - Circular Module Imports: guides/circular-module-imports.md
     - OpenAPI Security from Guards: guides/openapi-security.md
     - Proxy & Static Files: guides/proxy-and-static-files.md
+    - Background Tasks: guides/background-tasks.md
   - Concepts:
     - Extractors vs Dependencies vs Guards vs Middlewares: concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md
   - Comparisons:

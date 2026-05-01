@@ -439,7 +439,7 @@ The full development loop is one command:
 ```console
 $ uv tool install prek      # one-time, optional but recommended
 $ prek install              # wires up the git hook
-$ nox                       # lint + tests (1639 passing, 24 skipped) + typecheck
+$ nox                       # lint + tests (1691 passing, 24 skipped) + typecheck
 ```
 
 ## License

@@ -29,6 +29,7 @@ from ..signals import (
     StartupComplete,
     get_default_bus,
 )
+from ..background import BackgroundTasks as _BackgroundTasks, _BG_TASKS_ATTR
 from .._lifecycle import LifecycleScheduler
 from .._modules import ModuleGraph
 from .._routing import RouteEntry, Router
@@ -255,6 +256,23 @@ def _compile_handler_signature(
                     Extraction(
                         name=name,
                         source="request",
+                        inner_type=ann,
+                        field_descriptor=fd,
+                        default=default,
+                        has_default=has_default,
+                        pipes=pipes,
+                    )
+                )
+                param_names.append(name)
+                continue
+            # BackgroundTasks parameter — detected and short-circuited at dispatch time.
+            if ann is _BackgroundTasks or (
+                isinstance(ann, type) and issubclass(ann, _BackgroundTasks)
+            ):
+                extractions.append(
+                    Extraction(
+                        name=name,
+                        source="background_tasks",
                         inner_type=ann,
                         field_descriptor=fd,
                         default=default,
@@ -1157,6 +1175,16 @@ class LaurenApp:
                             for ext in compiled.extractions:
                                 if ext.source == "request":
                                     kwargs_dict[ext.name] = req2
+                                elif ext.source == "background_tasks":
+                                    # Lazy-create once per request; same instance
+                                    # for all bg params in the same handler.
+                                    _bg: _BackgroundTasks | None = req2.state.get(
+                                        _BG_TASKS_ATTR
+                                    )
+                                    if _bg is None:
+                                        _bg = _BackgroundTasks()
+                                        req2.state._lauren_bg_tasks = _bg
+                                    kwargs_dict[ext.name] = _bg
                                 else:
                                     kwargs_dict[ext.name] = await extract_parameter(
                                         req2,
@@ -1475,14 +1503,18 @@ class LaurenApp:
             self._in_flight.add(task)
         try:
             response = await self.handle(request)
+            _bg: _BackgroundTasks | None = request.state.get(_BG_TASKS_ATTR)
             await _send_response(response, send)
+            if _bg is not None and _bg._has_tasks():
+                await _bg._run(signals=self._signals, logger=self._logger)
         finally:
             if task is not None:
                 self._in_flight.discard(task)
             # Return the Request instance to the pool for reuse. Done
-            # *after* ``_send_response`` so any awaitable body finishes
-            # first — if the body is a streaming iterable it may still
-            # reference the request's ``_receive`` callable.
+            # *after* ``_send_response`` (and background tasks) so any
+            # awaitable body finishes first — if the body is a streaming
+            # iterable it may still reference the request's ``_receive``
+            # callable.
             self._arena.release_request(request)
 
     async def _websocket(

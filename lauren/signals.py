@@ -176,6 +176,32 @@ class ShutdownBegin(LifecycleEvent):
     app: Any = None
 
 
+@dataclass
+class BackgroundTaskStarted(LifecycleEvent):
+    """Emitted just before a background task begins executing."""
+
+    task_id: str = ""
+    func: Any = None  # Callable[..., Any]
+
+
+@dataclass
+class BackgroundTaskComplete(LifecycleEvent):
+    """Emitted after a background task finishes successfully."""
+
+    task_id: str = ""
+    func: Any = None
+    duration_s: float = 0.0
+
+
+@dataclass
+class BackgroundTaskFailed(LifecycleEvent):
+    """Emitted when a background task raises an exception."""
+
+    task_id: str = ""
+    func: Any = None
+    error: BaseException | None = None
+
+
 # ---------------------------------------------------------------------------
 # Listener registration types
 # ---------------------------------------------------------------------------
@@ -512,6 +538,9 @@ __all__ = [
     "RequestReceived",
     "RequestComplete",
     "ShutdownBegin",
+    "BackgroundTaskStarted",
+    "BackgroundTaskComplete",
+    "BackgroundTaskFailed",
     # Bus
     "SignalBus",
     "on",

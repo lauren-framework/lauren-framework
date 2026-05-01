@@ -27,6 +27,28 @@ from lauren.types import Path, Query, Header, Cookie, Json, Form, Bytes, Depends
 | `Bytes` | raw body `bytes` | no T argument |
 | `State` | `request.state` | reads per-request mutable state set by middleware |
 | `Depends[T]` | DI container | resolves `T` as if injected into a constructor |
+| `BackgroundTasks` | (injected per-request) | Collect tasks to run after response is sent |
+
+### BackgroundTasks — fire-and-forget after response
+
+Declare `tasks: BackgroundTasks` in a handler to enqueue work that runs **after**
+the HTTP response has been sent to the client:
+
+```python
+from lauren import BackgroundTasks
+
+@post("/users")
+async def create(self, body: Json[CreateUser], tasks: BackgroundTasks) -> UserOut:
+    user = await self._repo.create(body)
+    handle = tasks.add_task(send_welcome_email, user.email, name=user.name)
+    return user, 201
+```
+
+- `add_task(fn, *args, **kwargs)` — enqueue `fn`; returns a `TaskHandle` with `.task_id` and `.status`.
+- Sync functions are offloaded to `anyio.to_thread.run_sync` automatically.
+- Task failures are caught and logged; subsequent tasks always run.
+- Tasks run in the same `asyncio.Task` as the request — they participate in graceful-shutdown drain.
+- **Do NOT pass `Scope.REQUEST` DI instances** — they are torn down before tasks run. Pass values (IDs, strings) or `Scope.SINGLETON` services.
 
 ### Multi-value query parameter
 

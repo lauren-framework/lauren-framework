@@ -222,6 +222,24 @@ Interceptors wrap the **handler** (run after guards, before response is sent). U
 for cross-cutting logic that needs to read or transform the response — audit logs, timing,
 response envelope injection. For transport-layer concerns (auth headers, CORS), use middleware.
 
+## Background Tasks
+
+```python
+from lauren import BackgroundTasks, TaskHandle
+
+@post("/orders")
+async def create(self, body: Json[Order], tasks: BackgroundTasks) -> dict:
+    order = await self._repo.create(body)
+    handle: TaskHandle = tasks.add_task(notify_warehouse, order_id=order.id)
+    return {"id": order.id, "task_id": handle.task_id}
+```
+
+- `add_task(fn, *args, **kwargs)` — enqueue work to run **after** the response is sent.
+- Sync callables are auto-offloaded via `anyio.to_thread.run_sync`.
+- `TaskHandle.status`: `"pending"` → `"running"` → `"done"` | `"failed"`.
+- Signals: `BackgroundTaskStarted`, `BackgroundTaskComplete`, `BackgroundTaskFailed`.
+- **Do not pass `Scope.REQUEST` DI instances** — use plain values or singletons.
+
 ## Exception handlers
 
 ```python

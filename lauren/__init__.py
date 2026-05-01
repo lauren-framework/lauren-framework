@@ -58,6 +58,7 @@ For a complete reference intended for LLM ingestion, see the top-level
 from __future__ import annotations
 
 from . import docs, logging, serialization, signals
+from .background import BackgroundTasks, TaskHandle
 from ._app import Lauren
 from ._arena import RequestAllocation, RequestArena
 from ._asgi import LaurenApp, LaurenFactory
@@ -165,6 +166,9 @@ from .extractors import (
     pipe,
 )
 from .signals import (
+    BackgroundTaskComplete,
+    BackgroundTaskFailed,
+    BackgroundTaskStarted,
     LifecycleEvent,
     RequestComplete,
     RequestReceived,
@@ -229,6 +233,12 @@ except PackageNotFoundError:  # editable install without a tag
     __version__ = "0.0.0+unknown"
 
 __all__ = [
+    # background tasks
+    "BackgroundTasks",
+    "TaskHandle",
+    "BackgroundTaskStarted",
+    "BackgroundTaskComplete",
+    "BackgroundTaskFailed",
     # app
     "Lauren",
     "LaurenApp",

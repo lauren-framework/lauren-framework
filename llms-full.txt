@@ -1431,6 +1431,72 @@ typed-iteration story for *receiving* a stream from the client.
 
 ---
 
+## Background Tasks
+
+Run work **after** the HTTP response has been sent to the client (emails, webhooks,
+audit writes, cache invalidation). Declare `tasks: BackgroundTasks` as a handler
+parameter — Lauren injects a fresh instance per request.
+
+```python
+from lauren import BackgroundTasks, TaskHandle, controller, post, Json
+from pydantic import BaseModel
+
+class CreateUser(BaseModel):
+    email: str
+
+@controller("/users")
+class UsersController:
+    @post("/")
+    async def create(self, body: Json[CreateUser], tasks: BackgroundTasks) -> dict:
+        user = await self._repo.create(body)
+        handle: TaskHandle = tasks.add_task(send_welcome_email, user.email)
+        return {"id": user.id, "task_id": handle.task_id}, 201
+```
+
+### API
+
+- `tasks.add_task(fn, *args, **kwargs) -> TaskHandle` — enqueue work; returns a handle.
+- `TaskHandle.task_id: str` — random hex string, include in response for client polling.
+- `TaskHandle.status: str` — `"pending"` → `"running"` → `"done"` | `"failed"`.
+
+### Sync offload
+
+Sync callables are automatically offloaded via `anyio.to_thread.run_sync` — they
+never block the event loop.
+
+### Error isolation
+
+If a task raises, the exception is logged and emitted as `BackgroundTaskFailed`.
+Subsequent tasks always run. The HTTP response status is never affected.
+
+### Signals
+
+```python
+from lauren import BackgroundTaskStarted, BackgroundTaskComplete, BackgroundTaskFailed
+```
+
+| Signal | Fields |
+|---|---|
+| `BackgroundTaskStarted` | `task_id`, `func` |
+| `BackgroundTaskComplete` | `task_id`, `func`, `duration_s` |
+| `BackgroundTaskFailed` | `task_id`, `func`, `error` |
+
+Subscribe via `app.signals.on(BackgroundTaskFailed)(handler)`.
+
+### Graceful shutdown
+
+Tasks run in the same `asyncio.Task` as their parent request, which is tracked in
+`LaurenApp._in_flight`. The drain phase on `SIGTERM` waits for all background tasks
+to complete before teardown.
+
+### DI constraint
+
+Do **not** pass `Scope.REQUEST` DI instances — they are torn down after the handler
+returns, before tasks run. Pass plain values (IDs, strings) or `Scope.SINGLETON`
+services instead.
+
+---
+
 ## Companion Packages
 
 The framework stays small on purpose; cross-cutting concerns live in

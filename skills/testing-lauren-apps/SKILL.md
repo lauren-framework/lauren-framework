@@ -151,3 +151,58 @@ def test_protected(client, valid_token):
     resp = client.get("/admin/data", headers={"Authorization": f"Bearer {valid_token}"})
     assert resp.status_code == 200
 ```
+
+## Testing background tasks
+
+`TestClient` runs background tasks synchronously in the same event loop before
+the request returns, so side effects are directly assertable:
+
+```python
+from lauren import module, controller, post, LaurenFactory, BackgroundTasks, Json
+from lauren.testing import TestClient
+from pydantic import BaseModel
+
+results = []
+
+async def notify(email: str) -> None:
+    results.append(email)
+
+class CreateUser(BaseModel):
+    email: str
+
+@controller("/users")
+class UsersController:
+    @post("/")
+    async def create(self, body: Json[CreateUser], tasks: BackgroundTasks) -> dict:
+        handle = tasks.add_task(notify, body.email)
+        return {"task_id": handle.task_id}
+
+@module(controllers=[UsersController])
+class AppModule: pass
+
+client = TestClient(LaurenFactory.create(AppModule))
+
+def test_background_task_ran():
+    results.clear()
+    resp = client.post("/users", json={"email": "alice@example.com"})
+    assert resp.status_code == 200
+    assert results == ["alice@example.com"]   # task already ran
+
+def test_task_handle_id_in_response():
+    resp = client.post("/users", json={"email": "bob@example.com"})
+    assert resp.json()["task_id"]             # non-empty string
+```
+
+For signal-based assertions, subscribe before the request:
+
+```python
+from lauren import BackgroundTaskFailed
+
+failures = []
+
+def test_failed_task_emits_signal():
+    app.signals.on(BackgroundTaskFailed)(failures.append)
+    client.post("/path-that-triggers-bad-task")
+    assert len(failures) == 1
+    assert isinstance(failures[0].error, SomeExpectedError)
+```
