@@ -997,6 +997,11 @@ class LaurenApp:
     async def handle(self, request: Request) -> Response:
         """Dispatch a :class:`Request` through middleware, guards and handler.
 
+        Global middlewares run **before** routing so they can intercept every
+        request — including OPTIONS preflight — regardless of whether a
+        matching route exists.  Per-route and controller middlewares run after
+        routing (they need access to the compiled handler).
+
         Every dispatch acquires a :class:`RequestAllocation` bundle from
         the app's :class:`RequestArena`. The bundle's ``request_cache``
         holds request-scoped DI instances; ``framework_values`` is
@@ -1016,71 +1021,18 @@ class LaurenApp:
         # error was surfaced (HTTPError or an unhandled exception).
         final_response: Response | None = None
         captured_error: BaseException | None = None
+        # Tracks the handler qualname for request logging; set inside
+        # _route_and_run once a route is matched.
+        handler_qualname: str | None = None
         # Fire RequestReceived as the very first thing so listeners
         # see the request before any routing decisions have been made.
         # The fast-path check on ``_listeners`` inside SignalBus.emit
         # makes the no-listener case effectively free.
         await self._signals.emit(RequestReceived(request=request))
         try:
-            try:
-                entry, params = self._router.find(request.method, request.path)
-            except RouteNotFoundError as e:
-                captured_error = e
-                resp = _error_response(e, error_format=self._error_format)
-                self._log_request(request, resp, t0, handler=None)
-                final_response = resp
-                return resp
-            except MethodNotAllowedError as e:
-                captured_error = e
-                resp = _error_response(e, error_format=self._error_format)
-                if e.allow:
-                    resp = resp.with_header("allow", ", ".join(e.allow))
-                self._log_request(request, resp, t0, handler=None)
-                final_response = resp
-                return resp
-
-            compiled = self._handlers[(entry.method, entry.path_template)]
-            # Reuse the request's existing ``_path_params`` dict rather
-            # than replacing it: for pooled ``Request`` objects the dict
-            # was already cleared by ``Request.reset``, and for
-            # user-constructed requests it's an empty dict. This saves
-            # one allocation per request on the hot path.
-            request._path_params.clear()
-            request._path_params.update(params)
-            request._matched_route = entry
-            request._handler_class = compiled.controller_cls
-            request._handler_func = compiled.handler_fn
-            request._route_template = entry.path_template
-
-            # Build effective middleware list: global -> controller -> route
-            mw_classes = list(self._global_middlewares) + list(
-                compiled.middleware_chain
-            )
-
-            # Effective guard chain: global guards run FIRST, then the
-            # route's compiled chain (which itself is class-then-method).
-            # Global guards see no controller-module restriction so they
-            # behave like cross-cutting middleware.
-            effective_guards = list(self._global_guards) + list(compiled.guards)
-
-            # Effective interceptor chain: global interceptors are outermost,
-            # then controller-level, then method-level.
-            effective_interceptors = list(self._global_interceptors) + list(
-                compiled.interceptors
-            )
-
-            # Effective exception-handler chain. Route handlers come
-            # first (they are most specific), then controller, then
-            # global. The compiled tuple already encodes route-then-
-            # controller; appending globals here keeps the per-app
-            # configuration mutable without having to recompile every
-            # CompiledHandler when globals change in tests.
-            effective_exception_handlers = list(compiled.exception_handlers) + list(
-                self._global_exception_handlers
-            )
-
-            owning_module = compiled.owning_module
-
+            # Acquire the arena lease before building the global middleware
+            # chain so that ``framework_values`` is available for DI
+            # resolution of global middleware instances.
             async with self._arena.lease() as alloc:
                 # ``request_cache`` holds request-scoped DI instances; the
                 # extractor/guard/controller paths all receive the same
@@ -1095,268 +1047,342 @@ class LaurenApp:
                 framework_values[type(request)] = request
                 kwargs_dict = alloc.kwargs
 
-                async def run_handler(req: Request) -> Response:
-                    # Guards
-                    ctx = ExecutionContext(
-                        request=req,
-                        handler_class=compiled.controller_cls,
-                        handler_func=compiled.handler_fn,
-                        route_template=compiled.path_template,
-                        metadata=dict(compiled.metadata),
+                async def _route_and_run(req: Request) -> Response:
+                    """Routing → per-route middleware → guards → interceptors → handler."""
+                    nonlocal captured_error, handler_qualname
+
+                    # --- Routing ---
+                    try:
+                        entry, params = self._router.find(req.method, req.path)
+                    except RouteNotFoundError as e:
+                        captured_error = e
+                        return _error_response(e, error_format=self._error_format)
+                    except MethodNotAllowedError as e:
+                        captured_error = e
+                        resp = _error_response(e, error_format=self._error_format)
+                        if e.allow:
+                            resp = resp.with_header("allow", ", ".join(e.allow))
+                        return resp
+
+                    compiled = self._handlers[(entry.method, entry.path_template)]
+                    # Reuse the request's existing ``_path_params`` dict rather
+                    # than replacing it: for pooled ``Request`` objects the dict
+                    # was already cleared by ``Request.reset``, and for
+                    # user-constructed requests it's an empty dict. This saves
+                    # one allocation per request on the hot path.
+                    req._path_params.clear()
+                    req._path_params.update(params)
+                    req._matched_route = entry
+                    req._handler_class = compiled.controller_cls
+                    req._handler_func = compiled.handler_fn
+                    req._route_template = entry.path_template
+                    handler_qualname = getattr(
+                        compiled.handler_fn, "__qualname__", None
                     )
-                    for guard_cls in effective_guards:
-                        # Global guards have no controller-module
-                        # restriction; per-route guards resolve within
-                        # the controller's owning module just like
-                        # before.
-                        guard_owning = (
-                            owning_module if guard_cls in compiled.guards else None
-                        )
-                        guard = await self._container.resolve(
-                            guard_cls,
-                            request_cache=request_cache,
-                            framework_values=framework_values,
-                            owning_module=guard_owning,
-                        )
-                        ok = await guard.can_activate(ctx)
-                        if not ok:
-                            raise ForbiddenError(
-                                f"guard {guard_cls.__name__} denied the request",
-                                detail={"guard": guard_cls.__name__},
-                            )
 
-                    # ------------ inner invocation (wrapped by interceptors) ---
-                    async def _invoke_handler() -> Any:
-                        # Instantiate controller + extract args
-                        controller = await self._container.resolve(
-                            compiled.controller_cls,
-                            request_cache=request_cache,
-                            framework_values=framework_values,
-                            owning_module=owning_module,
+                    # Build effective per-route middleware list: controller → route.
+                    # Global middlewares already wrap _route_and_run so they are
+                    # intentionally excluded here.
+                    mw_classes = list(compiled.middleware_chain)
+
+                    # Effective guard chain: global guards run FIRST, then the
+                    # route's compiled chain (which itself is class-then-method).
+                    # Global guards see no controller-module restriction so they
+                    # behave like cross-cutting middleware.
+                    effective_guards = list(self._global_guards) + list(compiled.guards)
+
+                    # Effective interceptor chain: global interceptors are outermost,
+                    # then controller-level, then method-level.
+                    effective_interceptors = list(self._global_interceptors) + list(
+                        compiled.interceptors
+                    )
+
+                    # Effective exception-handler chain. Route handlers come
+                    # first (they are most specific), then controller, then
+                    # global. The compiled tuple already encodes route-then-
+                    # controller; appending globals here keeps the per-app
+                    # configuration mutable without having to recompile every
+                    # CompiledHandler when globals change in tests.
+                    effective_exception_handlers = list(
+                        compiled.exception_handlers
+                    ) + list(self._global_exception_handlers)
+
+                    owning_module = compiled.owning_module
+
+                    async def run_handler(req2: Request) -> Response:
+                        # Guards
+                        ctx = ExecutionContext(
+                            request=req2,
+                            handler_class=compiled.controller_cls,
+                            handler_func=compiled.handler_fn,
+                            route_template=compiled.path_template,
+                            metadata=dict(compiled.metadata),
                         )
-                        # Build kwargs directly into the pooled dict.
-                        # ``kwargs_dict`` starts empty (``alloc.kwargs`` was
-                        # cleared on lease acquisition); we clear any prior
-                        # content defensively in case a middleware populated
-                        # the scratch earlier in the chain.
-                        kwargs_dict.clear()
-                        for ext in compiled.extractions:
-                            if ext.source == "request":
-                                kwargs_dict[ext.name] = req
-                            else:
-                                kwargs_dict[ext.name] = await extract_parameter(
-                                    req,
-                                    ext,
-                                    container=self._container,
-                                    request_cache=request_cache,
-                                    owning_module=owning_module,
-                                    execution_context=ctx,
+                        for guard_cls in effective_guards:
+                            # Global guards have no controller-module
+                            # restriction; per-route guards resolve within
+                            # the controller's owning module just like
+                            # before.
+                            guard_owning = (
+                                owning_module if guard_cls in compiled.guards else None
+                            )
+                            guard = await self._container.resolve(
+                                guard_cls,
+                                request_cache=request_cache,
+                                framework_values=framework_values,
+                                owning_module=guard_owning,
+                            )
+                            ok = await guard.can_activate(ctx)
+                            if not ok:
+                                raise ForbiddenError(
+                                    f"guard {guard_cls.__name__} denied the request",
+                                    detail={"guard": guard_cls.__name__},
                                 )
-                        # ``kwargs`` below re-aliases the same pooled dict so
-                        # the existing dispatch branches stay identical.
-                        kwargs = kwargs_dict
-                        # Invoke the handler according to its binding style and
-                        # whether it is a coroutine function.
-                        #
-                        # ``instance`` — normal method: pass the DI-built
-                        # controller as the implicit ``self``.
-                        # ``classmethod`` — pass the class itself; the handler
-                        # receives ``cls`` even though we still resolved the
-                        # instance for lifecycle purposes (field injection runs,
-                        # ``@post_construct`` fires, etc.).
-                        # ``static`` — no receiver at all.
-                        #
-                        # Sync handlers are offloaded to a thread pool via
-                        # ``anyio.to_thread.run_sync`` so that a blocking
-                        # ``time.sleep`` (or any other blocking I/O) does not
-                        # stall the event loop.
-                        _fn = compiled.handler_fn
-                        if compiled.binding == "static":
-                            if compiled.is_coroutine:
-                                return await _fn(**kwargs)
-                            _kw = kwargs
-                            return await anyio.to_thread.run_sync(lambda: _fn(**_kw))
-                        if compiled.binding == "classmethod":
-                            if compiled.is_coroutine:
-                                return await _fn(compiled.controller_cls, **kwargs)
-                            _cls, _kw = compiled.controller_cls, kwargs
-                            return await anyio.to_thread.run_sync(
-                                lambda: _fn(_cls, **_kw)
-                            )
-                        # instance binding
-                        if compiled.is_coroutine:
-                            return await _fn(controller, **kwargs)
-                        _ctrl, _kw = controller, kwargs
-                        return await anyio.to_thread.run_sync(lambda: _fn(_ctrl, **_kw))
 
-                    # Build interceptor chain (innermost first, then wrap
-                    # outward so the first declared interceptor is outermost).
-                    call_handler: CallHandler = CallHandler(_invoke_handler)
-                    for inter_cls in reversed(effective_interceptors):
-                        inter_owning = (
+                        # ------------ inner invocation (wrapped by interceptors) ---
+                        async def _invoke_handler() -> Any:
+                            # Instantiate controller + extract args
+                            controller = await self._container.resolve(
+                                compiled.controller_cls,
+                                request_cache=request_cache,
+                                framework_values=framework_values,
+                                owning_module=owning_module,
+                            )
+                            # Build kwargs directly into the pooled dict.
+                            # ``kwargs_dict`` starts empty (``alloc.kwargs`` was
+                            # cleared on lease acquisition); we clear any prior
+                            # content defensively in case a middleware populated
+                            # the scratch earlier in the chain.
+                            kwargs_dict.clear()
+                            for ext in compiled.extractions:
+                                if ext.source == "request":
+                                    kwargs_dict[ext.name] = req2
+                                else:
+                                    kwargs_dict[ext.name] = await extract_parameter(
+                                        req2,
+                                        ext,
+                                        container=self._container,
+                                        request_cache=request_cache,
+                                        owning_module=owning_module,
+                                        execution_context=ctx,
+                                    )
+                            # ``kwargs`` below re-aliases the same pooled dict so
+                            # the existing dispatch branches stay identical.
+                            kwargs = kwargs_dict
+                            # Invoke the handler according to its binding style and
+                            # whether it is a coroutine function.
+                            #
+                            # ``instance`` — normal method: pass the DI-built
+                            # controller as the implicit ``self``.
+                            # ``classmethod`` — pass the class itself; the handler
+                            # receives ``cls`` even though we still resolved the
+                            # instance for lifecycle purposes (field injection runs,
+                            # ``@post_construct`` fires, etc.).
+                            # ``static`` — no receiver at all.
+                            #
+                            # Sync handlers are offloaded to a thread pool via
+                            # ``anyio.to_thread.run_sync`` so that a blocking
+                            # ``time.sleep`` (or any other blocking I/O) does not
+                            # stall the event loop.
+                            _fn = compiled.handler_fn
+                            if compiled.binding == "static":
+                                if compiled.is_coroutine:
+                                    return await _fn(**kwargs)
+                                _kw = kwargs
+                                return await anyio.to_thread.run_sync(
+                                    lambda: _fn(**_kw)
+                                )
+                            if compiled.binding == "classmethod":
+                                if compiled.is_coroutine:
+                                    return await _fn(compiled.controller_cls, **kwargs)
+                                _cls, _kw = compiled.controller_cls, kwargs
+                                return await anyio.to_thread.run_sync(
+                                    lambda: _fn(_cls, **_kw)
+                                )
+                            # instance binding
+                            if compiled.is_coroutine:
+                                return await _fn(controller, **kwargs)
+                            _ctrl, _kw = controller, kwargs
+                            return await anyio.to_thread.run_sync(
+                                lambda: _fn(_ctrl, **_kw)
+                            )
+
+                        # Build interceptor chain (innermost first, then wrap
+                        # outward so the first declared interceptor is outermost).
+                        call_handler: CallHandler = CallHandler(_invoke_handler)
+                        for inter_cls in reversed(effective_interceptors):
+                            inter_owning = (
+                                owning_module
+                                if inter_cls in compiled.interceptors
+                                else None
+                            )
+                            inter_inst = await self._container.resolve(
+                                inter_cls,
+                                request_cache=request_cache,
+                                framework_values=framework_values,
+                                owning_module=inter_owning,
+                            )
+                            call_handler = _wrap_interceptor(
+                                inter_inst, ctx, call_handler
+                            )
+
+                        result = await call_handler.handle()
+
+                        # StreamingResponse[T] path — the handler returns an async
+                        # iterable of ``T`` which we must frame according to the
+                        # request's Accept header. Falls back to the generic coercer
+                        # for every other return shape (feature 7).
+                        if compiled.streaming_item_type is not None and not isinstance(
+                            result, Response
+                        ):
+                            return await _coerce_streaming_response(
+                                result,
+                                item_type=compiled.streaming_item_type,
+                                request=req2,
+                                encoder=self._json_encoder,
+                            )
+                        return _coerce_to_response(result, encoder=self._json_encoder)
+
+                    # Per-route onion chain (global mw already wraps _route_and_run)
+                    chain: CallNext = run_handler
+                    for mw_cls in reversed(mw_classes):
+                        # Middleware declared on the controller resolves within that
+                        # controller's module; global middleware resolves with no
+                        # module restriction (it is application-wide).
+                        mw_owning = (
                             owning_module
-                            if inter_cls in compiled.interceptors
+                            if mw_cls in compiled.middleware_chain
                             else None
                         )
-                        inter_inst = await self._container.resolve(
-                            inter_cls,
-                            request_cache=request_cache,
+                        mw_instance = await self._container.resolve(
+                            mw_cls,
                             framework_values=framework_values,
-                            owning_module=inter_owning,
+                            owning_module=mw_owning,
                         )
-                        call_handler = _wrap_interceptor(inter_inst, ctx, call_handler)
+                        chain = _wrap_middleware(mw_instance, chain)
 
-                    result = await call_handler.handle()
+                    try:
+                        try:
+                            return await chain(req)
+                        except HTTPError as e:
+                            # Give user-declared handlers a chance to claim
+                            # the error before falling back to lauren's
+                            # built-in error envelope. This lets a custom
+                            # filter override (for example) the status code
+                            # of a ForbiddenError, while leaving the default
+                            # behaviour identical when no filter matches.
+                            handled = await self._dispatch_exception_handlers(
+                                e,
+                                request=req,
+                                handlers=effective_exception_handlers,
+                                request_cache=request_cache,
+                                framework_values=framework_values,
+                                owning_module=owning_module,
+                                compiled=compiled,
+                            )
+                            captured_error = e
+                            if handled is not None:
+                                return handled
+                            return _error_response(e, error_format=self._error_format)
+                        except Exception as e:  # pragma: no cover - final safety net
+                            # Try user handlers first — a non-HTTP exception
+                            # like ValueError can be turned into a clean
+                            # response by a registered filter. Only when no
+                            # filter matches do we emit the generic 500.
+                            handled = await self._dispatch_exception_handlers(
+                                e,
+                                request=req,
+                                handlers=effective_exception_handlers,
+                                request_cache=request_cache,
+                                framework_values=framework_values,
+                                owning_module=owning_module,
+                                compiled=compiled,
+                            )
+                            captured_error = e
+                            if handled is not None:
+                                return handled
+                            logger.exception("Unhandled handler error")
+                            self._logger.error(
+                                f"Unhandled exception: {type(e).__name__}: {e}",
+                                context="Request",
+                                method=req.method,
+                                path=req.path,
+                                error=type(e).__name__,
+                            )
+                            from ..exceptions import LaurenError
 
-                    # StreamingResponse[T] path — the handler returns an async
-                    # iterable of ``T`` which we must frame according to the
-                    # request's Accept header. Falls back to the generic coercer
-                    # for every other return shape (feature 7).
-                    if compiled.streaming_item_type is not None and not isinstance(
-                        result, Response
-                    ):
-                        return await _coerce_streaming_response(
-                            result,
-                            item_type=compiled.streaming_item_type,
-                            request=req,
-                            encoder=self._json_encoder,
-                        )
-                    return _coerce_to_response(result, encoder=self._json_encoder)
+                            return _error_response(
+                                LaurenError(
+                                    "internal server error",
+                                    detail={"type": type(e).__name__},
+                                ),
+                                status=500,
+                                code="internal_error",
+                                error_format=self._error_format,
+                            )
+                    finally:
+                        # Finalize any request-scoped instances: run their
+                        # @pre_destruct hook (if declared) and then any
+                        # aclose() coroutine. Hooks run in reverse insertion
+                        # order so the most recently constructed instance
+                        # tears down first — analogous to the LIFO order used
+                        # by the application-level scheduler at shutdown.
+                        providers_by_cls = {
+                            p.cls: p for p in self._container.all_providers()
+                        }
+                        # Snapshot the cache keys *before* the arena clears
+                        # the pooled dict; otherwise we'd iterate an empty
+                        # mapping as soon as the lease exits.
+                        request_scoped_instances = [
+                            (cls, request_cache[cls])
+                            for cls in reversed(list(request_cache.keys()))
+                        ]
+                        for cls, instance in request_scoped_instances:
+                            provider = providers_by_cls.get(cls)
+                            if (
+                                provider is not None
+                                and provider.pre_destruct is not None
+                            ):
+                                try:
+                                    bound = getattr(
+                                        instance, provider.pre_destruct.__name__
+                                    )
+                                    res = bound()
+                                    if inspect.isawaitable(res):
+                                        await res
+                                except Exception:
+                                    logger.exception(
+                                        "Error in @pre_destruct on %s", cls.__name__
+                                    )
+                            aclose = getattr(instance, "aclose", None)
+                            if callable(aclose):
+                                try:
+                                    aclose_result = aclose()
+                                    if inspect.isawaitable(aclose_result):
+                                        await aclose_result
+                                except Exception:
+                                    logger.exception(
+                                        "Error closing request-scoped instance %r",
+                                        instance,
+                                    )
 
-                # Onion chain
-                chain: CallNext = run_handler
-                for mw_cls in reversed(mw_classes):
-                    # Middleware declared on the controller resolves within that
-                    # controller's module; global middleware resolves with no module
-                    # restriction (it is application-wide).
-                    mw_owning = (
-                        owning_module if mw_cls in compiled.middleware_chain else None
-                    )
+                # Build global middleware onion around _route_and_run.
+                # Global middlewares see every request before routing, so they
+                # can intercept OPTIONS preflight, add CORS headers to 404
+                # responses, and so on.
+                global_chain: CallNext = _route_and_run
+                for mw_cls in reversed(self._global_middlewares):
                     mw_instance = await self._container.resolve(
                         mw_cls,
                         framework_values=framework_values,
-                        owning_module=mw_owning,
+                        owning_module=None,
                     )
-                    chain = _wrap_middleware(mw_instance, chain)
+                    global_chain = _wrap_middleware(mw_instance, global_chain)
 
-                response: Response | None = None
-                try:
-                    try:
-                        response = await chain(request)
-                        final_response = response
-                        return response
-                    except HTTPError as e:
-                        # Give user-declared handlers a chance to claim
-                        # the error before falling back to lauren's
-                        # built-in error envelope. This lets a custom
-                        # filter override (for example) the status code
-                        # of a ForbiddenError, while leaving the default
-                        # behaviour identical when no filter matches.
-                        handled = await self._dispatch_exception_handlers(
-                            e,
-                            request=request,
-                            handlers=effective_exception_handlers,
-                            request_cache=request_cache,
-                            framework_values=framework_values,
-                            owning_module=owning_module,
-                            compiled=compiled,
-                        )
-                        captured_error = e
-                        if handled is not None:
-                            response = handled
-                        else:
-                            response = _error_response(
-                                e, error_format=self._error_format
-                            )
-                        final_response = response
-                        return response
-                    except Exception as e:  # pragma: no cover - final safety net
-                        # Try user handlers first — a non-HTTP exception
-                        # like ValueError can be turned into a clean
-                        # response by a registered filter. Only when no
-                        # filter matches do we emit the generic 500.
-                        handled = await self._dispatch_exception_handlers(
-                            e,
-                            request=request,
-                            handlers=effective_exception_handlers,
-                            request_cache=request_cache,
-                            framework_values=framework_values,
-                            owning_module=owning_module,
-                            compiled=compiled,
-                        )
-                        captured_error = e
-                        if handled is not None:
-                            response = handled
-                            final_response = response
-                            return response
-                        logger.exception("Unhandled handler error")
-                        self._logger.error(
-                            f"Unhandled exception: {type(e).__name__}: {e}",
-                            context="Request",
-                            method=request.method,
-                            path=request.path,
-                            error=type(e).__name__,
-                        )
-                        from ..exceptions import LaurenError
-
-                        response = _error_response(
-                            LaurenError(
-                                "internal server error",
-                                detail={"type": type(e).__name__},
-                            ),
-                            status=500,
-                            code="internal_error",
-                            error_format=self._error_format,
-                        )
-                        final_response = response
-                        return response
-                finally:
-                    # Log the request before we lose `response` and `handler` context.
-                    self._log_request(
-                        request,
-                        response,
-                        t0,
-                        handler=getattr(compiled.handler_fn, "__qualname__", None),
-                    )
-                    # Finalize any request-scoped instances: run their @pre_destruct
-                    # hook (if declared) and then any aclose() coroutine. Hooks run
-                    # in reverse insertion order so the most recently constructed
-                    # instance tears down first — analogous to the LIFO order used
-                    # by the application-level scheduler at shutdown.
-                    providers_by_cls = {
-                        p.cls: p for p in self._container.all_providers()
-                    }
-                    # Snapshot the cache keys *before* the arena clears the
-                    # pooled dict; otherwise we'd iterate an empty mapping
-                    # as soon as the lease exits.
-                    request_scoped_instances = [
-                        (cls, request_cache[cls])
-                        for cls in reversed(list(request_cache.keys()))
-                    ]
-                    for cls, instance in request_scoped_instances:
-                        provider = providers_by_cls.get(cls)
-                        if provider is not None and provider.pre_destruct is not None:
-                            try:
-                                bound = getattr(
-                                    instance, provider.pre_destruct.__name__
-                                )
-                                res = bound()
-                                if inspect.isawaitable(res):
-                                    await res
-                            except Exception:
-                                logger.exception(
-                                    "Error in @pre_destruct on %s", cls.__name__
-                                )
-                        aclose = getattr(instance, "aclose", None)
-                        if callable(aclose):
-                            try:
-                                result = aclose()
-                                if inspect.isawaitable(result):
-                                    await result
-                            except Exception:
-                                logger.exception(
-                                    "Error closing request-scoped instance %r", instance
-                                )
+                response = await global_chain(request)
+                self._log_request(request, response, t0, handler=handler_qualname)
+                final_response = response
+                return response
         finally:
             # Fire RequestComplete on every exit path (success, handled
             # HTTPError, internal error, routing miss). Skipped only
