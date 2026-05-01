@@ -8,7 +8,7 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 
 - **Radix-tree router** with O(depth) lookup, static > param > wildcard priority, per-method dispatch with `Allow` header on 405.
 - **Dependency Injection** with `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes, Protocol binding, multi-bindings (`list[T]` injection), circular detection, scope-violation checks, and the four NestJS-style custom-provider recipes (`use_value`, `use_class`, `use_factory`, `use_existing`) plus `Token` and `Inject`.
-- **Extractor system** for typed request decomposition (`Path[int]`, `Query[str]`, `Header[str]`, `Cookie[str]`, `Json[Model]`, `Form[Model]`, `Bytes`, `State`, `Depends[T]`, plus user-defined extractors via a classmethod hook).
+- **Extractor system** for typed request decomposition (`Path[int]`, `Query[str]`, `Header[str]`, `Cookie[str]`, `Json[Model]`, `Form[Model]`, `Bytes`, `State`, `Depends[T]`, plus user-defined extractors via `ExtractionMarker` with a unified `extract(self, execution_context, extraction)` instance method).
 - **Module system** with explicit imports/exports and circular-import detection (NestJS-style).
 - **Lifecycle hooks** (`@post_construct`, `@pre_destruct`) run in topological order with timeouts.
 - **First-class WebSockets** — `@ws_controller(path)`, `@on_connect`, `@on_message("event")`, `@on_disconnect`, `@on_error`, with typed Pydantic-validated frames, discriminated-union dispatch, and `BroadcastGroup` rooms.
@@ -17,7 +17,8 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 - **Socket.IO compatibility** — Engine.IO v4 / Socket.IO v5 adapter with `@socketio_controller` and `@on_socketio_event`.
 - **ASGI runtime** with `LaurenFactory.create()` seven-phase startup, lifespan protocol, graceful drain.
 - **OpenAPI 3.1** generation from Pydantic models; Swagger UI / ReDoc-ready schemas.
-- **Middleware (onion)**, **Guards**, and **Exception Handlers** — all attachable globally, per-controller, or per-route.
+- **Middleware (onion)**, **Guards**, **Interceptors**, and **Exception Handlers** — all attachable globally, per-controller, or per-route. Pipeline order: global middlewares → per-route middlewares → guards → interceptors → handler.
+- **Sync handler offload**: synchronous handlers automatically run in an `anyio` thread pool so they never block the event loop.
 - **Auto-serialization**: return dicts, Pydantic models, dataclasses, or `(body, status)` tuples and lauren builds the Response for you.
 - **Strict inheritance**: subclasses are controllers / injectables / WS gateways / exception handlers / middlewares only when explicitly re-decorated.
 - **Structured logging** with NestJS-style `ConsoleLogger` (coloured) and `JsonLogger` (production); per-phase startup events, per-request traces, deterministic shutdown messages.
@@ -42,5 +43,5 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 - [Typed streaming](#streaming): `StreamingResponse[T]` with content negotiation.
 - [Custom providers](#custom-providers): `use_value` / `use_class` / `use_factory` / `use_existing`.
 - [Custom extractors](#custom-extractors): creating domain extractors like `CurrentUser`.
-- [Guards & middleware](#guards-middleware): applying authorization at class or route level.
+- [Guards, middleware & interceptors](#guards-middleware--interceptors): applying authorization and cross-cutting response logic at class or route level.
 - [Exception handlers](#exception-handlers): typed error → response mapping.

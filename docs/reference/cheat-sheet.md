@@ -193,6 +193,35 @@ class API: ...
 async def x(self): ...
 ```
 
+## Interceptors
+
+```python
+from lauren import interceptor, use_interceptors, ExecutionContext, CallHandler, Response
+
+@interceptor()
+class AuditLog:
+    async def intercept(self, ctx: ExecutionContext, call_handler: CallHandler) -> Response:
+        response = await call_handler.handle()
+        print(f"{ctx.request.method} {ctx.request.path} → {response.status_code}")
+        return response
+
+# Global:
+app = LaurenFactory.create(AppModule, global_interceptors=[AuditLog])
+
+# Controller / route:
+@use_interceptors(AuditLog)
+@controller("/api")
+class API: ...
+
+@get("/x")
+@use_interceptors(TimingInterceptor)
+async def x(self): ...
+```
+
+Interceptors wrap the **handler** (run after guards, before response is sent). Use them
+for cross-cutting logic that needs to read or transform the response — audit logs, timing,
+response envelope injection. For transport-layer concerns (auth headers, CORS), use middleware.
+
 ## Exception handlers
 
 ```python
@@ -222,32 +251,42 @@ app = LaurenFactory.create(AppModule, global_exception_handlers=[DomainErrors])
 ## Custom extractors
 
 ```python
-from lauren import DIContainer
 from lauren.extractors import Extraction, ExtractionMarker
 from lauren.exceptions import UnauthorizedError
-from lauren.types import Request
+from lauren.types import ExecutionContext
 
 class CurrentUser(ExtractionMarker):
     source = "app.current_user"
 
-    @classmethod
     async def extract(
-        cls,
-        request: Request,
+        self,
+        execution_context: ExecutionContext,
         extraction: Extraction,
-        *,
-        container: DIContainer,
-        request_cache: dict[type, object] | None,
     ) -> object:
-        uid = request.state.get("user_id")
+        uid = execution_context.request.state.get("user_id")
         if uid is None:
             raise UnauthorizedError("missing auth")
-        repo = await container.resolve(UserRepo, request_cache=request_cache,
-                                        framework_values={type(request): request})
-        return await repo.get(uid)
+        ...   # lookup uid in DB; raise UnauthorizedError if missing
 
 @get("/me")
 async def me(self, user: CurrentUser) -> dict: ...
+```
+
+For DI-injected extractors (constructor deps), add `@injectable` and list the class in `providers=`. The `extract` signature is identical:
+
+```python
+from lauren import injectable, Scope
+
+@injectable(scope=Scope.REQUEST)
+class CurrentUser(ExtractionMarker):
+    source = "app.current_user"
+
+    def __init__(self, repo: UserRepository) -> None:
+        self._repo = repo
+
+    async def extract(self, execution_context: ExecutionContext, extraction: Extraction) -> User:
+        uid = execution_context.request.state.get("user_id")
+        return await self._repo.get(uid)
 ```
 
 ## Auto-serialization

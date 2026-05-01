@@ -18,7 +18,7 @@ common mistakes.
 7. [Dependency Injection](#dependency-injection)
 8. [Custom Providers](#custom-providers)
 9. [Modules](#modules)
-10. [Guards & Middleware](#guards--middleware)
+10. [Guards, Middleware & Interceptors](#guards-middleware--interceptors)
 11. [Exception Handlers](#exception-handlers)
 12. [Auto-Serialization](#auto-serialization)
 13. [Error Catalog](#error-catalog)
@@ -52,7 +52,6 @@ Python 3.11+ required. `py.typed` marker ships for full static-analysis support.
 ## Minimal Example
 
 ```python
-import asyncio
 from pydantic import BaseModel
 from lauren import (
     LaurenFactory, controller, get, post, module,
@@ -78,21 +77,18 @@ class UserController:
 class AppModule:
     pass
 
-async def main():
-    app = await LaurenFactory.create(AppModule)
-    # `app` is an ASGI callable — use uvicorn/hypercorn to serve.
-    return app
-
-asyncio.run(main())
+# LaurenFactory.create() is synchronous — build at module level for uvicorn.
+app = LaurenFactory.create(AppModule)
+# `app` is an ASGI callable — serve with uvicorn/hypercorn/granian.
 ```
 
 ---
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middleware=None, max_body_size=1048576, app_state=None)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_exception_handlers=None, max_body_size=1048576, app_state=None)`
 
-Async factory. Returns a fully-booted `LaurenApp`. Executes seven phases:
+Synchronous factory. Returns a fully-booted `LaurenApp`. Executes seven phases:
 
 1. **Module graph construction** — walk `@module(imports=[...])` edges, detect cycles.
 2. **Provider collection** — gather every `@injectable` from the graph.
@@ -226,11 +222,13 @@ class Db:
 ### Middleware & guard decorators
 
 - `@middleware` — marks a class with a `dispatch(request, call_next)` method as middleware.
-- `@use_middleware(*classes)` — attach middleware to a **controller class** OR a **handler method**.
+- `@use_middlewares(*classes)` — attach middleware to a **controller class** OR a **handler method**.
 - `@use_guards(*classes)` — attach guards to a **controller class** OR a **handler method**.
-- `@set_metadata(key, value)` — attach free-form metadata readable by guards via `ExecutionContext.get_metadata(key, default)`.
+- `@interceptor()` — marks a class with an `intercept(ctx, call_handler)` method as an interceptor.
+- `@use_interceptors(*classes)` — attach interceptors to a **controller class** OR a **handler method**.
+- `@set_metadata(key, value)` — attach free-form metadata readable by guards/interceptors via `ExecutionContext.get_metadata(key, default)`.
 
-Both decoration orders work for class-level `@use_guards` and `@use_middleware`:
+Both decoration orders work for class-level `@use_guards` and `@use_middlewares`:
 
 ```python
 # Order A
@@ -459,7 +457,7 @@ Resolution rules:
 
 ---
 
-## Guards & Middleware
+## Guards, Middleware & Interceptors
 
 ### Guards (`GuardProtocol`)
 
@@ -505,9 +503,43 @@ class RequestId:
 
 Registration paths (onion order, outermost first):
 
-1. Global — `LaurenFactory.create(AppModule, global_middleware=[RequestId, AuthMiddleware])`
-2. Controller — `@use_middleware(...)` on the controller class
-3. Route — `@use_middleware(...)` on a handler method
+1. Global — `LaurenFactory.create(AppModule, global_middlewares=[RequestId, AuthMiddleware])`
+2. Controller — `@use_middlewares(...)` on the controller class
+3. Route — `@use_middlewares(...)` on a handler method
+
+### Interceptors (`InterceptorProtocol`)
+
+Interceptors run **after** guards, **around** the handler. They receive a `CallHandler` and
+can read or replace the `Response`. Execution order: global → controller → route (wrapping
+outward, so the outermost interceptor sees the final response last).
+
+```python
+from lauren import interceptor, use_interceptors, ExecutionContext, CallHandler, Response
+
+@interceptor()
+class TimingInterceptor:
+    async def intercept(self, ctx: ExecutionContext, call_handler: CallHandler) -> Response:
+        import time
+        start = time.perf_counter()
+        response = await call_handler.handle()
+        elapsed = time.perf_counter() - start
+        return response.with_header("x-elapsed-ms", f"{elapsed * 1000:.1f}")
+
+# Global:
+app = LaurenFactory.create(AppModule, global_interceptors=[TimingInterceptor])
+
+# Controller / route level:
+@use_interceptors(AuditLog)
+@controller("/api")
+class API: ...
+```
+
+DI-injected interceptors: add `@injectable` and list the class in the module's `providers`.
+
+**Pipeline order (verified in source):**
+```
+Global middlewares → per-route middlewares → guards → interceptors → handler
+```
 
 ---
 
@@ -654,56 +686,59 @@ Same rule for `@controller` and `@module`. This avoids surprising behavior when 
 
 Method-level decorators (`@get`, `@post`, etc.) DO propagate through inheritance — that's just Python method resolution, nothing lauren-specific.
 
-`@use_guards` and `@use_middleware` attach to the exact target (class or method) only. A subclass that wants parent guards must re-declare them.
+`@use_guards`, `@use_middlewares`, and `@use_interceptors` attach to the exact target (class or method) only. A subclass that wants parent guards must re-declare them.
 
 ---
 
 ## Custom Extractors (plugin API)
 
-Any subclass of `ExtractionMarker` with an async `extract` classmethod can participate in handler signatures.
+Any subclass of `ExtractionMarker` with an async `extract` instance method can participate in handler signatures.
 
 ```python
-from lauren import DIContainer
 from lauren.extractors import Extraction, ExtractionMarker
 from lauren.exceptions import UnauthorizedError
-from lauren.types import Request
+from lauren.types import ExecutionContext
 
 class CurrentUser(ExtractionMarker):
     source = "app.current_user"  # any unique string
 
-    @classmethod
     async def extract(
-        cls,
-        request: Request,
+        self,
+        execution_context: ExecutionContext,
         extraction: Extraction,
-        *,
-        container: DIContainer,
-        request_cache: dict[type, object] | None,
     ) -> object:
-        uid = request.state.get("user_id")
+        uid = execution_context.request.state.get("user_id")
         if uid is None:
             raise UnauthorizedError("missing auth")
-        session = await container.resolve(
-            DbSession,
-            request_cache=request_cache,
-            framework_values={type(request): request},
-        )
-        user = await session.get(User, uid)
-        if user is None:
-            raise UnauthorizedError("user vanished")
-        return user
+        ...  # lookup uid in DB; raise UnauthorizedError if missing
 
-# Usage \u2014 declare as a handler parameter annotation:
+# Usage — declare as a handler parameter annotation:
 @get("/me")
 async def me(self, user: CurrentUser) -> dict:
     return {"id": user.id, "name": user.name}
 ```
 
 The extractor receives:
-- `request` — the current `Request`
+- `execution_context` — carries `request`, `handler_class`, `handler_func`, `route_template`, `metadata`.
 - `extraction` — an `Extraction` with `name`, `default`, `has_default`, etc.
-- `container` — the DI container (use to resolve sessions, services)
-- `request_cache` — the per-request cache; pass it when resolving request-scoped deps.
+
+For DI-injected extractors (constructor deps), add `@injectable` and list the class in `providers=`.
+The `extract` signature is identical — the DI container resolves constructor dependencies automatically:
+
+```python
+from lauren import injectable, Scope
+
+@injectable(scope=Scope.REQUEST)
+class CurrentUser(ExtractionMarker):
+    source = "app.current_user"
+
+    def __init__(self, repo: UserRepository) -> None:
+        self._repo = repo
+
+    async def extract(self, execution_context: ExecutionContext, extraction: Extraction) -> User:
+        uid = execution_context.request.state.get("user_id")
+        return await self._repo.get(uid)
+```
 
 Raise any `HTTPError` subclass (`UnauthorizedError`, `ForbiddenError`, ...) to short-circuit with the matching status.
 
@@ -747,14 +782,14 @@ from lauren import LaurenFactory
 from lauren.logging import default_logger, ConsoleLogger, JsonLogger, LogLevel
 
 # Auto-choose based on TTY detection + LAUREN_LOG_FORMAT / LAUREN_LOG_LEVEL
-app = await LaurenFactory.create(AppModule, logger=default_logger())
+app = LaurenFactory.create(AppModule, logger=default_logger())
 
 # Or pick explicitly:
-app = await LaurenFactory.create(
+app = LaurenFactory.create(
     AppModule,
     logger=ConsoleLogger(level="DEBUG", name="MyApp"),
 )
-app = await LaurenFactory.create(
+app = LaurenFactory.create(
     AppModule,
     logger=JsonLogger(level=LogLevel.INFO),
 )
@@ -802,7 +837,7 @@ idempotent: concurrent or repeated ``shutdown()`` invocations return once
 the first shutdown has finished.
 
 ```python
-app = await LaurenFactory.create(AppModule, logger=default_logger())
+app = LaurenFactory.create(AppModule, logger=default_logger())
 
 # Register arbitrary cleanup (decorator form supported):
 @app.on_shutdown
@@ -858,8 +893,7 @@ Lauren's runtime awaits `aclose()` on every request-scoped instance after each r
 ```python
 class CurrentUser(ExtractionMarker):
     source = "app.current_user"
-    @classmethod
-    async def extract(cls, request, extraction, *, container, request_cache):
+    async def extract(self, execution_context, extraction):
         ...
 
 @controller("/me")
@@ -1163,9 +1197,9 @@ class UserController: ...
 async def x(self): ...
 
 # Global — handles every request:
-app = await LaurenFactory.create(
+app = LaurenFactory.create(
     AppModule,
-    global_exception_filters=[DomainErrors, AuditFailures],
+    global_exception_handlers=[DomainErrors, AuditFailures],
 )
 ```
 
@@ -1432,9 +1466,9 @@ from lauren_middlewares import (
     cors, rate_limit, gzip, security_headers, request_id,
 )
 
-app = await LaurenFactory.create(
+app = LaurenFactory.create(
     AppModule,
-    global_middleware=[
+    global_middlewares=[
         request_id(),
         security_headers(),
         cors(allow_origins=["https://app.example.com"]),

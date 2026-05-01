@@ -29,18 +29,18 @@ Lauren's `Response` is **immutable** — every `with_*` method returns a new ins
 ## Three places to attach middleware
 
 ```python
-# 1. Global — wraps every request, outermost layer first:
+# 1. Global — runs BEFORE routing; wraps every request including OPTIONS preflight and 404/405:
 app = LaurenFactory.create(
     AppModule,
     global_middlewares=[RequestId, Timing, AuthMiddleware],
 )
 
-# 2. Controller — wraps every handler on the class:
+# 2. Controller — wraps every handler on the class (runs after routing):
 @use_middlewares(TenantScope)
 @controller("/api")
 class ApiController: ...
 
-# 3. Route — wraps a single handler:
+# 3. Route — wraps a single handler (runs after routing):
 @get("/expensive")
 @use_middlewares(CacheControl)
 async def slow(self): ...
@@ -49,12 +49,14 @@ async def slow(self): ...
 Stacking order, outermost first:
 
 ```
-global → controller → route → handler
-                       ↑
-                   peeled off in reverse on the way out
+global (before routing) → controller → route → handler
+                                         ↑
+                                     peeled off in reverse on the way out
 ```
 
-So a request hits global middleware first, then controller middleware, then route middleware, then the handler — and the response unwinds in the reverse order. This is the same "onion" you'd find in Express, Koa, or Axum.
+**Key distinction**: global middleware runs *before* the router, so it intercepts every request — including those that would result in `404 Not Found` or `405 Method Not Allowed`. This is exactly what makes CORS preflights work: the global `CORS` middleware handles the `OPTIONS` request and returns the preflight response before any routing occurs. No explicit `@options` route handler is needed.
+
+Controller-level and route-level middlewares run *after* routing. They see only requests that matched their handler, with full route parameter data available in `request.state`.
 
 ## Middleware is DI-injected
 

@@ -173,7 +173,36 @@ class AdminController:
     async def purge(self): ...
 ```
 
-## 10. Custom exception handlers
+## 10. Interceptors — wrap the handler, not the transport
+
+Interceptors run **around** the handler (after guards, before the response is sent) and
+receive a `CallHandler` so they can observe or mutate both the inbound context and the
+outbound response. They compose with `@use_interceptors` at the global, controller, or
+route level — same scoping rules as guards.
+
+```python
+from lauren import interceptor, use_interceptors, ExecutionContext, CallHandler, Response
+
+@interceptor()
+class AuditLog:
+    async def intercept(self, ctx: ExecutionContext, call_handler: CallHandler) -> Response:
+        response = await call_handler.handle()
+        # response is available here — inspect or wrap it
+        print(f"[audit] {ctx.request.method} {ctx.request.path} → {response.status_code}")
+        return response
+
+# Global:
+app = LaurenFactory.create(AppModule, global_interceptors=[AuditLog])
+
+# Controller or route:
+@use_interceptors(AuditLog)
+@controller("/api")
+class API: ...
+```
+
+Interceptors execute **after** guards and see the real response, unlike middleware which wraps the entire transport layer. Full guide: [Interceptors](../guides/interceptors.md).
+
+## 11. Custom exception handlers
 
 Catch domain errors with class-form (DI-injected) or function-form handlers:
 
@@ -192,7 +221,7 @@ async def handle_value_error(exc, request) -> Response:
 
 Attach with `@use_exception_handlers(...)` per controller / route, or globally via `LaurenFactory.create(..., global_exception_handlers=[...])`. Full guide: [Custom Exception Handlers](../guides/custom-exception-handlers.md).
 
-## 11. Custom providers (NestJS-style recipes)
+## 12. Custom providers (NestJS-style recipes)
 
 When `@injectable` isn't enough — environment-conditional swaps, externally-built objects, alias tokens — Lauren ships the four NestJS recipes:
 
@@ -212,7 +241,7 @@ class AppModule: ...
 
 Full guide: [Custom Providers](../guides/custom-providers.md).
 
-## 12. OpenAPI 3.1 generation
+## 13. OpenAPI 3.1 generation
 
 ```python
 @get("/users/{id}", response_model=UserOut, operation_id="getUser", tags=["users"])
@@ -224,7 +253,7 @@ schema = app.openapi()    # dict; serve at /openapi.json or feed to Swagger UI /
 
 Field descriptors emit constraints (`ge`, `le`, `pattern`, `alias`, ...) into the parameter schema. Pydantic response models become `components.schemas` references.
 
-## 13. Structured logging — Console or JSON
+## 14. Structured logging — Console or JSON
 
 ```python
 from lauren.logging import default_logger, ConsoleLogger, JsonLogger, LogLevel
@@ -246,7 +275,7 @@ Per-request traces fire at `DEBUG` for 2xx/3xx, `WARN` for 4xx, `ERROR` for 5xx.
 [Lauren] 18:22:01.314  INFO  [Shutdown]       Shutdown complete. Goodbye.
 ```
 
-## 14. Graceful shutdown with signals
+## 15. Graceful shutdown with signals
 
 ```python
 from lauren.signals import install_signal_handlers, wait_for_shutdown
@@ -261,13 +290,13 @@ await wait_for_shutdown(event)
 
 Four phases, all logged: drain → `on_shutdown` callbacks → `@pre_destruct` hooks → goodbye. Idempotent — concurrent calls return once the first drain has completed.
 
-## 15. WebSockets, SSE, and Socket.IO
+## 16. WebSockets, SSE, and Socket.IO
 
-* **WebSockets** — `@ws_controller` + `@on(...)` handlers with the same DI wiring.
-* **Server-Sent Events** — `Response.sse(async_iter)` or `EventStream` with `keep_alive=N` for long-lived browser streams.
+* **WebSockets** — `@ws_controller` gateways with `@on_connect`, `@on_message("event")`, and `@on_disconnect` hooks; typed Pydantic frames; `BroadcastGroup` for room-scoped fan-out.
+* **Server-Sent Events** — `Response.sse(async_iter)` or `EventStream` with `keep_alive=N` for long-lived browser streams and `Last-Event-ID` resumability.
 * **Socket.IO** — Engine.IO v4 / Socket.IO v5 adapter that lets the official `socket.io-client` connect with no glue.
 
-## 16. AI-ready documentation (`llms.txt` / `llms-full.txt`)
+## 17. AI-ready documentation (`llms.txt` / `llms-full.txt`)
 
 Lauren ships an [llms.txt](https://llmstxt.org)-format overview and a complete LLM-ready reference at the package root, also available programmatically:
 
@@ -288,5 +317,6 @@ Coding agents (Claude, Cursor, Aider) can ingest the full reference and produce 
 | Write a custom extractor | [Custom Extractors](../guides/custom-extractors.md) |
 | Add an authorization guard | [Custom Guards](../guides/custom-guards.md) |
 | Write request-tracing middleware | [Custom Middleware](../guides/custom-middleware.md) |
+| Add cross-cutting response logic | [Interceptors](../guides/interceptors.md) |
 | Handle a domain error | [Custom Exception Handlers](../guides/custom-exception-handlers.md) |
 | Compare to FastAPI / Litestar / BlackSheep | [Comparisons](../comparisons/python-frameworks.md) |

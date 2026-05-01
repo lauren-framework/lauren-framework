@@ -87,10 +87,10 @@ A-pre → B-pre → C-pre → handler → C-post → B-post → A-post
 
 | | Middleware | Interceptor |
 |---|---|---|
-| When it runs | Before routing | After routing |
+| When it runs | Global: **before routing** (sees every request, even 404/405). Controller/route: after routing. | After routing and after guards |
 | Context available | `Request` only | `ExecutionContext` (class, func, template, metadata) |
 | Receives | `Request` + `CallNext` | `ExecutionContext` + `CallHandler` |
-| Right tool for | CORS, auth headers, body parsing | Response transforms, caching, route-aware logging |
+| Right tool for | CORS, request IDs, body parsing (global); per-route headers/auth (local) | Response transforms, caching, route-aware logging |
 
 ## Reading route metadata
 
