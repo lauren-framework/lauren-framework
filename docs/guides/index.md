@@ -39,6 +39,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     The onion model, request-id propagation, response post-processing, error handling.
 
+-   :material-repeat: [__Interceptors__](interceptors.md)
+
+    ---
+    AOP-style wrappers that run after routing and guards. Full `ExecutionContext` access: transform results, add headers, implement caching, catch errors, and read route metadata.
+
 -   :material-alert-circle-outline: [__Custom Exception Handlers__](custom-exception-handlers.md)
 
     ---

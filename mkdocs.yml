@@ -122,6 +122,7 @@ nav:
     - Custom Extractors: guides/custom-extractors.md
     - Custom Guards: guides/custom-guards.md
     - Custom Middleware: guides/custom-middleware.md
+    - Interceptors: guides/interceptors.md
     - Custom Exception Handlers: guides/custom-exception-handlers.md
     - WebSockets: guides/websockets.md
     - Server-Sent Events: guides/server-sent-events.md

@@ -9,6 +9,7 @@ from .exceptions import (
     DecoratorUsageError,
     ExceptionHandlerConfigError,
     GuardConfigError,
+    InterceptorConfigError,
     LifecycleConfigError,
     MiddlewareConfigError,
 )
@@ -67,6 +68,8 @@ SET_METADATA = "__lauren_metadata__"
 POST_CONSTRUCT = "__lauren_post_construct__"
 PRE_DESTRUCT = "__lauren_pre_destruct__"
 OPENAPI_SECURITY_META = "__lauren_openapi_security__"
+INTERCEPTOR_META = "__lauren_interceptor__"
+USE_INTERCEPTORS = "__lauren_use_interceptors__"
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +479,120 @@ def use_guards(*classes: type | None) -> Callable[[Any], Any]:
             setattr(target, USE_GUARDS, existing)
         except (AttributeError, TypeError):  # pragma: no cover
             raise GuardConfigError(f"Cannot attach guards to {target!r}")
+        return target
+
+    return decorator
+
+
+# ---------------------------------------------------------------------------
+# Interceptors
+# ---------------------------------------------------------------------------
+
+
+def interceptor(*args: Any) -> Any:
+    """Mark a class as an interceptor.
+
+    An interceptor runs **after guards** and **before** (and after) the
+    route handler.  Unlike :func:`middleware`, interceptors receive a full
+    :class:`~lauren.types.ExecutionContext` (matched route, controller
+    class, metadata) instead of a bare :class:`~lauren.types.Request`.
+
+    The decorated class **must** define::
+
+        async def intercept(
+            self,
+            context: ExecutionContext,
+            call_handler: CallHandler,
+        ) -> Any: ...
+
+    Interceptors are automatically registered as *singletons* in the DI
+    container — this mirrors the behaviour of :func:`middleware`.  To use
+    a narrower scope or inject dependencies, combine with
+    :func:`injectable`::
+
+        @interceptor()
+        @injectable(scope=Scope.REQUEST)
+        class CurrentUserInterceptor:
+            def __init__(self, repo: UserRepository) -> None:
+                self._repo = repo
+
+            async def intercept(self, ctx, call_handler):
+                ...
+
+    Must be invoked with parentheses: ``@interceptor()``.
+
+    Usage::
+
+        @interceptor()
+        class LoggingInterceptor:
+            async def intercept(
+                self, ctx: ExecutionContext, call_handler: CallHandler
+            ) -> Any:
+                print(f"→ {ctx.route_template}")
+                result = await call_handler.handle()
+                print(f"← {ctx.route_template}")
+                return result
+    """
+    if args:
+        _reject_bare_usage("interceptor", args[0])
+
+    def _apply(cls: C) -> C:
+        if not hasattr(cls, "intercept"):
+            raise InterceptorConfigError(
+                f"@interceptor class {cls.__name__} must define 'intercept'"
+            )
+        setattr(cls, INTERCEPTOR_META, True)
+        if not hasattr(cls, INJECTABLE_META):
+            setattr(cls, INJECTABLE_META, InjectableMeta(scope=Scope.SINGLETON))
+        return cls
+
+    return _apply
+
+
+def use_interceptors(*classes: type | None) -> Callable[[Any], Any]:
+    """Attach interceptors to a controller class or route handler.
+
+    Works on both:
+
+    * **controller classes** — the interceptors run for every handler on
+      the class.
+    * **handler methods** — the interceptors run only for that route.
+
+    Interceptors execute in **declaration order** (outermost → innermost),
+    which is the same onion model used by middlewares:
+
+    * Global interceptors (declared in :func:`~lauren.LaurenFactory.create`)
+      are outermost.
+    * Controller-level interceptors run next.
+    * Method-level interceptors are innermost.
+
+    ``None`` entries are silently dropped so callers can use inline
+    conditionals::
+
+        @use_interceptors(
+            LoggingInterceptor,
+            CacheInterceptor if caching_enabled else None,
+        )
+        @controller("/users")
+        class UsersController: ...
+    """
+    filtered: tuple[type, ...] = tuple(c for c in classes if c is not None)
+    for c in filtered:
+        if not hasattr(c, "intercept"):
+            raise InterceptorConfigError(f"{_describe(c)} must define 'intercept'")
+
+    def decorator(target: Any) -> Any:
+        # Read own dict when target is a class so subclasses don't silently
+        # share the parent's interceptor list.
+        if isinstance(target, type):
+            existing = list(target.__dict__.get(USE_INTERCEPTORS, []))
+        else:
+            existing = list(getattr(target, USE_INTERCEPTORS, []))
+        existing.extend(filtered)
+        try:
+            setattr(target, USE_INTERCEPTORS, existing)
+        except (AttributeError, TypeError):  # pragma: no cover
+            raise InterceptorConfigError(f"Cannot attach interceptors to {target!r}")
         return target
 
     return decorator

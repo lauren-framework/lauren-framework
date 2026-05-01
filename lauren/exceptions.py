@@ -117,6 +117,10 @@ class GuardConfigError(StartupError):
     code = "guard_config"
 
 
+class InterceptorConfigError(StartupError):
+    code = "interceptor_config"
+
+
 class ExceptionHandlerConfigError(StartupError):
     """An ``@exception_handler`` / ``@use_exception_handlers`` was misused.
 

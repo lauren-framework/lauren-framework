@@ -1077,6 +1077,64 @@ class GuardProtocol(Protocol):
     async def can_activate(self, context: ExecutionContext) -> bool: ...
 
 
+class CallHandler:
+    """Represents the rest of the interceptor / handler pipeline.
+
+    Passed to every :class:`InterceptorProtocol` as the second argument.
+    Call :meth:`handle` to advance to the next interceptor (or, for the
+    innermost interceptor, to the actual route handler itself).
+
+    The return value of :meth:`handle` is the **raw handler result**
+    (dict, Pydantic model, ``Response``, etc.) before response coercion.
+    Interceptors may inspect and transform it freely::
+
+        class TimingInterceptor:
+            async def intercept(
+                self, ctx: ExecutionContext, call_handler: CallHandler
+            ) -> Any:
+                start = time.perf_counter()
+                result = await call_handler.handle()
+                elapsed = time.perf_counter() - start
+                print(f"{ctx.route_template} took {elapsed:.3f}s")
+                return result
+    """
+
+    def __init__(self, fn: "Callable[[], Awaitable[Any]]") -> None:
+        self._fn = fn
+
+    async def handle(self) -> "Any":
+        """Invoke the next stage in the pipeline and return its result."""
+        return await self._fn()
+
+
+@runtime_checkable
+class InterceptorProtocol(Protocol):
+    """Protocol that every interceptor class must satisfy.
+
+    Interceptors run **after** guards and **before** (and after) the
+    handler.  Unlike middleware they receive a full
+    :class:`ExecutionContext` (matched route, handler class, metadata)
+    rather than a bare :class:`Request`.
+
+    The *call_handler* argument lets the interceptor control when (or
+    whether) the rest of the pipeline executes::
+
+        @interceptor()
+        class LoggingInterceptor:
+            async def intercept(
+                self, ctx: ExecutionContext, call_handler: CallHandler
+            ) -> Any:
+                print(f"→ {ctx.route_template}")
+                result = await call_handler.handle()
+                print(f"← {ctx.route_template}")
+                return result
+    """
+
+    async def intercept(
+        self, context: ExecutionContext, call_handler: CallHandler
+    ) -> "Any": ...
+
+
 __all__ = [
     "Scope",
     "Headers",
@@ -1091,4 +1149,6 @@ __all__ = [
     "MiddlewareProtocol",
     "GuardProtocol",
     "ExecutionContext",
+    "CallHandler",
+    "InterceptorProtocol",
 ]

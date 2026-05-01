@@ -35,10 +35,12 @@ from .._routing import RouteEntry, Router
 from ..decorators import (
     CONTROLLER_META,
     EXCEPTION_HANDLER_META,
+    INTERCEPTOR_META,
     ROUTE_META,
     SET_METADATA,
     USE_EXCEPTION_HANDLERS,
     USE_GUARDS,
+    USE_INTERCEPTORS,
     USE_MIDDLEWARE,
     ControllerMeta,
     ExceptionHandlerMeta,
@@ -79,6 +81,7 @@ from ..logging import (
 )
 from ..types import (
     AppState,
+    CallHandler,
     CallNext,
     ClientInfo,
     ExecutionContext,
@@ -134,6 +137,10 @@ class CompiledHandler:
     #: ``asyncio.to_thread`` so that blocking sync handlers do not stall the
     #: event loop.
     is_coroutine: bool = False
+    #: Ordered tuple of interceptor classes applied to this route.
+    #: Encodes controller-level (class-then-method) chains; global
+    #: interceptors are prepended at dispatch time.
+    interceptors: tuple[type, ...] = ()
 
 
 def _compile_handler_signature(
@@ -485,6 +492,7 @@ def _unwrap_handler_descriptor(
         "__lauren_route__",
         "__lauren_use_middleware__",
         "__lauren_use_guards__",
+        "__lauren_use_interceptors__",
         "__lauren_metadata__",
         "__lauren_ws_on_connect__",
         "__lauren_ws_on_disconnect__",
@@ -562,6 +570,7 @@ class LaurenApp:
         error_format: str = "default",
         global_guards: list[type] | None = None,
         global_exception_filters: list[Any] | None = None,
+        global_interceptors: list[type] | None = None,
     ) -> None:
         self._router = router
         self._container = container
@@ -571,6 +580,7 @@ class LaurenApp:
         self._global_middleware = list(global_middleware)
         self._global_guards = list(global_guards or [])
         self._global_exception_filters = list(global_exception_filters or [])
+        self._global_interceptors: list[type] = list(global_interceptors or [])
         self._app_state = app_state
         self._strict_lifecycle = strict_lifecycle
         self._max_body_size = max_body_size
@@ -1051,6 +1061,12 @@ class LaurenApp:
             # behave like cross-cutting middleware.
             effective_guards = list(self._global_guards) + list(compiled.guards)
 
+            # Effective interceptor chain: global interceptors are outermost,
+            # then controller-level, then method-level.
+            effective_interceptors = list(self._global_interceptors) + list(
+                compiled.interceptors
+            )
+
             # Effective exception-handler chain. Route handlers come
             # first (they are most specific), then controller, then
             # global. The compiled tuple already encodes route-then-
@@ -1106,75 +1122,90 @@ class LaurenApp:
                                 f"guard {guard_cls.__name__} denied the request",
                                 detail={"guard": guard_cls.__name__},
                             )
-                    # Instantiate controller + extract args
-                    controller = await self._container.resolve(
-                        compiled.controller_cls,
-                        request_cache=request_cache,
-                        framework_values=framework_values,
-                        owning_module=owning_module,
-                    )
-                    # Build kwargs directly into the pooled dict.
-                    # ``kwargs_dict`` starts empty (``alloc.kwargs`` was
-                    # cleared on lease acquisition); we clear any prior
-                    # content defensively in case a middleware populated
-                    # the scratch earlier in the chain.
-                    kwargs_dict.clear()
-                    for ext in compiled.extractions:
-                        if ext.source == "request":
-                            kwargs_dict[ext.name] = req
-                        else:
-                            kwargs_dict[ext.name] = await extract_parameter(
-                                req,
-                                ext,
-                                container=self._container,
-                                request_cache=request_cache,
-                                owning_module=owning_module,
-                                execution_context=ctx,
-                            )
-                    # ``kwargs`` below re-aliases the same pooled dict so
-                    # the existing dispatch branches stay identical.
-                    kwargs = kwargs_dict
-                    # Invoke the handler according to its binding style and
-                    # whether it is a coroutine function.
-                    #
-                    # ``instance`` — normal method: pass the DI-built controller
-                    # as the implicit ``self``.
-                    # ``classmethod`` — pass the class itself; the handler
-                    # receives ``cls`` even though we still resolved the
-                    # instance for lifecycle purposes (field injection runs,
-                    # ``@post_construct`` fires, etc.).
-                    # ``static`` — no receiver at all.
-                    #
-                    # Sync handlers are offloaded to a thread pool via
-                    # ``anyio.to_thread.run_sync`` so that a blocking
-                    # ``time.sleep`` (or any other blocking I/O) does not stall
-                    # the event loop and prevent other requests from being
-                    # served concurrently.  anyio works across both asyncio
-                    # and trio back-ends; it is already a transitive dependency
-                    # of pytest-asyncio so it is always present.
-                    _fn = compiled.handler_fn
-                    if compiled.binding == "static":
-                        if compiled.is_coroutine:
-                            result = await _fn(**kwargs)
-                        else:
+
+                    # ------------ inner invocation (wrapped by interceptors) ---
+                    async def _invoke_handler() -> Any:
+                        # Instantiate controller + extract args
+                        controller = await self._container.resolve(
+                            compiled.controller_cls,
+                            request_cache=request_cache,
+                            framework_values=framework_values,
+                            owning_module=owning_module,
+                        )
+                        # Build kwargs directly into the pooled dict.
+                        # ``kwargs_dict`` starts empty (``alloc.kwargs`` was
+                        # cleared on lease acquisition); we clear any prior
+                        # content defensively in case a middleware populated
+                        # the scratch earlier in the chain.
+                        kwargs_dict.clear()
+                        for ext in compiled.extractions:
+                            if ext.source == "request":
+                                kwargs_dict[ext.name] = req
+                            else:
+                                kwargs_dict[ext.name] = await extract_parameter(
+                                    req,
+                                    ext,
+                                    container=self._container,
+                                    request_cache=request_cache,
+                                    owning_module=owning_module,
+                                    execution_context=ctx,
+                                )
+                        # ``kwargs`` below re-aliases the same pooled dict so
+                        # the existing dispatch branches stay identical.
+                        kwargs = kwargs_dict
+                        # Invoke the handler according to its binding style and
+                        # whether it is a coroutine function.
+                        #
+                        # ``instance`` — normal method: pass the DI-built
+                        # controller as the implicit ``self``.
+                        # ``classmethod`` — pass the class itself; the handler
+                        # receives ``cls`` even though we still resolved the
+                        # instance for lifecycle purposes (field injection runs,
+                        # ``@post_construct`` fires, etc.).
+                        # ``static`` — no receiver at all.
+                        #
+                        # Sync handlers are offloaded to a thread pool via
+                        # ``anyio.to_thread.run_sync`` so that a blocking
+                        # ``time.sleep`` (or any other blocking I/O) does not
+                        # stall the event loop.
+                        _fn = compiled.handler_fn
+                        if compiled.binding == "static":
+                            if compiled.is_coroutine:
+                                return await _fn(**kwargs)
                             _kw = kwargs
-                            result = await anyio.to_thread.run_sync(lambda: _fn(**_kw))
-                    elif compiled.binding == "classmethod":
-                        if compiled.is_coroutine:
-                            result = await _fn(compiled.controller_cls, **kwargs)
-                        else:
+                            return await anyio.to_thread.run_sync(lambda: _fn(**_kw))
+                        if compiled.binding == "classmethod":
+                            if compiled.is_coroutine:
+                                return await _fn(compiled.controller_cls, **kwargs)
                             _cls, _kw = compiled.controller_cls, kwargs
-                            result = await anyio.to_thread.run_sync(
+                            return await anyio.to_thread.run_sync(
                                 lambda: _fn(_cls, **_kw)
                             )
-                    else:
+                        # instance binding
                         if compiled.is_coroutine:
-                            result = await _fn(controller, **kwargs)
-                        else:
-                            _ctrl, _kw = controller, kwargs
-                            result = await anyio.to_thread.run_sync(
-                                lambda: _fn(_ctrl, **_kw)
-                            )
+                            return await _fn(controller, **kwargs)
+                        _ctrl, _kw = controller, kwargs
+                        return await anyio.to_thread.run_sync(lambda: _fn(_ctrl, **_kw))
+
+                    # Build interceptor chain (innermost first, then wrap
+                    # outward so the first declared interceptor is outermost).
+                    call_handler: CallHandler = CallHandler(_invoke_handler)
+                    for inter_cls in reversed(effective_interceptors):
+                        inter_owning = (
+                            owning_module
+                            if inter_cls in compiled.interceptors
+                            else None
+                        )
+                        inter_inst = await self._container.resolve(
+                            inter_cls,
+                            request_cache=request_cache,
+                            framework_values=framework_values,
+                            owning_module=inter_owning,
+                        )
+                        call_handler = _wrap_interceptor(inter_inst, ctx, call_handler)
+
+                    result = await call_handler.handle()
+
                     # StreamingResponse[T] path — the handler returns an async
                     # iterable of ``T`` which we must frame according to the
                     # request's Accept header. Falls back to the generic coercer
@@ -1514,6 +1545,17 @@ def _wrap_middleware(instance: Any, next_call: CallNext) -> CallNext:
     return wrapped
 
 
+def _wrap_interceptor(
+    instance: Any, ctx: ExecutionContext, next_handler: CallHandler
+) -> CallHandler:
+    """Wrap *next_handler* with *instance*'s ``intercept`` method."""
+
+    async def fn() -> Any:
+        return await instance.intercept(ctx, next_handler)
+
+    return CallHandler(fn)
+
+
 def _coerce_to_response(value: Any, *, encoder: JSONEncoder | None = None) -> Response:
     """Convert a handler return value into a :class:`Response`.
 
@@ -1844,6 +1886,7 @@ class LaurenFactory:
         global_middleware: Iterable[type] | None = None,
         global_middlewares: Iterable[type] | None = None,
         global_guards: Iterable[type] | None = None,
+        global_interceptors: Iterable[type] | None = None,
         global_exception_filters: Iterable[Any] | None = None,
         max_body_size: int = 1_048_576,
         app_state: AppState | None = None,
@@ -1897,6 +1940,7 @@ class LaurenFactory:
             else (global_middleware or [])
         )
         effective_global_guards = list(global_guards or [])
+        effective_global_interceptors = list(global_interceptors or [])
         effective_global_exception_filters = list(global_exception_filters or [])
         overall_t0 = time.perf_counter()
         _log.log(
@@ -1970,6 +2014,18 @@ class LaurenFactory:
             if g not in {pp.cls for pp in container.all_providers()}:
                 _ensure_injectable(g)
                 container.register(g)
+        # Global interceptors — same treatment as global middleware/guards.
+        for inter in effective_global_interceptors:
+            if not hasattr(inter, "intercept"):
+                from ..exceptions import InterceptorConfigError
+
+                raise InterceptorConfigError(
+                    f"global interceptor {getattr(inter, '__name__', repr(inter))} "
+                    "must define 'intercept(context, call_handler)'",
+                )
+            if inter not in {pp.cls for pp in container.all_providers()}:
+                _ensure_injectable(inter)
+                container.register(inter)
         # Global exception filters — must already be decorated with
         # ``@exception_handler``. We surface configuration mistakes
         # loudly at startup rather than at the first error response.
@@ -2031,17 +2087,18 @@ class LaurenFactory:
             ):
                 continue
             ctrl_meta = _own_controller_meta(ctrl_cls)
-            # Read own-class middleware/guards/metadata so a subclass doesn't
-            # silently inherit attributes it hasn't explicitly opted into.
+            # Read own-class middleware/guards/interceptors/metadata so a
+            # subclass doesn't silently inherit attributes it hasn't opted into.
             ctrl_mw = list(ctrl_cls.__dict__.get(USE_MIDDLEWARE, []))
             ctrl_guards = list(ctrl_cls.__dict__.get(USE_GUARDS, []))
+            ctrl_interceptors = list(ctrl_cls.__dict__.get(USE_INTERCEPTORS, []))
             ctrl_exc_handlers = list(ctrl_cls.__dict__.get(USE_EXCEPTION_HANDLERS, []))
             ctrl_extra_meta: dict[str, Any] = dict(
                 ctrl_cls.__dict__.get(SET_METADATA, {})
             )
 
-            # Register controller's guards/middleware as providers if needed
-            for cls in ctrl_mw + ctrl_guards:
+            # Register controller's guards/middleware/interceptors as providers
+            for cls in ctrl_mw + ctrl_guards + ctrl_interceptors:
                 if cls not in {pp.cls for pp in container.all_providers()}:
                     _ensure_injectable(cls)
                     container.register(cls)
@@ -2084,9 +2141,10 @@ class LaurenFactory:
                     continue
                 fn_mw = list(getattr(fn, USE_MIDDLEWARE, []))
                 fn_guards = list(getattr(fn, USE_GUARDS, []))
+                fn_interceptors = list(getattr(fn, USE_INTERCEPTORS, []))
                 fn_exc_handlers = list(getattr(fn, USE_EXCEPTION_HANDLERS, []))
                 fn_meta: dict[str, Any] = dict(getattr(fn, SET_METADATA, {}))
-                for cls in fn_mw + fn_guards:
+                for cls in fn_mw + fn_guards + fn_interceptors:
                     if cls not in {pp.cls for pp in container.all_providers()}:
                         _ensure_injectable(cls)
                         container.register(cls)
@@ -2137,6 +2195,9 @@ class LaurenFactory:
                         extractions=extractions,
                         middleware_chain=tuple(ctrl_mw + fn_mw),
                         guards=tuple(ctrl_guards + fn_guards),
+                        # Controller-level interceptors first, then method-level;
+                        # global interceptors are prepended at dispatch time.
+                        interceptors=tuple(ctrl_interceptors + fn_interceptors),
                         # Route handlers are most specific so they sit
                         # at the front of the chain; controller-level
                         # handlers fall through next; globals are
@@ -2236,6 +2297,7 @@ class LaurenFactory:
             compiled_handlers=compiled_handlers,
             global_middleware=effective_global_middleware,
             global_guards=effective_global_guards,
+            global_interceptors=effective_global_interceptors,
             global_exception_filters=effective_global_exception_filters,
             app_state=final_state,
             strict_lifecycle=strict_lifecycle,
