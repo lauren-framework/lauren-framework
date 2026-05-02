@@ -262,3 +262,46 @@ def test_module_level_on_decorator_seeds_new_apps() -> None:
         assert seen == [200]
     finally:
         get_default_bus().clear()
+
+
+# ---------------------------------------------------------------------------
+# Regression: a raising RequestComplete listener must not drop the response
+# ---------------------------------------------------------------------------
+
+
+def test_raising_request_complete_listener_does_not_drop_response() -> None:
+    """A ``RequestComplete`` listener that raises must not cause the HTTP
+    response to be dropped (which would close the connection with no bytes
+    sent — the 'server closed connection before returning the first response
+    byte' bombardier error).
+
+    The framework wraps signal emission in the ``handle()`` finally block
+    in try/except so a misbehaving listener cannot suppress the return value.
+    """
+    bus = SignalBus()
+    fired: list[bool] = []
+
+    @bus.on(RequestComplete)
+    def bad_listener(_: RequestComplete) -> None:
+        fired.append(True)
+        raise RuntimeError("boom from signal listener")
+
+    app = LaurenFactory.create(_PingModule, signals=bus)
+    # The client must receive a valid 200 response — not a connection error.
+    resp = TestClient(app).get("/ping/")
+    assert resp.status_code == 200
+    assert fired == [True]
+
+
+def test_raising_request_complete_listener_does_not_drop_response_on_error_path() -> None:
+    """Same guarantee on the error path: a listener raising during a 418
+    response must not prevent the 418 from reaching the client."""
+    bus = SignalBus()
+
+    @bus.on(RequestComplete)
+    def bad_listener(_: RequestComplete) -> None:
+        raise RuntimeError("boom")
+
+    app = LaurenFactory.create(_BoomModule, signals=bus)
+    resp = TestClient(app).get("/boom/")
+    assert resp.status_code == 418

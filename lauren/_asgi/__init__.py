@@ -1418,15 +1418,25 @@ class LaurenApp:
             # this coroutine was cancelled before producing anything —
             # in that case an observer would see a phantom event.
             if final_response is not None:
-                await self._signals.emit(
-                    RequestComplete(
-                        request=request,
-                        response=final_response,
-                        status=final_response.status,
-                        duration_s=time.perf_counter() - t0,
-                        error=captured_error,
+                try:
+                    await self._signals.emit(
+                        RequestComplete(
+                            request=request,
+                            response=final_response,
+                            status=final_response.status,
+                            duration_s=time.perf_counter() - t0,
+                            error=captured_error,
+                        )
                     )
-                )
+                except Exception as _sig_exc:
+                    # A signal listener error must never suppress the response
+                    # that is already computed.  Log and continue so __call__
+                    # can send the response normally.
+                    self._logger.error(
+                        f"RequestComplete signal error: {_sig_exc}",
+                        context="Request",
+                        error=type(_sig_exc).__name__,
+                    )
 
     # -- ASGI entry point --------------------------------------------------
 
@@ -1501,12 +1511,37 @@ class LaurenApp:
         task = asyncio.current_task()
         if task is not None:
             self._in_flight.add(task)
+        _response_sent = False
         try:
             response = await self.handle(request)
             _bg: _BackgroundTasks | None = request.state.get(_BG_TASKS_ATTR)
             await _send_response(response, send)
+            _response_sent = True
             if _bg is not None and _bg._has_tasks():
                 await _bg._run(signals=self._signals, logger=self._logger)
+        except asyncio.CancelledError:
+            # Task was cancelled (client disconnect or server shutdown).
+            # No response can be sent — re-raise so the ASGI server can
+            # close the connection cleanly.
+            raise
+        except BaseException:
+            # An unexpected exception escaped handle() (e.g. a BaseException
+            # from a misbehaving signal listener that was not caught by the
+            # try/except inside handle(), or any other exotic error).
+            # Attempt a best-effort 500 response with Connection: close so
+            # the client is not left hanging and the keep-alive pool is not
+            # poisoned with a connection that received no bytes.
+            if not _response_sent:
+                try:
+                    _fallback = _error_response(
+                        LaurenError("internal server error"),
+                        status=500,
+                        code="internal_error",
+                        error_format=self._error_format,
+                    ).with_header("connection", "close")
+                    await _send_response(_fallback, send)
+                except Exception:
+                    pass  # Cannot send — ASGI server will close the connection
         finally:
             if task is not None:
                 self._in_flight.discard(task)
