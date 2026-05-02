@@ -1641,7 +1641,11 @@ def _collect_field_deps(cls: type) -> list[tuple[str, type]]:
     itself a ``Protocol`` bound by a provider) and omit any class-body
     default.
     """
-    own_annotations = cls.__dict__.get("__annotations__", {}) or {}
+    # Python 3.14+ (PEP 649/annotationlib) no longer stores ``__annotations__``
+    # directly in ``cls.__dict__``; the key is absent and the annotations are
+    # produced on demand via ``__annotate_func__``.  ``inspect.get_annotations``
+    # handles this transparently on all supported Python versions (3.10+).
+    own_annotations = inspect.get_annotations(cls, eval_str=False) or {}
     if not own_annotations:
         return []
     # Resolve hints with include_extras=True so ``Annotated[T, Depends]``

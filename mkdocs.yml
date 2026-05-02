@@ -117,6 +117,7 @@ nav:
     - guides/index.md
     - Declaring an Injectable: guides/declaring-injectables.md
     - Custom Providers: guides/custom-providers.md
+    - Dependency Injection — Complete Reference: guides/dependency-injection.md
     - Implicit Parameter Extraction: guides/implicit-params.md
     - Sync vs Async Handlers: guides/sync-handlers.md
     - Custom Extractors: guides/custom-extractors.md
