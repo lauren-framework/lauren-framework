@@ -392,7 +392,7 @@ def test_resolver_syntax_error_returns_fallback() -> None:
 def test_resolver_walk_generic_unchanged_returns_ann() -> None:
     """When resolved args equal original args, the original annotation is returned."""
     # Use a concrete generic where args are already resolved
-    ann = list[int]
+    _ = list[int]
     result = resolve_forwardref("list[int]")
     # Should come back as list[int] (no change needed)
     assert result == list[int]
@@ -449,7 +449,7 @@ def test_resolve_type_hints_extra_localns_highest_priority() -> None:
     class B:
         pass
 
-    def handler(x: "MyThing") -> None: ...
+    def handler(x: "MyThing") -> None: ... # noqa: F821
 
     hints = resolve_type_hints(
         handler,
@@ -479,7 +479,7 @@ def test_resolve_type_hints_stdlib_fallback_name_error() -> None:
 
     # ``Phantom`` is not in any sys.modules so stdlib will NameError.
     # The lenient resolver returns a ForwardRef or the raw string rather than raising.
-    def handler(x: "Phantom123XYZ") -> None: ...  # type: ignore[name-defined]
+    def handler(x: "Phantom123XYZ") -> None: ...  # type: ignore[name-defined] # noqa: F821
 
     # This should not raise, regardless of whether the result is a ForwardRef or string
     try:

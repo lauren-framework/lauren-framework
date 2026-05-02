@@ -442,7 +442,7 @@ class TestWebSocketTestSession:
 
         async def exit_immediately(scope, receive, send):
             # Read the connect message but don't send close
-            msg = await receive()
+            await receive()
             await send({"type": "websocket.accept"})
             # exit without sending close
 
@@ -476,7 +476,7 @@ class TestWebSocketTestSession:
 
         app = LaurenFactory.create(_WsQueryMod)
         ws_client = WsTestClient(app)
-        async with ws_client.connect("/ws_q") as ws:
+        async with ws_client.connect("/ws_q"):
             pass  # exits cleanly, sets _closed
         # Session is now done; close() on the closed state should not raise
         # Actually after __aexit__, session is fully done. Test the line directly:
@@ -634,7 +634,7 @@ class TestWebSocketTestSession:
         session._closed = False
 
         # Patch _wait_server to use a very short timeout
-        original_wait = WebSocketTestSession._wait_server
+        _ = WebSocketTestSession._wait_server
 
         async def patched_wait(self):
             if self._server_task is None:

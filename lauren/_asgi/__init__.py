@@ -36,7 +36,6 @@ from .._routing import RouteEntry, Router
 from ..decorators import (
     CONTROLLER_META,
     EXCEPTION_HANDLER_META,
-    INTERCEPTOR_META,
     ROUTE_META,
     SET_METADATA,
     USE_EXCEPTION_HANDLERS,

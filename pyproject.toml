@@ -41,7 +41,7 @@ dev = [
 ]
 
 [tool.ruff.lint]
-ignore = ["E741"]
+ignore = ["E741", "E742", "E743"]  # Ignore ambiguous variable names (e.g. "l", "O", "I")
 
 [tool.setuptools.packages.find]
 include = ["lauren*"]

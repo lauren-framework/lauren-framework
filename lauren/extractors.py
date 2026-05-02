@@ -142,7 +142,7 @@ class ExtractionMarker:
     source: str = "unknown"
     reads_body: bool = False
 
-    def __class_getitem__(cls, item: Any) -> Any:
+    def __class_getitem__(cls, item: T) -> T:
         # Returns ``Annotated[item, marker_instance]`` so user code can write
         # ``user_id: Path[int]`` and we can detect it in type hints.
         #

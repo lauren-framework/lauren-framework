@@ -167,7 +167,7 @@ class TestLaurenAppProperties:
         calls = []
         app.on_shutdown(lambda: calls.append("shutdown"))
 
-        client = TestClient(app)
+        _ = TestClient(app)
         # Trigger shutdown via lifespan
         asyncio.run(app.shutdown())
         assert calls == ["shutdown"]

@@ -243,7 +243,7 @@ class TestWsRequestProxy:
         async def run():
             async with WsTestClient(app).connect(
                 "/ck", headers={"cookie": "session=abc; user=def"}
-            ) as ws:
+            ):
                 pass
 
         asyncio.run(run())
@@ -345,7 +345,7 @@ class TestWsConnectedProperty:
         app = LaurenFactory.create(M)
 
         async def run():
-            async with WsTestClient(app).connect("/conn") as ws:
+            async with WsTestClient(app).connect("/conn"):
                 pass
 
         asyncio.run(run())
@@ -371,7 +371,7 @@ class TestWsConnectedProperty:
         app = LaurenFactory.create(M)
 
         async def run():
-            async with WsTestClient(app).connect("/cc") as ws:
+            async with WsTestClient(app).connect("/cc"):
                 pass
 
         asyncio.run(run())

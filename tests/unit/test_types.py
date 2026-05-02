@@ -348,7 +348,7 @@ class TestRequestEdgeCases:
 
         async def run():
             # First consume via body()
-            body = await req.body()
+            _ = await req.body()
             # Then stream should yield the cached body
             chunks = []
             async for chunk in req.stream():

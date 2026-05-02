@@ -616,7 +616,7 @@ class TestEventStreamCancelledError:
             assert body is not None
             task = asyncio.ensure_future(_collect_chunks(body, chunks))
             # Let it run briefly (should emit one keep-alive comment)
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.2)
             task.cancel()
             try:
                 await task

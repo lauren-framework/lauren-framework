@@ -293,7 +293,9 @@ def test_raising_request_complete_listener_does_not_drop_response() -> None:
     assert fired == [True]
 
 
-def test_raising_request_complete_listener_does_not_drop_response_on_error_path() -> None:
+def test_raising_request_complete_listener_does_not_drop_response_on_error_path() -> (
+    None
+):
     """Same guarantee on the error path: a listener raising during a 418
     response must not prevent the 418 from reaching the client."""
     bus = SignalBus()

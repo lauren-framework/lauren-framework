@@ -393,8 +393,6 @@ class TestDiContainerResolveEdgeCases:
         from lauren._di import DIContainer
         from lauren import injectable, Scope
 
-        instances: list[object] = []
-
         @injectable(scope=Scope.TRANSIENT)
         class Transient:
             pass

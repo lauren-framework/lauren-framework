@@ -41,17 +41,16 @@ from lauren.exceptions import (
     HTTPError,
     MissingProviderError,
 )
+from lauren.extractors import Pipe, PipeContext, pipe
+from lauren.testing import TestClient
+from lauren.types import CallHandler
+
 
 
 class NotFoundError(HTTPError):
     """Local domain error that maps to HTTP 404 — used in pipe tests."""
 
     status_code = 404
-
-
-from lauren.extractors import Pipe, PipeContext, pipe
-from lauren.testing import TestClient
-from lauren.types import CallHandler
 
 
 # ===========================================================================

@@ -43,7 +43,7 @@ class NotFoundError(HTTPError):
 # ---------------------------------------------------------------------------
 
 
-def _build(ctrl_cls: type, providers: list | None = None) -> "LaurenApp":  # type: ignore[name-defined]
+def _build(ctrl_cls: type, providers: list | None = None) -> "LaurenApp":  # type: ignore[name-defined] # noqa: F821
     @module(controllers=[ctrl_cls], providers=providers or [])
     class M:
         pass
