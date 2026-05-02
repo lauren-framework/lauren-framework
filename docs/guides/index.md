@@ -7,7 +7,7 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
 -   :material-needle: [__Declaring an Injectable__](declaring-injectables.md)
 
     ---
-    The full lifecycle of an injectable — `@injectable`, scopes, lifecycle hooks, Protocols, multi-bindings.
+    The full lifecycle of an injectable — `@injectable`, scopes, function-based providers, lifecycle hooks, Protocols, multi-bindings.
 
 -   :material-cog-outline: [__Custom Providers__](custom-providers.md)
 
@@ -28,6 +28,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
 
     ---
     Post-extraction transforms: validate, coerce, enrich, or replace extracted values before they reach your handler. Function-based, class-based, chainable, and DI-aware.
+
+-   :material-upload: [__File Uploads__](file-uploads.md)
+
+    ---
+    `UploadFile` for single and multi-file multipart uploads, mixed forms with `Form[T]`, optional files, Unicode filenames.
 
 -   :material-shield-key: [__Custom Guards__](custom-guards.md)
 
@@ -59,6 +64,21 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     One-way streaming with `EventStream` and `ServerSentEvent`: keep-alive heartbeats, `Last-Event-ID` resumability, AI text-streaming patterns.
 
+-   :material-swap-vertical: [__Typed Streaming__](typed-streaming.md)
+
+    ---
+    `StreamingResponse[T]` for outbound content-negotiated streams and `Stream[T]` for inbound typed iterators. SSE / NDJSON / JSON Lines, discriminated unions, bidirectional pipelines.
+
+-   :material-signal: [__Signals & Lifecycle Events__](signals.md)
+
+    ---
+    `SignalBus` for typed pub/sub: `RequestComplete`, `StartupComplete`, background-task signals. MRO dispatch, error isolation, metrics/tracing patterns.
+
+-   :material-puzzle: [__Socket.IO__](socketio.md)
+
+    ---
+    Engine.IO v4 / Socket.IO v5 adapter — `@socketio_controller`, `@on_socketio_event`, `SocketIOConnection`, automatic ACKs, DI injection.
+
 -   :material-sync-circle: [__Circular Module Imports__](circular-module-imports.md)
 
     ---
@@ -78,5 +98,15 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
 
     ---
     Fire-and-forget work after the response is sent. `BackgroundTasks` extractor, `TaskHandle`, sync/async callables, `BackgroundTaskFailed` signals, graceful-shutdown drain participation.
+
+-   :material-sync: [__Sync vs Async Handlers__](sync-handlers.md)
+
+    ---
+    Every handler may be `def` or `async def`. Sync handlers are automatically offloaded to a thread pool — no blocking the event loop.
+
+-   :material-database-import: [__DI with Data Model Types__](di-model-types.md)
+
+    ---
+    Using `@dataclass`, Pydantic `BaseModel`, SQLAlchemy `DeclarativeBase`, and `SQLModel` with the DI container.
 
 </div>

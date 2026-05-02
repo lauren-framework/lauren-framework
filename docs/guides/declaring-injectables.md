@@ -209,21 +209,74 @@ class External(Base):
 
 This applies to controllers, modules, middleware, and exception handlers too. See [Class Inheritance Rules](../core-concepts/inheritance.md).
 
+## Function-based providers
+
+`@injectable()` works on plain functions too. The function's **return value** becomes
+the dependency, and its parameters are resolved through the DI container exactly like
+a class constructor's:
+
+```python
+from lauren import injectable, Scope
+
+@injectable()
+def db_url() -> str:
+    import os
+    return os.environ.get("DATABASE_URL", "sqlite:///:memory:")
+
+@injectable()
+class UserRepo:
+    def __init__(self, url: str) -> None:   # url resolved via db_url factory
+        self.url = url
+```
+
+Key rules:
+
+* The function **is** the token — consumers inject it with `Depends[factory_fn]`:
+
+    ```python
+    @injectable()
+    class Service:
+        url: Depends[db_url]     # field injection works too
+    ```
+
+* **Async factories** are awaited automatically:
+
+    ```python
+    @injectable()
+    async def make_pool(url: str) -> asyncpg.Pool:
+        return await asyncpg.create_pool(url)
+    ```
+
+* **Scopes** work identically. `SINGLETON` means the factory is called once:
+
+    ```python
+    @injectable(scope=Scope.SINGLETON)
+    def make_pool(url: str) -> asyncpg.Pool: ...   # called once per app
+    ```
+
+* Registering the same function twice raises `DuplicateBindingError` at startup.
+* A missing dependency in the function's params raises `MissingProviderError` at compile time.
+
+Register the function in `providers=[]` like any class:
+
+```python
+@module(providers=[db_url, make_pool, UserRepo])
+class AppModule: ...
+```
+
 ## Verifying with the test client
 
 ```python
 from lauren.testing import TestClient
 from lauren import LaurenFactory
 
-async def boot():
-    return LaurenFactory.create(AppModule)
+# LaurenFactory.create() is synchronous — no asyncio.run() needed.
+app = LaurenFactory.create(AppModule)
 
-import asyncio
-app = asyncio.run(boot())
-
-c = TestClient(app)
+c = TestClient(app)   # startup() runs here; @post_construct hooks fire
 
 # You can also reach into the container directly for assertions:
+import asyncio
 clock = asyncio.run(app.container.resolve(Clock))
 assert isinstance(clock, Clock)
 ```

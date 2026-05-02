@@ -340,7 +340,7 @@ Renders as:
 ## Streaming
 
 ```python
-# Bytes:
+# Raw bytes:
 return Response.stream(async_iterable, media_type="application/octet-stream")
 
 # SSE (auto-promote dicts/strings to ServerSentEvent):
@@ -349,6 +349,98 @@ return Response.sse(async_iterable_of_events)
 # SSE with keep-alive (long-lived browser streams):
 from lauren import EventStream, ServerSentEvent
 return EventStream(producer(), keep_alive=15.0)
+```
+
+## Typed streaming (`StreamingResponse[T]` / `Stream[T]`)
+
+```python
+from lauren import Stream, StreamingResponse
+
+# Outbound — content-negotiated SSE / NDJSON / JSON Lines:
+@post("/transcribe")
+async def transcribe(self) -> StreamingResponse[Transcript]:
+    async def produce():
+        yield Transcript(text="hello", confidence=0.9)
+    return produce()
+
+# Inbound — typed async iterator:
+@post("/ingest")
+async def ingest(self, records: Stream[Record]) -> dict:
+    count = 0
+    async for record in records:   # record is a validated Record
+        await self._repo.save(record)
+        count += 1
+    return {"saved": count}
+
+# Bidirectional:
+@post("/pipeline")
+async def pipeline(self, inbound: Stream[Input]) -> StreamingResponse[Output]:
+    async def produce():
+        async for item in inbound:
+            yield transform(item)
+    return produce()
+```
+
+Wire formats: `Accept: text/event-stream` → SSE, `application/x-ndjson` → NDJSON,
+`application/json+stream` or absent → JSON Lines (default).
+
+## File uploads
+
+```python
+from lauren import UploadFile, Form
+
+# Single file:
+@post("/avatar")
+async def upload(self, avatar: UploadFile) -> dict:
+    data = await avatar.read()
+    return {"filename": avatar.filename, "size": len(data)}
+
+# Multiple files (same field name):
+@post("/gallery")
+async def gallery(self, photos: list[UploadFile]) -> dict: ...
+
+# Mixed: file + text fields:
+@post("/doc")
+async def create(self, meta: Form[Meta], file: UploadFile) -> dict: ...
+
+# Optional file:
+@post("/profile")
+async def update(self, avatar: UploadFile | None = None) -> dict: ...
+```
+
+## Signals
+
+```python
+from lauren.signals import (
+    RequestComplete, RequestReceived,
+    StartupBegin, StartupComplete, ShutdownBegin,
+    BackgroundTaskFailed,
+    SignalBus,
+)
+
+# Subscribe (app-owned bus):
+@app.signals.on(RequestComplete)
+def on_complete(event: RequestComplete) -> None:
+    metrics.record("req.duration", event.duration_s, status=event.status)
+
+# Unsubscribe:
+app.signals.off(RequestComplete, on_complete)
+
+# Module-level registration (seeds every new app):
+from lauren.signals import on
+
+@on(StartupComplete)
+async def warmup(event: StartupComplete) -> None:
+    await event.app.container.resolve(CacheWarmer).warm()
+
+# Firehose — catches every event:
+@app.signals.on(LifecycleEvent)
+def trace_all(event): ...
+
+# Background task failures:
+@app.signals.on(BackgroundTaskFailed)
+async def alert(event: BackgroundTaskFailed) -> None:
+    await pagerduty.trigger(str(event.error))
 ```
 
 ## Logging

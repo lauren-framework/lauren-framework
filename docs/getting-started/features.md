@@ -296,7 +296,47 @@ Four phases, all logged: drain → `on_shutdown` callbacks → `@pre_destruct` h
 * **Server-Sent Events** — `Response.sse(async_iter)` or `EventStream` with `keep_alive=N` for long-lived browser streams and `Last-Event-ID` resumability.
 * **Socket.IO** — Engine.IO v4 / Socket.IO v5 adapter that lets the official `socket.io-client` connect with no glue.
 
-## 17. AI-ready documentation (`llms.txt` / `llms-full.txt`)
+## 17. Typed bidirectional streaming
+
+`Stream[T]` (inbound) and `StreamingResponse[T]` (outbound) form a symmetrical
+streaming primitive. The same wire-format vocabulary (`text/event-stream`,
+`application/x-ndjson`, `application/json+stream`) is honoured in both directions:
+
+```python
+from lauren import Stream, StreamingResponse
+
+@post("/transcribe")
+async def transcribe(
+    self, audio: Stream[AudioChunk]
+) -> StreamingResponse[Transcript]:
+    async def produce():
+        async for chunk in audio:         # validated AudioChunk
+            yield Transcript(text=chunk.text.upper(), confidence=0.95)
+    return produce()
+```
+
+Content negotiation is automatic from the `Accept` header. The OpenAPI document
+carries `x-streaming: true` and lists all three negotiable content types.
+
+## 18. Lifecycle event bus
+
+`SignalBus` is an in-process typed pub/sub system that fires at well-known lifecycle
+points — startup, per-request, background tasks, shutdown — without coupling user
+code to framework internals:
+
+```python
+from lauren.signals import RequestComplete
+
+@app.signals.on(RequestComplete)
+def on_complete(event: RequestComplete) -> None:
+    metrics.record("request.duration", event.duration_s, tags={"status": event.status})
+```
+
+Listeners are sync or async. Errors are logged but never propagate out of `emit`.
+A listener on `LifecycleEvent` receives every event (firehose). MRO dispatch means
+base-class subscriptions are first-class.
+
+## 19. AI-ready documentation (`llms.txt` / `llms-full.txt`)
 
 Lauren ships an [llms.txt](https://llmstxt.org)-format overview and a complete LLM-ready reference at the package root, also available programmatically:
 
