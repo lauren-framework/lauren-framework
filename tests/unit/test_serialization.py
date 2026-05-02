@@ -270,3 +270,85 @@ def test_msgspec_encoder_raises_runtime_error_when_not_installed(
     monkeypatch.setattr(builtins, "__import__", _no_msgspec)
     with pytest.raises(RuntimeError, match="pip install msgspec"):
         MsgspecEncoder()
+
+
+# ---------------------------------------------------------------------------
+# OrjsonEncoder TypeError retry path (lines 190-197)
+# ---------------------------------------------------------------------------
+
+
+def test_orjson_encoder_retries_on_typeerror_with_default() -> None:
+    """OrjsonEncoder.encode should retry through _default when orjson raises TypeError."""
+    pytest.importorskip("orjson")
+
+    call_count = [0]
+
+    class UnknownThing:
+        pass
+
+    def custom_default(obj: object) -> object:
+        call_count[0] += 1
+        if isinstance(obj, UnknownThing):
+            return {"coerced": True}
+        raise TypeError(f"unhandled {type(obj).__name__}")
+
+    encoder = OrjsonEncoder(default=custom_default)
+    # orjson will call default for UnknownThing
+    blob = encoder.encode({"thing": UnknownThing()})
+    assert stdlib_json.loads(blob) == {"thing": {"coerced": True}}
+
+
+# ---------------------------------------------------------------------------
+# MsgspecEncoder encode / encode_compact (lines 234-237)
+# ---------------------------------------------------------------------------
+
+
+def test_msgspec_encoder_encode_and_compact_are_equivalent() -> None:
+    pytest.importorskip("msgspec")
+    encoder = MsgspecEncoder()
+    payload = {"a": 1, "b": [2, 3]}
+    # Both methods must return valid JSON-parseable bytes
+    assert stdlib_json.loads(encoder.encode(payload)) == payload
+    assert stdlib_json.loads(encoder.encode_compact(payload)) == payload
+    # They are the same method object (aliased)
+    assert encoder.encode is encoder.encode_compact
+
+
+# ---------------------------------------------------------------------------
+# auto_encoder fallback chain (lines 257-266)
+# ---------------------------------------------------------------------------
+
+
+def test_auto_encoder_falls_back_to_msgspec_when_no_orjson(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("msgspec")
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _no_orjson(name: str, *args: object, **kwargs: object) -> object:
+        if name == "orjson":
+            raise ImportError("simulated no orjson")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_orjson)
+    enc = auto_encoder()
+    assert enc.name == "msgspec"
+
+
+def test_auto_encoder_falls_back_to_stdlib_when_neither_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _no_fast(name: str, *args: object, **kwargs: object) -> object:
+        if name in ("orjson", "msgspec"):
+            raise ImportError(f"simulated no {name}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_fast)
+    enc = auto_encoder()
+    assert enc.name == "stdlib"

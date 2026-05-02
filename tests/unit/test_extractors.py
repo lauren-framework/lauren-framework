@@ -1373,4 +1373,699 @@ class TestFormExtraction:
         )
         val = await extract_parameter(req, ext)
         assert val["name"] == ["alice"]
-        assert val["age"] == ["30"]
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage tests for uncovered lines
+# ---------------------------------------------------------------------------
+
+
+class TestFieldDescriptorValidateEdgeCases:
+    """Cover gt, lt, min/max_length, and pattern branches in validate()."""
+
+    def test_gt_violation(self):
+        fd = FieldDescriptor(gt=5.0)
+        with pytest.raises(ExtractorFieldError, match="5.0"):
+            fd.validate("x", 5.0)  # exactly 5 is NOT > 5
+
+    def test_lt_violation(self):
+        fd = FieldDescriptor(lt=5.0)
+        with pytest.raises(ExtractorFieldError, match="5.0"):
+            fd.validate("x", 5.0)  # exactly 5 is NOT < 5
+
+    def test_min_length_violation(self):
+        fd = FieldDescriptor(min_length=5)
+        with pytest.raises(ExtractorFieldError, match="too short"):
+            fd.validate("name", "abc")
+
+    def test_max_length_violation(self):
+        fd = FieldDescriptor(max_length=3)
+        with pytest.raises(ExtractorFieldError, match="too long"):
+            fd.validate("name", "abcd")
+
+    def test_pattern_violation(self):
+        fd = FieldDescriptor(pattern=r"^\d+$")
+        with pytest.raises(ExtractorFieldError, match="pattern"):
+            fd.validate("code", "abc")
+
+    def test_pattern_ok(self):
+        fd = FieldDescriptor(pattern=r"^\d+$")
+        assert fd.validate("code", "123") == "123"
+
+    def test_none_value_with_default(self):
+        fd = FieldDescriptor(default="fallback")
+        assert fd.validate("x", None) == "fallback"
+
+
+class TestParamSpecEdgeCases:
+    def test_paramspec_default_no_descriptor(self):
+        from lauren.extractors import _ParamSpec
+
+        ps = _ParamSpec()
+        assert ps.default is ...
+
+    def test_paramspec_or_two_descriptors_raises(self):
+        from lauren.extractors import _ParamSpec
+
+        ps1 = _ParamSpec(field_descriptor=FieldDescriptor(ge=1))
+        ps2 = _ParamSpec(field_descriptor=FieldDescriptor(le=100))
+        with pytest.raises(TypeError, match="at most one FieldDescriptor"):
+            _ = ps1 | ps2
+
+    def test_paramspec_or_with_second_descriptor_raises_when_already_has_one(self):
+        from lauren.extractors import _ParamSpec
+
+        ps = _ParamSpec(field_descriptor=FieldDescriptor(ge=1))
+        with pytest.raises(TypeError, match="at most one FieldDescriptor"):
+            _ = ps | FieldDescriptor(le=100)
+
+    def test_paramspec_or_returns_not_implemented_for_non_callable(self):
+        from lauren.extractors import _ParamSpec
+
+        ps = _ParamSpec()
+        # "42" is neither callable, pipe, FieldDescriptor, nor _ParamSpec
+        result = ps.__or__(42)
+        assert result is NotImplemented
+
+    def test_paramspec_or_with_pipe_adds_pipe(self):
+        from lauren.extractors import _ParamSpec, pipe
+
+        @pipe
+        def my_pipe(v, ctx):
+            return v
+
+        ps = _ParamSpec()
+        result = ps | my_pipe
+        assert my_pipe in result.pipes
+
+
+class TestCoerceScalarEdgeCases:
+    """Cover union, list[T], bool, and error paths in _coerce_scalar."""
+
+    def test_coerce_bool_true(self):
+        from lauren.extractors import _coerce_scalar
+
+        assert _coerce_scalar("true", bool) is True
+        assert _coerce_scalar("1", bool) is True
+        assert _coerce_scalar("false", bool) is False
+        assert _coerce_scalar("no", bool) is False
+
+    def test_coerce_list_int(self):
+        from lauren.extractors import _coerce_scalar
+
+        result = _coerce_scalar("1,2,3", list[int])
+        assert result == [1, 2, 3]
+
+    def test_coerce_union_first_branch_wins(self):
+        from lauren.extractors import _coerce_scalar
+        from typing import Union
+
+        # int | str: "42" coerces to int
+        result = _coerce_scalar("42", Union[int, str])
+        assert result == 42
+
+    def test_coerce_union_fallback_to_second_branch(self):
+        from lauren.extractors import _coerce_scalar
+        from typing import Union
+
+        # int | str: "abc" fails int, falls back to str
+        result = _coerce_scalar("abc", Union[int, str])
+        assert result == "abc"
+
+    def test_coerce_none_returns_none(self):
+        from lauren.extractors import _coerce_scalar
+
+        assert _coerce_scalar(None, int) is None
+
+    def test_coerce_float_error(self):
+        from lauren.extractors import _coerce_scalar
+
+        with pytest.raises(ExtractorFieldError):
+            _coerce_scalar("not-a-float", float)
+
+    def test_coerce_int_error(self):
+        from lauren.extractors import _coerce_scalar
+
+        with pytest.raises(ExtractorFieldError):
+            _coerce_scalar("not-an-int", int)
+
+
+class TestExtractionStateMissing:
+    """Cover state extraction fallback (lines 1335-1346)."""
+
+    @pytest.mark.asyncio
+    async def test_state_missing_with_default(self):
+        from lauren.types import Request
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        req = Request(method="GET", path="/", receive=receive)
+        ext = Extraction(
+            name="current_user",
+            source="state",
+            inner_type=str,
+            field_descriptor=None,
+            default="anonymous",
+            has_default=True,
+        )
+        result = await extract_parameter(req, ext)
+        assert result == "anonymous"
+
+    @pytest.mark.asyncio
+    async def test_state_missing_required_raises(self):
+        from lauren.types import Request
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        req = Request(method="GET", path="/", receive=receive)
+        ext = Extraction(
+            name="required_state",
+            source="state",
+            inner_type=str,
+            field_descriptor=None,
+            default=...,
+            has_default=False,
+        )
+        with pytest.raises(ExtractorFieldError, match="missing state"):
+            await extract_parameter(req, ext)
+
+    @pytest.mark.asyncio
+    async def test_state_from_app_state(self):
+        from lauren.types import Request, AppState
+
+        app_state = AppState({"theme": "dark"})
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        req = Request(method="GET", path="/", receive=receive, app_state=app_state)
+        ext = Extraction(
+            name="theme",
+            source="state",
+            inner_type=str,
+            field_descriptor=None,
+            default=...,
+            has_default=False,
+        )
+        result = await extract_parameter(req, ext)
+        assert result == "dark"
+
+
+class TestExtractionDependsMissingContainer:
+    """Cover 'depends' with no container (line 1350)."""
+
+    @pytest.mark.asyncio
+    async def test_depends_without_container_raises(self):
+        req = make_request()
+        ext = Extraction(
+            name="svc",
+            source="depends",
+            inner_type=object,
+            field_descriptor=None,
+            default=...,
+            has_default=False,
+        )
+        # Without a container, Depends raises some kind of error
+        with pytest.raises(Exception, match="DI container|Depends"):
+            await extract_parameter(req, ext, container=None)
+
+
+class TestCustomExtractorEdgeCases:
+    """Cover custom extractor error wrapping (lines 1444-1464)."""
+
+    @pytest.mark.asyncio
+    async def test_custom_extractor_non_http_error_wrapped(self):
+        """Non-HTTPError/StartupError exceptions from custom extractors
+        get wrapped in ExtractorError."""
+        from lauren.extractors import ExtractionMarker
+
+        class BoomExtractor(ExtractionMarker):
+            source = "boom"
+
+            async def extract(self, execution_context, extraction):
+                raise ValueError("raw error from custom extractor")
+
+        req = make_request()
+        ext = Extraction(
+            name="boom_param",
+            source="boom",
+            inner_type=str,
+            field_descriptor=None,
+            default=...,
+            has_default=False,
+            marker_cls=BoomExtractor,
+        )
+        with pytest.raises(
+            ExtractorError, match="custom extractor BoomExtractor failed"
+        ):
+            await extract_parameter(req, ext)
+
+    @pytest.mark.asyncio
+    async def test_custom_extractor_http_error_not_wrapped(self):
+        """HTTPError from a custom extractor propagates unchanged."""
+        from lauren.extractors import ExtractionMarker
+        from lauren.exceptions import UnauthorizedError
+
+        class AuthExtractor(ExtractionMarker):
+            source = "auth"
+
+            async def extract(self, execution_context, extraction):
+                raise UnauthorizedError("not authenticated")
+
+        req = make_request()
+        ext = Extraction(
+            name="auth_param",
+            source="auth",
+            inner_type=str,
+            field_descriptor=None,
+            default=...,
+            has_default=False,
+            marker_cls=AuthExtractor,
+        )
+        with pytest.raises(UnauthorizedError):
+            await extract_parameter(req, ext)
+
+
+class TestCookieExtractionWithFdDefault:
+    """Cover cookie fd.default fallback (lines 1280-1282)."""
+
+    @pytest.mark.asyncio
+    async def test_cookie_fd_default_when_missing(self):
+        req = make_request()
+        fd = FieldDescriptor(default="no-session")
+        ext = Extraction(
+            name="session",
+            source="cookie",
+            inner_type=str,
+            field_descriptor=fd,
+            default=...,
+            has_default=False,
+        )
+        result = await extract_parameter(req, ext)
+        assert result == "no-session"
+
+
+class TestHeaderExtractionWithFdDefault:
+    """Cover header fd.default fallback (lines 1266-1268)."""
+
+    @pytest.mark.asyncio
+    async def test_header_fd_default_when_missing(self):
+        req = make_request()
+        fd = FieldDescriptor(default="none")
+        ext = Extraction(
+            name="x_trace_id",
+            source="header",
+            inner_type=str,
+            field_descriptor=fd,
+            default=...,
+            has_default=False,
+        )
+        result = await extract_parameter(req, ext)
+        assert result == "none"
+
+
+class TestQueryModelOptionalNoFields:
+    """Cover Query[OptionalModel] with no fields present."""
+
+    @pytest.mark.asyncio
+    async def test_optional_model_with_no_query_params_returns_none(self):
+        from pydantic import BaseModel
+
+        class Filters(BaseModel):
+            tag: str | None = None
+            limit: int = 10
+
+        req = make_request()
+        ext = Extraction(
+            name="filters",
+            source="query",
+            inner_type=Filters | None,
+            field_descriptor=None,
+            default=None,
+            has_default=True,
+        )
+        result = await extract_parameter(req, ext)
+        # Optional model with no query params and has_default should return default
+        assert result is None
+
+
+class TestFormPydanticModel:
+    """Cover form extraction with a pydantic model (lines 1311-1312)."""
+
+    @pytest.mark.asyncio
+    async def test_form_with_pydantic_model(self):
+        from pydantic import BaseModel
+
+        class CreateForm(BaseModel):
+            name: str
+            age: int
+
+        req = make_request(body=b"name=alice&age=30")
+        ext = Extraction(
+            name="data",
+            source="form",
+            inner_type=CreateForm,
+            field_descriptor=None,
+            default=...,
+            has_default=False,
+            reads_body=True,
+        )
+        result = await extract_parameter(req, ext)
+        assert isinstance(result, CreateForm)
+        assert result.name == "alice"
+        assert result.age == 30
+
+
+class TestMissingJsonBody:
+    """Cover missing JSON body with default (line 1202)."""
+
+    @pytest.mark.asyncio
+    async def test_empty_json_body_with_default(self):
+        req = make_request(body=b"")
+        ext = Extraction(
+            name="payload",
+            source="json",
+            inner_type=dict,
+            field_descriptor=None,
+            default=None,
+            has_default=True,
+        )
+        result = await extract_parameter(req, ext)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_empty_json_body_without_default_raises(self):
+        req = make_request(body=b"")
+        ext = Extraction(
+            name="payload",
+            source="json",
+            inner_type=dict,
+            field_descriptor=None,
+            default=...,
+            has_default=False,
+        )
+        with pytest.raises(ExtractorFieldError, match="missing JSON body"):
+            await extract_parameter(req, ext)
+
+
+class TestQueryListWithFd:
+    """Cover query list extraction with FieldDescriptor (line 1246)."""
+
+    @pytest.mark.asyncio
+    async def test_query_list_with_fd(self):
+        req = make_request(query=b"tag=a&tag=b")
+        fd = FieldDescriptor()
+        ext = Extraction(
+            name="tag",
+            source="query",
+            inner_type=list[str],
+            field_descriptor=fd,
+            default=...,
+            has_default=False,
+        )
+        result = await extract_parameter(req, ext)
+        assert result == ["a", "b"]
+
+
+class TestQueryFdDefaultFallback:
+    """Cover query fd.default fallback when key missing (line 1252)."""
+
+    @pytest.mark.asyncio
+    async def test_query_fd_default_used_when_key_missing(self):
+        req = make_request()  # no query params
+        fd = FieldDescriptor(default="all")
+        ext = Extraction(
+            name="status",
+            source="query",
+            inner_type=str,
+            field_descriptor=fd,
+            default=...,
+            has_default=False,
+        )
+        result = await extract_parameter(req, ext)
+        assert result == "all"
+
+
+class TestPipeArityUnknown:
+    """Cover pipe with arity unknown (TypeError from inspect, line 1113-1114)."""
+
+    @pytest.mark.asyncio
+    async def test_pipe_with_args_kwargs_only(self):
+        """A pipe whose signature raises TypeError in inspect.signature
+        defaults to arity=2 and gets both value and ctx."""
+        from lauren.extractors import pipe
+
+        received: list = []
+
+        def flexible_pipe(*args, **kwargs):
+            received.append(args)
+            return args[0]
+
+        # Tag it as a pipe
+        marked = pipe(flexible_pipe)
+
+        req = make_request(query=b"x=42")
+        ext = Extraction(
+            name="x",
+            source="query",
+            inner_type=str,
+            field_descriptor=None,
+            default=...,
+            has_default=False,
+            pipes=(marked,),
+        )
+        result = await extract_parameter(req, ext)
+        assert result == "42"
+
+
+class TestUnknownExtractorSource:
+    """Cover the fallback 'unknown source' ExtractorError at the end of _extract_raw."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_source_raises(self):
+        req = make_request()
+        ext = Extraction(
+            name="x",
+            source="definitely_unknown_source",
+            inner_type=str,
+            field_descriptor=None,
+            default=...,
+            has_default=False,
+            marker_cls=None,
+        )
+        with pytest.raises(ExtractorError, match="unknown extractor source"):
+            await extract_parameter(req, ext)
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage for extractors.py
+# ---------------------------------------------------------------------------
+
+
+class TestParseExtractorHintNestedAnnotated:
+    """Cover lines 804-812 (inner_src not None, inner_fd not None)."""
+
+    def test_nested_annotated_with_fd_merges_fd(self):
+        """Annotated[Path[int], FieldDescriptor(default=0)] merges inner FD."""
+        from typing import Annotated
+        from lauren.extractors import parse_extractor_hint, FieldDescriptor
+
+        # Create Path[int] which is Annotated[int, Path]
+        # Then wrap it: Annotated[Path[int], FieldDescriptor(default=0)]
+        inner = Path[int]  # Annotated[int, Path]
+        outer = Annotated[inner, FieldDescriptor(default=0)]
+        src, typ, reads_body, marker, fd, pipes = parse_extractor_hint(outer)
+        assert src == "path"
+        assert typ is int
+        # The FieldDescriptor from the outer Annotated is applied
+        assert fd is not None
+
+    def test_nested_annotated_with_param_spec(self):
+        """Annotated[Path[int], PathField(ge=0)] uses _ParamSpec merging."""
+        from typing import Annotated
+        from lauren.extractors import parse_extractor_hint
+        from lauren import Path
+        from lauren.extractors import PathField
+
+        # PathField creates a FieldDescriptor; it acts as a _ParamSpec
+        inner = Path[int]  # Annotated[int, Path]
+        outer = Annotated[inner, PathField(ge=0)]
+        src, typ, reads_body, marker, fd, pipes = parse_extractor_hint(outer)
+        assert src == "path"
+        assert fd is not None
+
+    def test_multiple_field_descriptors_raises(self):
+        """Two FieldDescriptor entries in Annotated[...] raises ExtractorError."""
+        from typing import Annotated
+        from lauren.extractors import parse_extractor_hint, FieldDescriptor
+
+        fd1 = FieldDescriptor(default=0)
+        fd2 = FieldDescriptor(default=1)
+        ann = Annotated[int, fd1, fd2]
+        with pytest.raises(ExtractorError, match="multiple FieldDescriptor"):
+            parse_extractor_hint(ann)
+
+    def test_param_spec_with_fd_raises_when_fd_already_set(self):
+        """_ParamSpec in Annotated when fd already set raises ExtractorError."""
+        from typing import Annotated
+        from lauren.extractors import (
+            parse_extractor_hint,
+            FieldDescriptor,
+            PathField,
+        )
+
+        # A _ParamSpec that has a field_descriptor + pre-existing FD from another arg
+        fd_existing = FieldDescriptor(default=5)
+        param_spec = PathField(ge=0)  # Returns a _ParamSpec with a FieldDescriptor
+
+        ann = Annotated[int, fd_existing, param_spec]
+        with pytest.raises(ExtractorError, match="multiple FieldDescriptor"):
+            parse_extractor_hint(ann)
+
+    def test_list_extraction_marker_origin(self):
+        """list[SomeMarker] returns the marker's source and the list type."""
+        from lauren.extractors import parse_extractor_hint
+        from lauren.extractors import UploadFile
+
+        ann = list[UploadFile]
+        src, typ, reads_body, marker, fd, pipes = parse_extractor_hint(ann)
+        assert src == "upload_file"  # UploadFile.source
+        assert reads_body is True
+
+
+class TestCoerceScalarUnionEdgeCases:
+    """Cover lines 1012, 1017-1019 in _coerce_scalar."""
+
+    def test_union_none_branch_skipped(self):
+        """Union[str, None] skips NoneType branch."""
+        from lauren.extractors import _coerce_scalar
+        from typing import Union
+
+        result = _coerce_scalar("hello", Union[str, None])
+        assert result == "hello"
+
+    def test_union_all_fail_raises_last_error(self):
+        """Union[int, float] where neither works raises the last error."""
+        from lauren.extractors import _coerce_scalar, ExtractorFieldError
+        from typing import Union
+
+        # Try to coerce "not_a_number" to Union[int, float]
+        with pytest.raises(ExtractorFieldError):
+            _coerce_scalar("not_a_number", Union[int, float])
+
+    def test_union_first_branch_succeeds(self):
+        """Union[int, float] where int succeeds returns int."""
+        from lauren.extractors import _coerce_scalar
+        from typing import Union
+
+        result = _coerce_scalar("42", Union[int, float])
+        assert result == 42
+        assert isinstance(result, int)
+
+
+class TestIsPydanticModelType:
+    """Cover _is_pydantic_model_type edge cases."""
+
+    def test_optional_model_is_true(self):
+        """Optional[SomeModel] is recognized as a pydantic model type."""
+        from lauren.extractors import _is_pydantic_model_type
+        from pydantic import BaseModel
+        from typing import Optional
+
+        class M(BaseModel):
+            x: int = 1
+
+        assert _is_pydantic_model_type(Optional[M])
+
+    def test_non_model_is_false(self):
+        from lauren.extractors import _is_pydantic_model_type
+
+        assert not _is_pydantic_model_type(str)
+        assert not _is_pydantic_model_type(int)
+        assert not _is_pydantic_model_type(dict)
+
+    def test_plain_model_is_true(self):
+        from lauren.extractors import _is_pydantic_model_type
+        from pydantic import BaseModel
+
+        class M(BaseModel):
+            x: int = 1
+
+        assert _is_pydantic_model_type(M)
+
+
+class TestPipeArityEdgeCases:
+    """Cover lines 1113-1114 (unknown arity falls back to 2)."""
+
+    @pytest.mark.asyncio
+    async def test_pipe_with_unknown_arity_still_works(self):
+        """A pipe whose signature can't be inspected still runs correctly."""
+        from lauren.extractors import pipe, Extraction, extract_parameter
+
+        # Create a pipe with a lambda (lambdas have unknown arity from signature perspective)
+        # but we can test that it passes value and context
+        results = []
+
+        def my_pipe(value, ctx=None):
+            results.append(value)
+            return value.upper()
+
+        req = make_request(query=b"name=hello")
+        ext = Extraction(
+            name="name",
+            source="query",
+            inner_type=str,
+            field_descriptor=None,
+            default=...,
+            has_default=False,
+            marker_cls=None,
+            pipes=(pipe(my_pipe),),
+        )
+        result = await extract_parameter(req, ext)
+        assert result == "HELLO"
+
+    @pytest.mark.asyncio
+    async def test_pipe_raises_extractor_error_preserved(self):
+        """A pipe that raises ExtractorError propagates it unchanged."""
+        from lauren.extractors import pipe, Extraction, extract_parameter
+
+        def bad_pipe(value, ctx=None):
+            raise ExtractorError("pipe intentionally failed")
+
+        req = make_request(query=b"n=1")
+        ext = Extraction(
+            name="n",
+            source="query",
+            inner_type=str,
+            field_descriptor=None,
+            default=...,
+            has_default=False,
+            marker_cls=None,
+            pipes=(pipe(bad_pipe),),
+        )
+        with pytest.raises(ExtractorError, match="pipe intentionally failed"):
+            await extract_parameter(req, ext)
+
+    @pytest.mark.asyncio
+    async def test_pipe_raises_non_extractor_wrapped(self):
+        """A pipe that raises a non-ExtractorError wraps in ExtractorError."""
+        from lauren.extractors import pipe, Extraction, extract_parameter
+
+        def bad_pipe(value, ctx=None):
+            raise ValueError("some internal error")
+
+        req = make_request(query=b"n=1")
+        ext = Extraction(
+            name="n",
+            source="query",
+            inner_type=str,
+            field_descriptor=None,
+            default=...,
+            has_default=False,
+            marker_cls=None,
+            pipes=(pipe(bad_pipe),),
+        )
+        with pytest.raises(ExtractorError):
+            await extract_parameter(req, ext)

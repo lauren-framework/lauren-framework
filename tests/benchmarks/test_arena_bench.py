@@ -28,6 +28,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
+
 from lauren import (
     LaurenFactory,
     Path,
@@ -115,6 +117,7 @@ def _print_table(title: str, results: list[BenchResult]) -> None:
 class TestArenaBench:
     """Compare arena-pooled dispatch vs allocation-per-request."""
 
+    @pytest.mark.benchmark
     def test_arena_vs_no_pooling_end_to_end(self) -> None:
         n = 1_000
 

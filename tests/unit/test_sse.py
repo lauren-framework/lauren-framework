@@ -546,3 +546,121 @@ async def _drain_stream(stream: EventStream) -> list[bytes]:
     body = stream.stream_body
     assert body is not None, "EventStream must always provide a stream body"
     return [chunk async for chunk in body]
+
+
+# ===========================================================================
+# Additional coverage tests
+# ===========================================================================
+
+
+class TestEncodeDataPydanticModel:
+    """Cover _encode_data with pydantic model (lines 228-231)."""
+
+    def test_pydantic_model_encode(self):
+        from pydantic import BaseModel
+
+        class Item(BaseModel):
+            name: str
+            value: int
+
+        result = _encode_data(Item(name="x", value=42))
+        import json
+
+        parsed = json.loads(result)
+        assert parsed["name"] == "x"
+        assert parsed["value"] == 42
+
+
+class TestEventStreamExtraHeaders:
+    """Cover EventStream extra_headers parameter (lines 321-326)."""
+
+    def test_extra_headers_as_headers_object(self):
+        """EventStream with extra_headers as a Headers instance."""
+
+        async def gen():
+            yield "data"
+
+        from lauren import Headers
+
+        stream = EventStream(gen(), extra_headers=Headers([("x-custom", "yes")]))
+        ct = stream.headers.get("content-type")
+        assert "text/event-stream" in ct
+        assert stream.headers.get("x-custom") == "yes"
+
+    def test_extra_headers_as_list(self):
+        """EventStream with extra_headers as a list of tuples (iterable)."""
+
+        async def gen():
+            yield "data"
+
+        stream = EventStream(gen(), extra_headers=[("x-custom-2", "abc")])
+        assert stream.headers.get("x-custom-2") == "abc"
+
+
+class TestEventStreamCancelledError:
+    """Cover CancelledError propagation in keep-alive framing (line 448)."""
+
+    def test_cancelled_error_propagates_via_keep_alive(self):
+        """When the event loop cancels the keep_alive stream, CancelledError
+        propagates upward rather than being silently swallowed."""
+
+        async def gen():
+            await asyncio.sleep(999)
+            yield "never"
+
+        stream = EventStream(gen(), keep_alive=0.01)
+
+        async def run():
+            chunks = []
+            body = stream.stream_body
+            assert body is not None
+            task = asyncio.ensure_future(_collect_chunks(body, chunks))
+            # Let it run briefly (should emit one keep-alive comment)
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+            return chunks
+
+        async def _collect_chunks(body, chunks):
+            async for chunk in body:
+                chunks.append(chunk)
+
+        result = asyncio.run(run())
+        # At least a keep-alive heartbeat comment should have been emitted
+        assert any(b": keep-alive" in c for c in result), f"No heartbeat in {result!r}"
+
+
+class TestSafeAclose:
+    """Cover _safe_aclose (lines 472-478)."""
+
+    def test_safe_aclose_without_aclose_method(self):
+        """Iterators without aclose() are handled gracefully."""
+        from lauren.sse import _safe_aclose
+
+        class NoAclose:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise StopAsyncIteration
+
+        async def run():
+            await _safe_aclose(NoAclose())
+
+        asyncio.run(run())
+
+    def test_safe_aclose_with_raising_aclose(self):
+        """Exceptions from aclose() are suppressed."""
+        from lauren.sse import _safe_aclose
+
+        class BrokenAclose:
+            async def aclose(self):
+                raise RuntimeError("broken aclose")
+
+        async def run():
+            await _safe_aclose(BrokenAclose())  # should not raise
+
+        asyncio.run(run())

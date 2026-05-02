@@ -157,3 +157,161 @@ class TestAdapterCache:
         out = adapter.validate_python({"seq": 1, "text": "hi"})
         assert isinstance(out, Chunk)
         assert out.seq == 1
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage tests for streaming.py
+# ---------------------------------------------------------------------------
+
+
+class TestStreamReaderProperties:
+    """Cover StreamReader.format and inner_type properties (lines 217, 221)."""
+
+    def test_format_property(self):
+        from lauren.streaming import StreamReader
+
+        async def empty_receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        class FakeRequest:
+            pass
+
+        fake = FakeRequest()
+        fake._receive = empty_receive  # instance attribute to avoid binding
+
+        reader = StreamReader(
+            request=fake,
+            inner_type=str,
+            format="ndjson",
+            field_name="data",
+        )
+        assert reader.format == "ndjson"
+
+    def test_inner_type_property(self):
+        from lauren.streaming import StreamReader
+
+        async def empty_receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        class FakeRequest:
+            pass
+
+        fake = FakeRequest()
+        fake._receive = empty_receive  # instance attribute to avoid binding
+
+        reader = StreamReader(
+            request=fake,
+            inner_type=int,
+            format="jsonlines",
+            field_name="n",
+        )
+        assert reader.inner_type is int
+
+
+class TestStreamReaderEdgeCases:
+    """Cover disconnection + trailing fragment (lines 236-241)."""
+
+    def _make_reader(self, messages, format="jsonlines"):
+        """Helper to build a StreamReader with a controlled message sequence."""
+        from lauren.streaming import StreamReader
+        from typing import Any
+
+        idx = [0]
+
+        async def receive():
+            m = messages[idx[0]]
+            idx[0] += 1
+            return m
+
+        class FakeRequest:
+            pass
+
+        fake = FakeRequest()
+        fake._receive = receive
+
+        # Use Any inner_type so pydantic won't reject arbitrary dicts
+        return StreamReader(
+            request=fake,
+            inner_type=Any,
+            format=format,
+            field_name="data",
+        )
+
+    def test_stream_reader_http_disconnect(self):
+        """When a disconnect arrives after data, StopAsyncIteration is raised."""
+        import asyncio
+
+        reader = self._make_reader(
+            [
+                {
+                    "type": "http.request",
+                    "body": b'{"x":1}\n{"x":2}\n',
+                    "more_body": True,
+                },
+                {"type": "http.disconnect"},
+            ]
+        )
+
+        async def run():
+            items = []
+            async for item in reader:
+                items.append(item)
+            return items
+
+        result = asyncio.run(run())
+        assert len(result) == 2
+        assert result[0] == {"x": 1}
+        assert result[1] == {"x": 2}
+
+    def test_stream_reader_http_disconnect_continues_reading(self):
+        """When more_body=True followed by disconnect, items are still yielded."""
+        import asyncio
+
+        reader = self._make_reader(
+            [
+                {"type": "http.request", "body": b'{"x":1}\n', "more_body": True},
+                {"type": "http.disconnect"},
+            ]
+        )
+
+        async def run():
+            items = []
+            async for item in reader:
+                items.append(item)
+            return items
+
+        result = asyncio.run(run())
+        assert len(result) >= 1
+        assert result[0] == {"x": 1}
+
+
+class TestBuildAdapterNoPydantic:
+    """Cover _build_adapter when pydantic is not available (line 406)."""
+
+    def test_build_adapter_returns_none_without_pydantic(self, monkeypatch):
+        from lauren import streaming
+
+        monkeypatch.setattr(streaming, "_PYDANTIC_AVAILABLE", False)
+        result = streaming._build_adapter(str)
+        assert result is None
+
+
+class TestIsDiscriminatedUnionNoPydantic:
+    """Cover is_discriminated_union when pydantic is not available (line 424)."""
+
+    def test_returns_false_without_pydantic(self, monkeypatch):
+        from lauren import streaming
+
+        monkeypatch.setattr(streaming, "_PYDANTIC_AVAILABLE", False)
+        result = streaming.is_discriminated_union(str)
+        assert result is False
+
+
+class TestDiscriminatorVariantsEdgeCases:
+    """Cover discriminator_variants empty args (line 486)."""
+
+    def test_empty_args_returns_empty_tuple(self):
+        from lauren.streaming import discriminator_variants
+
+        result = discriminator_variants(str)  # No args
+        assert result == ()

@@ -295,3 +295,219 @@ class TestDiscoverHooks:
         hooks = discover_ws_hooks(G)
         assert hooks["on_error"] is not None
         assert hooks["on_error"].__name__ == "catch"
+
+
+# ---------------------------------------------------------------------------
+# WebSocket class unit tests (lines 330, 380, 454, 458, 512, 520, etc.)
+# ---------------------------------------------------------------------------
+
+
+class TestWebSocketDirectUnit:
+    """Test WebSocket methods directly without a full ASGI app."""
+
+    def _make_ws(self, messages=None):
+        """Create a WebSocket in STATE_CONNECTING with a fake receive/send."""
+        from lauren.websockets import WebSocket
+
+        if messages is None:
+            messages = []
+
+        idx = [0]
+
+        async def receive():
+            if idx[0] >= len(messages):
+                return {"type": "websocket.disconnect", "code": 1000}
+            msg = messages[idx[0]]
+            idx[0] += 1
+            return msg
+
+        sent = []
+
+        async def send(msg):
+            sent.append(msg)
+
+        ws = WebSocket(
+            scope={
+                "type": "websocket",
+                "path": "/test",
+                "headers": [],
+                "query_string": b"",
+            },
+            receive=receive,
+            send=send,
+            path_template="/test",
+            path_params={},
+        )
+        return ws, sent
+
+    def test_path_property(self):
+
+        ws, _ = self._make_ws()
+        assert ws.path == "/test"
+
+    def test_path_template_property(self):
+
+        ws, _ = self._make_ws()
+        assert ws.path_template == "/test"
+
+    def test_path_params_property(self):
+        ws, _ = self._make_ws()
+        assert ws.path_params == {}
+
+    def test_headers_property(self):
+        ws, _ = self._make_ws()
+        assert ws.headers is not None
+
+    def test_query_string_property(self):
+        ws, _ = self._make_ws()
+        assert ws.query_string == b""
+
+    def test_state_property(self):
+        ws, _ = self._make_ws()
+        assert ws.state is not None
+
+    def test_app_state_property(self):
+        ws, _ = self._make_ws()
+        # app_state is None by default (no app_state passed)
+        # Just verify the property exists
+        _ = ws.app_state  # should not raise
+
+    def test_connected_property_before_accept(self):
+        ws, _ = self._make_ws()
+        assert not ws.connected
+
+    def test_accept_when_not_connecting_raises(self):
+        import asyncio
+        from lauren.websockets import WebSocket, WebSocketError
+
+        ws, sent = self._make_ws()
+
+        async def run():
+            # Move to STATE_OPEN manually
+            ws._state_code = WebSocket.STATE_OPEN
+            with pytest.raises(WebSocketError, match="cannot accept"):
+                await ws.accept()
+
+        asyncio.run(run())
+
+    def test_receive_text_with_binary_message_raises(self):
+        import asyncio
+        from lauren.websockets import WebSocket, WebSocketError
+
+        messages = [
+            {"type": "websocket.receive", "text": None, "bytes": b"\x01\x02"},
+        ]
+        ws, _ = self._make_ws(messages)
+
+        async def run():
+            ws._state_code = WebSocket.STATE_OPEN
+            with pytest.raises(WebSocketError, match="expected text frame"):
+                await ws.receive_text()
+
+        asyncio.run(run())
+
+    def test_receive_bytes_with_text_message_raises(self):
+        import asyncio
+        from lauren.websockets import WebSocket, WebSocketError
+
+        messages = [
+            {"type": "websocket.receive", "text": "hello", "bytes": None},
+        ]
+        ws, _ = self._make_ws(messages)
+
+        async def run():
+            ws._state_code = WebSocket.STATE_OPEN
+            with pytest.raises(WebSocketError, match="expected binary frame"):
+                await ws.receive_bytes()
+
+        asyncio.run(run())
+
+    def test_receive_json_invalid_json_raises(self):
+        import asyncio
+        from lauren.websockets import WebSocket, WebSocketValidationError
+
+        messages = [
+            {"type": "websocket.receive", "text": "not-valid-json", "bytes": None},
+        ]
+        ws, _ = self._make_ws(messages)
+
+        async def run():
+            ws._state_code = WebSocket.STATE_OPEN
+            with pytest.raises(WebSocketValidationError, match="invalid JSON frame"):
+                await ws.receive_json()
+
+        asyncio.run(run())
+
+    def test_close_when_already_closed_is_noop(self):
+        import asyncio
+        from lauren.websockets import WebSocket
+
+        ws, sent = self._make_ws()
+
+        async def run():
+            ws._state_code = WebSocket.STATE_CLOSED
+            await ws.close()  # Should not raise
+
+        asyncio.run(run())
+        assert not sent  # nothing sent
+
+    def test_receive_when_closed_raises(self):
+        import asyncio
+        from lauren.websockets import WebSocket, WebSocketDisconnect
+
+        ws, _ = self._make_ws()
+
+        async def run():
+            ws._state_code = WebSocket.STATE_CLOSED
+            with pytest.raises(WebSocketDisconnect, match="already closed"):
+                await ws.receive()
+
+        asyncio.run(run())
+
+    def test_accept_with_subprotocol_and_headers(self):
+        import asyncio
+
+        ws, sent = self._make_ws()
+
+        async def run():
+            await ws.accept(
+                subprotocol="my-protocol",
+                headers=[("x-custom", "value")],
+            )
+
+        asyncio.run(run())
+        assert len(sent) == 1
+        accept_msg = sent[0]
+        assert accept_msg["type"] == "websocket.accept"
+        assert accept_msg["subprotocol"] == "my-protocol"
+        assert accept_msg["headers"]
+
+    def test_on_message_non_method_raises(self):
+        """@on_message on a class (not a method) raises DecoratorUsageError."""
+        from lauren.exceptions import DecoratorUsageError
+
+        with pytest.raises(DecoratorUsageError):
+
+            @on_message("evt")
+            class NotAMethod:
+                pass
+
+    def test_is_method_target_returns_false_for_class(self):
+        """_is_method_target returns False for a class type."""
+        from lauren.websockets import _is_method_target
+
+        class Foo:
+            pass
+
+        assert not _is_method_target(Foo)
+
+    def test_is_method_target_returns_true_for_classmethod(self):
+        """_is_method_target returns True for classmethod."""
+        from lauren.websockets import _is_method_target
+
+        class Foo:
+            @classmethod
+            def method(cls):
+                pass
+
+        assert _is_method_target(Foo.__dict__["method"])

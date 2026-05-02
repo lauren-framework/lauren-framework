@@ -335,3 +335,296 @@ class TestDocsEndpoints:
         # The HTML UIs must reference the custom JSON URL.
         assert "/api/schema.json" in client.get("/api/swagger").text
         assert "/api/schema.json" in client.get("/api/reference").text
+
+
+# ---------------------------------------------------------------------------
+# _docs.py direct coverage
+# ---------------------------------------------------------------------------
+
+
+class TestDocsHelpers:
+    def test_swagger_ui_html_with_oauth2_redirect(self):
+        """oauth2_redirect_url branch in swagger_ui_html."""
+        from lauren._asgi._docs import swagger_ui_html
+
+        html = swagger_ui_html(
+            openapi_url="/openapi.json",
+            title="Test",
+            oauth2_redirect_url="https://example.com/oauth2/callback",
+        )
+        assert "oauth2RedirectUrl" in html
+        assert "https://example.com/oauth2/callback" in html
+
+    def test_swagger_ui_html_without_oauth2_redirect(self):
+        from lauren._asgi._docs import swagger_ui_html
+
+        html = swagger_ui_html(openapi_url="/openapi.json")
+        assert "oauth2RedirectUrl" not in html
+        assert "SwaggerUIBundle" in html
+
+    def test_html_response_sets_content_type(self):
+        from lauren._asgi._docs import html_response
+
+        resp = html_response("<html><body>hi</body></html>")
+        assert resp.headers.get("content-type") == "text/html; charset=utf-8"
+        assert b"hi" in resp.body
+
+    def test_json_response_returns_json_body(self):
+        from lauren._asgi._docs import json_response
+
+        resp = json_response({"key": "value"})
+        import json
+
+        data = json.loads(resp.body)
+        assert data["key"] == "value"
+
+
+# ---------------------------------------------------------------------------
+# _openapi.py: _python_type_to_schema edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestPythonTypeToSchema:
+    def test_float_type(self):
+        from lauren._asgi._openapi import _python_type_to_schema
+
+        assert _python_type_to_schema(float) == {"type": "number"}
+
+    def test_bool_type(self):
+        from lauren._asgi._openapi import _python_type_to_schema
+
+        assert _python_type_to_schema(bool) == {"type": "boolean"}
+
+    def test_none_type(self):
+        from lauren._asgi._openapi import _python_type_to_schema
+
+        assert _python_type_to_schema(None) == {"type": "string"}
+        assert _python_type_to_schema(type(None)) == {"type": "string"}
+
+    def test_bytes_type(self):
+        from lauren._asgi._openapi import _python_type_to_schema
+
+        result = _python_type_to_schema(bytes)
+        assert result == {"type": "string", "format": "binary"}
+
+    def test_list_with_type_arg(self):
+        from lauren._asgi._openapi import _python_type_to_schema
+
+        result = _python_type_to_schema(list[int])
+        assert result["type"] == "array"
+        assert result["items"] == {"type": "integer"}
+
+    def test_tuple_with_type_arg(self):
+        from lauren._asgi._openapi import _python_type_to_schema
+
+        result = _python_type_to_schema(tuple[str])
+        assert result["type"] == "array"
+
+    def test_dict_with_value_type(self):
+        from lauren._asgi._openapi import _python_type_to_schema
+
+        result = _python_type_to_schema(dict[str, int])
+        assert result["type"] == "object"
+        assert result["additionalProperties"] == {"type": "integer"}
+
+    def test_dict_no_value_type(self):
+        from lauren._asgi._openapi import _python_type_to_schema
+
+        result = _python_type_to_schema(dict)
+        # bare dict has no args, falls through to unknown -> {}
+        assert isinstance(result, dict)
+
+    def test_optional_t_unwraps_to_t(self):
+        from lauren._asgi._openapi import _python_type_to_schema
+
+        result = _python_type_to_schema(int | None)
+        assert result == {"type": "integer"}
+
+    def test_union_multiple_types(self):
+        from lauren._asgi._openapi import _python_type_to_schema
+
+        result = _python_type_to_schema(int | str)
+        assert "oneOf" in result
+
+    def test_enum_type(self):
+        from lauren._asgi._openapi import _python_type_to_schema
+        import enum
+
+        class Color(enum.Enum):
+            RED = "red"
+            GREEN = "green"
+
+        result = _python_type_to_schema(Color)
+        assert "enum" in result
+        assert set(result["enum"]) == {"red", "green"}
+
+    def test_unknown_type_returns_empty(self):
+        from lauren._asgi._openapi import _python_type_to_schema
+
+        class Weird:
+            pass
+
+        result = _python_type_to_schema(Weird)
+        assert result == {}
+
+
+class TestApplyFieldDescriptor:
+    def test_all_constraints(self):
+        from lauren._asgi._openapi import _apply_field_descriptor
+        from lauren.extractors import FieldDescriptor
+
+        fd = FieldDescriptor(
+            ge=1.0,
+            le=100.0,
+            gt=0.0,
+            lt=200.0,
+            min_length=2,
+            max_length=50,
+            pattern=r"\d+",
+            example="42",
+        )
+        schema: dict = {}
+        result = _apply_field_descriptor(schema, fd)
+        assert result["minimum"] == 1.0
+        assert result["maximum"] == 100.0
+        assert result["exclusiveMinimum"] == 0.0
+        assert result["exclusiveMaximum"] == 200.0
+        assert result["minLength"] == 2
+        assert result["maxLength"] == 50
+        assert result["pattern"] == r"\d+"
+        assert result["example"] == "42"
+
+
+class TestEnsureComponentWithDefs:
+    def test_pydantic_model_with_nested_defs(self):
+        """$defs from a pydantic schema should be hoisted into components."""
+        from lauren._asgi._openapi import _ensure_component
+        from pydantic import BaseModel
+
+        class Inner(BaseModel):
+            x: int
+
+        class Outer(BaseModel):
+            inner: Inner
+
+        components: dict = {"schemas": {}}
+        ref = _ensure_component(components, Outer)
+        assert ref.startswith("#/components/schemas/")
+        # Inner should also appear
+        assert "Inner" in components["schemas"] or "Outer" in components["schemas"]
+
+
+class TestOpenAPISchemaTypeVariants:
+    def test_bytes_request_body(self):
+        """bytes extractor produces application/octet-stream requestBody."""
+        from lauren import controller, post, module, Bytes
+        from lauren import LaurenFactory
+
+        @controller("/upload")
+        class UpCtrl:
+            @post("/")
+            async def upload(self, body: Bytes) -> dict:
+                return {}
+
+        @module(controllers=[UpCtrl])
+        class UpMod:
+            pass
+
+        app = LaurenFactory.create(UpMod)
+        schema = app.openapi()
+        op = schema["paths"]["/upload"]["post"]
+        body = op.get("requestBody", {})
+        assert "application/octet-stream" in body.get("content", {})
+
+    def test_form_request_body(self):
+        """Form extractor produces application/x-www-form-urlencoded requestBody."""
+        from lauren import controller, post, module, Form
+        from lauren import LaurenFactory
+
+        @controller("/form")
+        class FormCtrl:
+            @post("/")
+            async def handle(self, data: Form) -> dict:
+                return {}
+
+        @module(controllers=[FormCtrl])
+        class FormMod:
+            pass
+
+        app = LaurenFactory.create(FormMod)
+        schema = app.openapi()
+        op = schema["paths"]["/form"]["post"]
+        body = op.get("requestBody", {})
+        assert "application/x-www-form-urlencoded" in body.get("content", {})
+
+    def test_response_with_responses_dict_override(self):
+        """Custom 'responses' dict on route is merged into OpenAPI output."""
+
+        @controller("/items")
+        class ItemCtrl:
+            @get(
+                "/",
+                responses={200: {"description": "OK custom"}, 400: "Bad request"},
+            )
+            async def list_items(self) -> dict:
+                return {}
+
+        @module(controllers=[ItemCtrl])
+        class ItemMod:
+            pass
+
+        app = LaurenFactory.create(ItemMod)
+        schema = app.openapi()
+        op = schema["paths"]["/items"]["get"]
+        assert op["responses"]["200"]["description"] == "OK custom"
+        assert "400" in op["responses"]
+
+    def test_streaming_response_includes_x_streaming(self):
+        """StreamingResponse[T] produces x-streaming in the OpenAPI output."""
+        from pydantic import BaseModel
+        from lauren import controller, get, module, LaurenFactory
+        from lauren.streaming import StreamingResponse
+
+        class Item(BaseModel):
+            value: int
+
+        @controller("/stream")
+        class StreamCtrl:
+            @get("/", response_model=Item)
+            async def stream_items(self) -> StreamingResponse[Item]:
+                async def gen():
+                    yield Item(value=1)
+
+                return gen()
+
+        @module(controllers=[StreamCtrl])
+        class StreamMod:
+            pass
+
+        app = LaurenFactory.create(StreamMod)
+        schema = app.openapi()
+        op = schema["paths"]["/stream"]["get"]
+        assert op.get("x-streaming") is True
+
+    def test_root_path_becomes_server(self):
+        """When root_path is set and servers is empty, root_path becomes a server."""
+        app = LaurenFactory.create(PetModule, root_path="/api/v1")
+        schema = app.openapi()
+        servers = schema.get("servers", [])
+        assert any(s["url"] == "/api/v1" for s in servers)
+
+    def test_security_schemes_in_components(self):
+        """security_schemes appear in components/securitySchemes."""
+        app = LaurenFactory.create(
+            PetModule,
+            openapi_security_schemes={
+                "BearerAuth": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "bearerFormat": "JWT",
+                }
+            },
+        )
+        schema = app.openapi()
+        sec = schema["components"].get("securitySchemes", {})
+        assert "BearerAuth" in sec
