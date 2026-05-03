@@ -29,9 +29,11 @@ from lauren import (
     controller,
     get,
     module,
+    post,
 )
 from lauren._asgi import _coerce_to_response
 from lauren.testing import TestClient
+from lauren.types import ExecutionContext
 
 
 # ---------------------------------------------------------------------------
@@ -463,3 +465,124 @@ class TestRootPathStripping:
         # Route is /api/v1/endpoint, but with root_path=/prefix it's at /prefix/api/v1/endpoint
         resp = client.get("/prefix/api/v1/endpoint")
         assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# ExecutionContext injection
+# ---------------------------------------------------------------------------
+
+
+class TestExecutionContextInjection:
+    def test_exec_ctx_injected_into_route(self):
+        """A parameter annotated as ExecutionContext receives the live ctx."""
+
+        @controller("/ctx")
+        class CtxCtrl:
+            @get("/info")
+            async def info(self, ctx: ExecutionContext) -> dict:
+                return {
+                    "template": ctx.route_template,
+                    "handler": ctx.handler_func.__name__,
+                    "class": ctx.handler_class.__name__,
+                }
+
+        @module(controllers=[CtxCtrl])
+        class CtxMod:
+            pass
+
+        client = TestClient(LaurenFactory.create(CtxMod))
+        resp = client.get("/ctx/info")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["template"] == "/ctx/info"
+        assert data["handler"] == "info"
+        assert data["class"] == "CtxCtrl"
+
+    def test_exec_ctx_alongside_other_params(self):
+        """ExecutionContext can coexist with path, query, and body params."""
+        from lauren import Path, Query
+
+        @controller("/ctx")
+        class MixedCtrl:
+            @get("/items/{item_id}")
+            async def item(
+                self,
+                item_id: Path[int],
+                q: Query[str] = "default",
+                ctx: ExecutionContext = None,  # type: ignore[assignment]
+            ) -> dict:
+                return {
+                    "item_id": item_id,
+                    "q": q,
+                    "has_ctx": ctx is not None,
+                    "template": ctx.route_template,
+                }
+
+        @module(controllers=[MixedCtrl])
+        class MixedMod:
+            pass
+
+        client = TestClient(LaurenFactory.create(MixedMod))
+        resp = client.get("/ctx/items/42?q=hello")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["item_id"] == 42
+        assert data["q"] == "hello"
+        assert data["has_ctx"] is True
+        assert data["template"] == "/ctx/items/{item_id}"
+
+    def test_exec_ctx_in_sync_handler(self):
+        """ExecutionContext injection works in synchronous (non-async) handlers."""
+
+        @controller("/ctx")
+        class SyncCtrl:
+            @get("/sync")
+            def sync_info(self, ctx: ExecutionContext) -> dict:
+                return {"template": ctx.route_template}
+
+        @module(controllers=[SyncCtrl])
+        class SyncMod:
+            pass
+
+        client = TestClient(LaurenFactory.create(SyncMod))
+        resp = client.get("/ctx/sync")
+        assert resp.status_code == 200
+        assert resp.json()["template"] == "/ctx/sync"
+
+    def test_exec_ctx_metadata_visible(self):
+        """Metadata set via @set_metadata is accessible through ctx.metadata."""
+        from lauren import set_metadata
+
+        @controller("/ctx")
+        class MetaCtrl:
+            @set_metadata("role", "admin")
+            @get("/protected")
+            async def protected(self, ctx: ExecutionContext) -> dict:
+                return {"role": ctx.get_metadata("role")}
+
+        @module(controllers=[MetaCtrl])
+        class MetaMod:
+            pass
+
+        client = TestClient(LaurenFactory.create(MetaMod))
+        resp = client.get("/ctx/protected")
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "admin"
+
+    def test_exec_ctx_post_handler(self):
+        """ExecutionContext injection works on POST routes."""
+
+        @controller("/ctx")
+        class PostCtrl:
+            @post("/submit")
+            async def submit(self, ctx: ExecutionContext) -> dict:
+                return {"method": ctx.request.method}
+
+        @module(controllers=[PostCtrl])
+        class PostMod:
+            pass
+
+        client = TestClient(LaurenFactory.create(PostMod))
+        resp = client.post("/ctx/submit")
+        assert resp.status_code == 200
+        assert resp.json()["method"] == "POST"

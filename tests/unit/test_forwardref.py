@@ -449,7 +449,7 @@ def test_resolve_type_hints_extra_localns_highest_priority() -> None:
     class B:
         pass
 
-    def handler(x: "MyThing") -> None: ... # noqa: F821
+    def handler(x: "MyThing") -> None: ...  # noqa: F821
 
     hints = resolve_type_hints(
         handler,

@@ -264,6 +264,23 @@ def _compile_handler_signature(
                 )
                 param_names.append(name)
                 continue
+            # ExecutionContext injection — short-circuited at dispatch time.
+            if ann is ExecutionContext or (
+                isinstance(ann, type) and issubclass(ann, ExecutionContext)
+            ):
+                extractions.append(
+                    Extraction(
+                        name=name,
+                        source="execution_context",
+                        inner_type=ann,
+                        field_descriptor=fd,
+                        default=default,
+                        has_default=has_default,
+                        pipes=pipes,
+                    )
+                )
+                param_names.append(name)
+                continue
             # BackgroundTasks parameter — detected and short-circuited at dispatch time.
             if ann is _BackgroundTasks or (
                 isinstance(ann, type) and issubclass(ann, _BackgroundTasks)
@@ -1174,6 +1191,8 @@ class LaurenApp:
                             for ext in compiled.extractions:
                                 if ext.source == "request":
                                     kwargs_dict[ext.name] = req2
+                                elif ext.source == "execution_context":
+                                    kwargs_dict[ext.name] = ctx
                                 elif ext.source == "background_tasks":
                                     # Lazy-create once per request; same instance
                                     # for all bg params in the same handler.

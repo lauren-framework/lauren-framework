@@ -46,7 +46,6 @@ from lauren.testing import TestClient
 from lauren.types import CallHandler
 
 
-
 class NotFoundError(HTTPError):
     """Local domain error that maps to HTTP 404 — used in pipe tests."""
 
