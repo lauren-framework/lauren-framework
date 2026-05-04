@@ -341,6 +341,7 @@ def clean(session: nox.Session) -> None:
         ROOT / ".coverage",
         ROOT / "htmlcov",
         ROOT / "coverage.xml",
+        ROOT / ".nox",
     ]
     for path in targets:
         if path.exists():
