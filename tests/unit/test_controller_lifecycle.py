@@ -13,8 +13,10 @@ import pytest
 from lauren import (
     LaurenFactory,
     Request,
+    Scope,
     controller,
     get,
+    injectable,
     module,
     post_construct,
     pre_destruct,
@@ -41,6 +43,7 @@ class TestControllerLifecycleHooks:
         events: list[str] = []
 
         @controller("/c")
+        @injectable(scope=Scope.REQUEST)
         class Ctrl:
             @post_construct
             def _init(self):
@@ -66,6 +69,7 @@ class TestControllerLifecycleHooks:
         events: list[str] = []
 
         @controller("/c")
+        @injectable(scope=Scope.REQUEST)
         class Ctrl:
             @post_construct
             def _init(self):
@@ -94,6 +98,7 @@ class TestControllerLifecycleHooks:
         events: list[str] = []
 
         @controller("/c")
+        @injectable(scope=Scope.REQUEST)
         class Ctrl:
             @post_construct
             async def _init(self):

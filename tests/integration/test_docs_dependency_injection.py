@@ -88,6 +88,7 @@ class TestA1InjectableClass:
             pass
 
         @controller("/a1r")
+        @injectable(scope=Scope.REQUEST)
         class C:
             def __init__(self, ctx: RequestCtx) -> None:
                 self.ctx = ctx

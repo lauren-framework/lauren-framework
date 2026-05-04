@@ -220,6 +220,7 @@ class TestFunctionInjectable:
             return counter["n"]
 
         @controller("/api")
+        @injectable(scope=Scope.REQUEST)
         class Api:
             rid_a: Depends[request_id]
 
@@ -228,7 +229,7 @@ class TestFunctionInjectable:
                 self,
                 rid_b: Depends[request_id],
             ) -> dict:
-                # Field injection and Depends in the handler \u2014 both
+                # Field injection and Depends in the handler — both
                 # hit the same request-scoped instance.
                 return {"a": self.rid_a, "b": rid_b}
 

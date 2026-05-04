@@ -260,10 +260,9 @@ def controller(
             ),
         )
         # Mark this class as injectable in its OWN __dict__ — never by
-        # inheritance. Controllers default to REQUEST scope so they may depend
-        # on request-scoped providers (DB sessions, CurrentUser, etc.).
+        # inheritance. Controllers default to SINGLETON scope.
         if INJECTABLE_META not in cls.__dict__:
-            setattr(cls, INJECTABLE_META, InjectableMeta(scope=Scope.REQUEST))
+            setattr(cls, INJECTABLE_META, InjectableMeta(scope=Scope.SINGLETON))
         return cls
 
     return decorator

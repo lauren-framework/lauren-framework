@@ -26,6 +26,7 @@ from lauren import (
     Depends,
     LaurenFactory,
     Path,
+    Scope,
     controller,
     get,
     injectable,
@@ -109,6 +110,7 @@ class UserRepo:
 
 
 @controller("/users", tags=["users"])
+@injectable(scope=Scope.REQUEST)
 class UserController:
     def __init__(self, repo: UserRepo, clock: Clock):
         self.repo = repo
@@ -163,6 +165,7 @@ class OrderRepo:
 
 
 @controller("/orders", tags=["orders"])
+@injectable(scope=Scope.REQUEST)
 class OrderController:
     destroyed: list[int] = []
 
