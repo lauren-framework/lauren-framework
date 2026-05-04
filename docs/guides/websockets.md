@@ -427,6 +427,18 @@ async def test_ping_pong():
 
 Connection options include `headers={...}`, `subprotocols=[...]`, and `query_string="..."`, mirroring what a real client would send. The session context-manager guarantees the server task is awaited at exit, so any unhandled server-side exception propagates into the test harness instead of getting silently swallowed.
 
+## Rejection patterns
+
+There are three idiomatic ways to reject a connection inside `@on_connect`:
+
+| Pattern | Code | Notes |
+|---------|------|-------|
+| `close()` then `return` | `await ws.close(code=4401); return` | Preferred. Sends close frame, exits hook cleanly. |
+| `raise WebSocketDisconnect` | `raise WebSocketDisconnect("reason", close_code=4401)` | Equivalent — the runtime sends the close frame for you. |
+| `close()` then `raise` | `await ws.close(...); raise WebSocketDisconnect(...)` | Also safe. The runtime detects the connection is already closed and skips the second close frame. |
+
+All three patterns produce the same client-visible close code. Mixing `close()` with `raise WebSocketDisconnect` in the same handler is safe because Lauren tracks connection state internally and never sends a duplicate close frame to the ASGI transport.
+
 ## Best practices
 
 * **Accept explicitly when authorising.** Calling `await ws.accept()` is the contract that signals "the handshake succeeded". Calling `close()` *before* `accept()` rejects the connection with the `4xxx` code you choose. Skip both, and the framework will accept by default — convenient for trivial gateways but error-prone for anything authenticated.

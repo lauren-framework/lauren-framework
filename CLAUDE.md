@@ -212,6 +212,26 @@ WebSockets and SSE are first-class peers of HTTP, not bolt-ons.
   `StreamingResponse[T]`: the framework negotiates between SSE,
   NDJSON, and JSON Lines from `Accept`. Use raw `EventStream` only
   when you need explicit control of the SSE envelope.
+- **WebSocket connection rejection — three safe patterns.** All three
+  are idempotent and produce identical client-visible close codes:
+  1. `await ws.close(code=4401); return` — preferred
+  2. `raise WebSocketDisconnect("reason", close_code=4401)` — runtime closes
+  3. `await ws.close(code=4401); raise WebSocketDisconnect(...)` — safe combination
+  The runtime tracks connection state internally and never emits a
+  duplicate `websocket.close` ASGI frame regardless of which pattern
+  you use.
+- **SSE mid-stream client disconnect.** The runtime wraps the streaming
+  body loop in a try/except so a client disconnecting mid-stream is
+  handled silently. Generators should use `try/finally` for cleanup:
+  ```python
+  async def producer():
+      resource = await acquire()
+      try:
+          async for item in resource:
+              yield ServerSentEvent(data=item)
+      finally:
+          await resource.release()
+  ```
 
 When adding tests for either, drive a real app through
 `lauren.testing.WsTestClient` (websockets) or `TestClient` (SSE — the
@@ -221,6 +241,9 @@ deterministic).
 ## 8. Common Pitfalls
 
 - ❌ Calling `get_type_hints` directly — use `_typing.resolve_type_hints`.
+  `_safe_type_hints` in `_asgi/__init__.py` has a three-tier fallback:
+  `resolve_type_hints` → retry with frame locals → `inspect.get_annotations(eval_str=True)`.
+  This ensures handler files can freely use `from __future__ import annotations`.
 - ❌ Importing `typing.List / Dict / Optional` — use `list`, `dict`,
   `X | None`.
 - ❌ Creating a `dataclass` with `field(default_factory=lambda: X())`

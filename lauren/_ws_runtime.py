@@ -702,7 +702,17 @@ async def handle_websocket(
         if ws.connection_state == ws.STATE_CONNECTING:
             await ws.accept()
     except WebSocketError as exc:
-        await send({"type": "websocket.close", "code": exc.close_code})
+        # Only send a close frame if the gateway hook didn't already close the
+        # connection itself (e.g. ``await ws.close(...)`` followed by raising
+        # ``WebSocketDisconnect``).  Sending a second ``websocket.close`` to an
+        # already-rejected connection causes the underlying ASGI transport to
+        # raise, which would propagate as an unhandled exception and corrupt
+        # concurrent HTTP responses.
+        if ws.connection_state != ws.STATE_CLOSED:
+            try:
+                await send({"type": "websocket.close", "code": exc.close_code})
+            except Exception:
+                pass  # transport already gone — nothing to do
         logger.warn(
             f"WebSocket handshake rejected: {exc.message}",
             context="WebSocket",

@@ -493,7 +493,20 @@ def _safe_type_hints(fn: Callable[..., Any]) -> dict[str, Any]:
             include_extras=True,
         )
     except Exception:
-        return hints or {}
+        pass
+    # Last resort: inspect.get_annotations(eval_str=True) evaluates PEP 563
+    # string annotations (from __future__ import annotations) using the
+    # function's own globals, so handler files can freely use that import
+    # without breaking extractor hint resolution.
+    try:
+        import inspect as _inspect
+
+        evaled = _inspect.get_annotations(fn, eval_str=True)
+        if evaled:
+            return evaled
+    except Exception:
+        pass
+    return hints or {}
 
 
 def _unwrap_handler_descriptor(
@@ -1612,6 +1625,19 @@ class LaurenApp:
                 receive,
                 send,
             )
+        except asyncio.CancelledError:
+            raise  # server shutdown — let Uvicorn handle it
+        except Exception:
+            # An unexpected exception escaped handle_websocket (e.g. a broken
+            # transport raising when we tried to send a close frame on an
+            # already-rejected connection).  Log it but do NOT re-raise: Uvicorn
+            # would otherwise log "ASGI callable returned without completing
+            # response" for every other in-flight request on the same worker.
+            import logging as _logging
+
+            _logging.getLogger("lauren").exception(
+                "Unhandled error in WebSocket handler (path=%s)", scope.get("path", "?")
+            )
         finally:
             if task is not None:
                 self._in_flight.discard(task)
@@ -1976,11 +2002,24 @@ async def _send_response(
                 "headers": raw_headers,
             }
         )
-        async for chunk in stream:
-            if isinstance(chunk, str):
-                chunk = chunk.encode("utf-8")
-            await send({"type": "http.response.body", "body": chunk, "more_body": True})
-        await send({"type": "http.response.body", "body": b"", "more_body": False})
+        # Once the response headers are sent we cannot send a fallback error
+        # response if streaming fails.  Wrap the body loop so that:
+        # - asyncio.CancelledError  → re-raised (server shutdown / client gone)
+        # - Any other send() failure → absorbed; the ASGI server closes the
+        #   connection when this coroutine returns without a more_body=False
+        #   chunk, which is the correct signal for an interrupted stream.
+        try:
+            async for chunk in stream:
+                if isinstance(chunk, str):
+                    chunk = chunk.encode("utf-8")
+                await send(
+                    {"type": "http.response.body", "body": chunk, "more_body": True}
+                )
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass  # client disconnected mid-stream; connection will be closed
 
 
 # ---------------------------------------------------------------------------

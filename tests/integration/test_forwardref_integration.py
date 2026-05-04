@@ -14,6 +14,12 @@ references appear in lauren applications:
 
 3. Services that depend on forward-declared services declared later in
    the same module (two-phase declaration order).
+
+4. ``@use_guards`` on a controller whose handlers use ``Json[T]`` — guards
+   must not prevent extractor-hint resolution when PEP 563 is active.
+
+5. Multiple extractor types in the same handler (``Path[int]``,
+   ``Query[str]``, ``Json[T]``) all stringified by PEP 563 simultaneously.
 """
 
 from __future__ import annotations
@@ -26,12 +32,15 @@ from lauren import (
     Json,
     LaurenFactory,
     Path,
+    Query,
     controller,
     get,
     injectable,
     module,
     post,
+    use_guards,
 )
+from lauren.types import ExecutionContext
 from lauren.testing import TestClient
 
 
@@ -191,3 +200,120 @@ def test_forwardref_inside_generic_container() -> None:
     )
     assert r.status_code == 200
     assert r.json() == {"count": 2, "first": "a"}
+
+
+# ---------------------------------------------------------------------------
+# 5. ``@use_guards`` + ``Json[T]`` + PEP 563
+#
+# Regression test for the case where both resolve_type_hints calls in
+# _safe_type_hints fall back to the inspect.get_annotations() last resort.
+# Guards must not prevent extractor-hint resolution when the handler file
+# has ``from __future__ import annotations``.
+# ---------------------------------------------------------------------------
+
+
+class TokenRequest(BaseModel):
+    token: str
+    user_id: str
+
+
+class _AllowAllGuard:
+    """A no-op guard that always allows the request through."""
+
+    async def can_activate(self, context: ExecutionContext) -> bool:
+        return True
+
+
+class _RejectAllGuard:
+    """A guard that always rejects (for verifying the guard runs)."""
+
+    async def can_activate(self, context: ExecutionContext) -> bool:
+        return False
+
+
+@use_guards(_AllowAllGuard)
+@controller("/guarded")
+class GuardedController:
+    @post("/token")
+    async def issue_token(self, body: Json[TokenRequest]) -> dict:
+        return {"echo_token": body.token, "echo_user": body.user_id}
+
+    @use_guards(_RejectAllGuard)
+    @post("/secret")
+    async def secret(self, body: Json[TokenRequest]) -> dict:
+        return {"secret": "you should not see this"}
+
+
+@module(controllers=[GuardedController])
+class _GuardedModule:
+    pass
+
+
+def test_guarded_controller_json_body_resolves_with_pep563() -> None:
+    """``@use_guards`` on a PEP-563 controller must not break ``Json[T]``
+    extractor resolution — guards do not wrap handler functions so the
+    extractor compiler must still see the proper Annotated type."""
+    app = LaurenFactory.create(_GuardedModule)
+    r = TestClient(app).post(
+        "/guarded/token",
+        json={"token": "abc123", "user_id": "u-1"},
+    )
+    assert r.status_code == 200
+    assert r.json() == {"echo_token": "abc123", "echo_user": "u-1"}
+
+
+def test_guarded_controller_route_guard_rejects() -> None:
+    """A method-level ``@use_guards`` that returns False must produce 403,
+    even when the containing controller has PEP-563 active."""
+    app = LaurenFactory.create(_GuardedModule)
+    r = TestClient(app).post(
+        "/guarded/secret",
+        json={"token": "x", "user_id": "u-2"},
+    )
+    assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# 6. Multiple extractor types in one handler, all stringified by PEP 563
+# ---------------------------------------------------------------------------
+
+
+class PatchPayload(BaseModel):
+    value: str
+
+
+@controller("/multi")
+class MultiExtractorController:
+    @post("/{resource_id}/update")
+    async def update(
+        self,
+        resource_id: Path[int],
+        dry_run: Query[bool],
+        body: Json[PatchPayload],
+    ) -> dict:
+        return {
+            "resource_id": resource_id,
+            "dry_run": dry_run,
+            "value": body.value,
+        }
+
+
+@module(controllers=[MultiExtractorController])
+class _MultiExtractorModule:
+    pass
+
+
+def test_multiple_extractors_with_pep563() -> None:
+    """Path, Query, and Json extractors in the same handler must all resolve
+    correctly when their types are stringified by ``from __future__ import
+    annotations``."""
+    app = LaurenFactory.create(_MultiExtractorModule)
+    r = TestClient(app).post(
+        "/multi/42/update?dry_run=true",
+        json={"value": "hello"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["resource_id"] == 42
+    assert data["dry_run"] is True
+    assert data["value"] == "hello"

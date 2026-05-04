@@ -1394,7 +1394,19 @@ class PrivateGateway:
 ```
 
 Returning from `@on_connect` without calling `accept()` rejects the
-handshake.
+handshake. Three safe rejection patterns exist (all produce identical
+client-visible close codes):
+
+```python
+# 1. close() then return (preferred)
+await ws.close(code=4401, reason="unauthorised"); return
+
+# 2. raise WebSocketDisconnect (runtime closes)
+raise WebSocketDisconnect("unauthorised", close_code=4401)
+
+# 3. close() then raise (also safe — no duplicate close frame)
+await ws.close(code=4401); raise WebSocketDisconnect("unauthorised", close_code=4401)
+```
 
 ### Errors and `@on_error`
 
