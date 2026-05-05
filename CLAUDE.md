@@ -334,5 +334,34 @@ deterministic).
 - `docs/` — long-form prose explanations and conceptual articles.
 
 When in doubt: grep the tests. They express the invariants more
-precisely than any English prose. Around **1691 tests** currently pass
+precisely than any English prose. Around **2136 tests** currently pass
 in ~30 seconds.
+
+## 12. Injectable Logger Pattern
+
+All four built-in logger classes (`ConsoleLogger`, `JsonLogger`,
+`NullLogger`, `InMemoryLogger`) are decorated with
+`@injectable(scope=Scope.SINGLETON, provides=(Logger,))`. This means
+any of them can be passed to `global_providers` and will resolve for
+any service that declares `log: Logger`:
+
+```python
+app = LaurenFactory.create(AppModule, global_providers=[ConsoleLogger])
+
+@injectable()
+class MyService:
+    log: Logger   # → ConsoleLogger SINGLETON, visible from every module
+```
+
+To inject a specific pre-built instance, use `use_value`:
+
+```python
+app = LaurenFactory.create(
+    AppModule,
+    global_providers=[use_value(provide=Logger, value=my_logger_instance)],
+)
+```
+
+`Lauren` exposes the same via `global_providers=` constructor arg and
+`app.add_provider(provider)` imperative method. See
+`tests/integration/test_global_providers.py` for the full test suite.

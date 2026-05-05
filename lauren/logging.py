@@ -29,6 +29,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Protocol, TextIO, runtime_checkable
 
+from .decorators import injectable
+from .types import Scope
+
 
 # ---------------------------------------------------------------------------
 # Levels
@@ -97,6 +100,14 @@ class Logger(Protocol):
     level: LogLevel
 
     def log_record(self, record: LogRecord) -> None: ...
+
+    def log(self, message: str, *, context: str = "", **extra: Any) -> None: ...
+    def info(self, message: str, *, context: str = "", **extra: Any) -> None: ...
+    def debug(self, message: str, *, context: str = "", **extra: Any) -> None: ...
+    def verbose(self, message: str, *, context: str = "", **extra: Any) -> None: ...
+    def warn(self, message: str, *, context: str = "", **extra: Any) -> None: ...
+    def warning(self, message: str, *, context: str = "", **extra: Any) -> None: ...
+    def error(self, message: str, *, context: str = "", **extra: Any) -> None: ...
 
 
 class _BaseLogger:
@@ -195,6 +206,7 @@ _LEVEL_LABELS = {
 }
 
 
+@injectable(scope=Scope.SINGLETON, provides=(Logger,))
 class ConsoleLogger(_BaseLogger):
     """Human-readable logger with optional ANSI colour.
 
@@ -269,6 +281,7 @@ class ConsoleLogger(_BaseLogger):
 # ---------------------------------------------------------------------------
 
 
+@injectable(scope=Scope.SINGLETON, provides=(Logger,))
 class JsonLogger(_BaseLogger):
     """One JSON object per line, for production log aggregators.
 
@@ -329,6 +342,7 @@ class JsonLogger(_BaseLogger):
 # ---------------------------------------------------------------------------
 
 
+@injectable(scope=Scope.SINGLETON, provides=(Logger,))
 class NullLogger(_BaseLogger):
     """Discards everything. Use in tests or when lauren must stay quiet."""
 
@@ -344,6 +358,7 @@ class NullLogger(_BaseLogger):
 # ---------------------------------------------------------------------------
 
 
+@injectable(scope=Scope.SINGLETON, provides=(Logger,))
 class InMemoryLogger(_BaseLogger):
     """Collects records in a list for unit tests."""
 

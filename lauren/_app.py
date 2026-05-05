@@ -76,6 +76,7 @@ class Lauren:
         global_guards: list[type] | None = None,
         global_interceptors: list[type] | None = None,
         global_exception_handlers: list[Any] | None = None,
+        global_providers: list[Any] | None = None,
     ) -> None:
         self._title = title
         self._version = version
@@ -98,6 +99,7 @@ class Lauren:
         self._guards: list[type] = list(global_guards or [])
         self._interceptors: list[type] = list(global_interceptors or [])
         self._exception_filters: list[Any] = list(global_exception_handlers or [])
+        self._global_providers: list[Any] = list(global_providers or [])
         self._startup_handlers: list[Callable[[], Any]] = []
         self._shutdown_handlers: list[Callable[[], Any]] = []
 
@@ -289,6 +291,18 @@ class Lauren:
         if handler not in self._exception_filters:
             self._exception_filters.append(handler)
 
+    def add_provider(self, provider: Any) -> None:
+        """Register a provider globally (visible to every module).
+
+        Accepts the same shapes as the module ``providers=`` list: an
+        ``@injectable`` class, a function provider, or the result of
+        ``use_value`` / ``use_class`` / ``use_factory`` / ``use_existing``.
+        Must be called before the application compiles.
+        """
+        self._assert_not_compiled("add a global provider")
+        if provider not in self._global_providers:
+            self._global_providers.append(provider)
+
     # ------------------------------------------------------------------
     # Lifecycle hooks
     # ------------------------------------------------------------------
@@ -385,6 +399,7 @@ class Lauren:
             global_guards=list(self._guards),
             global_interceptors=list(self._interceptors),
             global_exception_handlers=list(self._exception_filters),
+            global_providers=list(self._global_providers),
             max_body_size=self._max_body_size,
             app_state=self._app_state,
             logger=self._logger,

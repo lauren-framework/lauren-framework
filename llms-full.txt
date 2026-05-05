@@ -86,7 +86,7 @@ app = LaurenFactory.create(AppModule)
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_exception_handlers=None, max_body_size=1048576, app_state=None)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None)`
 
 Synchronous factory. Returns a fully-booted `LaurenApp`. Executes seven phases:
 
@@ -99,6 +99,29 @@ Synchronous factory. Returns a fully-booted `LaurenApp`. Executes seven phases:
 7. **Readiness** — seal `app_state`, app enters running state.
 
 Failures in phases 1–5 raise a `StartupError` subclass immediately — the app never begins serving traffic with an invalid graph.
+
+**`global_providers`** — accepts the same shapes as a module's `providers=` list (an `@injectable` class, or the result of `use_value` / `use_class` / `use_factory` / `use_existing`). Every provider registered here is visible to all modules without requiring module `imports` or `exports`. This is the standard way to make the framework logger injectable:
+
+```python
+from lauren import LaurenFactory
+from lauren.logging import ConsoleLogger, Logger
+
+app = LaurenFactory.create(AppModule, global_providers=[ConsoleLogger])
+
+# Any @injectable service in any module can now declare:
+@injectable()
+class UserService:
+    log: Logger  # → ConsoleLogger instance (SINGLETON)
+```
+
+All four built-in logger implementations (`ConsoleLogger`, `JsonLogger`, `NullLogger`, `InMemoryLogger`) carry `@injectable(scope=Scope.SINGLETON, provides=(Logger,))`, so any of them can be passed directly in `global_providers`. To inject a specific pre-built instance instead of letting the DI container construct one, use `use_value`:
+
+```python
+my_logger = ConsoleLogger(level=LogLevel.DEBUG)
+app = LaurenFactory.create(AppModule, global_providers=[use_value(provide=Logger, value=my_logger)])
+```
+
+The `Lauren` class exposes the same capability via the `global_providers=` constructor argument and the `add_provider(provider)` imperative method.
 
 ### `LaurenApp`
 

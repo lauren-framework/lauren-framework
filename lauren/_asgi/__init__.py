@@ -15,6 +15,7 @@ from .._typing import resolve_type_hints
 
 from .._arena import RequestArena
 from .._di import INJECTABLE_META, DIContainer, InjectableMeta
+from .._di.custom import CustomProvider
 from ..serialization import (
     JSONEncoder,
     StdlibJSONEncoder,
@@ -618,6 +619,7 @@ class LaurenApp:
         global_guards: list[type] | None = None,
         global_exception_handlers: list[Any] | None = None,
         global_interceptors: list[type] | None = None,
+        global_providers: list[Any] | None = None,
     ) -> None:
         self._router = router
         self._container = container
@@ -628,6 +630,7 @@ class LaurenApp:
         self._global_guards = list(global_guards or [])
         self._global_exception_handlers = list(global_exception_handlers or [])
         self._global_interceptors: list[type] = list(global_interceptors or [])
+        self._global_providers: list[Any] = list(global_providers or [])
         self._app_state = app_state
         self._strict_lifecycle = strict_lifecycle
         self._max_body_size = max_body_size
@@ -2039,6 +2042,7 @@ class LaurenFactory:
         global_guards: Iterable[type] | None = None,
         global_interceptors: Iterable[type] | None = None,
         global_exception_handlers: Iterable[Any] | None = None,
+        global_providers: Iterable[Any] | None = None,
         max_body_size: int = 1_048_576,
         app_state: AppState | None = None,
         logger: Logger | None = None,
@@ -2082,6 +2086,7 @@ class LaurenFactory:
         effective_global_guards = list(global_guards or [])
         effective_global_interceptors = list(global_interceptors or [])
         effective_global_exception_handlers = list(global_exception_handlers or [])
+        effective_global_providers: list[Any] = list(global_providers or [])
         overall_t0 = time.perf_counter()
         _log.log(
             f"Starting application (root={root_module.__name__})",
@@ -2181,6 +2186,17 @@ class LaurenFactory:
             if ef not in {pp.cls for pp in container.all_providers()}:
                 _ensure_injectable(ef)
                 container.register(ef)
+
+        # Global providers — same treatment as global middleware/guards but
+        # for the DI container. owning_module=None makes every provider
+        # universally visible without requiring module imports or exports.
+        for gp in effective_global_providers:
+            if isinstance(gp, CustomProvider):
+                container.register_custom(gp, owning_module=None)
+            else:
+                if gp not in {pp.cls for pp in container.all_providers()}:
+                    _ensure_injectable(gp)
+                    container.register(gp, owning_module=None)
 
         # Install per-module visible-token sets. A module sees its own
         # providers, its own controllers, and anything re-exported by a
@@ -2439,6 +2455,7 @@ class LaurenFactory:
             global_guards=effective_global_guards,
             global_interceptors=effective_global_interceptors,
             global_exception_handlers=effective_global_exception_handlers,
+            global_providers=effective_global_providers,
             app_state=final_state,
             strict_lifecycle=strict_lifecycle,
             max_body_size=max_body_size,

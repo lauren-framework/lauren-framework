@@ -21,7 +21,7 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 - **Middleware (onion)**, **Guards**, and **Exception Handlers** — all attachable globally, per-controller, or per-route.
 - **Auto-serialization**: return dicts, Pydantic models, dataclasses, or `(body, status)` tuples and lauren builds the Response for you.
 - **Strict inheritance**: subclasses are controllers / injectables / WS gateways / exception handlers / middlewares only when explicitly re-decorated.
-- **Structured logging** with NestJS-style `ConsoleLogger` (coloured) and `JsonLogger` (production); per-phase startup events, per-request traces, deterministic shutdown messages.
+- **Structured logging** with NestJS-style `ConsoleLogger` (coloured) and `JsonLogger` (production); all four built-in loggers are `@injectable(provides=(Logger,))` — pass one in `global_providers=[ConsoleLogger]` and any service can declare `log: Logger` to receive it.
 - **Graceful shutdown hooks** via `app.on_shutdown(fn)` plus `install_signal_handlers` for SIGTERM/SIGINT-driven drain.
 - **28-class error catalog** with stable `code` strings; consistent `{error: {code, message, detail}}` envelope.
 
