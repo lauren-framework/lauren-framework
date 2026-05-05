@@ -480,7 +480,7 @@ class TestA5UseFactory:
                 use_factory(
                     provide="CONN",
                     factory=make_connection,
-                    inject=[DB_URL_TOK],
+                    injects=[DB_URL_TOK],
                     scope=Scope.SINGLETON,
                 ),
                 DbClient,
@@ -514,7 +514,7 @@ class TestA5UseFactory:
         @module(
             controllers=[C],
             providers=[
-                use_factory(provide="ASYNC_DATA", factory=async_build, inject=[]),
+                use_factory(provide="ASYNC_DATA", factory=async_build, injects=[]),
                 AsyncSvc,
             ],
         )
@@ -550,7 +550,7 @@ class TestA5UseFactory:
                 use_factory(
                     provide="THING",
                     factory=make_thing,
-                    inject=[OptionalDep("MISSING_TOKEN")],
+                    injects=[OptionalDep("MISSING_TOKEN")],
                 ),
                 ThingSvc,
             ],
@@ -1709,7 +1709,7 @@ class TestEMixedModule:
                 use_factory(
                     provide="CONN_E",
                     factory=make_conn,
-                    inject=[DB_TOKEN],
+                    injects=[DB_TOKEN],
                     scope=Scope.SINGLETON,
                 ),
                 AppService,

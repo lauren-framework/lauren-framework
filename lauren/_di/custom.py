@@ -27,7 +27,7 @@ possible to register dependencies that don't have an obvious class
 to attach to — database connections, raw config dicts, third-party
 client instances. Inject them via ``param: Annotated[T, Inject("X")]``
 or, when you'd rather keep the class form, by listing the same token
-in a custom provider's ``inject=`` list.
+in a custom provider's ``injects=`` list.
 """
 
 from __future__ import annotations
@@ -244,7 +244,7 @@ class CustomProvider:
 
 @dataclass(frozen=True)
 class OptionalDep:
-    """Mark a member of an ``inject=[...]`` list as optional.
+    """Mark a member of an ``injects=[...]`` list as optional.
 
     When the matching provider is missing at resolution time, lauren
     passes ``None`` to the factory's positional argument instead of
@@ -258,7 +258,7 @@ class OptionalDep:
         use_factory(
             provide="CONNECTION",
             factory=lambda opts, optional_logger=None: ...,
-            inject=[Options, OptionalDep("LOGGER")],
+            injects=[Options, OptionalDep("LOGGER")],
         )
     """
 
@@ -368,13 +368,13 @@ def use_factory(
     *,
     provide: Any,
     factory: Callable[..., Any],
-    inject: Iterable[Any] = (),
+    injects: Iterable[Any] = (),
     scope: Scope = Scope.SINGLETON,
     multi: bool = False,
 ) -> CustomProvider:
     """Bind ``provide`` to the result of calling ``factory``.
 
-    ``inject`` lists the tokens lauren resolves and passes *positionally*
+    ``injects`` lists the tokens lauren resolves and passes *positionally*
     to the factory in declaration order. This positional contract is
     deliberately the only one supported — it keeps the call site small
     and unambiguous, and matches NestJS's `inject:` semantics::
@@ -382,14 +382,14 @@ def use_factory(
         use_factory(
             provide="CONNECTION",
             factory=lambda opts, log: DatabaseConnection(opts.get(), log),
-            inject=[OptionsProvider, "LOGGER"],
-            #         ^^^               ^^^^^^^
-            #         class token       string token
+            injects=[OptionsProvider, "LOGGER"],
+            #           ^^^               ^^^^^^^
+            #           class token       string token
         )
 
     Wrap any entry in :class:`OptionalDep` to soften the resolution::
 
-        inject=[OptionsProvider, OptionalDep("LOGGER")]
+        injects=[OptionsProvider, OptionalDep("LOGGER")]
 
     Async factories work transparently — lauren awaits the return value
     when it's a coroutine, so an ``async def`` factory is just a
@@ -401,7 +401,7 @@ def use_factory(
             f"use_factory.factory must be callable; got {factory!r}",
             detail={"factory": repr(factory)},
         )
-    inject_tuple = tuple(inject)
+    inject_tuple = tuple(injects)
     for tok in inject_tuple:
         if isinstance(tok, OptionalDep):
             _validate_token(tok.token, where="use_factory.inject")

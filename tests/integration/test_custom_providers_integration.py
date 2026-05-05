@@ -286,7 +286,7 @@ class TestUseFactory:
         connection_provider = use_factory(
             provide="CONNECTION",
             factory=lambda opts: _DatabaseConnection(opts.get()),
-            inject=[MyOptionsProvider],
+            injects=[MyOptionsProvider],
         )
 
         @controller("/db")
@@ -320,7 +320,7 @@ class TestUseFactory:
             factory=lambda opts, tracer: _DatabaseConnection(
                 opts.get(), log_prefix=f"[{tracer.id}]" if tracer else "[no-trace]"
             ),
-            inject=[MyOptionsProvider, OptionalDep(Tracer)],
+            injects=[MyOptionsProvider, OptionalDep(Tracer)],
         )
 
         @controller("/db")
@@ -349,7 +349,7 @@ class TestUseFactory:
             factory=lambda opts, tracer: _DatabaseConnection(
                 opts.get(), log_prefix="[no-trace]" if tracer is None else "[have]"
             ),
-            inject=[MyOptionsProvider, OptionalDep("UNREGISTERED")],
+            injects=[MyOptionsProvider, OptionalDep("UNREGISTERED")],
         )
 
         @controller("/db")
@@ -615,7 +615,7 @@ class TestComposition:
                 use_factory(
                     provide="DOUBLED",
                     factory=lambda b: b * 2,
-                    inject=["BASE"],
+                    injects=["BASE"],
                 ),
                 use_existing(provide="ALIAS", existing="DOUBLED"),
             ],

@@ -113,7 +113,7 @@ class TestCustomProviderRecords:
         rec = use_factory(
             provide="C",
             factory=lambda: "value",
-            inject=[],
+            injects=[],
         )
         assert rec.kind == "factory"
         assert callable(rec.factory)

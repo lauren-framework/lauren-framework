@@ -205,7 +205,7 @@ class Provider:
     #: Indices into ``deps`` whose values may resolve to ``None``
     #: instead of raising :class:`MissingProviderError`. Populated by
     #: :meth:`DIContainer.register_factory` when an entry of
-    #: ``inject=[...]`` was wrapped in :class:`OptionalDep`.
+    #: ``injects=[...]`` was wrapped in :class:`OptionalDep`.
     optional_dep_names: frozenset[str] = field(default_factory=frozenset)
     #: Positional-argument names (in order) for factory-style providers.
     #: When present the resolver passes the resolved deps positionally
@@ -1839,7 +1839,7 @@ def _callable_default_map(provider: Provider) -> dict[str, bool]:
 
     For ``provider_kind == 'factory'`` (use_factory) we don't ask the
     user's lambda about its defaults: the dependency contract there is
-    declared positionally via ``inject=[...]`` and optional entries
+    declared positionally via ``injects=[...]`` and optional entries
     are tagged by :class:`OptionalDep`. Returning ``{}`` here lets the
     OptionalDep path own that decision rather than the lambda's
     parameter defaults.
