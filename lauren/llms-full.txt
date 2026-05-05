@@ -1146,7 +1146,7 @@ def make_engine(url: str, log: Logger | None) -> Engine:
     use_factory(
         provide=Engine,
         factory=make_engine,
-        inject=[DB_URL, OptionalDep("LOGGER")],
+        injects=[DB_URL, OptionalDep("LOGGER")],
         scope=Scope.SINGLETON,
     ),
 ])
