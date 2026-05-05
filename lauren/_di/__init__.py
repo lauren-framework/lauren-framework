@@ -719,6 +719,19 @@ class DIContainer:
                 return list(visible)
 
             bindings = self._token_bindings.get(token)
+            if not bindings and getattr(token, "_is_runtime_protocol", False):
+                # Structural Protocol fallback — when no provider is explicitly
+                # registered under a Protocol token, scan for providers whose
+                # class is a structural subtype of the Protocol. The scan is
+                # scoped to the *owning module* of the consumer so that each
+                # module sees only its own runner/service, not those imported
+                # from sibling modules.
+                bindings = _structural_protocol_providers(
+                    token,
+                    owning_module,
+                    self._providers,
+                    is_visible=self._is_visible if self._visible else None,
+                )
             if not bindings:
                 raise MissingProviderError(
                     f"No provider for {_describe(token)}",
@@ -923,6 +936,13 @@ class DIContainer:
                 owning_module=owning_module,
             )
         bindings = self._token_bindings.get(token)
+        if not bindings and getattr(token, "_is_runtime_protocol", False):
+            bindings = _structural_protocol_providers(
+                token,
+                owning_module,
+                self._providers,
+                is_visible=self._is_visible if self._visible else None,
+            )
         if not bindings:
             raise MissingProviderError(f"No provider for {_describe(token)}")
         # Narrow to visible bindings.
@@ -1737,6 +1757,38 @@ _NON_INJECTABLE_PRIMITIVES: frozenset[type] = frozenset(
         dict,
     }
 )
+
+
+def _structural_protocol_providers(
+    protocol: Any,
+    owning_module: type | None,
+    providers: dict[Any, "Provider"],
+    is_visible: "Callable[[Provider, type | None], bool] | None" = None,
+) -> list["Provider"]:
+    """Return providers whose class is a structural subtype of *protocol*.
+
+    Filtered by *is_visible*: only providers that are visible from
+    *owning_module* are returned.  This ensures ``runner: AgentRunner``
+    resolves to a runner that is actually reachable from the consumer's module
+    (either owned by it or exported from an imported module), not an
+    unrelated sibling runner.
+
+    When *owning_module* is ``None`` or *is_visible* is ``None`` all providers
+    are scanned (global / test context).
+    """
+    matches: list[Provider] = []
+    for p in providers.values():
+        if not isinstance(p.cls, type):
+            continue
+        if owning_module is not None and is_visible is not None:
+            if not is_visible(p, owning_module):
+                continue
+        try:
+            if issubclass(p.cls, protocol) and p.cls is not protocol:
+                matches.append(p)
+        except TypeError:
+            pass
+    return matches
 
 
 def _looks_injectable(ann: Any) -> bool:
