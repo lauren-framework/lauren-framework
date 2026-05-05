@@ -1672,3 +1672,122 @@ from lauren_guards import (
     basic_auth_challenge_handler,  # @exception_handler adds WWW-Authenticate header
 )
 ```
+
+---
+
+## ExecutionContext injection in route handlers
+
+Any route handler parameter annotated as `ExecutionContext` (from `lauren.types`) is
+automatically provided by the dispatch engine — no extractor marker needed.  The
+injected value is the **same `ExecutionContext` instance** that guards and interceptors
+receive, populated before guards run.
+
+### Usage
+
+```python
+from lauren.types import ExecutionContext
+
+@controller("/api")
+class MyController:
+    @get("/info")
+    async def info(self, ctx: ExecutionContext) -> dict:
+        return {
+            "route": ctx.route_template,       # e.g. "/api/info"
+            "handler": ctx.handler_func.__name__,
+            "class": ctx.handler_class.__name__,
+        }
+
+    @get("/items/{item_id}")
+    async def item(
+        self,
+        item_id: Path[int],
+        q: Query[str] = "default",
+        ctx: ExecutionContext = None,          # works with any default
+    ) -> dict:
+        return {"item_id": item_id, "route": ctx.route_template}
+```
+
+Works in:
+- `async def` handlers (awaited)
+- `def` handlers (offloaded to thread pool via `anyio.to_thread.run_sync`)
+- `GET`, `POST`, and all other HTTP verbs
+- `@staticmethod` and `@classmethod` handlers
+
+The parameter may appear in any position and have any name, as long as its type
+annotation is `ExecutionContext` (or a subclass).  The compilation phase records
+it as `source="execution_context"` so dispatch is zero-overhead after startup.
+
+### ExecutionContext fields
+
+| Field | Type | Description |
+|---|---|---|
+| `request` | `Request` | The live request object. |
+| `handler_class` | `type` | The controller class. |
+| `handler_func` | `Callable` | The handler method. |
+| `route_template` | `str` | Route template, e.g. `"/users/{id}"`. |
+| `metadata` | `dict[str, Any]` | Key/value pairs from `@set_metadata`. |
+| `get_metadata(key)` | `Any \| None` | Reads a metadata key; returns `None` if absent. |
+
+### In lauren-ai integration
+
+Passing `execution_context=exec_ctx` to `AgentRunner.run()` flows the context
+through to every tool call via `ToolContext.execution_context`.  Tools can then
+read `ctx.execution_context.request.state` for server-side-verified values (e.g.
+the authenticated user ID pinned by a guard) without the LLM being able to
+tamper with them.
+
+```python
+@post("/chat")
+async def stream(self, body: Json[ChatRequest], exec_ctx: ExecutionContext) -> EventStream:
+    response = await self._runner.run(
+        self._agent,
+        body.messages[-1].content,
+        execution_context=exec_ctx,   # flows to ToolContext.execution_context
+    )
+    ...
+```
+
+---
+
+## Controller scope — SINGLETON by default
+
+Controllers default to `Scope.SINGLETON` since lauren 1.x.  The framework builds
+each controller instance once at startup and reuses it for every request — exactly
+the NestJS default.
+
+```python
+@controller("/api")
+class MyController:
+    # Scope is SINGLETON — one shared instance for all requests.
+    ...
+```
+
+To opt into per-request construction (e.g. when a controller depends on a
+`Scope.REQUEST`-scoped provider), apply `@injectable(scope=Scope.REQUEST)` below
+`@controller`:
+
+```python
+from lauren import Scope, injectable
+
+@controller("/api")
+@injectable(scope=Scope.REQUEST)   # ← applied first; @controller sees it and skips overwrite
+class RequestScopedController:
+    def __init__(self, ctx: RequestCtx) -> None:
+        self.ctx = ctx  # fresh per-request
+
+    @get("/hello")
+    async def hello(self) -> dict:
+        return {"id": id(self.ctx)}
+```
+
+### Lifecycle hook behaviour by scope
+
+| Scope | `@post_construct` fires | `@pre_destruct` fires |
+|---|---|---|
+| `SINGLETON` (default) | Once at startup | Once at shutdown |
+| `REQUEST` | Each request | Each request (in `finally`) |
+| `TRANSIENT` | Each `resolve()` call | Not called |
+
+The scope-narrowing rule still applies: a `SINGLETON` controller cannot depend on a
+`REQUEST`-scoped provider.  The compiler raises `DIScopeViolationError` at startup if
+this is violated.

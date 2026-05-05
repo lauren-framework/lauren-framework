@@ -280,6 +280,157 @@ def detect_errors(event: RequestComplete) -> None:
 
 ---
 
+## Real-world: routing agent signals to WebSocket clients
+
+The `lauren-ai-chatbot` backend wires `SignalBus` to a WebSocket gateway so that every LLM token usage, tool call, and fund transfer is pushed to the browser in real time — without the HTTP SSE channel having to know about WebSockets at all.
+
+### Shared bus singleton
+
+Both `main.py` and `ai_module.py` need the same bus instance. Rather than importing from either of those (which would create a circular dependency), a dedicated module holds the singleton:
+
+```python title="app/ai/signals.py"
+from lauren_ai import SignalBus
+
+# One instance for the whole application.
+# Centralising it here avoids circular imports between main.py and ai_module.py.
+signal_bus: SignalBus = SignalBus()
+```
+
+### Wiring signals to WebSocket delivery
+
+`EventForwarder` is a `Scope.SINGLETON` injectable that subscribes to every agent-lifecycle event in its constructor. Because it's a singleton, the subscription happens once at startup and the handler list is stable for the application's lifetime:
+
+```python title="app/ws/event_forwarder.py"
+from lauren import Scope, injectable
+from lauren_ai import AgentRunComplete, ModelCallComplete, ToolCallComplete, ToolCallStarted
+
+from app.ai.signals import signal_bus
+from app.ws.context import current_user_id
+
+
+@injectable(scope=Scope.SINGLETON)
+class EventForwarder:
+    def __init__(self, db: BankDatabase) -> None:
+        self._connections: dict[str, list[WebSocket]] = {}
+        self._lock = asyncio.Lock()
+
+        # All four subscriptions happen here — pure DI wiring, no @post_construct.
+        signal_bus.on(ModelCallComplete)(self._on_model_complete)
+        signal_bus.on(ToolCallStarted)(self._on_tool_started)
+        signal_bus.on(ToolCallComplete)(self._on_tool_complete)
+        signal_bus.on(AgentRunComplete)(self._on_run_complete)
+
+    async def _on_model_complete(self, event: ModelCallComplete) -> None:
+        user_id = current_user_id.get()   # which user's browser should receive this?
+        if not user_id:
+            return
+        await self.send_to_user(user_id, {
+            "type": "token_usage",
+            "model": event.model,
+            "input_tokens": event.usage.input_tokens if event.usage else 0,
+            "output_tokens": event.usage.output_tokens if event.usage else 0,
+            "cost_usd": event.cost_usd,
+            "duration_ms": round(event.duration_ms),
+        })
+
+    async def _on_tool_started(self, event: ToolCallStarted) -> None:
+        user_id = current_user_id.get()
+        if not user_id:
+            return
+        await self.send_to_user(user_id, {
+            "type": "tool_started",
+            "tool_name": event.tool_name,
+            "tool_use_id": event.tool_use_id,
+        })
+
+    async def _on_run_complete(self, event: AgentRunComplete) -> None:
+        user_id = current_user_id.get()
+        if not user_id:
+            return
+        usage = event.total_usage
+        await self.send_to_user(user_id, {
+            "type": "run_complete",
+            "turns": event.turns,
+            "total_cost_usd": event.total_cost_usd,
+            "total_tokens": (usage.input_tokens + usage.output_tokens) if usage else 0,
+        })
+```
+
+### Routing to the right user with `ContextVar`
+
+The handlers above call `current_user_id.get()` — a `contextvars.ContextVar` — to find out which user is currently running an agent. `SignalBus.emit` uses `asyncio.gather` internally, which **copies the calling task's `Context` into every spawned coroutine**. This means any `ContextVar` set before `emit` is visible inside the listeners without any extra wiring.
+
+The HTTP chat controller sets the variable before calling `AgentRunner.run()`:
+
+```python title="app/ai/chat_banking_controller.py (excerpt)"
+async def generate():
+    # Pin the authenticated user so every signal handler fired during
+    # the agent loop can call current_user_id.get() to route its payload.
+    current_user_id.set(account.user_id)
+
+    response = await self._runner.run(
+        self._crm_agent,
+        full_prompt,
+        execution_context=exec_ctx,
+    )
+    ...
+```
+
+And the variable is defined in its own module to prevent import cycles:
+
+```python title="app/ws/context.py"
+from contextvars import ContextVar
+
+# asyncio.gather() copies ContextVar state into spawned tasks, so this
+# value is visible inside SignalBus handlers called via emit().
+current_user_id: ContextVar[str | None] = ContextVar("ws_current_user_id", default=None)
+```
+
+### Why this works without explicit passing
+
+The flow end-to-end:
+
+```
+HTTP POST /api/banking/chat
+  └─ BankingChatController.stream()
+       └─ current_user_id.set("alice")      ← pins context
+       └─ AgentRunner.run(crm_agent, ...)
+            └─ tool calls → LLM → tool calls
+            └─ signal_bus.emit(ModelCallComplete(...))
+                 └─ asyncio.gather copies Context
+                 └─ EventForwarder._on_model_complete()
+                      └─ current_user_id.get() → "alice"  ← reads from copied context
+                      └─ ws.send_json({"type": "token_usage", ...})
+                           └─ browser receives event on WS /ws/banking?token=...
+```
+
+No signal argument carries the user id. No global lock is needed. The async task scheduler propagates it automatically.
+
+### Database callbacks as pseudo-signals
+
+The `BankDatabase` transfer listener follows the same delivery pattern, but uses a plain Python callback list instead of a `SignalBus`:
+
+```python title="app/ws/event_forwarder.py (excerpt)"
+# Registered in EventForwarder.__init__:
+db.add_transfer_listener(self._on_transfer)
+
+async def _on_transfer(self, tx: Transaction, from_balance: float, to_balance: float) -> None:
+    """Broadcast balance update to ALL connected users after any transfer."""
+    await self.broadcast({
+        "type": "balance_changed",
+        "from_user": tx.from_user,
+        "to_user": tx.to_user,
+        "amount": tx.amount,
+        "balances": {tx.from_user: from_balance, tx.to_user: to_balance},
+    })
+```
+
+Balance changes are broadcast (not unicast) because every connected user's UI should refresh — the person who received the transfer should see their new balance immediately, not just the sender.
+
+See the [WebSockets guide](websockets.md#real-world-ai-agent-event-push) for the corresponding gateway, token service, and module wiring.
+
+---
+
 ## Snapshot semantics
 
 During `emit`, a snapshot of the current listener list is taken before iteration
@@ -341,6 +492,7 @@ shutdown sequence.
 
 ## See also
 
+* [WebSockets](websockets.md) — the gateway, `EventForwarder`, and token service from the real-world example above.
 * [Background Tasks](background-tasks.md) — `BackgroundTaskStarted/Complete/Failed` signals.
 * [Lifecycle Hooks](../core-concepts/lifecycle.md) — `@post_construct` / `@pre_destruct` and shutdown phases.
 * [Reference → Cheat Sheet](../reference/cheat-sheet.md) — one-line signal patterns.

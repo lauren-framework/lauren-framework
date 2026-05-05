@@ -277,6 +277,17 @@ deterministic).
   args/kwargs — request-scoped instances are torn down after the handler
   returns, before tasks run. Capture plain values (IDs, strings) or
   `Scope.SINGLETON` instances instead.
+- ❌ Expecting `@post_construct` / `@pre_destruct` to fire per-request
+  on a controller — `@controller` defaults to `Scope.SINGLETON` (NestJS
+  behaviour), so lifecycle hooks fire once at startup/shutdown. If a
+  controller needs per-request construction, add
+  `@injectable(scope=Scope.REQUEST)` *below* `@controller` (bottom-up
+  application means `@injectable` runs first and wins).
+- ❌ Extracting the current request from DI when you need `route_template`
+  or handler metadata — use `ExecutionContext` injection instead. Any
+  handler parameter typed as `ExecutionContext` (from `lauren.types`) is
+  automatically provided by the dispatch engine at zero cost; no extractor
+  marker is needed.
 
 ## 9. Testing Playbook
 

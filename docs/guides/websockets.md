@@ -354,6 +354,214 @@ class FeedGateway:
 
 For *application*-level data that's read-only after startup (config, registries), inject providers via the gateway's constructor instead.
 
+## Real-world: AI agent event push
+
+The `lauren-ai-chatbot` backend demonstrates a production-grade pattern where a WebSocket gateway acts as a live side-channel for agent observability events — tool calls, token usage, balance changes — while the primary response flows over SSE.
+
+### The problem
+
+Browsers cannot set custom HTTP headers during a WebSocket upgrade (the `Upgrade` request is browser-controlled). Passing credentials in the URL query string is therefore the standard workaround for authenticated WebSocket connections.
+
+The backend solves this with two endpoints:
+
+1. `POST /api/banking/ws-token` — issues a short-lived, HMAC-signed token (120-second TTL). The browser calls this over the already-authenticated HTTP path before opening the socket.
+2. `WS /ws/banking?token=<token>` — the gateway reads the token from the query string, verifies it, and accepts.
+
+### Token issuance (HTTP → WebSocket handoff)
+
+```python title="app/ws/ws_token_controller.py"
+@use_guards(SignatureGuard)
+@controller("/api/banking")
+class WsTokenController:
+    def __init__(self, token_service: WsTokenService) -> None:
+        self._svc = token_service
+
+    @post("/ws-token")
+    async def issue_token(self, body: Json[WsTokenRequest]) -> dict:
+        token = self._svc.create_token(body.user_id)
+        return {"token": token, "expires_in": 120}
+```
+
+### The gateway
+
+`BankingWsGateway` uses Lauren's `Query[str]` extractor to pluck the token from the query string — no `@on_connect` body parsing needed:
+
+```python title="app/ws/ws_gateway.py"
+from lauren import Query
+from lauren.websockets import WebSocket, WebSocketDisconnect, on_connect, on_disconnect, ws_controller
+
+from app.ws.event_forwarder import EventForwarder
+from app.ws.token_service import WsTokenService
+
+
+@ws_controller("/ws/banking")
+class BankingWsGateway:
+    def __init__(self, forwarder: EventForwarder, token_service: WsTokenService) -> None:
+        self._forwarder = forwarder
+        self._token_service = token_service
+        self._user_id: str | None = None
+
+    @on_connect
+    async def connect(self, ws: WebSocket, token: Query[str]) -> None:
+        user_id = self._token_service.verify_token(token)
+        if not user_id:
+            await ws.close(code=4401, reason="invalid or expired token")
+            raise WebSocketDisconnect("unauthorized", close_code=4401)
+        self._user_id = user_id
+        await self._forwarder.register(user_id, ws)
+
+    @on_disconnect
+    async def disconnect(self, ws: WebSocket) -> None:
+        if self._user_id:
+            await self._forwarder.unregister(self._user_id, ws)
+```
+
+Two points worth noting:
+
+* The gateway is `Scope.REQUEST` (the `@ws_controller` default) — each connection has its own instance, so `self._user_id` is connection-private.
+* Authentication is entirely in `@on_connect`. If verification fails the connection is closed before `register()` is ever called.
+
+### EventForwarder — the signal-to-socket bridge
+
+`EventForwarder` is a **singleton** that holds all live WebSocket registrations and subscribes to `SignalBus` events in its constructor:
+
+```python title="app/ws/event_forwarder.py"
+from lauren import Scope, injectable
+from lauren.websockets import WebSocket
+from lauren_ai import AgentRunComplete, ModelCallComplete, ToolCallComplete, ToolCallStarted
+
+from app.ai.signals import signal_bus
+from app.banking.bank_db import BankDatabase, Transaction
+from app.ws.context import current_user_id
+
+
+@injectable(scope=Scope.SINGLETON)
+class EventForwarder:
+    def __init__(self, db: BankDatabase) -> None:
+        self._connections: dict[str, list[WebSocket]] = {}
+        self._lock = asyncio.Lock()
+
+        # Register agent lifecycle signal handlers once at construction time.
+        signal_bus.on(ModelCallComplete)(self._on_model_complete)
+        signal_bus.on(ToolCallStarted)(self._on_tool_started)
+        signal_bus.on(ToolCallComplete)(self._on_tool_complete)
+        signal_bus.on(AgentRunComplete)(self._on_run_complete)
+
+        # Balance changes broadcast to ALL connected users.
+        db.add_transfer_listener(self._on_transfer)
+
+    async def register(self, user_id: str, ws: WebSocket) -> None:
+        async with self._lock:
+            self._connections.setdefault(user_id, []).append(ws)
+
+    async def unregister(self, user_id: str, ws: WebSocket) -> None:
+        async with self._lock:
+            bucket = self._connections.get(user_id)
+            if bucket and ws in bucket:
+                bucket.remove(ws)
+
+    async def send_to_user(self, user_id: str, payload: dict) -> None:
+        """Unicast to every socket registered for this user; prune dead ones."""
+        async with self._lock:
+            targets = list(self._connections.get(user_id, []))
+        dead: list[WebSocket] = []
+        for ws in targets:
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                dead.append(ws)
+        if dead:
+            async with self._lock:
+                bucket = self._connections.get(user_id, [])
+                for ws in dead:
+                    if ws in bucket:
+                        bucket.remove(ws)
+
+    async def broadcast(self, payload: dict) -> None:
+        """Multicast to every connected socket across all users."""
+        async with self._lock:
+            all_ws = [ws for bucket in self._connections.values() for ws in bucket]
+        for ws in all_ws:
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                pass  # dead socket — ignored; cleanup happens on the user's next send
+
+    async def _on_model_complete(self, event: ModelCallComplete) -> None:
+        user_id = current_user_id.get()          # ContextVar set by the HTTP handler
+        if not user_id:
+            return
+        usage = event.usage
+        await self.send_to_user(user_id, {
+            "type": "token_usage",
+            "model": event.model,
+            "input_tokens": usage.input_tokens if usage else 0,
+            "output_tokens": usage.output_tokens if usage else 0,
+            "cost_usd": event.cost_usd,
+        })
+
+    async def _on_transfer(self, tx: Transaction, from_balance: float, to_balance: float) -> None:
+        await self.broadcast({
+            "type": "balance_changed",
+            "from_user": tx.from_user,
+            "to_user": tx.to_user,
+            "amount": tx.amount,
+            "balances": {tx.from_user: from_balance, tx.to_user: to_balance},
+        })
+```
+
+Key design decisions:
+
+* **Dead-socket pruning inside `send_to_user`.** Rather than a background sweeper, dead sockets are detected and removed lazily on the next send attempt. This keeps the cleanup O(1) per message.
+* **`broadcast` swallows send errors.** Balance-changed notifications are best-effort; a failing socket is cleaned up the next time `send_to_user` runs for that user.
+* **Constructor wiring.** Registering signal handlers in `__init__` makes the wiring explicit and DI-traceable — no `@post_construct` or startup hook needed.
+
+### Routing events to the right user with `ContextVar`
+
+The HTTP chat handler sets a `ContextVar` **before** calling `AgentRunner.run()`. `SignalBus.emit` uses `asyncio.gather` internally, which copies the current `contextvars.Context` into every spawned coroutine — so signal handlers fired inside the agent loop automatically inherit the right `user_id`:
+
+```python title="app/ws/context.py"
+from contextvars import ContextVar
+
+# Holds the authenticated user_id for the duration of an agent run.
+# asyncio.gather() copies ContextVar state into spawned tasks, so
+# this value is visible inside SignalBus handlers called via emit().
+current_user_id: ContextVar[str | None] = ContextVar("ws_current_user_id", default=None)
+```
+
+```python title="app/ai/chat_banking_controller.py (excerpt)"
+async def generate():
+    current_user_id.set(account.user_id)   # ← pins the user for signal handlers
+    response = await self._runner.run(
+        self._crm_agent,
+        full_prompt,
+        execution_context=exec_ctx,
+    )
+    ...
+```
+
+!!! note "Why not reset() the ContextVar?"
+    `EventStream`'s keep-alive path wraps each `__anext__()` in a fresh `asyncio.Task`. Every task gets a **copy** of the context at the point it's spawned, so `reset()` with a `Token` from a different task raises `ValueError("created in a different Context")`. Since each task's context copy is discarded automatically on exit, no manual reset is needed.
+
+### Module wiring
+
+```python title="app/ws/ws_module.py"
+@module(
+    imports=[CryptoModule, BankingModule],
+    providers=[EventForwarder, WsTokenService],
+    controllers=[BankingWsGateway, WsTokenController],
+    exports=[EventForwarder],
+)
+class WsModule:
+    pass
+```
+
+`EventForwarder` is exported so `AIModule` (which owns the chat controller that sets the `ContextVar`) can import it if needed. `BankingModule` is imported to satisfy `EventForwarder`'s `BankDatabase` dependency.
+
+See the [Signals guide](signals.md#real-world-routing-agent-signals-to-websocket-clients) for the corresponding `SignalBus` setup.
+
+---
+
 ## Strict inheritance — opt-in only
 
 Like every other class-level decorator in Lauren, `@ws_controller` does **not** propagate to subclasses. A subclass that wants to be a gateway has to redecorate.
@@ -450,6 +658,7 @@ All three patterns produce the same client-visible close code. Mixing `close()` 
 ## See also
 
 * [Server-Sent Events](server-sent-events.md) — for one-way push when you don't need bidirectional traffic.
+* [Signals & Lifecycle Events](signals.md) — `SignalBus` and the `ContextVar` routing pattern shown in the real-world example above.
 * [Class Inheritance Rules](../core-concepts/inheritance.md) — why subclassing a `@ws_controller` doesn't auto-mount.
 * [Custom Guards](custom-guards.md) — for HTTP-style authorisation; on WebSockets the equivalent is an `@on_connect` check that closes with a 4xxx code.
 * [Reference → Error Catalog](../reference/errors.md) — all 28 framework error classes.
