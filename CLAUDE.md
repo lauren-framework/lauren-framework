@@ -1,10 +1,42 @@
-# CLAUDE.md — Agentic Development Guide for the `lauren` Framework
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 > This file is read automatically by Claude Code, Cursor, Aider and
 > similar coding agents. It encodes the project's conventions so that
 > AI-generated patches integrate cleanly without manual review loops.
 > Keep it short, opinionated, and actionable. When conventions change,
 > update this file **first** — agents trust it as ground truth.
+
+## 0. Commands
+
+`nox` is the canonical task runner (see `noxfile.py`). All sessions install the package
+in editable mode first, so no separate `pip install` step is needed.
+
+```bash
+# Tests
+nox -s tests                        # full suite (unit + integration)
+nox -s tests_unit                   # unit only  (tests/unit/)
+nox -s tests_integration            # integration only  (tests/integration/)
+nox -s coverage                     # tests + coverage report
+
+# Run a single test file / specific test without nox overhead
+pip install -e ".[dev]"             # one-time local install
+pytest tests/unit/test_di.py -q
+pytest tests/ -k "test_module_graph" -q
+
+# Code quality
+nox -s lint                         # ruff check (E, F, I rules)
+nox -s format                       # ruff format (auto-fix)
+nox -s typecheck                    # mypy
+
+# Docs
+nox -s docs_serve                   # live-reload at localhost:8000
+nox -s docs                         # strict build (fails on warnings)
+
+# Sync public API reference
+nox -s llms_check                   # verify llms-full.txt matches lauren.__all__
+```
 
 ## 1. Project Identity
 
@@ -334,8 +366,8 @@ deterministic).
 - `docs/` — long-form prose explanations and conceptual articles.
 
 When in doubt: grep the tests. They express the invariants more
-precisely than any English prose. Around **2136 tests** currently pass
-in ~30 seconds.
+precisely than any English prose. Around **2120 tests** currently pass
+in ~15 seconds.
 
 ## 12. Injectable Logger Pattern
 
