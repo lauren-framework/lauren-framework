@@ -54,6 +54,7 @@ def _reject_bare_usage(decorator_name: str, arg: Any) -> None:
 
 F = TypeVar("F", bound=Callable[..., Any])
 C = TypeVar("C", bound=type)
+_T = TypeVar("_T")
 
 # Marker attributes (placed on classes / functions).
 CONTROLLER_META = "__lauren_controller__"
@@ -82,7 +83,7 @@ def injectable(
     scope: Scope = Scope.SINGLETON,
     provides: list[type] | None = None,
     multi: bool = False,
-) -> Callable[..., Any]:
+) -> Callable[[_T], _T]:
     """Mark a class or function as a DI provider.
 
     **Class form**::
@@ -112,7 +113,7 @@ def injectable(
     if args:
         _reject_bare_usage("injectable", args[0])
 
-    def decorator(target: Any) -> Any:
+    def decorator(target: _T) -> _T:
         meta = InjectableMeta(
             scope=scope,
             provides=tuple(provides or []),
@@ -373,7 +374,7 @@ def pre_destruct(fn: F) -> F:
 # ---------------------------------------------------------------------------
 
 
-def middleware(*args: Any) -> Any:
+def middleware(*args: Any) -> Callable[[C], C]:
     """Mark a class as a middleware provider.
 
     Must be invoked with parentheses: ``@middleware()``.
@@ -416,7 +417,7 @@ def middleware(*args: Any) -> Any:
     return _apply
 
 
-def use_middlewares(*classes: type | None) -> Callable[[Any], Any]:
+def use_middlewares(*classes: type | None) -> Callable[[_T], _T]:
     """Attach middleware(s) to a controller class or route function.
 
     Works on both:
@@ -445,7 +446,7 @@ def use_middlewares(*classes: type | None) -> Callable[[Any], Any]:
                 f"{_describe(c)} must define 'dispatch(request, call_next)'"
             )
 
-    def decorator(target: Any) -> Any:
+    def decorator(target: _T) -> _T:
         # Read own dict when target is a class so subclasses don't silently
         # share the parent's middleware list.
         if isinstance(target, type):
@@ -462,7 +463,7 @@ def use_middlewares(*classes: type | None) -> Callable[[Any], Any]:
     return decorator
 
 
-def use_guards(*classes: type | None) -> Callable[[Any], Any]:
+def use_guards(*classes: type | None) -> Callable[[_T], _T]:
     """Attach guards to a controller class or route function.
 
     Works on both:
@@ -499,7 +500,7 @@ def use_guards(*classes: type | None) -> Callable[[Any], Any]:
                 f"{_describe(c)} must define 'can_activate(context)'"
             )
 
-    def decorator(target: Any) -> Any:
+    def decorator(target: _T) -> _T:
         if isinstance(target, type):
             existing = list(target.__dict__.get(USE_GUARDS, []))
         else:
@@ -519,7 +520,7 @@ def use_guards(*classes: type | None) -> Callable[[Any], Any]:
 # ---------------------------------------------------------------------------
 
 
-def interceptor(*args: Any) -> Any:
+def interceptor(*args: Any) -> Callable[[C], C]:
     """Mark a class as an interceptor.
 
     An interceptor runs **after guards** and **before** (and after) the
@@ -579,7 +580,7 @@ def interceptor(*args: Any) -> Any:
     return _apply
 
 
-def use_interceptors(*classes: type | None) -> Callable[[Any], Any]:
+def use_interceptors(*classes: type | None) -> Callable[[_T], _T]:
     """Attach interceptors to a controller class or route handler.
 
     Works on both:
@@ -611,7 +612,7 @@ def use_interceptors(*classes: type | None) -> Callable[[Any], Any]:
         if not hasattr(c, "intercept"):
             raise InterceptorConfigError(f"{_describe(c)} must define 'intercept'")
 
-    def decorator(target: Any) -> Any:
+    def decorator(target: _T) -> _T:
         # Read own dict when target is a class so subclasses don't silently
         # share the parent's interceptor list.
         if isinstance(target, type):
@@ -649,7 +650,7 @@ class ExceptionHandlerMeta:
 
 def exception_handler(
     *exceptions: type[BaseException],
-) -> Callable[[Any], Any]:
+) -> Callable[[_T], _T]:
     """Mark a class or function as an exception handler.
 
     Like every other decorator in lauren, this *only* attaches metadata to
@@ -718,7 +719,7 @@ def exception_handler(
 
     captured = tuple(exceptions)
 
-    def decorator(target: Any) -> Any:
+    def decorator(target: _T) -> _T:
         # Class form: must define ``catch``. Function form: target is
         # itself the handler callable.
         if isinstance(target, type):
@@ -762,7 +763,7 @@ def exception_handler(
 
 def use_exception_handlers(
     *handlers: type | Callable[..., Any] | None,
-) -> Callable[[Any], Any]:
+) -> Callable[[_T], _T]:
     """Attach exception handler(s) to a controller class or route function.
 
     Mirrors :func:`use_guards` / :func:`use_middlewares`:
@@ -805,7 +806,7 @@ def use_exception_handlers(
                 detail={"target": _describe(h)},
             )
 
-    def decorator(target: Any) -> Any:
+    def decorator(target: _T) -> _T:
         if isinstance(target, type):
             existing = list(target.__dict__.get(USE_EXCEPTION_HANDLERS, []))
         else:
@@ -959,10 +960,10 @@ def openapi_security(
     return decorator
 
 
-def set_metadata(key: str, value: Any) -> Callable[[Any], Any]:
+def set_metadata(key: str, value: Any) -> Callable[[_T], _T]:
     """Attach free-form metadata observable from ``ExecutionContext``."""
 
-    def decorator(target: Any) -> Any:
+    def decorator(target: _T) -> _T:
         existing: dict[str, Any] = dict(getattr(target, SET_METADATA, {}))
         existing[key] = value
         setattr(target, SET_METADATA, existing)
