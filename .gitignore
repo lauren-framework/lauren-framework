@@ -53,3 +53,5 @@ Thumbs.db
 venv/
 env/
 .env
+
+.codemap
