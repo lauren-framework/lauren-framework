@@ -19,7 +19,7 @@ jobs:
     name: prek (all hooks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -68,7 +68,7 @@ jobs:
     # need to be regenerated as part of a feature PR).
     continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
