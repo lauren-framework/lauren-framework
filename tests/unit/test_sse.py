@@ -443,13 +443,16 @@ class TestEventStreamKeepAlive:
 
     @pytest.mark.asyncio
     async def test_heartbeat_uses_custom_comment(self):
+        # Use a 10× ratio (0.2s producer delay, 0.02s keep-alive) so that at
+        # least one heartbeat fires even on Windows where asyncio.sleep has a
+        # ~15 ms timer resolution.
         async def slow_producer() -> AsyncIterator[ServerSentEvent]:
-            await asyncio.sleep(0.03)
+            await asyncio.sleep(0.2)
             yield ServerSentEvent(data="x")
 
         stream = EventStream(
             slow_producer(),
-            keep_alive=0.01,
+            keep_alive=0.02,
             keep_alive_comment="custom-ping",
         )
         chunks = await _drain_stream(stream)

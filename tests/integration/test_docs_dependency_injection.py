@@ -81,7 +81,10 @@ class TestA1InjectableClass:
         assert TestClient(LaurenFactory.create(M)).get("/a1/").status_code == 200
 
     def test_request_scope_gives_fresh_instance_per_request(self):
-        ids: list[int] = []
+        # Store the *instances* (not just their ids) to prevent CPython from
+        # reusing the same memory address after the first instance is GC'd,
+        # which would make id(instance1) == id(instance2) spuriously.
+        instances: list[object] = []
 
         @injectable(scope=Scope.REQUEST)
         class RequestCtx:
@@ -95,7 +98,7 @@ class TestA1InjectableClass:
 
             @get("/")
             async def h(self) -> dict:
-                ids.append(id(self.ctx))
+                instances.append(self.ctx)
                 return {}
 
         @module(controllers=[C], providers=[RequestCtx])
@@ -106,8 +109,8 @@ class TestA1InjectableClass:
         c.get("/a1r/")
         c.get("/a1r/")
         # Each request gets a distinct RequestCtx instance.
-        assert len(ids) == 2
-        assert ids[0] != ids[1]
+        assert len(instances) == 2
+        assert instances[0] is not instances[1]
 
     def test_transient_gives_new_instance_each_resolve(self):
         """TRANSIENT scope: each container.resolve() call returns a fresh instance."""
