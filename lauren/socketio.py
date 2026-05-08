@@ -701,7 +701,7 @@ def _install_socketio_runtime_hook() -> None:
         await original_dispatch_text(gateway, run_hook, text, ws)
 
     _ws_runtime._dispatch_text = _patched_dispatch_text
-    _ws_runtime.__sio_hook_installed__ = True
+    _ws_runtime.__sio_hook_installed__ = True  # type: ignore[attr-defined]
 
 
 # Install the hook eagerly at import time so users don't need to

@@ -866,7 +866,7 @@ class Response:
     @classmethod
     def stream(
         cls,
-        iterable: AsyncIterable[bytes],
+        iterable: AsyncIterable[bytes],  # type: ignore[valid-type]
         *,
         status: int = 200,
         media_type: str = "application/octet-stream",
@@ -920,8 +920,8 @@ class Response:
         *,
         status: int | None = None,
         headers: MutableHeaders | None = None,
-        body: bytes | None = None,
-        stream: AsyncIterable[bytes] | None = ...,  # type: ignore[assignment]
+        body: bytes | None = None,  # type: ignore[valid-type]
+        stream: AsyncIterable[bytes] | None = ...,  # type: ignore[assignment, valid-type]
     ) -> "Response":
         new = Response.__new__(Response)
         new._status = self._status if status is None else status
@@ -957,9 +957,9 @@ class Response:
         new._media_type = media_type
         return new
 
-    def with_body(self, body: bytes | str) -> "Response":
+    def with_body(self, body: bytes | str) -> "Response":  # type: ignore[valid-type]
         if isinstance(body, str):
-            body = body.encode("utf-8")
+            body = body.encode("utf-8")  # type: ignore[union-attr]
         return self._clone(body=body, stream=None)
 
     def with_cookie(

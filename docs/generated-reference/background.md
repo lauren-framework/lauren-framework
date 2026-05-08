@@ -57,4 +57,3 @@ Tracks the lifecycle of a single background task. The
 response bodies so clients can poll for completion status elsewhere.
 :attr:`status` progresses ``"pending"`` → ``"running"`` →
 ``"done"`` | ``"failed"``.
-

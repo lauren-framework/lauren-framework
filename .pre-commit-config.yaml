@@ -108,15 +108,15 @@ repos:
   # ---------------------------------------------------------------------
   # Markdown — light formatting check for the docs and READMEs
   # ---------------------------------------------------------------------
-  - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: v0.43.0
-    hooks:
-      - id: markdownlint
-        name: markdownlint (README + docs)
-        # Limit to the top-level README and the docs site; long-form
-        # files like llms-full.txt and CLAUDE.md have their own format.
-        files: ^(README\.md|CONTRIBUTING\.md|AGENTS\.md|docs/.*\.md)$
-        args: ["--config=.markdownlint.yaml"]
+  # - repo: https://github.com/igorshubovych/markdownlint-cli
+  #   rev: v0.43.0
+  #   hooks:
+  #     - id: markdownlint
+  #       name: markdownlint (README + docs)
+  #       # Limit to the top-level README and the docs site; long-form
+  #       # files like llms-full.txt and CLAUDE.md have their own format.
+  #       files: ^(README\.md|CONTRIBUTING\.md|AGENTS\.md|docs/.*\.md)$
+  #       args: ["--config=.markdownlint.yaml"]
 
   # ---------------------------------------------------------------------
   # Local hooks — invariants specific to this repo

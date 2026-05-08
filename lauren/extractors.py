@@ -155,7 +155,7 @@ class ExtractionMarker:
         # like the simple ``Path[int]`` form.
         if isinstance(item, tuple):
             if len(item) == 1:
-                return Annotated[item[0], cls]  # type: ignore[valid-type]
+                return Annotated[item[0], cls]  # type: ignore[valid-type, return-value]
             base_type = item[0]
             extras: list[Any] = []
             for extra in item[1:]:
@@ -169,8 +169,8 @@ class ExtractionMarker:
                     extras.append(pipe(extra))
                 else:
                     extras.append(extra)
-            return Annotated[(base_type, cls, *extras)]  # type: ignore[valid-type]
-        return Annotated[item, cls]  # type: ignore[valid-type]
+            return Annotated[(base_type, cls, *extras)]  # type: ignore[valid-type, return-value]
+        return Annotated[item, cls]  # type: ignore[valid-type, return-value]
 
     # ------------------------------------------------------------------
     # Custom extractor hook. Subclasses may override this as an instance
@@ -1225,8 +1225,9 @@ async def _extract_raw(
                         if getattr(f_info, "alias", None)
                         else f_name
                     )
-                    raw = request.query_params.get(
-                        f_alias, request.query_params.get(f_name, [])
+                    raw = request.query_params.get(  # type: ignore[assignment]
+                        f_alias,  # type: ignore[arg-type]
+                        request.query_params.get(f_name, []),  # type: ignore[arg-type]
                     )
                     if raw:
                         fields_dict[f_name] = raw[0] if len(raw) == 1 else raw
@@ -1425,7 +1426,7 @@ async def _extract_raw(
                 sig = _inspect.signature(marker_cls.extract)  # type: ignore[attr-defined]
                 params = sig.parameters
             except (TypeError, ValueError):
-                params = {}
+                params = {}  # type: ignore[assignment]
             if "owning_module" in params:
                 return await marker_cls.extract(  # type: ignore[attr-defined]
                     request,

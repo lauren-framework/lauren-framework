@@ -7,6 +7,7 @@ import hmac
 import html
 import re
 import secrets
+from pydantic import BaseModel
 
 from lauren import (
     Json,
@@ -70,8 +71,6 @@ class InputSanitizer:
 # ---------------------------------------------------------------------------
 # Controller that uses sanitizer
 # ---------------------------------------------------------------------------
-
-from pydantic import BaseModel
 
 
 class TextBody(BaseModel):

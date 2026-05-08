@@ -1584,3 +1584,305 @@ Processors: `ContextvarsProcessor`, `RedactSecrets`, `Sampler`,
 Drop-in `request_logging()` middleware propagates `X-Request-ID`,
 binds contextvars, and emits a structured request-summary line per
 request.
+
+---
+
+## Background Tasks
+
+`BackgroundTasks` lets you fire work **after** the response has been
+sent. Declare it as a handler parameter and the framework injects it:
+
+```python
+from lauren import BackgroundTasks, injectable, Scope
+
+@injectable(scope=Scope.SINGLETON)
+class EmailService:
+    async def send(self, addr: str) -> None: ...
+
+@post("/sign-up")
+async def sign_up(self, body: Json[SignUpBody], tasks: BackgroundTasks) -> dict:
+    handle: TaskHandle = tasks.add_task(self._email.send, body.email)
+    return {"status": "queued"}
+```
+
+`TaskHandle` has `.cancel()`, `.result()` (awaitable), and `.done`
+properties.  Both `async def` and regular `def` callables are accepted;
+sync callables are offloaded via `anyio.to_thread.run_sync`.
+
+### Background-task signals
+
+Three `LifecycleEvent` subclasses are emitted on the shared `SignalBus`:
+
+| Event | When |
+|---|---|
+| `BackgroundTaskStarted` | Just before the callable is invoked |
+| `BackgroundTaskComplete` | After it returns successfully |
+| `BackgroundTaskFailed` | After it raises an exception |
+
+---
+
+## Signals & Lifecycle Events
+
+`SignalBus` is an in-process pub/sub bus for `LifecycleEvent` subclasses.
+Subscribe with the `@bus.on(EventType)` decorator or `bus.subscribe()`.
+The default app bus is accessible via `lauren.signals.bus`.
+
+```python
+from lauren import SignalBus
+from lauren.signals import (
+    StartupBegin, StartupComplete,
+    ShutdownBegin,
+    RequestReceived, RequestComplete,
+    LifecycleEvent,
+)
+
+bus = SignalBus()
+
+@bus.on(StartupComplete)
+async def on_ready(event: StartupComplete) -> None:
+    print("App ready")
+```
+
+Full event hierarchy:
+
+| Event | When |
+|---|---|
+| `StartupBegin` | `lifespan.startup` arrives; `@post_construct` not yet run |
+| `StartupComplete` | All `@post_construct` hooks finished |
+| `ShutdownBegin` | `lifespan.shutdown` or OS signal received |
+| `RequestReceived` | ASGI scope parsed into a `Request` |
+| `RequestComplete` | Response fully sent to the client |
+| `BackgroundTaskStarted` | Background task begins |
+| `BackgroundTaskComplete` | Background task finishes successfully |
+| `BackgroundTaskFailed` | Background task raises |
+
+`LifecycleEvent` is the common base class for all events above.
+
+---
+
+## Interceptors
+
+Interceptors run **after guards** and **before** the handler. They wrap
+handler execution: ideal for timing, caching, or response transforms.
+
+```python
+from lauren import interceptor, use_interceptors, CallHandler
+from lauren.types import ExecutionContext, Response
+
+@interceptor()
+class TimingInterceptor:
+    async def intercept(self, ctx: ExecutionContext, next: CallHandler) -> Response:
+        import time
+        t0 = time.monotonic()
+        response = await next.handle()
+        ms = (time.monotonic() - t0) * 1000
+        return response.with_header("x-duration-ms", f"{ms:.1f}")
+
+# Apply to a controller or individual route:
+@use_interceptors(TimingInterceptor)
+@controller("/api")
+class MyController: ...
+```
+
+`InterceptorProtocol` is the structural protocol every interceptor satisfies.
+`InterceptorConfigError` is raised when an interceptor is misconfigured at
+startup (e.g. applied without parentheses).
+
+`use_middlewares` is the per-controller / per-route equivalent of
+`global_middlewares=` on the app factory.  Both `use_interceptors` and
+`use_middlewares` accept a class or an instance and can be stacked.
+
+---
+
+## Pipes
+
+Pipes transform or validate an extracted parameter value **before** it
+reaches the handler.
+
+```python
+from lauren import Pipe, PipeContext, is_pipe
+from lauren import Path, injectable, Scope
+
+class PositiveIntPipe(Pipe):
+    async def transform(self, value: int, ctx: PipeContext) -> int:
+        if value <= 0:
+            raise ValueError("Must be positive")
+        return value
+
+@get("/{id}")
+async def get_item(self, id: Path[int, PositiveIntPipe]) -> dict: ...
+```
+
+`PipeMeta` is the metadata marker stored on pipe callables; `PIPE_META`
+is the sentinel attribute name; `is_pipe(obj)` returns `True` if *obj*
+carries the pipe marker.
+
+`PathField` provides alias / validation overrides for path parameters,
+analogous to Pydantic's `Field`.  `FieldDescriptor` is the richer
+variant that supports `ge`, `le`, `min_length`, etc.
+
+`PipeContext` carries the parameter name, annotation, and owning handler
+metadata so a pipe can make context-aware decisions.
+
+---
+
+## Per-Route Middleware (`use_middlewares`)
+
+`use_middlewares` attaches middleware(s) to a specific controller class
+or route handler without registering them globally:
+
+```python
+from lauren import use_middlewares, middleware, injectable, Scope
+
+@middleware()
+@injectable(scope=Scope.SINGLETON)
+class AuditLog:
+    async def dispatch(self, req, call_next):
+        response = await call_next(req)
+        print(f"AUDIT {req.method} {req.url.path} → {response.status_code}")
+        return response
+
+@use_middlewares(AuditLog)
+@controller("/admin")
+class AdminController: ...
+```
+
+`CallNext` is the callable type for `call_next` inside a middleware
+`dispatch` method.
+
+---
+
+## JSON Serialisation
+
+Lauren auto-selects the fastest available encoder at startup via
+`auto_encoder()`.  The selection order is orjson > msgspec > stdlib.
+
+| Class | Dependency |
+|---|---|
+| `StdlibJSONEncoder` | Built-in `json` (always available) |
+| `OrjsonEncoder` | `orjson` C extension |
+| `MsgspecEncoder` | `msgspec` |
+| `JSONEncoder` | Abstract base — implement `encode(obj) -> bytes` |
+
+```python
+from lauren import auto_encoder, OrjsonEncoder, StdlibJSONEncoder
+enc = auto_encoder()          # picks best available
+enc.encode({"hello": "world"})
+```
+
+---
+
+## Types & Connection Info
+
+`ClientInfo` and `ServerInfo` are `(host, port)` named-tuples
+available on `Request.client` and `Request.server` respectively.
+
+`MutableHeaders` is the writable headers mapping used when constructing
+or mutating a `Response`.
+
+`ByteStream` is the zero-copy streaming body extractor:
+`body: ByteStream` receives an async iterable of raw `bytes` chunks so
+the handler can process the body without buffering it into memory.
+
+`UploadFile` is the multipart file-upload extractor — FastAPI-compatible:
+
+```python
+from lauren import UploadFile
+
+@post("/upload")
+async def upload(self, file: UploadFile) -> dict:
+    content = await file.read()
+    return {"filename": file.filename, "size": len(content)}
+```
+
+`StateExtractor` is the typed extractor for `request.state` fields
+declared by guards or middleware.
+
+---
+
+## Static Files
+
+`StaticFilesModule` serves a directory of static assets as a Lauren
+feature module:
+
+```python
+from lauren.static_files import StaticFilesModule
+
+@module(imports=[StaticFilesModule.for_root("/assets", directory="./public")])
+class AppModule: ...
+```
+
+---
+
+## OpenAPI Security
+
+`openapi_security` attaches OpenAPI 3.1 security requirement objects to
+a guard class so the generated schema documents authentication schemes:
+
+```python
+from lauren import openapi_security
+
+@openapi_security([{"BearerAuth": []}])
+class JwtGuard:
+    async def can_activate(self, ctx) -> bool: ...
+```
+
+`OpenAPISecurityMeta` is the metadata dataclass stored on the guard by
+this decorator.
+
+---
+
+## Request Arena
+
+`RequestArena` is the pool of reusable per-request containers.
+`RequestAllocation` is the handle to a leased set of containers for a
+single request.  Both are internal infrastructure exposed for advanced
+ASGI adapter customisation; typical application code never touches them.
+
+---
+
+## Errors: Decorator & Interceptor
+
+`DecoratorUsageError` is raised when a configurable decorator such as
+`@controller`, `@injectable`, or `@middleware` is used **bare** (without
+parentheses):
+
+```python
+# Wrong — raises DecoratorUsageError at startup:
+@controller          # missing ()
+class Broken: ...
+
+# Correct:
+@controller("/api")
+class Fine: ...
+```
+
+`InterceptorConfigError` is raised when an interceptor class is
+misconfigured at startup (e.g. no `intercept` method, wrong signature,
+or applied without parentheses).
+
+---
+
+## Server-Sent Events Helpers
+
+`format_sse_event` formats a single SSE frame as its wire string without
+creating a full `ServerSentEvent` object — useful for low-level adapters:
+
+```python
+from lauren import format_sse_event
+line = format_sse_event(data="hello", event="ping", id="1")
+# → "id: 1\nevent: ping\ndata: hello\n\n"
+```
+
+---
+
+## AI Documentation Access
+
+`docs` is a module that exposes the bundled `llms.txt` and
+`llms-full.txt` files programmatically:
+
+```python
+import lauren.docs as ld
+overview = ld.llms_txt()        # short overview (~2 KB)
+reference = ld.llms_full_txt()  # full reference (~25 KB)
+```

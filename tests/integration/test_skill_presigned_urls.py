@@ -147,7 +147,7 @@ class TestPresignedUrls:
         expires = int(parsed["expires"][0])
         signature = parsed["signature"][0]
 
-        client = build_app()
+        _ = build_app()
         # Use the service directly for this check
         assert svc.verify_url(bucket, key, expires, signature) is True
 

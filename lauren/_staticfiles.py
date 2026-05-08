@@ -156,9 +156,11 @@ class StaticFilesModule:
 
             @get("/{*filepath}", include_in_schema=False)
             async def serve_file(
-                self, filepath: PathParam[str], request: Request
+                self,
+                filepath: PathParam[str],  # type: ignore[type-arg]
+                request: Request,  # type: ignore[arg-type]
             ) -> Response:
-                return _serve_file(_base, filepath, request, max_age)
+                return _serve_file(_base, filepath, request, max_age)  # type: ignore[arg-type]
 
         # ------------------------------------------------------------------
         # Generated module — each call returns a unique class so multiple

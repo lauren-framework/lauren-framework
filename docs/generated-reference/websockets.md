@@ -487,4 +487,3 @@ class WebSocketRouteNotFoundError
 ```
 
 The handshake path doesn't match any registered ``@ws_controller``.
-

@@ -85,4 +85,3 @@ Use as::
 ```python
 def connect(self, path: str, headers: Mapping[str, str] | Iterable[tuple[str, str]] | None = None, subprotocols: Iterable[str] | None = None, query_string: str = '') -> WebSocketTestSession
 ```
-

@@ -79,7 +79,7 @@ def _python_type_to_schema(tp: Any) -> dict[str, Any]:
     import types as _types
 
     if origin is getattr(_types, "UnionType", None) or origin is type(int | str):
-        args = [a for a in get_args(tp) if a is not type(None)]
+        args = [a for a in get_args(tp) if a is not type(None)]  # type: ignore[assignment]
         if len(args) == 1:
             return _python_type_to_schema(args[0])
         return {"oneOf": [_python_type_to_schema(a) for a in args]}

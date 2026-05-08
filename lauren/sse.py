@@ -416,7 +416,7 @@ async def _frame_event_stream(
         while True:
             sleeper = asyncio.ensure_future(asyncio.sleep(keep_alive))
             try:
-                done, _ = await asyncio.wait(
+                done, _ = await asyncio.wait(  # type: ignore[type-var]
                     {pending, sleeper},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
@@ -432,7 +432,7 @@ async def _frame_event_stream(
                         pass
             if pending in done:
                 try:
-                    raw = pending.result()
+                    raw = pending.result()  # type: ignore[union-attr]
                 except StopAsyncIteration:
                     pending = None  # consumed; nothing left to cancel
                     return

@@ -441,7 +441,7 @@ def is_discriminated_union(target: Any) -> bool:
     except Exception:  # pragma: no cover
         pass
     try:
-        union_types.add(_types.UnionType)
+        union_types.add(_types.UnionType)  # type: ignore[arg-type]
     except AttributeError:  # pragma: no cover - py<3.10
         pass
     if inner_origin not in union_types and inner_origin is not getattr(

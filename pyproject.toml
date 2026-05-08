@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lauren"
 dynamic = ["version"]
-description = "A metadata-first Python web framework inspired by Axum and NestJS."
+description = "A metadata-first ASGI-compatible Python web framework inspired by FastAPI, Axum and NestJS."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
@@ -51,6 +51,12 @@ dev = [
     "opentelemetry-api>=1.0",
     "opentelemetry-sdk>=1.0",
 ]
+
+[tool.mypy]
+python_version = "3.12"
+
+# Ignore missing third-party stubs
+ignore_missing_imports = true
 
 [tool.ruff.lint]
 ignore = ["E741", "E742", "E743"]  # Ignore ambiguous variable names (e.g. "l", "O", "I")

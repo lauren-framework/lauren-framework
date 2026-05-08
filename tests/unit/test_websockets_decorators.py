@@ -341,12 +341,10 @@ class TestWebSocketDirectUnit:
         return ws, sent
 
     def test_path_property(self):
-
         ws, _ = self._make_ws()
         assert ws.path == "/test"
 
     def test_path_template_property(self):
-
         ws, _ = self._make_ws()
         assert ws.path_template == "/test"
 

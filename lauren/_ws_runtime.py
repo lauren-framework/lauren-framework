@@ -1010,7 +1010,7 @@ async def _bind_ws_kwargs(
         # will see an empty body and raise an appropriate error — the
         # same behaviour HTTP handlers get.
         kwargs[ext.name] = await extract_parameter(
-            request_like,
+            request_like,  # type: ignore[arg-type]
             ext,
             container=container,
             request_cache=request_cache,

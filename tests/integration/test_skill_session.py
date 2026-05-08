@@ -147,7 +147,7 @@ class TestSessionStore:
         client = build_app()
         # Session A writes a value
         r1 = client.post("/session/set", json={"key": "user", "value": "alice"})
-        sid_a = _extract_session_cookie(r1)
+        _ = _extract_session_cookie(r1)
 
         # Session B (no cookie) should have empty session
         r2 = client.get("/session/")

@@ -21,7 +21,6 @@ Requirements:
 
 from __future__ import annotations
 
-import textwrap
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -40,13 +39,19 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 PAGES: dict[str, list[str | tuple[str, str]]] = {
     "app.md": [
-        ("# App & Factory\n\nThe top-level entry points for creating and running a Lauren application.", ""),
+        (
+            "# App & Factory\n\nThe top-level entry points for creating and running a Lauren application.",
+            "",
+        ),
         "lauren.LaurenFactory",
         "lauren.Lauren",
         "lauren.LaurenApp",
     ],
     "decorators.md": [
-        ("# Decorators\n\nAll user-facing class and method decorators exported by the framework.", ""),
+        (
+            "# Decorators\n\nAll user-facing class and method decorators exported by the framework.",
+            "",
+        ),
         ("## Module system", ""),
         "lauren.module",
         "lauren.controller",
@@ -74,7 +79,10 @@ PAGES: dict[str, list[str | tuple[str, str]]] = {
         "lauren.Scope",
     ],
     "extractors.md": [
-        ("# Extractors\n\nTyped extractors for decomposing HTTP requests into strongly-typed Python values.", ""),
+        (
+            "# Extractors\n\nTyped extractors for decomposing HTTP requests into strongly-typed Python values.",
+            "",
+        ),
         ("## Path, Query, Header, Cookie", ""),
         "lauren.Path",
         "lauren.Query",
@@ -98,7 +106,10 @@ PAGES: dict[str, list[str | tuple[str, str]]] = {
         "lauren.FieldDescriptor",
     ],
     "websockets.md": [
-        ("# WebSockets\n\nFirst-class WebSocket support via `@ws_controller` gateways.", ""),
+        (
+            "# WebSockets\n\nFirst-class WebSocket support via `@ws_controller` gateways.",
+            "",
+        ),
         ("## Gateway decorators", ""),
         "lauren.ws_controller",
         "lauren.on_connect",
@@ -120,7 +131,10 @@ PAGES: dict[str, list[str | tuple[str, str]]] = {
         "lauren.WebSocketRouteNotFoundError",
     ],
     "sse.md": [
-        ("# SSE & Streaming\n\nServer-Sent Events, typed streaming responses, and raw byte streams.", ""),
+        (
+            "# SSE & Streaming\n\nServer-Sent Events, typed streaming responses, and raw byte streams.",
+            "",
+        ),
         ("## Server-Sent Events", ""),
         "lauren.EventStream",
         "lauren.ServerSentEvent",
@@ -133,7 +147,10 @@ PAGES: dict[str, list[str | tuple[str, str]]] = {
         "lauren.StreamReader",
     ],
     "di.md": [
-        ("# Dependency Injection\n\nCustom provider recipes and DI container utilities.", ""),
+        (
+            "# Dependency Injection\n\nCustom provider recipes and DI container utilities.",
+            "",
+        ),
         ("## Custom providers", ""),
         "lauren.use_value",
         "lauren.use_class",
@@ -147,7 +164,10 @@ PAGES: dict[str, list[str | tuple[str, str]]] = {
         "lauren.DIContainer",
     ],
     "exceptions.md": [
-        ("# Exception Catalog\n\nAll 28 typed exception classes exported by the framework.", ""),
+        (
+            "# Exception Catalog\n\nAll 28 typed exception classes exported by the framework.",
+            "",
+        ),
         ("## Base classes", ""),
         "lauren.LaurenError",
         "lauren.StartupError",
@@ -200,7 +220,10 @@ PAGES: dict[str, list[str | tuple[str, str]]] = {
         "lauren.AppState",
     ],
     "background.md": [
-        ("# Background Tasks\n\nFire-and-forget work that runs after the HTTP response has been sent.", ""),
+        (
+            "# Background Tasks\n\nFire-and-forget work that runs after the HTTP response has been sent.",
+            "",
+        ),
         "lauren.BackgroundTasks",
         "lauren.TaskHandle",
     ],
@@ -216,7 +239,10 @@ PAGES: dict[str, list[str | tuple[str, str]]] = {
         "lauren.ShutdownBegin",
     ],
     "testing.md": [
-        ("# Testing\n\nIn-process ASGI test clients for unit and integration tests.", ""),
+        (
+            "# Testing\n\nIn-process ASGI test clients for unit and integration tests.",
+            "",
+        ),
         "lauren.testing.TestClient",
         "lauren.testing.WsTestClient",
     ],
@@ -255,7 +281,7 @@ def _resolve(pkg: griffe.Package, dotted: str) -> griffe.Object | None:
     # The dotted name starts with "lauren." — strip that prefix because
     # pkg IS the lauren module; we navigate relative to it.
     if dotted.startswith("lauren."):
-        dotted = dotted[len("lauren."):]
+        dotted = dotted[len("lauren.") :]
 
     parts = dotted.split(".")
     obj: griffe.Object | None = pkg  # type: ignore[assignment]

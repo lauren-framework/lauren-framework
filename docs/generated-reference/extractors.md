@@ -336,4 +336,3 @@ class FieldDescriptor(default: Any = ..., alias: str | None = None, ge: float | 
 ```python
 def validate(self, name: str, value: Any) -> Any
 ```
-

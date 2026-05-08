@@ -26,7 +26,8 @@ def main(argv: list[str]) -> int:
         print("ERROR: lauren.__all__ is empty or missing", file=sys.stderr)
         return 2
 
-    llms_path = pathlib.Path("llms-full.txt")
+    source_dir = pathlib.Path(__file__).parent.parent
+    llms_path = source_dir / 'lauren' / "llms-full.txt"
     if not llms_path.exists():
         print("ERROR: llms-full.txt not found in repo root", file=sys.stderr)
         return 2

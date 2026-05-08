@@ -365,4 +365,3 @@ holds handler arguments assembled from the extractor plan.
 
 Every container returned from the lease is cleared on exit, so
 pooled allocations never leak user data across requests.
-

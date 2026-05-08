@@ -405,4 +405,3 @@ output — it yields the stable lowercase name (``"singleton"``,
 ``"request"``, ``"transient"``) that tests and logs rely on, and
 does not depend on the ``IntEnum`` ``__str__`` formatting which
 varies between Python 3.11 and 3.12.
-

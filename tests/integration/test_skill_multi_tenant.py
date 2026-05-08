@@ -7,6 +7,7 @@ from contextvars import ContextVar
 
 from sqlalchemy import Column, Integer, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, Session
+from pydantic import BaseModel
 
 from lauren import (
     LaurenFactory,
@@ -108,8 +109,6 @@ class TenantDataService:
 # ---------------------------------------------------------------------------
 # Controller + Pydantic model
 # ---------------------------------------------------------------------------
-
-from pydantic import BaseModel
 
 
 class CreateRecordBody(BaseModel):

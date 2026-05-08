@@ -206,7 +206,7 @@ _LEVEL_LABELS = {
 }
 
 
-@injectable(scope=Scope.SINGLETON, provides=(Logger,))
+@injectable(scope=Scope.SINGLETON, provides=(Logger,))  # type: ignore[arg-type]
 class ConsoleLogger(_BaseLogger):
     """Human-readable logger with optional ANSI colour.
 
@@ -281,7 +281,7 @@ class ConsoleLogger(_BaseLogger):
 # ---------------------------------------------------------------------------
 
 
-@injectable(scope=Scope.SINGLETON, provides=(Logger,))
+@injectable(scope=Scope.SINGLETON, provides=(Logger,))  # type: ignore[arg-type]
 class JsonLogger(_BaseLogger):
     """One JSON object per line, for production log aggregators.
 
@@ -342,7 +342,7 @@ class JsonLogger(_BaseLogger):
 # ---------------------------------------------------------------------------
 
 
-@injectable(scope=Scope.SINGLETON, provides=(Logger,))
+@injectable(scope=Scope.SINGLETON, provides=(Logger,))  # type: ignore[arg-type]
 class NullLogger(_BaseLogger):
     """Discards everything. Use in tests or when lauren must stay quiet."""
 
@@ -358,7 +358,7 @@ class NullLogger(_BaseLogger):
 # ---------------------------------------------------------------------------
 
 
-@injectable(scope=Scope.SINGLETON, provides=(Logger,))
+@injectable(scope=Scope.SINGLETON, provides=(Logger,))  # type: ignore[arg-type]
 class InMemoryLogger(_BaseLogger):
     """Collects records in a list for unit tests."""
 

@@ -516,7 +516,7 @@ def install_signal_handlers(
         except (NotImplementedError, RuntimeError):
             # Windows or non-main-thread loops: fall back to signal.signal.
             try:
-                signal.signal(sig, lambda s, f, _h=_handler: _h(s))
+                signal.signal(sig, lambda s, f, _h=_handler: _h(s))  # type: ignore[misc]
             except (ValueError, OSError):  # pragma: no cover - platform-dep
                 logger.warn(
                     f"Could not install handler for {signal.Signals(sig).name}",

@@ -132,7 +132,6 @@ class _PropMod:
 
 class TestLaurenAppProperties:
     def test_router_property(self):
-
         app = LaurenFactory.create(_PropMod)
         assert app.router is not None
 

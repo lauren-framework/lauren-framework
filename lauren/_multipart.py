@@ -176,6 +176,7 @@ def iter_parts(body: bytes, boundary: str) -> Iterable[_Part]:
 def _build_part(header_block: str, data: bytes) -> _Part:
     """Parse a header block plus body into a :class:`_Part`."""
     headers: list[tuple[str, str]] = []
+    name: str | None = None
     for raw_line in header_block.split("\r\n"):
         if not raw_line:
             continue

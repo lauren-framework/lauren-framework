@@ -396,4 +396,3 @@ Record that a singleton's ``@post_construct`` has already run.
 Called by :class:`LifecycleScheduler` after it invokes the hook in
 topological order during startup so that subsequent ``resolve()``
 calls don't re-fire the hook.
-

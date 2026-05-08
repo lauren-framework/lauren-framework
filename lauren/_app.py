@@ -435,7 +435,7 @@ class Lauren:
         """ASGI entry point \u2014 compiles lazily on first invocation."""
         if self._compiled is None:
             await self._compile()
-        await self._compiled(scope, receive, send)
+        await self._compiled(scope, receive, send)  # type: ignore[misc]
 
     # ------------------------------------------------------------------
     # Introspection helpers \u2014 forwarded to the compiled LaurenApp
@@ -560,11 +560,11 @@ def _wrap_function_as_method(fn: Callable[..., Any]) -> Callable[..., Any]:
 
     if inspect.iscoroutinefunction(fn):
 
-        async def method(self, *args: Any, **kwargs: Any):  # type: ignore[no-redef]
+        async def method(self, *args: Any, **kwargs: Any):  # type: ignore[no-redef, misc]
             return await fn(*args, **kwargs)
     else:
 
-        def method(self, *args: Any, **kwargs: Any):  # type: ignore[no-redef]
+        def method(self, *args: Any, **kwargs: Any):  # type: ignore[no-redef, misc]
             return fn(*args, **kwargs)
 
     # Forward annotations so ``_compile_handler_signature`` sees the real

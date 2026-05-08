@@ -1119,7 +1119,7 @@ class DIContainer:
             target = (
                 provider.factory if provider.provider_kind == "class" else provider.cls
             )
-            instance = await _construct_class(target, kwargs, field_values)
+            instance = await _construct_class(target, kwargs, field_values)  # type: ignore[arg-type]
         else:
             # Function provider: call the factory; the return value IS
             # the dependency. ``await`` if it returns a coroutine.

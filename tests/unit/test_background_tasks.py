@@ -138,7 +138,6 @@ class TestBackgroundTasksRun:
 
     @pytest.mark.asyncio
     async def test_handle_status_transitions_pending_running_done(self) -> None:
-
         async def work() -> None:
             pass
 

@@ -203,4 +203,3 @@ Listeners are typically used to flush buffers, close external
 connections, or emit a final heartbeat. The event does NOT
 block shutdown — listeners run concurrently with the framework's
 own ``@pre_destruct`` machinery.
-

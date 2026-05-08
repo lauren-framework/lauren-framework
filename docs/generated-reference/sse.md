@@ -222,4 +222,3 @@ buffered into a line accumulator, complete lines are decoded using the
 negotiated wire format, and each decoded payload is validated against
 ``T`` (supporting both plain Pydantic models and ``Annotated[Union[...],
 Field(discriminator=...)]`` tagged unions via :class:`pydantic.TypeAdapter`).
-
