@@ -1,6 +1,6 @@
 mkdocs>=1.6
 mkdocs-material>=9.5
-pymdown-extensions>=10.7
+pymdown-extensions>=10.21.2
 # API-reference documentation from docstrings.
 # The correct package is mkdocstrings[python] (NOT mkdocs-docstring, which does
 # not exist on PyPI).  The [python] extra pulls in mkdocstrings-python which
