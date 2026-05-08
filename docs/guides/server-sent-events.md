@@ -306,7 +306,7 @@ async def test_keepalive_arrives_during_idle():
 * **Set `keep_alive` for any long-lived stream.** `15.0` seconds is a safe default for most production proxies.
 * **Use `event` names**, not custom JSON discriminators inside `data`. Browsers route on `event:` natively via `addEventListener`, which is much cleaner client-side than parsing `data` and dispatching manually.
 * **Disable response buffering** on intermediaries. The headers `EventStream` sets are correct for nginx; if you're behind another proxy (HAProxy, AWS ALB), check its docs for the equivalent opt-out.
-* **Cap concurrent streams.** SSE connections are long-lived; without a per-process limit, a misconfigured client can pin file descriptors. Enforce via [`lauren-middlewares.rate_limit`](https://lauren-framework.dev/middlewares/) or an upstream load balancer.
+* **Cap concurrent streams.** SSE connections are long-lived; without a per-process limit, a misconfigured client can pin file descriptors. Enforce via [`lauren-middlewares.rate_limit`](https://lauren-py.dev/middlewares/) or an upstream load balancer.
 * **Serve under HTTP/2 if you can.** HTTP/1.1 limits each origin to ~6 concurrent connections per browser, which SSE streams can quickly saturate. HTTP/2 multiplexes many streams over one TCP connection and removes the limit.
 * **Don't put real-time business logic in the producer.** The producer should be a *transport* — pull from a queue, broadcast registry, or database tail and frame as SSE. The work that *generates* events belongs in a service the producer subscribes to.
 

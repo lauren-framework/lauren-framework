@@ -173,7 +173,7 @@ For agents that ingest raw context rather than SKILL.md files:
 
 | File | Purpose |
 |---|---|
-| [`llms.txt`](https://lauren.dev/llms.txt) | 2 KB overview — start here |
+| [`llms.txt`](https://lauren-py.dev/llms.txt) | 2 KB overview — start here |
 | [`llms-full.txt`](https://github.com/lauren-framework/lauren-framework/raw/main/lauren/llms-full.txt) | 25 KB complete API reference |
 | [`AGENTS.md`](https://github.com/lauren-framework/lauren-framework/blob/main/AGENTS.md) | By-task lookup, common errors, definition of done |
 | [`CLAUDE.md`](https://github.com/lauren-framework/lauren-framework/blob/main/CLAUDE.md) | Architecture invariants, pattern selection |

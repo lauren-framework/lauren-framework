@@ -10,7 +10,7 @@
 
 **Please do not open a public GitHub issue for security bugs.**
 
-Report vulnerabilities by emailing **security@lauren-framework.dev** with:
+Report vulnerabilities by emailing **security@lauren-py.dev** with:
 
 - A description of the vulnerability and its potential impact
 - Steps to reproduce or a minimal proof-of-concept

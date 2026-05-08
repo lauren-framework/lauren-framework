@@ -5,12 +5,26 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lauren"
 dynamic = ["version"]
-description = "A metadata-first ASGI-compatible Python web framework inspired by FastAPI, Axum and NestJS."
+description = "An ASGI web framework with dependency injection, metadata-driven routing, and modular architecture."
 readme = "README.md"
 license = {text = "MIT"}
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{name = "Platform Engineering Team"}]
-keywords = ["asgi", "web", "framework", "async", "di", "nestjs", "axum", "fastapi"]
+maintainers = [{name = "Platform Engineering Team"}]
+keywords = [
+    "asgi",
+    "web",
+    "framework",
+    "async",
+    "di",
+    "dependency-injection",
+    "nestjs",
+    "axum",
+    "fastapi",
+    "openapi",
+    "routing",
+]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Framework :: AsyncIO",
@@ -23,13 +37,22 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
 dependencies = [
     "anyio>=4.0",
     "pydantic>=2.0",
 ]
+
+[project.urls]
+Homepage      = "https://lauren-py.dev"
+Documentation = "https://lauren-py.dev/docs"
+Repository    = "https://github.com/lauren-framework/lauren-framework"
+Issues        = "https://github.com/lauren-framework/lauren-framework/issues"
+Changelog     = "https://github.com/lauren-framework/lauren-framework/releases"
 
 [project.optional-dependencies]
 dev = [
@@ -50,6 +73,13 @@ dev = [
     "prometheus-client>=0.17",
     "opentelemetry-api>=1.0",
     "opentelemetry-sdk>=1.0",
+]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.27",
+    "pymdown-extensions>=10.7",
+    "griffe>=1.0",
 ]
 
 [tool.mypy]

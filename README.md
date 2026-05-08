@@ -51,7 +51,7 @@
 
 ---
 
-**Documentation**: <a href="https://lauren.dev" target="_blank">https://lauren.dev</a>
+**Documentation**: <a href="https://lauren-py.dev" target="_blank">https://lauren-py.dev</a>
 
 **Source Code**: <a href="https://github.com/lauren-framework/lauren-framework" target="_blank">https://github.com/lauren-framework/lauren-framework</a>
 
@@ -96,7 +96,7 @@ core ideas:
 * **No reflection on the request path.** The whole graph is compiled into
   immutable structures at startup; serving a request is pure traversal.
 * **AI-ready by default.** Public surface is mirrored in
-  [`llms.txt` / `llms-full.txt`](https://lauren.dev/llms-txt) and exported
+  [`llms.txt` / `llms-full.txt`](https://lauren-py.dev/llms-txt) and exported
   in `__all__` — a CI hook keeps the two in lock-step.
 
 ## Features
