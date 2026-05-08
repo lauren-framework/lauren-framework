@@ -52,7 +52,7 @@ repos:
   # We run ruff via its official mirror so prek can use the prebuilt
   # binary instead of building from source on every clone.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.6
+    rev: v0.15.12
     hooks:
       - id: ruff
         name: ruff (lint, autofix)
