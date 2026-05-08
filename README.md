@@ -56,13 +56,27 @@
 
 ## For AI Agents & Coding Assistants
 
+### Install all skills in one command
+
+```bash
+# Claude Code, Cursor, Copilot, Continue, Codex CLI — auto-detected
+npx skills add lauren-framework/lauren-framework
+```
+
+This copies all 60+ SKILL.md context packs into your agent's global skills
+directory (`~/.claude/skills/`, `~/.cursor/skills/`, etc.). The next time your
+agent opens a Lauren project it has pre-loaded expertise on auth, database,
+config, API patterns, observability, and more.
+
 | Resource | What it contains |
 |---|---|
 | [`llms.txt`](llms.txt) | 2 KB framework overview — start here |
 | [`lauren/llms-full.txt`](lauren/llms-full.txt) | 25 KB complete reference — all APIs, patterns, common errors |
 | [`AGENTS.md`](AGENTS.md) | Agent rules, by-task lookup, file ownership, common errors, definition of done |
 | [`CLAUDE.md`](CLAUDE.md) | Conventions, commands, golden rules, pattern selection guide |
-| [`skills/`](skills/) | 10 copy-paste skill guides covering every common task |
+| [`skills/`](skills/) | 60+ copy-paste skill guides covering every common task |
+
+Full install guide and skills index: [docs/guides/agent-skills.md](docs/guides/agent-skills.md)
 
 ---
 
