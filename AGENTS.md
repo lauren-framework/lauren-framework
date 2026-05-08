@@ -201,3 +201,60 @@ path to "I understand what I'm doing":
    know why.
 
 Welcome aboard.
+
+## By-Task Quick Lookup
+
+| I need to… | Read first | Copy-paste guide |
+|---|---|---|
+| Add a new route / controller | `lauren/_asgi/__init__.py` | `skills/building-lauren-controllers/` |
+| Wire DI / providers / lifecycle | `lauren/_di/__init__.py` | `skills/building-lauren-services/` |
+| Add a guard, middleware, or interceptor | `lauren/decorators.py` | `skills/building-lauren-guards/` |
+| Add WebSocket / SSE / streaming | `lauren/websockets.py`, `lauren/sse.py` | `skills/building-lauren-streaming/` |
+| Write unit or integration tests | `tests/integration/test_di.py` | `skills/testing-lauren-apps/` |
+| Add a background task | `lauren/background.py` | `skills/building-lauren-background-tasks/` |
+| Debug a startup error | `lauren/exceptions.py` | **Common Errors** section below |
+| Port from FastAPI | `llms-full.txt` §Guards | `skills/migrating-from-fastapi/` |
+| Add CORS / auth guards / logging | `AGENTS.md` §Companion Packages | `skills/using-companion-packages/` |
+| Copy a production-ready pattern | `tests/integration/` | `skills/common-patterns/` |
+
+## Skills Quick Index
+
+| Task | Skill directory |
+|---|---|
+| Project layout, `LaurenFactory`, root module | `skills/building-lauren-apps/` |
+| Route handlers, extractors, pipes, serialization | `skills/building-lauren-controllers/` |
+| DI scopes, custom providers, lifecycle hooks | `skills/building-lauren-services/` |
+| Guards, interceptors, middleware | `skills/building-lauren-guards/` |
+| SSE, WebSocket gateways, `StreamingResponse` | `skills/building-lauren-streaming/` |
+| `BackgroundTasks`, `TaskHandle` | `skills/building-lauren-background-tasks/` |
+| `TestClient`, async tests, mock providers | `skills/testing-lauren-apps/` |
+| FastAPI → lauren side-by-side equivalents | `skills/migrating-from-fastapi/` |
+| CORS, auth guards, structured logging | `skills/using-companion-packages/` |
+| Copy-paste: CRUD, health check, background job, SSE | `skills/common-patterns/` |
+
+Full index: [`skills/README.md`](skills/README.md)
+
+## Docs Map
+
+| Concept | Most relevant file |
+|---|---|
+| Dependency injection deep-dive | `docs/guides/dependency-injection.md` |
+| Custom extractor plugin API | `docs/guides/custom-extractors.md` |
+| Guard vs middleware vs interceptor | `docs/concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md` |
+| Strict inheritance rules (why subclasses must re-decorate) | `docs/core-concepts/inheritance.md` |
+| WebSocket patterns | `docs/guides/websockets.md` |
+| SSE / streaming | `docs/guides/sse.md` |
+| Testing playbook | `docs/guides/testing.md` |
+| Release / versioning process | `docs/development/release.md` |
+
+## Common Startup Errors
+
+| Error class | Most common cause | Fix |
+|---|---|---|
+| `MetadataInheritanceError` | Subclass of `@controller` / `@injectable` / `@module` not re-decorated | Re-apply the decorator on the subclass |
+| `ModuleExportViolation` | Provider injected across module boundary but not listed in `exports=[]` | Add the type to `exports=` in the owning module |
+| `CircularDependencyError` | A → B → A in the DI graph | Break with `use_factory` or restructure modules |
+| `DecoratorUsageError` | `@middleware` / `@injectable` used bare without `()` | Change to `@middleware()` / `@injectable()` |
+| `DuplicateRouteError` | Two handlers registered on the same method + path | Rename one route |
+| `UnresolvableProviderError` | Type not registered anywhere, or owning module not imported | Import the owning module in the consumer module |
+| `StartupError` (generic) | Missing required parameter in constructor injection | Add the type as a `@module` provider or import its module |

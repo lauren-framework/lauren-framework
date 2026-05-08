@@ -3,6 +3,10 @@ name: testing-lauren-apps
 description: Tests Lauren apps with TestClient (sync) and httpx.AsyncClient (async). Covers conftest setup, env vars before imports, app startup, mock providers, and common assertion patterns. Use when writing unit or integration tests for a Lauren app.
 ---
 
+> Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
+> exact file + line range and is faster than grep across the whole repo.
+
+
 # Testing Lauren Apps
 
 ## Conftest — env vars MUST come before app imports

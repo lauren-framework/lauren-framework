@@ -1,0 +1,31 @@
+{
+  "skill": "building-lauren-controllers",
+  "scenarios": [
+    {
+      "query": "Add a GET /users/{id} route that returns a Pydantic User model",
+      "expected_behavior": [
+        "Wraps handler in a @controller-decorated class",
+        "Uses @get('/{id}') decorator on the method",
+        "Declares typed Path[int] extractor for the id parameter",
+        "Returns a Pydantic model instance (auto-serialized to JSON)"
+      ]
+    },
+    {
+      "query": "Add a POST /items route that validates the request body as a Pydantic model and returns 201",
+      "expected_behavior": [
+        "Uses @post('/') decorator",
+        "Declares Json[CreateItem] body extractor",
+        "Returns (item, 201) tuple to set the status code",
+        "Does not call response.json() manually"
+      ]
+    },
+    {
+      "query": "Add a query parameter 'limit' with a default of 10 to a list endpoint",
+      "expected_behavior": [
+        "Declares limit: int = 10 or limit: Query[int] = 10 in the handler signature",
+        "Does not add Path[int] for a query parameter",
+        "Passes the default value correctly"
+      ]
+    }
+  ]
+}

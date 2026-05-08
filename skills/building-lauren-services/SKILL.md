@@ -3,6 +3,10 @@ name: building-lauren-services
 description: Writes Lauren injectable services, configures DI scopes, wires lifecycle hooks, and uses custom providers (Token, use_value, use_class, use_factory, use_existing). Use when adding a service, repository, or DI provider to a Lauren module.
 ---
 
+> Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
+> exact file + line range and is faster than grep across the whole repo.
+
+
 # Lauren Services & Dependency Injection
 
 ## Injectable service

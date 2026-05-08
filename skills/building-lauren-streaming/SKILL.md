@@ -3,6 +3,10 @@ name: building-lauren-streaming
 description: Writes Lauren SSE endpoints with EventStream/ServerSentEvent and WebSocket gateways with ws_controller/on_connect/on_message/on_disconnect/BroadcastGroup. Use when adding real-time streaming or bidirectional communication to a Lauren app.
 ---
 
+> Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
+> exact file + line range and is faster than grep across the whole repo.
+
+
 # Lauren Streaming
 
 ## Server-Sent Events (SSE)

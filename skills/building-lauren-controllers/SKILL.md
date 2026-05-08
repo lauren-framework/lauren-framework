@@ -3,6 +3,10 @@ name: building-lauren-controllers
 description: Writes Lauren controllers with route handlers, typed extractors, and auto-serialization. Covers @controller, @get/@post/@put/@patch/@delete, Path/Query/Header/Cookie/Json/Form/Bytes extractors, field descriptors, pipes, and all return-type patterns. Use when adding routes, extractors, or HTTP handlers to a Lauren app.
 ---
 
+> Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
+> exact file + line range and is faster than grep across the whole repo.
+
+
 # Lauren Controllers
 
 ## Controller skeleton

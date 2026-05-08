@@ -215,18 +215,32 @@ def docs_install(session: nox.Session) -> None:
 def docs(session: nox.Session) -> None:
     """Build the documentation site into ./site (strict mode).
 
+    Also regenerates docs/generated-reference/ — the plain-Markdown API
+    reference consumed by the lauren-website (Next.js).  The generated files
+    are committed to the repo so the website's production build works without
+    requiring Python.
+
     Strict mode treats any warning (broken link, missing nav entry,
     unresolved snippet) as an error, matching CI.
     """
     session.install("-r", str(DOCS_REQUIREMENTS))
+    # griffe is already pulled in by mkdocstrings[python] in docs-requirements;
+    # this explicit install makes the requirement visible in the session log.
+    session.install("griffe")
+    session.run("python", "scripts/generate_api_docs.py")
     args = session.posargs or ["--strict"]
     session.run("mkdocs", "build", *args)
 
 
 @nox.session(python=PRIMARY_PYTHON, reuse_venv=True, name="docs_serve")
 def docs_serve(session: nox.Session) -> None:
-    """Serve the docs locally with live reload at http://localhost:8000."""
+    """Serve the docs locally with live reload at http://localhost:8000.
+
+    Also regenerates docs/generated-reference/ before starting the server.
+    """
     session.install("-r", str(DOCS_REQUIREMENTS))
+    session.install("griffe")
+    session.run("python", "scripts/generate_api_docs.py")
     session.run("mkdocs", "serve", *session.posargs)
 
 

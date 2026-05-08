@@ -10,6 +10,9 @@ on:
       - "mkdocs.yml"
       - "docs-requirements.txt"
       - "README.md"
+      - "CHANGELOG.md"
+      # Rebuild when source changes so mkdocstrings API reference stays fresh.
+      - "lauren/**"
       - ".github/workflows/docs.yml"
       - "noxfile.py"
   workflow_dispatch:
@@ -36,6 +39,10 @@ jobs:
           cache: pip
           cache-dependency-path: docs-requirements.txt
       - run: python -m pip install --upgrade pip nox
+      - name: Re-generate plain-Markdown API reference (for lauren-website)
+        run: |
+          pip install griffe
+          python scripts/generate_api_docs.py
       - name: Build site
         run: nox -s docs
       - name: Upload site artifact

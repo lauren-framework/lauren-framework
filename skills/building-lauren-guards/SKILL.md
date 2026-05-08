@@ -3,6 +3,10 @@ name: building-lauren-guards
 description: Writes Lauren guards, interceptors, and middlewares. Covers @guard, can_activate, ExecutionContext, @interceptor, intercept/CallHandler, @middleware() (parentheses required), dispatch/call_next, use_guards, use_interceptors, use_middlewares, and set_metadata. Use when protecting routes, transforming responses, or adding cross-cutting logic to a Lauren app.
 ---
 
+> Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
+> exact file + line range and is faster than grep across the whole repo.
+
+
 # Lauren Guards, Interceptors & Middlewares
 
 ## Guards — route authorization

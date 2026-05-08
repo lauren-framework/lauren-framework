@@ -3,6 +3,10 @@ name: building-lauren-apps
 description: Scaffolds and builds Lauren Python web framework applications. Covers LaurenFactory.create(), the @module system, project file layout, and wiring everything together. Use when creating a new Lauren project, setting up AppModule, or understanding how Lauren's startup phases work.
 ---
 
+> Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
+> exact file + line range and is faster than grep across the whole repo.
+
+
 # Building Lauren Apps
 
 Lauren is a Python ASGI framework (NestJS-inspired). Every app is a tree of `@module`s assembled by `LaurenFactory.create()`.

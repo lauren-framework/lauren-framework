@@ -3,6 +3,10 @@ name: building-lauren-background-tasks
 description: Adds fire-and-forget background tasks to Lauren handlers. Covers BackgroundTasks extractor, add_task, TaskHandle, sync/async callables, signal subscription (BackgroundTaskStarted/Complete/Failed), graceful shutdown participation, and the request-scoped DI constraint. Use when deferring work (emails, webhooks, audit writes) to after the HTTP response is sent.
 ---
 
+> Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
+> exact file + line range and is faster than grep across the whole repo.
+
+
 # Lauren Background Tasks
 
 ## Basic usage

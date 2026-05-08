@@ -1,0 +1,31 @@
+{
+  "skill": "building-lauren-services",
+  "scenarios": [
+    {
+      "query": "Create a singleton service that is injected into a controller",
+      "expected_behavior": [
+        "Decorates the service class with @injectable(scope=Scope.SINGLETON)",
+        "Adds the service to the module's providers= list",
+        "Injects it via the controller's __init__ constructor parameter",
+        "Does not use Depends() — that is FastAPI syntax"
+      ]
+    },
+    {
+      "query": "Wire a request-scoped database session with cleanup on request teardown",
+      "expected_behavior": [
+        "Uses @injectable(scope=Scope.REQUEST)",
+        "Adds a @pre_destruct method for cleanup",
+        "Does not store the session as a module-level global"
+      ]
+    },
+    {
+      "query": "Inject a fixed configuration value using use_value",
+      "expected_behavior": [
+        "Creates a Token or uses the class as the provider token",
+        "Wraps the value with use_value(provide=..., value=...)",
+        "Adds it to the module's providers= list",
+        "Injects via constructor type annotation"
+      ]
+    }
+  ]
+}

@@ -162,6 +162,8 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
    existing category (`StartupError`, `HTTPError`, `LifecycleError`)
    rather than creating a parallel hierarchy.
 
+→ *See `skills/building-lauren-apps/` for the complete `LaurenFactory` bootstrap pattern and module wiring.*
+
 ## 4. Coding Conventions
 
 - **Python version:** target 3.11+; use PEP 604 unions (`X | None`),
@@ -181,6 +183,19 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
   parametrize for axis-of-variation tables. No `unittest.TestCase`.
 - **Line length:** soft 88 (black-compatible); hard 120.
 
+**Choosing the right abstraction:**
+
+| I need to… | Use |
+|---|---|
+| Block or allow a request (auth, rate-limit) | `CanActivate` guard + `@use_guards` |
+| Read/modify raw request or response bytes | `@middleware()` with `call_next` |
+| Wrap handler execution (timing, caching, transforms) | `@injectable` interceptor + `@use_interceptors` |
+| Inject a typed value into a handler parameter | Custom `Extractor` (`extractors.py`) |
+| Share state across a single request | `Scope.REQUEST` injectable |
+| Share state for the app lifetime | `Scope.SINGLETON` injectable |
+
+See `docs/concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md` for detailed trade-offs.
+
 ## 5. How to Add a Feature
 
 ```
@@ -194,6 +209,8 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 6. Add a docs page under `docs/guides/` (or extend an existing one).
 7. Run the full suite: `pytest -q`. Every test must pass.
 ```
+
+→ *See `AGENTS.md §Definition-of-Done` for the merge-readiness checklist. See `skills/building-lauren-apps/` for project scaffolding.*
 
 ## 6. How to Add a Decorator
 
@@ -270,6 +287,8 @@ When adding tests for either, drive a real app through
 buffered client returns the entire stream body, which makes assertions
 deterministic).
 
+→ *See `skills/building-lauren-streaming/` for copy-paste SSE and WebSocket gateway patterns.*
+
 ## 8. Common Pitfalls
 
 - ❌ Calling `get_type_hints` directly — use `_typing.resolve_type_hints`.
@@ -339,6 +358,8 @@ deterministic).
 - **Regression shape:** every bug fix gets a test in the same file as
   its nearest existing neighbour.
 
+→ *See `skills/testing-lauren-apps/` for `TestClient` setup, async test patterns, and mock-provider recipes.*
+
 ## 10. Commit Messages
 
 `<scope>: <imperative sentence under 72 chars>`. Scopes: `di`, `asgi`,
@@ -364,6 +385,16 @@ deterministic).
 - `llms-full.txt` — machine-readable reference, the source of truth
   for what the public API is supposed to do.
 - `docs/` — long-form prose explanations and conceptual articles.
+
+**Symbol lookup (fastest navigation):** Use `codemap` before grepping — it
+returns exact file + line ranges so you only read what you need:
+
+```bash
+codemap find "InjectableError"       # → lauren/exceptions.py:45-52
+codemap find "resolve_type_hints"    # → lauren/_typing/__init__.py:12-38
+codemap show lauren/_di/__init__.py  # full symbol map with line ranges
+codemap find "on_connect" --type method
+```
 
 When in doubt: grep the tests. They express the invariants more
 precisely than any English prose. Around **2120 tests** currently pass

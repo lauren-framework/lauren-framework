@@ -54,6 +54,18 @@
 
 ---
 
+## For AI Agents & Coding Assistants
+
+| Resource | What it contains |
+|---|---|
+| [`llms.txt`](llms.txt) | 2 KB framework overview — start here |
+| [`lauren/llms-full.txt`](lauren/llms-full.txt) | 25 KB complete reference — all APIs, patterns, common errors |
+| [`AGENTS.md`](AGENTS.md) | Agent rules, by-task lookup, file ownership, common errors, definition of done |
+| [`CLAUDE.md`](CLAUDE.md) | Conventions, commands, golden rules, pattern selection guide |
+| [`skills/`](skills/) | 10 copy-paste skill guides covering every common task |
+
+---
+
 lauren is a modern, high-performance Python web framework for building APIs
 that need to **fail at startup, not in production**. It is built on these
 core ideas:
