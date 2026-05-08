@@ -67,9 +67,9 @@ npx skills add lauren-framework/lauren-framework
 ```
 
 This copies all 60+ SKILL.md context packs into your agent's global skills
-directory (`~/.claude/skills/`, `~/.cursor/skills/`, etc.). The next time your
+directory (`~/.claude/skills/`, `~/.cursor/skills/`, etc.).  The next time your
 agent opens a Lauren project it has pre-loaded expertise on auth, database,
-config, API patterns, observability, and more.
+API patterns, observability, security, and more.
 
 | Resource | What it contains |
 |---|---|
@@ -97,87 +97,66 @@ core ideas:
   immutable structures at startup; serving a request is pure traversal.
 * **AI-ready by default.** Public surface is mirrored in
   [`llms.txt` / `llms-full.txt`](https://lauren.dev/llms-txt) and exported
-  in `__all__` &mdash; a CI hook keeps the two in lock-step.
+  in `__all__` — a CI hook keeps the two in lock-step.
 
-The key features are:
+## Features
 
-* **Fast**: Performance comparable to Starlette, with zero per-request
-  reflection thanks to a fully pre-compiled execution graph.
-* **Implicit extractors**: Path params, query strings, and JSON bodies
-  are auto-detected from type annotations — write `id: int`, `q: str`,
-  `body: MyModel` with no `Path[...]`/`Query[...]`/`Json[...]` boilerplate
-  unless you need the explicit form.
-* **Three-scope DI**: `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes with
-  Protocol bindings, multi-bindings (`list[T]`), and custom token providers
-  (NestJS-style `use_value` / `use_class` / `use_factory` / `use_existing`).
-* **Pipes**: Post-extraction value transforms — validate, coerce, or enrich
-  extracted parameter values before they reach your handler. Function-based,
-  class-based, chainable, and DI-aware.
-* **WebSockets & SSE**: First-class `@ws_controller` gateways with typed
-  Pydantic frames and `BroadcastGroup` rooms; one-way streaming with
-  `EventStream` and `Last-Event-ID` resumability for AI text-streaming
-  patterns.
-* **Static files**: `StaticFilesModule.for_root("/static", directory="./public")`
+* **Fast** — Zero per-request reflection:
+  routes, DI graph, extractors, and middleware are fully compiled at startup.
+* **Implicit extractors** — Path params, query strings, and JSON bodies are
+  auto-detected from type annotations. Write `id: int`, `q: str`,
+  `body: MyModel` without boilerplate unless you need the explicit form.
+* **Three-scope DI** — `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes with
+  Protocol bindings, multi-bindings (`list[T]`), and NestJS-style custom
+  providers (`use_value` / `use_class` / `use_factory` / `use_existing`).
+* **Pipes** — Post-extraction value transforms: validate, coerce, or enrich
+  parameters before they reach the handler. Function-based, class-based,
+  chainable, and DI-aware.
+* **Guards, Middleware & Interceptors** — All three attachment points. Guards
+  run first (allow/deny); middleware wraps raw request/response bytes; interceptors
+  wrap handler execution for timing, caching, and response transforms.
+* **WebSockets** — First-class `@ws_controller` gateways with typed Pydantic
+  frames, discriminated-union dispatch, and `BroadcastGroup` rooms.
+* **Server-Sent Events** — `EventStream` with keep-alive heartbeats and
+  `Last-Event-ID` resumability for AI token-streaming patterns.
+* **Typed streaming** — `StreamingResponse[T]` auto-negotiates between SSE,
+  NDJSON, and JSON Lines based on the client's `Accept` header.
+* **Background tasks** — `BackgroundTasks` extractor fires work after the
+  response is sent. `TaskHandle` exposes cancel/await. Signals notify on
+  start, complete, and failure.
+* **Static files** — `StaticFilesModule.for_root("/assets", directory="./public")`
   with ETag caching, `Cache-Control`, and path-traversal protection.
-* **Fewer bugs**: Strict metadata inheritance, cycle detection, and
-  Pydantic-validated extractors reduce a class of errors by design.
-* **Standards-based**: Built on top of the [ASGI](https://asgi.readthedocs.io/)
-  spec, [Pydantic](https://docs.pydantic.dev/), and full
-  [OpenAPI 3.1](https://www.openapis.org/) generation.
-
-## Sponsors
-
-<!--
-Reserved for the project's sponsors once the GitHub Sponsors profile is
-set up. Edit this section after the first sponsor is onboarded.
--->
-
-Become one of the first sponsors of lauren on
-[GitHub Sponsors](https://github.com/sponsors/lauren-framework) &mdash; help
-fund maintenance and ensure the framework stays free and independent.
-
+* **Socket.IO** — Engine.IO v4 / Socket.IO v5 adapter via `@socketio_controller`.
+* **OpenAPI 3.1** — Automatic schema generation from Pydantic models and
+  route decorators. Swagger UI and ReDoc served out of the box.
+* **Lifecycle signals** — `SignalBus` with `StartupBegin`, `StartupComplete`,
+  `ShutdownBegin`, `RequestReceived`, `RequestComplete`, and more.
+* **Standards-based** — Built on [ASGI](https://asgi.readthedocs.io/),
+  [Pydantic](https://docs.pydantic.dev/), and [anyio](https://anyio.readthedocs.io/).
 
 ## Requirements
 
-Python **3.11**, **3.12**, **3.13**, and **3.14** are supported. Core requirements:
+Python **3.11**, **3.12**, **3.13**, and **3.14** are supported. Hard dependencies:
 
-* [Pydantic](https://docs.pydantic.dev/) for request validation and
-  response serialisation.
+* [Pydantic](https://docs.pydantic.dev/) — request validation and response serialisation.
+* [anyio](https://anyio.readthedocs.io/) — async backend and thread-pool offload for sync handlers.
 
 ## Installation
 
-Create and activate a [virtual environment](https://docs.python.org/3/library/venv.html)
-and then install lauren:
-
-```console
-$ pip install lauren
+```bash
+pip install lauren
+# with an ASGI server:
+pip install "uvicorn[standard]"
+# or granian (faster on CPython):
+pip install granian
 ```
 
-You'll also want an ASGI server such as
-[Uvicorn](https://www.uvicorn.org/) or [Hypercorn](https://hypercorn.readthedocs.io/):
-
-```console
-$ pip install "uvicorn[standard]"
-```
-
-## Example
-
-### Create it
-
-Create a file `main.py` with:
+## Quick start
 
 ```python
 from pydantic import BaseModel
-
-from lauren import (
-    LaurenFactory,
-    controller,
-    get,
-    post,
-    module,
-    ExecutionContext,
-    use_guards,
-)
+from lauren import LaurenFactory, controller, get, post, module, use_guards
+from lauren.types import ExecutionContext
 
 
 class CreateUser(BaseModel):
@@ -194,13 +173,10 @@ class AdminGuard:
 class UserController:
     @get("/{id}")
     async def get_user(self, id: int) -> dict:
-        # `id` is auto-detected as a path parameter (name matches `{id}`).
         return {"id": id, "found": True}
 
     @post("/")
     async def create(self, body: CreateUser):
-        # `body` is auto-detected as a JSON body (Pydantic model).
-        # Tuple form: (body, status_code).
         return body.model_dump(), 201
 
     @get("/admin")
@@ -214,69 +190,18 @@ class AppModule:
     pass
 
 
-# LaurenFactory.create() is synchronous — build the app at module level
-# so uvicorn / hypercorn / granian can import it directly.
-app = LaurenFactory.create(
-    AppModule,
-    openapi_url="/openapi.json",
-    docs_url="/docs",
-    redoc_url="/redoc",
-)
+app = LaurenFactory.create(AppModule, docs_url="/docs")
 ```
 
-Explicit extractor markers (`Path[int]`, `Json[CreateUser]`) are always
-accepted too — lauren auto-detects sources only when no explicit marker is
-present. See [Implicit Parameter Extraction](https://lauren.dev/guides/implicit-params/)
-for the full rules.
-
-### Run it
-
-Run the server with:
-
-```console
-$ uvicorn main:app --reload
-
-INFO:     Will watch for changes in these directories: ['/path/to/proj']
-INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
-INFO:     Started reloader process [28720]
-INFO:     [lauren] startup complete: 1 module, 1 controller, 3 routes
-INFO:     Application startup complete.
+```bash
+uvicorn main:app --reload
+# → http://127.0.0.1:8000/docs  (Swagger UI)
 ```
 
-### Check it
-
-Open your browser at <a href="http://127.0.0.1:8000/users/42" target="_blank">http://127.0.0.1:8000/users/42</a>.
-
-You will see the JSON response as:
-
-```json
-{"id": 42, "found": true}
-```
-
-You already created an API that:
-
-* Receives HTTP requests on the path `/users/{id}`.
-* Both paths take `GET` operations (also known as HTTP *methods*).
-* The path `/users/{id}` has a *path parameter* `id` that is validated as
-  an `int` — auto-detected because the parameter name matches `{id}` in
-  the URL template.
-* The path `/users/` accepts `POST` with a JSON body validated against
-  the `CreateUser` Pydantic model — auto-detected because `CreateUser` is
-  a Pydantic `BaseModel`.
-* The path `/users/admin` is gated by a class-based guard and returns
-  403 unless the `x-role: admin` header is present.
-
-### Interactive API docs
-
-Open <a href="http://127.0.0.1:8000/docs" target="_blank">http://127.0.0.1:8000/docs</a> for the Swagger UI, or <a href="http://127.0.0.1:8000/redoc" target="_blank">http://127.0.0.1:8000/redoc</a> for ReDoc. Both are generated automatically from your controller decorators and Pydantic models with no extra configuration.
-
-## Example upgrade
-
-Now modify `main.py` to wire up dependency injection and a lifecycle hook:
+## Dependency injection
 
 ```python
 from lauren import injectable, post_construct, pre_destruct, Scope
-
 
 @injectable(scope=Scope.SINGLETON)
 class UserRepository:
@@ -298,7 +223,6 @@ class UserRepository:
 @controller("/users")
 class UserController:
     def __init__(self, repo: UserRepository) -> None:
-        # Constructor injection — resolved once per request scope.
         self.repo = repo
 
     @get("/{id}")
@@ -308,137 +232,137 @@ class UserController:
             return {"id": id, "found": False}, 404
         return {"id": id, "name": name}
 
-    @post("/")
-    async def create(self, body: CreateUser):
-        await self.repo.upsert(body.age, body.name)
-        return body.model_dump(), 201
-
 
 @module(providers=[UserRepository], controllers=[UserController])
 class AppModule:
     pass
-
-
-app = LaurenFactory.create(AppModule, docs_url="/docs")
 ```
 
-### Mounting sub-applications
+## Modules
 
-`LaurenApp.mount()` lets you attach any ASGI sub-application at a path
-prefix. The most-specific prefix wins; the stripped path and updated
-`root_path` are forwarded to the sub-application:
+Modules are the unit of feature composition. Each module declares what it
+provides, what it exports, and what it imports from other modules — similar
+to NestJS:
 
 ```python
-from starlette.staticfiles import StaticFiles
-
-app = LaurenFactory.create(AppModule, docs_url="/docs")
-app.mount("/static", StaticFiles(directory="static"))
-
-# Equivalently, via the factory:
-app = LaurenFactory.create(
-    AppModule,
-    mounts={"/static": StaticFiles(directory="static")},
+@module(
+    imports=[DatabaseModule, AuthModule],
+    controllers=[UserController, ProfileController],
+    providers=[UserService, EmailService],
+    exports=[UserService],
 )
+class UsersModule:
+    pass
 ```
 
-For serving your own static files directly from a Lauren module, use
-`StaticFilesModule` instead:
+Circular dependency detection, missing export errors, and scope violations
+are all caught at startup — before your first request.
+
+## SSE / streaming
+
+```python
+from lauren import EventStream, ServerSentEvent, get
+
+@get("/events")
+async def stream(self) -> EventStream:
+    async def generate():
+        for i in range(10):
+            yield ServerSentEvent(data=f"tick {i}", event="tick")
+            await asyncio.sleep(1)
+        yield ServerSentEvent(data="done", event="close")
+    return EventStream(generate(), keep_alive=15.0)
+```
+
+For typed, content-negotiated streams (SSE / NDJSON / JSON Lines):
+
+```python
+from pydantic import BaseModel
+from lauren import StreamingResponse
+
+class Tick(BaseModel):
+    seq: int
+
+@get("/ticks")
+async def ticks(self) -> StreamingResponse[Tick]:
+    async def gen():
+        for i in range(100):
+            yield Tick(seq=i)
+            await asyncio.sleep(0.05)
+    return StreamingResponse(gen())
+```
+
+## Static files
 
 ```python
 from lauren.static_files import StaticFilesModule
 
-@module(
-    controllers=[...],
-    imports=[StaticFilesModule.for_root("/static", directory="./public")],
-)
+@module(imports=[StaticFilesModule.for_root("/assets", directory="./public")])
 class AppModule:
     pass
 ```
 
-### Recap
+Or mount any ASGI sub-app:
 
-In summary, you declare **once** the types of parameters, body, and
-guards as decorators or `Annotated` markers. lauren takes care of:
-
-* Reading the request payload, validating it, and converting it to the
-  right Python type — automatically inferred from the type annotation.
-* Resolving the controller's constructor dependencies through the DI
-  graph that was compiled at startup.
-* Running guards and middleware in the right order.
-* Returning a JSON response (with automatic data conversion).
-* Generating an interactive API documentation site.
-
-### Deploy your app (optional)
-
-#### Self-hosting
-
-lauren is a standard ASGI application. Deploy it the same way you'd
-deploy any FastAPI / Starlette / Litestar app:
-
-* [Uvicorn](https://www.uvicorn.org/deployment/)
-* [Hypercorn](https://hypercorn.readthedocs.io/en/latest/how_to_guides/configuring.html)
-* [Granian](https://github.com/emmett-framework/granian)
-
+```python
+app = LaurenFactory.create(AppModule)
+app.mount("/static", StaticFiles(directory="static"))
+```
 
 ## Performance
 
-Independent benchmarks consistently rank lauren in the top tier of pure
-Python ASGI frameworks. The exact numbers depend on the benchmark, the
-ASGI server, and the workload &mdash; see
-<https://lauren.dev/benchmarks> for the full methodology.
+Runtime is **pure traversal of pre-compiled structures** — no
+`inspect.signature(...)`, no `get_type_hints(...)`, no `isinstance(...)`
+walking on the hot path. The DI graph, route table, extractor bindings, and
+middleware pipeline are all resolved once at startup. Each request pays only
+the cost of dispatching through the already-compiled graph.
 
-The point isn't a number on a slide. It's that **runtime is pure
-traversal of pre-compiled structures**: no `inspect.signature(...)`, no
-`get_type_hints(...)`, no `isinstance(...)` walking. Once you've paid
-the startup cost, every request is allocation-light and predictable.
+## Optional dependencies
 
-## Dependencies
+| Package | Purpose |
+|---|---|
+| `uvicorn` / `hypercorn` / `granian` | ASGI server (none bundled — pick one) |
+| `httpx` | Required for `lauren.testing.TestClient` |
+| `orjson` | Faster JSON — auto-detected at import time |
+| `msgspec` | Alternative fast JSON encoder via `MsgspecEncoder` |
+| `python-multipart` | Required for `Form[...]` extractors |
 
-lauren's hard dependencies are [Pydantic](https://docs.pydantic.dev/) and [anyio](https://anyio.readthedocs.io/).
+## Companion packages
 
-### Optional dependencies
+| Package | Purpose |
+|---|---|
+| [`lauren-middlewares`](https://github.com/lauren-framework/lauren-middlewares) | CORS, rate-limit, GZip, security headers, request-id, trusted hosts, HTTPS redirect, body-size limit, timeout |
+| [`lauren-logging`](https://github.com/lauren-framework/lauren-logging) | Structured logging module with processor pipeline, contextvars binding, pluggable backends (stdlib, structlog, file, fan-out) |
+| [`lauren-guards`](https://github.com/lauren-framework/lauren-guards) | Auth guards: JWT bearer, API key, basic auth, OAuth2 introspection, session cookie, RBAC/ABAC, CSRF, IP allowlist |
 
-Install these separately as your project needs them:
+## Deployment
 
-* **ASGI server** &mdash;
-  [`uvicorn`](https://www.uvicorn.org/),
-  [`hypercorn`](https://hypercorn.readthedocs.io/), or
-  [`granian`](https://github.com/emmett-framework/granian).
-  None is bundled so you can pick whichever fits your deployment.
-* **Test client** &mdash; [`httpx`](https://www.python-httpx.org/)
-  is required for `lauren.testing`. Install it together with the
-  test runner via `pip install "lauren[dev]"` which also pulls in
-  `pytest` and `pytest-asyncio`.
-* **Faster JSON** &mdash; [`orjson`](https://github.com/ijl/orjson)
-  is auto-detected at import time. When present, all JSON
-  serialisation goes through orjson at no code change.
-* **Faster JSON (msgspec)** &mdash; install
-  [`msgspec`](https://jcristharif.com/msgspec/) and use
-  `MsgspecEncoder` from `lauren.serialization` if you prefer
-  msgspec over Pydantic for hot-path serialisation.
-* **Form parsing** &mdash;
-  [`python-multipart`](https://github.com/Kludex/python-multipart)
-  is required for `Form[...]` extractors.
+lauren is a standard ASGI application — deploy exactly like FastAPI or Starlette:
+
+```bash
+# Uvicorn
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+
+# Granian (Rust-based, faster on CPython)
+granian --interface asgi main:app --host 0.0.0.0 --port 8000
+
+# Hypercorn (HTTP/2 + HTTP/3)
+hypercorn main:app --bind 0.0.0.0:8000
+```
 
 ## Contributing
 
-We welcome contributions of every size, from typo fixes to whole
-subsystems. Two things to read first:
+We welcome contributions of every size, from typo fixes to whole subsystems.
+Read first:
 
-1. [`CONTRIBUTING.md`](CONTRIBUTING.md) &mdash; setup, branch & commit
-   conventions, and the quality bar.
-2. [`AGENTS.md`](AGENTS.md) (mirror of [`.CLAUDE.md`](.CLAUDE.md)) &mdash;
-   the design invariants every PR must respect, regardless of whether the
-   author is human or an AI agent.
+1. [`CONTRIBUTING.md`](CONTRIBUTING.md) — setup, branch & commit conventions, and the quality bar.
+2. [`AGENTS.md`](AGENTS.md) — the design invariants every PR must respect, whether the author is human or an AI agent.
 
-The full development loop is one command:
-
-```console
-$ uv tool install prek      # one-time, optional but recommended
-$ prek install              # wires up the git hook
-$ nox                       # lint + tests + typecheck
+```bash
+uv tool install prek      # one-time
+prek install              # wires up the git hook
+nox                       # lint + tests + typecheck
 ```
 
 ## License
 
-This project is licensed under the terms of the [MIT license](LICENSE).
+MIT — see [LICENSE](LICENSE).
