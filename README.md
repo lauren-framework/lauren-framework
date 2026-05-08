@@ -123,7 +123,7 @@ testimonials.)
 
 ## Requirements
 
-Python **3.11**, **3.12**, and **3.13** are supported. Core requirements:
+Python **3.11**, **3.12**, **3.13**, and **3.14** are supported. Core requirements:
 
 * [Pydantic](https://docs.pydantic.dev/) for request validation and
   response serialisation.
@@ -252,21 +252,7 @@ You already created an API that:
 
 ### Interactive API docs
 
-Now go to <a href="http://127.0.0.1:8000/docs" target="_blank">http://127.0.0.1:8000/docs</a>.
-
-You will see the automatic interactive API documentation (provided by
-[Swagger UI](https://github.com/swagger-api/swagger-ui)):
-
-![Swagger UI](https://lauren.dev/img/index/index-01-swagger-ui-simple.png)
-
-### Alternative API docs
-
-And now, go to <a href="http://127.0.0.1:8000/redoc" target="_blank">http://127.0.0.1:8000/redoc</a>.
-
-You will see the alternative automatic documentation (provided by
-[ReDoc](https://github.com/Rebilly/ReDoc)):
-
-![ReDoc](https://lauren.dev/img/index/index-02-redoc-simple.png)
+Open <a href="http://127.0.0.1:8000/docs" target="_blank">http://127.0.0.1:8000/docs</a> for the Swagger UI, or <a href="http://127.0.0.1:8000/redoc" target="_blank">http://127.0.0.1:8000/redoc</a> for ReDoc. Both are generated automatically from your controller decorators and Pydantic models with no extra configuration.
 
 ## Example upgrade
 
@@ -397,7 +383,7 @@ the startup cost, every request is allocation-light and predictable.
 
 ## Dependencies
 
-lauren's only hard dependency is Pydantic.
+lauren's hard dependencies are [Pydantic](https://docs.pydantic.dev/) and [anyio](https://anyio.readthedocs.io/).
 
 ### Optional dependencies
 
@@ -439,7 +425,7 @@ The full development loop is one command:
 ```console
 $ uv tool install prek      # one-time, optional but recommended
 $ prek install              # wires up the git hook
-$ nox                       # lint + tests (1691 passing, 24 skipped) + typecheck
+$ nox                       # lint + tests + typecheck
 ```
 
 ## License
