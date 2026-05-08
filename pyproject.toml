@@ -7,8 +7,7 @@ name = "lauren"
 dynamic = ["version"]
 description = "An ASGI web framework with dependency injection, metadata-driven routing, and modular architecture."
 readme = "README.md"
-license = {text = "MIT"}
-license-files = ["LICENSE"]
+license = "MIT"
 requires-python = ">=3.11"
 authors = [{name = "Platform Engineering Team"}]
 maintainers = [{name = "Platform Engineering Team"}]
