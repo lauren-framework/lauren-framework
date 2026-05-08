@@ -35,7 +35,7 @@
 <a href="https://github.com/astral-sh/ruff">
     <img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json" alt="Ruff">
 </a>
-<a href="http://mypy-lang.org/">
+<a href="https://mypy.readthedocs.io/en/stable/">
     <img src="https://img.shields.io/badge/types-mypy-blue.svg" alt="Checked with mypy">
 </a>
 <a href="https://github.com/j178/prek">
@@ -73,13 +73,13 @@ API patterns, observability, security, and more.
 
 | Resource | What it contains |
 |---|---|
-| [`llms.txt`](llms.txt) | 2 KB framework overview — start here |
-| [`lauren/llms-full.txt`](lauren/llms-full.txt) | 25 KB complete reference — all APIs, patterns, common errors |
-| [`AGENTS.md`](AGENTS.md) | Agent rules, by-task lookup, file ownership, common errors, definition of done |
-| [`CLAUDE.md`](CLAUDE.md) | Conventions, commands, golden rules, pattern selection guide |
-| [`skills/`](skills/) | 60+ copy-paste skill guides covering every common task |
+| [`llms.txt`](https://raw.githubusercontent.com/lauren-framework/lauren-framework/refs/heads/main/llms.txt) | 2 KB framework overview — start here |
+| [`lauren/llms-full.txt`](https://raw.githubusercontent.com/lauren-framework/lauren-framework/refs/heads/main/lauren/llms-full.txt) | 25 KB complete reference — all APIs, patterns, common errors |
+| [`AGENTS.md`](https://github.com/lauren-framework/lauren-framework/blob/main/AGENTS.md) | Agent rules, by-task lookup, file ownership, common errors, definition of done |
+| [`CLAUDE.md`](https://github.com/lauren-framework/lauren-framework/blob/main/CLAUDE.md) | Conventions, commands, golden rules, pattern selection guide |
+| [`skills/`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/) | 60+ copy-paste skill guides covering every common task |
 
-Full install guide and skills index: [docs/guides/agent-skills.md](docs/guides/agent-skills.md)
+Full install guide and skills index: [docs/guides/agent-skills.md](https://github.com/lauren-framework/lauren-framework/blob/main/docs/guides/agent-skills.md)
 
 ---
 
@@ -96,7 +96,7 @@ core ideas:
 * **No reflection on the request path.** The whole graph is compiled into
   immutable structures at startup; serving a request is pure traversal.
 * **AI-ready by default.** Public surface is mirrored in
-  [`llms.txt` / `llms-full.txt`](https://lauren-py.dev/llms-txt) and exported
+  [`llms.txt` / `llms-full.txt`](https://lauren-py.dev/llms.txt) and exported
   in `__all__` — a CI hook keeps the two in lock-step.
 
 ## Features
@@ -354,8 +354,8 @@ hypercorn main:app --bind 0.0.0.0:8000
 We welcome contributions of every size, from typo fixes to whole subsystems.
 Read first:
 
-1. [`CONTRIBUTING.md`](CONTRIBUTING.md) — setup, branch & commit conventions, and the quality bar.
-2. [`AGENTS.md`](AGENTS.md) — the design invariants every PR must respect, whether the author is human or an AI agent.
+1. [`CONTRIBUTING.md`](https://github.com/lauren-framework/lauren-framework/blob/main/CONTRIBUTING.md) — setup, branch & commit conventions, and the quality bar.
+2. [`AGENTS.md`](https://github.com/lauren-framework/lauren-framework/blob/main/AGENTS.md) — the design invariants every PR must respect, whether the author is human or an AI agent.
 
 ```bash
 uv tool install prek      # one-time
@@ -365,4 +365,4 @@ nox                       # lint + tests + typecheck
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/lauren-framework/lauren-framework/blob/main/LICENSE).
