@@ -84,7 +84,7 @@ nox.options.stop_on_first_error = False
 @nox.session(python=SUPPORTED_PYTHONS)
 def tests(session: nox.Session) -> None:
     """Run the full test suite (unit + integration)."""
-    session.install("-e", ".[dev]")
+    session.run("uv", "sync", "--extra", "dev", "--active", external=True)
     args = session.posargs or ["-q", "--ignore-glob=tests/benchmarks/test*bench.py"]
     session.run("pytest", *args)
 
@@ -92,7 +92,7 @@ def tests(session: nox.Session) -> None:
 @nox.session(python=PRIMARY_PYTHON, name="tests_unit")
 def tests_unit(session: nox.Session) -> None:
     """Run only unit tests under tests/unit/."""
-    session.install("-e", ".[dev]")
+    session.run("uv", "sync", "--extra", "dev", "--active", external=True)
     args = session.posargs or ["-q"]
     session.run("pytest", str(TESTS_DIR / "unit"), *args)
 
@@ -100,7 +100,7 @@ def tests_unit(session: nox.Session) -> None:
 @nox.session(python=PRIMARY_PYTHON, name="tests_integration")
 def tests_integration(session: nox.Session) -> None:
     """Run only integration tests under tests/integration/."""
-    session.install("-e", ".[dev]")
+    session.run("uv", "sync", "--extra", "dev", "--active", external=True)
     args = session.posargs or ["-q"]
     session.run("pytest", str(TESTS_DIR / "integration"), *args)
 
@@ -108,7 +108,7 @@ def tests_integration(session: nox.Session) -> None:
 @nox.session(python=PRIMARY_PYTHON, name="tests_verbose")
 def tests_verbose(session: nox.Session) -> None:
     """Run the full test suite with verbose output (mirrors `make test-verbose`)."""
-    session.install("-e", ".[dev]")
+    session.run("uv", "sync", "--extra", "dev", "--active", external=True)
     args = session.posargs or ["-v"]
     session.run("pytest", *args)
 
@@ -123,7 +123,8 @@ def coverage(session: nox.Session) -> None:
 
         nox -s coverage -- tests/unit --cov-report=xml
     """
-    session.install("-e", ".[dev]", "coverage[toml]", "pytest-cov")
+    session.run("uv", "sync", "--extra", "dev", "--active", external=True)
+    session.run("uv", "pip", "install", "coverage[toml]", "pytest-cov", external=True)
     args = session.posargs or [
         "tests/unit",
         "tests/integration",
@@ -158,7 +159,8 @@ def benchmark(session: nox.Session) -> None:
 
         nox -s benchmark -- --benchmark-compare=baseline
     """
-    session.install("-e", ".[dev]", "pytest-benchmark>=4.0")
+    session.run("uv", "sync", "--extra", "dev", "--active", external=True)
+    session.run("uv", "pip", "install", "pytest-benchmark>=4.0", external=True)
     args = session.posargs or ["-v", "-m", "benchmark", "tests/benchmarks/"]
     session.run("pytest", *args)
 
@@ -193,7 +195,8 @@ def format(session: nox.Session) -> None:  # noqa: A001 - intentional name
 @nox.session(python=PRIMARY_PYTHON, reuse_venv=True)
 def typecheck(session: nox.Session) -> None:
     """Run mypy over the lauren package."""
-    session.install("-e", ".[dev]", "mypy>=1.10")
+    session.run("uv", "sync", "--extra", "dev", "--active", external=True)
+    session.run("uv", "pip", "install", "mypy>=1.10", external=True)
     args = session.posargs or ["lauren"]
     session.run("mypy", *args)
 
