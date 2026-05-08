@@ -133,19 +133,6 @@ Become one of the first sponsors of lauren on
 [GitHub Sponsors](https://github.com/sponsors/lauren-framework) &mdash; help
 fund maintenance and ensure the framework stays free and independent.
 
-## Opinions
-
-> *"After fighting reflection-on-the-request-path bugs in three frameworks,
-> seeing lauren build the entire DI + routing graph at startup made me feel
-> the same way I did the first time I used types in a dynamic language."*
-
-> *"NestJS for Python &mdash; finally."*
-
-> *"It's like FastAPI grew up, watched a Rust talk, and came home with a
-> compile-time mindset."*
-
-(Add real quotes here once early adopters land. Open a PR &mdash; we love
-testimonials.)
 
 ## Requirements
 
@@ -389,11 +376,6 @@ deploy any FastAPI / Starlette / Litestar app:
 * [Hypercorn](https://hypercorn.readthedocs.io/en/latest/how_to_guides/configuring.html)
 * [Granian](https://github.com/emmett-framework/granian)
 
-#### Container images
-
-Reference Dockerfiles are published at
-<https://github.com/lauren-framework/lauren-framework/tree/main/examples/docker>
-for both Uvicorn and Granian.
 
 ## Performance
 

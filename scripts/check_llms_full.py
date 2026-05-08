@@ -27,7 +27,7 @@ def main(argv: list[str]) -> int:
         return 2
 
     source_dir = pathlib.Path(__file__).parent.parent
-    llms_path = source_dir / 'lauren' / "llms-full.txt"
+    llms_path = source_dir / "lauren" / "llms-full.txt"
     if not llms_path.exists():
         print("ERROR: llms-full.txt not found in repo root", file=sys.stderr)
         return 2

@@ -437,7 +437,7 @@ def is_discriminated_union(target: Any) -> bool:
     try:
         import typing as _typing
 
-        union_types.add(_typing.Union)
+        union_types.add(_typing.Union)  # type: ignore[arg-type]
     except Exception:  # pragma: no cover
         pass
     try:

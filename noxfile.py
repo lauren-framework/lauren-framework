@@ -129,6 +129,7 @@ def coverage(session: nox.Session) -> None:
         "tests/unit",
         "tests/integration",
         "--cov-report=term-missing",
+        "--ignore-glob=tests/benchmarks/test*bench.py",
     ]
     session.run(
         "pytest",
