@@ -20,11 +20,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
       # Cache prek's hook environments — they're hashed off
       # `.pre-commit-config.yaml`, so a cold run is one-time per dep bump.
       - name: Restore prek cache
@@ -35,7 +37,7 @@ jobs:
           restore-keys: |
             prek-${{ runner.os }}-
       - name: Install prek
-        run: python -m pip install --upgrade pip "prek>=0.3"
+        run: pip install "prek>=0.3"
       - name: Run prek
         run: prek run --all-files --show-diff-on-failure --color always
 
@@ -49,13 +51,14 @@ jobs:
     continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-      - run: python -m pip install --upgrade pip uv uvicorn
-      - run: python -m pip install --upgrade pip nox
+      - run: pip install nox
       - run: nox -s typecheck
 
   llms-txt-sync:
@@ -66,11 +69,13 @@ jobs:
     continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-      - run: python -m pip install --upgrade pip nox
+      - run: pip install nox
       - name: Verify every public symbol appears in llms-full.txt
         run: nox -s llms_check

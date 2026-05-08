@@ -31,11 +31,16 @@ jobs:
           # from the nearest git tag.
           fetch-depth: 0
 
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - run: python -m pip install --upgrade pip nox setuptools-scm
+      - run: pip install nox setuptools-scm
 
       - id: meta
         name: Extract version from tag (or setuptools-scm for manual runs)
