@@ -1,6 +1,9 @@
 <p align="center">
-  <a href="https://lauren.dev"><img src="https://lauren.dev/img/logo-margin/logo-teal.png" alt="lauren"></a>
+  <img src="./assets/lauren-logo.png" width=40%></img>
 </p>
+<div align="center">
+  <h1><i>lauren</i></h1>
+</div>
 <p align="center">
     <em>lauren framework: a metadata-first Python web framework. NestJS-style modules, Axum-style extractors, FastAPI-class ergonomics &mdash; resolved into an immutable execution graph at startup.</em>
 </p>
