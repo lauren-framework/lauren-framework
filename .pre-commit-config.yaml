@@ -140,7 +140,7 @@ repos:
       # Quick smoke: noxfile.py and pyproject.toml are syntactically valid.
       - id: nox-list
         name: nox sessions still parse
-        entry: bash -c 'python -c "import ast; ast.parse(open(\"noxfile.py\").read())" && python -c "import tomllib, pathlib; tomllib.loads(pathlib.Path(\"pyproject.toml\").read_text())"'
+        entry: bash -c 'python3 -c "import ast; ast.parse(open(\"noxfile.py\").read())" && python3 -c "import tomllib, pathlib; tomllib.loads(pathlib.Path(\"pyproject.toml\").read_text())"'
         language: system
         pass_filenames: false
         files: ^(noxfile\.py|pyproject\.toml)$
