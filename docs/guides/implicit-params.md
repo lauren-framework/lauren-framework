@@ -10,7 +10,7 @@ When a handler parameter has no extractor annotation (no `Path[…]`, `Query[…
 |-----------|-------------|
 | Parameter name matches a `{segment}` in the URL template | `Path[T]` |
 | Annotation is a Pydantic `BaseModel` (or `Optional[Model]`) | `Json[T]` (request body) |
-| Annotation is a scalar type (`int`, `str`, `float`, `bool`, `bytes`, `complex`) — or `Optional[scalar]` / `list[scalar]` | `Query[T]` (query string) |
+| Annotation is a scalar type (`int`, `str`, `float`, `bool`, `bytes`, `complex`) — or `Optional[scalar]` / `list[scalar]` / `tuple[scalar, ...]` | `Query[T]` (query string) |
 | Anything else | `UnresolvableParameterError` at startup |
 
 No runtime cost: promotion happens once at `LaurenFactory.create(...)` time, not on every request.
@@ -50,8 +50,8 @@ class ItemController:
     async def update(
         self,
         item_id: int,          # auto Path[int]
-        notify: bool = False,  # auto Query[bool] with default
         item: CreateItem,      # auto Json[CreateItem]
+        notify: bool = False,  # auto Query[bool] with default
     ) -> dict:
         return {"item_id": item_id, "notify": notify, "name": item.name}
 
@@ -85,6 +85,8 @@ page: int                 # required — 422 if absent
 name: str
 ratio: float
 active: bool              # "true"/"1"/"yes"/"on" → True
+checksum: bytes           # UTF-8 encoded — "abc" → b"abc"
+precision: complex        # standard complex literal — "1+2j" → (1+2j)
 
 # Optional (absent → None)
 q: Optional[str] = None
@@ -97,6 +99,9 @@ page_size: int = 20
 # Multi-value (repeat the param: ?tags=a&tags=b)
 tags: list[str]
 ids: list[int]
+
+# Tuple variant — also multi-value
+scores: tuple[float, ...]
 ```
 
 ### Boolean coercion
@@ -140,15 +145,20 @@ $ curl -X POST "http://localhost:8000/users/" \
 ### Optional body
 
 ```python
+from typing import Optional
+from lauren import controller, patch
+
 class PatchUser(BaseModel):
     name: str | None = None
     email: str | None = None
 
-@patch("/{user_id}")
-async def patch(self, user_id: int, body: Optional[PatchUser] = None) -> dict:
-    if body is None:
-        return {"user_id": user_id, "changed": False}
-    return {"user_id": user_id, "name": body.name}
+@controller("/users")
+class UserController:
+    @patch("/{user_id}")
+    async def update(self, user_id: int, body: Optional[PatchUser] = None) -> dict:
+        if body is None:
+            return {"user_id": user_id, "changed": False}
+        return {"user_id": user_id, "name": body.name}
 ```
 
 When no body is sent and the default is `None`, the parameter resolves to `None`. When a body **is** required (no default), an empty request body returns `422`.
@@ -166,9 +176,9 @@ class OrderBody(BaseModel):
 async def place_order(
     self,
     customer_id: int,       # Path   — name matches {customer_id}
-    priority: str = "low",  # Query  — scalar
+    order: OrderBody,       # Body   — Pydantic model (no default, before defaults)
+    priority: str = "low",  # Query  — scalar with default
     dry_run: bool = False,  # Query  — bool with default
-    order: OrderBody,       # Body   — Pydantic model
 ) -> dict:
     return {
         "customer": customer_id,
@@ -237,8 +247,8 @@ async def update(
     self,
     item_id: int,             # implicit path
     token: Header[str],       # explicit (no implicit equivalent)
-    q: str = "",              # implicit query
-    body: CreateItem,         # implicit body
+    body: CreateItem,         # implicit body  (no default — before defaults)
+    q: str = "",              # implicit query (default — after required params)
 ) -> dict: ...
 ```
 
@@ -247,7 +257,7 @@ async def update(
 | Type | Reason | Use instead |
 |---|---|---|
 | Unannotated parameter (`def h(self, x):`) | No type to coerce to | Annotate explicitly: `x: str` |
-| `list[MyService]` | Looks like a DI multi-binding | Register the provider or use `Json[list[MyService]]` |
+| `list[MyService]` | The element type is not a scalar — only `list[scalar]` (e.g. `list[int]`, `list[str]`) auto-promotes | Use `@injectable(multi=True)` + DI for multi-binding, or `Json[list[MyService]]` for a JSON array |
 | Custom class (non-Pydantic) | Ambiguous: DI token or body? | `@injectable` + auto-DI, or `Json[MyClass]`, or a custom extractor |
 | `Header[str]`, `Cookie[str]` | Can only come from headers/cookies | Always explicit |
 

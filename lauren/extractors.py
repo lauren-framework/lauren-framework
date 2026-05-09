@@ -997,6 +997,13 @@ def _coerce_scalar(value: str, target: Any) -> Any:
             raise ExtractorFieldError(str(e)) from e
     if target is bool:
         return value.lower() in ("1", "true", "yes", "on")
+    if target is bytes:
+        return value.encode()
+    if target is complex:
+        try:
+            return complex(value)
+        except ValueError as e:
+            raise ExtractorFieldError(str(e)) from e
     # list[T]
     origin = get_origin(target)
     if origin in (list, tuple):
