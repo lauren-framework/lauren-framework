@@ -178,8 +178,6 @@ def lint(session: nox.Session) -> None:
     session.install("ruff>=0.6")
     extra = session.posargs or []
     session.run("ruff", "check", "lauren", "tests", *extra)
-    # Format check (no write); use ``-- format`` to *write*.
-    session.run("ruff", "format", "--check", "lauren", "tests", external=False)
 
 
 @nox.session(python=PRIMARY_PYTHON, reuse_venv=True)

@@ -104,6 +104,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Every handler may be `def` or `async def`. Sync handlers are automatically offloaded to a thread pool — no blocking the event loop.
 
+-   :material-function-variant: [__Custom Route Handlers__](custom-route-handlers.md)
+
+    ---
+    `@staticmethod` and `@classmethod` bindings, writing decorators with `@functools.wraps`, environment-conditional handler selection at class-body time, and the descriptor protocol for advanced use cases.
+
 -   :material-database-import: [__DI with Data Model Types__](di-model-types.md)
 
     ---

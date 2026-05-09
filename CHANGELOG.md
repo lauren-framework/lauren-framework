@@ -8,6 +8,41 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ## [Unreleased]
 
 ### Fixed
+
+- **Integration tests** — tests/integration/test_docs_custom_route_handlers.py — 16 tests covering every code snippet in the guide: instance/static/classmethod
+bindings, both @staticmethod/@get orderings, decorators with and without @wraps (including the silent-404 and runtime-500 failure modes), the @feature flag
+decorator (flag absent → fallback, flag present → original), class-body if/else conditional, and the retry_on_error custom descriptor. Two gotchas caught
+during testing: (a) Python 3.11's inspect.iscoroutinefunction doesn't follow __wrapped__ (only 3.12+ does), so wrapped must explicitly be async def when fn
+is async; (b) the env var must be set before the class body executes since decorators run at class-definition time.
+
+### Changed
+- Updated CLAUDE.md and contributor docs.
+- Enhanced typing across the framework.
+- Own-module provider now takes priority in structural Protocol resolution.
+
+- The guide is at docs/guides/custom-route-handlers.md and the index is updated. Here's what it covers:
+
+  Binding styles — three sections with working examples:
+  - Instance method (default) — normal DI-injected self
+  - @staticmethod — no receiver; DI still works for request-level parameters like Inject(); both decorator orderings shown and explained
+  - @classmethod — cls is the controller class, instance still resolved for lifecycle hooks
+
+  Writing your own decorators — the @functools.wraps rule is front and center, with:
+  - The minimal skeleton every decorator should follow
+  - A !!! warning block showing the two distinct failure modes (silent 404 vs runtime 500) with a clear causal explanation of each
+  - A decorator-order diagram and the rule that either order is fine as long as every decorator in the chain uses @wraps
+
+  Environment-conditional implementations — two patterns:
+  - A reusable @feature(flag, fallback) decorator that picks an implementation at class-body time with zero per-request overhead, using @functools.wraps to
+  carry the route marker across
+  - A plain if/else in the class body evaluated at import time for the cleanest zero-overhead approach
+
+  - Custom descriptors (advanced) — the __get__ protocol section documents the three requirements (callable, update_wrapper, __wrapped__) with a concrete
+  retry_on_error descriptor example that shows exactly how it connects to Lauren's __get__-based dispatch.
+
+## [1.0.1] - 2026-05-09
+
+### Fixed
 - **Multi-binding with mixed custom provider types** — `use_value`, `use_class`,
   and `use_factory` can now all be registered with `multi=True` for the same
   `provide=` token and will all be collected correctly into `list[T]`.
@@ -19,11 +54,6 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `id(provider)` as the singleton cache key for multi-binding providers instead
   of the shared `provide=` token, preventing the first registered provider's
   cached value from being returned for all sibling providers.
-
-### Changed
-- Updated CLAUDE.md and contributor docs.
-- Enhanced typing across the framework.
-- Own-module provider now takes priority in structural Protocol resolution.
 
 ## [1.0.0] — 2026-05-08
 
