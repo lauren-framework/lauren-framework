@@ -2123,9 +2123,13 @@ class LaurenFactory:
             # container's ``register_custom`` lowers each kind to the
             # right shape. Standard class / function providers fall
             # through to the regular ``register`` call.
-            custom = graph.custom_provider(p)
-            if custom is not None:
-                container.register_custom(custom, owning_module=owning_module)
+            # A list is returned so that multi-binding scenarios where
+            # multiple providers share the same ``provide=`` token are
+            # all registered (previously only the last would survive).
+            customs = graph.custom_providers_for(p)
+            if customs:
+                for custom in customs:
+                    container.register_custom(custom, owning_module=owning_module)
             else:
                 container.register(p, owning_module=owning_module)
         for ctrl_class in graph.iter_controllers():

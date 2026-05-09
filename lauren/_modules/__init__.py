@@ -163,10 +163,11 @@ class CompiledModule:
     #: Only the provider tokens *declared* locally by this module (not imported).
     own_providers: set[Any] = field(default_factory=set)
     #: Custom-provider records (use_value / use_class / use_factory /
-    #: use_existing) declared by this module, indexed by provider token
-    #: so the factory pipeline can register them through the right
-    #: container method.
-    custom_providers: dict[Any, CustomProvider] = field(default_factory=dict)
+    #: use_existing) declared by this module, indexed by provider token.
+    #: Each token maps to a *list* so that multiple multi-binding providers
+    #: for the same ``provide=`` token are all preserved (a plain dict
+    #: would silently keep only the last one).
+    custom_providers: dict[Any, list[CustomProvider]] = field(default_factory=dict)
 
 
 class ModuleGraph:
@@ -181,10 +182,11 @@ class ModuleGraph:
         self._provider_owner: dict[Any, type] = {}
         #: controller class -> declaring module class.
         self._controller_owner: dict[type, type] = {}
-        #: Token -> CustomProvider record, flattened across every
+        #: Token -> list of CustomProvider records, flattened across every
         #: module so the factory pipeline can register them in one
-        #: pass. Owning-module info comes from ``_provider_owner``.
-        self._custom_providers: dict[Any, CustomProvider] = {}
+        #: pass. A list is used so that multiple multi-binding providers
+        #: for the same token are all preserved.
+        self._custom_providers: dict[Any, list[CustomProvider]] = {}
 
     def compile(self, root: type) -> None:
         self.root = root
@@ -228,7 +230,7 @@ class ModuleGraph:
                 token = normalise_provider_token(p)
                 own_tokens.add(token)
                 if isinstance(p, CustomProvider):
-                    compiled.custom_providers[token] = p
+                    compiled.custom_providers.setdefault(token, []).append(p)
             compiled.own_providers = set(own_tokens)
             providers: set[Any] = set(own_tokens)
             providers |= imported_exports
@@ -260,7 +262,7 @@ class ModuleGraph:
                 token = normalise_provider_token(p)
                 self.all_providers.add(token)
                 if isinstance(p, CustomProvider):
-                    self._custom_providers[token] = p
+                    self._custom_providers.setdefault(token, []).append(p)
                 # The first module that declares a provider owns it.
                 # Declaring the same provider in two modules is
                 # ambiguous and rejected here so errors surface at
@@ -300,9 +302,13 @@ class ModuleGraph:
         """Return the module class that *declares* the provider token, or ``None``."""
         return self._provider_owner.get(provider_cls)
 
-    def custom_provider(self, token: Any) -> CustomProvider | None:
-        """Return the :class:`CustomProvider` record for ``token`` if one exists."""
-        return self._custom_providers.get(token)
+    def custom_providers_for(self, token: Any) -> list[CustomProvider]:
+        """Return all :class:`CustomProvider` records for ``token`` (may be empty).
+
+        Returns a list to support multi-binding scenarios where the same
+        ``provide=`` token has multiple custom providers registered.
+        """
+        return self._custom_providers.get(token, [])
 
     def module_for_controller(self, controller_cls: type) -> type | None:
         """Return the module class that declares ``controller_cls``, or ``None``."""

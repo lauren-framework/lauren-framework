@@ -7,6 +7,19 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+- **Multi-binding with mixed custom provider types** — `use_value`, `use_class`,
+  and `use_factory` can now all be registered with `multi=True` for the same
+  `provide=` token and will all be collected correctly into `list[T]`.
+  Previously the module graph (`lauren/_modules/__init__.py`) stored custom
+  providers in a `dict[token → CustomProvider]`, silently discarding every
+  provider after the first for a given token. The dict is now
+  `dict[token → list[CustomProvider]]` and the ASGI bootstrap registers all
+  entries. Additionally, the DI container (`lauren/_di/__init__.py`) now uses
+  `id(provider)` as the singleton cache key for multi-binding providers instead
+  of the shared `provide=` token, preventing the first registered provider's
+  cached value from being returned for all sibling providers.
+
 ### Changed
 - Updated CLAUDE.md and contributor docs.
 - Enhanced typing across the framework.

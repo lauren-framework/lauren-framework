@@ -221,8 +221,11 @@ class DIContainer:
         self._providers: dict[type, Provider] = {}
         # Token -> list of providers (for protocols / multi-bindings)
         self._token_bindings: dict[type, list[Provider]] = {}
-        self._singletons: dict[type, Any] = {}
-        self._singletons_initialized: set[type] = set()
+        # Keys are normally the provider token (type | str | Token) but
+        # multi-binding providers use id(provider) (int) to keep each
+        # sibling's singleton slot distinct.
+        self._singletons: dict[Any, Any] = {}
+        self._singletons_initialized: set[Any] = set()
         self._compiled = False
         #: module_cls -> frozenset of provider tokens visible inside that module.
         #: An absent entry means "no visibility restrictions for this module" —
@@ -365,16 +368,13 @@ class DIContainer:
         def _value_factory() -> Any:
             return value
 
-        # Multi-binding providers do NOT use the per-token singleton
-        # cache: every binding gets its own instance during multi
-        # resolution, so caching by token would conflate them. Use a
-        # synthetic per-provider key for the singleton-style "build
-        # once" behaviour without colliding with sibling bindings.
+        # Multi-binding: keep ``token`` as ``provider.cls`` (needed for the
+        # module-visibility check), but pre-populate the singleton cache
+        # with the provider's identity key (see ``_singleton_key``) instead
+        # of the token. This prevents the first multi-bound value from
+        # "claiming" the shared token slot in ``_singletons``, which would
+        # cause every sibling provider to return that same value.
         cache_key: Any = token
-        if multi and token in self._providers:
-            # Use the factory's identity so each value provider has a
-            # distinct cache row.
-            cache_key = _value_factory
         provider = Provider(
             cls=cache_key,  # type: ignore[arg-type]
             scope=Scope.SINGLETON,
@@ -388,11 +388,13 @@ class DIContainer:
         )
         self._providers[cache_key] = provider
         self._bind_token(token, provider)
-        # Pre-populate the singleton cache so even introspection
-        # (``container.singletons()``) sees the value immediately,
-        # without forcing a resolve.
-        self._singletons[cache_key] = value
-        self._singletons_initialized.add(cache_key)
+        # Pre-populate the singleton cache.  For multi-binding providers
+        # we key by ``id(provider)`` instead of the token so that sibling
+        # providers sharing the same ``provide=`` token don't collide in
+        # the singleton cache (see ``_singleton_key`` helper).
+        singleton_key = id(provider) if multi else cache_key
+        self._singletons[singleton_key] = value
+        self._singletons_initialized.add(singleton_key)
         return provider
 
     def register_class(
@@ -1058,15 +1060,21 @@ class DIContainer:
                 owning_module=provider.owning_module,
             )
 
+        # Multi-binding providers share the same ``provide=`` token as their
+        # ``cls`` field — using ``cls`` as the singleton cache key would
+        # cause every sibling provider to return the first one's value.
+        # Use ``id(provider)`` instead so each binding gets its own slot.
+        _singleton_key: Any = id(provider) if provider.multi else provider.cls
+
         if provider.scope == Scope.SINGLETON:
-            if provider.cls in self._singletons:
-                return self._singletons[provider.cls]
+            if _singleton_key in self._singletons:
+                return self._singletons[_singleton_key]
         elif provider.scope == Scope.REQUEST:
             if request_cache is None:
                 # Falls back to transient if no request context is active.
                 pass
-            elif provider.cls in request_cache:
-                return request_cache[provider.cls]
+            elif _singleton_key in request_cache:
+                return request_cache[_singleton_key]
 
         # Build ``kwargs`` for the factory: function-provider parameters
         # and class-provider __init__ / __new__ parameters are resolved
@@ -1138,9 +1146,9 @@ class DIContainer:
             instance = result
 
         if provider.scope == Scope.SINGLETON:
-            self._singletons[provider.cls] = instance
+            self._singletons[_singleton_key] = instance
         elif provider.scope == Scope.REQUEST and request_cache is not None:
-            request_cache[provider.cls] = instance
+            request_cache[_singleton_key] = instance
 
         # Run @post_construct for REQUEST and TRANSIENT scopes here — those
         # scopes construct per request (or per resolution) so there is no
