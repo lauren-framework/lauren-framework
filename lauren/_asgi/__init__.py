@@ -129,8 +129,8 @@ class CompiledHandler:
     #: Binding style that tells the dispatcher how to invoke ``handler_fn``.
     #: One of ``"instance"`` (normal method, pass ``controller`` first),
     #: ``"classmethod"`` (pass ``controller_cls`` first), or ``"static"``
-    #: (no receiver). Detected once at startup from the class's own
-    #: ``__dict__`` so descriptors don't lose their identity at call time.
+    #: (no receiver). Kept for introspection; dispatch now uses
+    #: ``raw_descriptor.__get__`` instead of branching on this string.
     binding: str = "instance"
     #: ``True`` when ``handler_fn`` is a coroutine function (``async def``).
     #: Detected once at startup; the dispatcher uses this to decide whether
@@ -138,6 +138,15 @@ class CompiledHandler:
     #: ``asyncio.to_thread`` so that blocking sync handlers do not stall the
     #: event loop.
     is_coroutine: bool = False
+    #: Raw descriptor from ``cls.__dict__[attr_name]`` — the entry *before*
+    #: ``_unwrap_handler_descriptor`` strips ``staticmethod`` /
+    #: ``classmethod`` wrappers.  At dispatch time the runtime calls
+    #: ``raw_descriptor.__get__(instance, cls)`` to obtain a bound callable,
+    #: delegating to Python's descriptor protocol for every binding style
+    #: including arbitrary custom descriptors that implement ``__get__``.
+    #: ``None`` only for built-in synthetic handlers that bypass the MRO
+    #: walk (e.g. the auto-generated OpenAPI docs endpoints).
+    raw_descriptor: Any = None
     #: Ordered tuple of interceptor classes applied to this route.
     #: Encodes controller-level (class-then-method) chains; global
     #: interceptors are prepended at dispatch time.
@@ -1231,43 +1240,35 @@ class LaurenApp:
                             # ``kwargs`` below re-aliases the same pooled dict so
                             # the existing dispatch branches stay identical.
                             kwargs = kwargs_dict
-                            # Invoke the handler according to its binding style and
-                            # whether it is a coroutine function.
+                            # Invoke the handler via the descriptor protocol.
                             #
-                            # ``instance`` — normal method: pass the DI-built
-                            # controller as the implicit ``self``.
-                            # ``classmethod`` — pass the class itself; the handler
-                            # receives ``cls`` even though we still resolved the
-                            # instance for lifecycle purposes (field injection runs,
-                            # ``@post_construct`` fires, etc.).
-                            # ``static`` — no receiver at all.
+                            # ``raw_descriptor.__get__(instance, cls)`` produces
+                            # the correctly bound callable for every descriptor
+                            # kind without requiring an explicit binding branch:
+                            #   staticmethod   → raw fn (no receiver)
+                            #   classmethod    → bound method with cls prepended
+                            #   plain function → bound method with self prepended
+                            #   custom __get__ → whatever the descriptor decides
+                            #
+                            # The controller instance is always resolved first so
+                            # that ``@post_construct`` hooks and field injection
+                            # fire regardless of binding style.
                             #
                             # Sync handlers are offloaded to a thread pool via
-                            # ``anyio.to_thread.run_sync`` so that a blocking
-                            # ``time.sleep`` (or any other blocking I/O) does not
-                            # stall the event loop.
-                            _fn = compiled.handler_fn
-                            if compiled.binding == "static":
-                                if compiled.is_coroutine:
-                                    return await _fn(**kwargs)
-                                _kw = kwargs
-                                return await anyio.to_thread.run_sync(
-                                    lambda: _fn(**_kw)
+                            # ``anyio.to_thread.run_sync`` so blocking I/O does
+                            # not stall the event loop.
+                            _descriptor = compiled.raw_descriptor
+                            _bound = (
+                                _descriptor.__get__(controller, compiled.controller_cls)
+                                if _descriptor is not None
+                                else compiled.handler_fn.__get__(
+                                    controller, compiled.controller_cls
                                 )
-                            if compiled.binding == "classmethod":
-                                if compiled.is_coroutine:
-                                    return await _fn(compiled.controller_cls, **kwargs)
-                                _cls, _kw = compiled.controller_cls, kwargs
-                                return await anyio.to_thread.run_sync(
-                                    lambda: _fn(_cls, **_kw)
-                                )
-                            # instance binding
-                            if compiled.is_coroutine:
-                                return await _fn(controller, **kwargs)
-                            _ctrl, _kw = controller, kwargs
-                            return await anyio.to_thread.run_sync(
-                                lambda: _fn(_ctrl, **_kw)
                             )
+                            if compiled.is_coroutine:
+                                return await _bound(**kwargs)
+                            _bnd, _kw = _bound, kwargs
+                            return await anyio.to_thread.run_sync(lambda: _bnd(**_kw))
 
                         # Build interceptor chain (innermost first, then wrap
                         # outward so the first declared interceptor is outermost).
@@ -2285,7 +2286,11 @@ class LaurenFactory:
             # the *first* definition encountered as we walk the MRO from
             # the subclass down, so overrides correctly shadow base-class
             # methods. Then iterate the resolved map to register routes.
-            resolved_methods: dict[str, tuple[Callable[..., Any], str]] = {}
+            # Values are ``(unwrapped_fn, binding_tag, raw_descriptor)``.
+            # The raw descriptor is preserved so the dispatcher can call
+            # ``raw.__get__(instance, cls)`` rather than branching on the
+            # binding tag, which makes custom ``__get__`` descriptors work.
+            resolved_methods: dict[str, tuple[Callable[..., Any], str, Any]] = {}
             for klass in ctrl_cls.__mro__:
                 for attr_name, raw in klass.__dict__.items():
                     if attr_name in resolved_methods:
@@ -2293,9 +2298,9 @@ class LaurenFactory:
                     fn, binding = _unwrap_handler_descriptor(raw)
                     if fn is None:
                         continue
-                    resolved_methods[attr_name] = (fn, binding)
+                    resolved_methods[attr_name] = (fn, binding, raw)
 
-            for attr_name, (fn, binding) in resolved_methods.items():
+            for attr_name, (fn, binding, raw) in resolved_methods.items():
                 route_metas: list[RouteMeta] = getattr(fn, ROUTE_META, [])
                 if not route_metas:
                     continue
@@ -2368,6 +2373,7 @@ class LaurenFactory:
                         streaming_item_type=streaming_item,
                         binding=binding,
                         is_coroutine=inspect.iscoroutinefunction(fn),
+                        raw_descriptor=raw,
                     )
                     compiled_handlers[(entry.method, entry.path_template)] = compiled
                     _log.log(

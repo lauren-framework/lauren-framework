@@ -128,11 +128,14 @@ class CompiledGateway:
     #: generators can enumerate every declared event even when several
     #: share the same handler function.
     message_metas: tuple[WsMessageMeta, ...] = ()
-    #: Binding style per hook function. Populated from
-    #: :func:`discover_ws_hooks` so the dispatcher can invoke
-    #: staticmethod / classmethod hooks correctly without reading
-    #: descriptors per frame.
+    #: Binding style per hook function — kept for introspection.
+    #: Dispatch now uses ``raw_descriptors`` + ``__get__`` instead.
     bindings: dict[Any, str] = field(default_factory=dict)
+    #: Raw descriptor from ``cls.__dict__[attr_name]`` for each hook
+    #: function.  ``_run_hook`` calls ``descriptor.__get__(instance, cls)``
+    #: so every binding style, including custom descriptors, works
+    #: transparently without an explicit ``if/elif`` branch.
+    raw_descriptors: dict[Any, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +281,7 @@ def compile_gateways(
             messages=messages,
             message_metas=tuple(all_metas),
             bindings=dict(hooks.get("bindings", {})),
+            raw_descriptors=dict(hooks.get("raw_descriptors", {})),
         )
         gateways[entry.path_template] = compiled
     return gateways
@@ -678,16 +682,17 @@ async def handle_websocket(
             owning_module,
             extra_values or {},
         )
-        # Binding style resolved at gateway compile time: ``instance``
-        # passes the DI-built controller, ``classmethod`` passes the
-        # gateway class itself, ``static`` omits the receiver entirely.
-        binding = gateway.bindings.get(fn, "instance")
-        if binding == "static":
-            result = fn(**kwargs)
-        elif binding == "classmethod":
-            result = fn(gateway.controller_cls, **kwargs)
-        else:
-            result = fn(controller, **kwargs)
+        # Use the descriptor protocol: ``__get__(instance, cls)`` produces
+        # the correctly bound callable for every binding style without an
+        # explicit branch — staticmethod, classmethod, plain function, and
+        # custom descriptors all behave correctly.
+        _descriptor = gateway.raw_descriptors.get(fn)
+        _bound = (
+            _descriptor.__get__(controller, gateway.controller_cls)
+            if _descriptor is not None
+            else fn.__get__(controller, gateway.controller_cls)
+        )
+        result = _bound(**kwargs)
         if _inspect.isawaitable(result):
             result = await result
         return result

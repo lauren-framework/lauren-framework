@@ -859,7 +859,9 @@ def discover_ws_hooks(cls: type) -> dict[str, Any]:
     on_error_fn: Any | None = None
     messages: list[tuple[str, Any, WsMessageMeta]] = []
     bindings: dict[Any, str] = {}
-    resolved: dict[str, tuple[Any, str]] = {}
+    raw_descriptors: dict[Any, Any] = {}
+    # Values: (unwrapped_fn, binding_tag, raw_descriptor)
+    resolved: dict[str, tuple[Any, str, Any]] = {}
     for klass in cls.__mro__:
         for attr_name, raw in klass.__dict__.items():
             if attr_name in resolved:
@@ -867,20 +869,24 @@ def discover_ws_hooks(cls: type) -> dict[str, Any]:
             fn, binding = _unwrap_handler_descriptor(raw)
             if fn is None:
                 continue
-            resolved[attr_name] = (fn, binding)
-    for _name, (fn, binding) in resolved.items():
+            resolved[attr_name] = (fn, binding, raw)
+    for _name, (fn, binding, raw) in resolved.items():
         if getattr(fn, WS_ON_CONNECT, False):
             on_connect_fn = fn
             bindings[fn] = binding
+            raw_descriptors[fn] = raw
         if getattr(fn, WS_ON_DISCONNECT, False):
             on_disconnect_fn = fn
             bindings[fn] = binding
+            raw_descriptors[fn] = raw
         if getattr(fn, WS_ON_ERROR, False):
             on_error_fn = fn
             bindings[fn] = binding
+            raw_descriptors[fn] = raw
         metas: list[WsMessageMeta] = list(getattr(fn, WS_ON_MESSAGE, []) or [])
         if metas:
             bindings[fn] = binding
+            raw_descriptors[fn] = raw
             for meta in metas:
                 messages.append((meta.event, fn, meta))
     # Ordering: use the class's source definition order where available.
@@ -893,6 +899,7 @@ def discover_ws_hooks(cls: type) -> dict[str, Any]:
         "on_error": on_error_fn,
         "messages": messages,
         "bindings": bindings,
+        "raw_descriptors": raw_descriptors,
     }
 
 
