@@ -310,8 +310,9 @@ def test_msgspec_encoder_encode_and_compact_are_equivalent() -> None:
     # Both methods must return valid JSON-parseable bytes
     assert stdlib_json.loads(encoder.encode(payload)) == payload
     assert stdlib_json.loads(encoder.encode_compact(payload)) == payload
-    # They are the same method object (aliased)
-    assert encoder.encode is encoder.encode_compact
+    # They alias the same underlying function (Python creates a fresh bound-method
+    # object on every attribute access, so ``is`` would be False; compare __func__).
+    assert encoder.encode.__func__ is encoder.encode_compact.__func__
 
 
 # ---------------------------------------------------------------------------

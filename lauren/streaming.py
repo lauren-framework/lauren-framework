@@ -394,21 +394,30 @@ _ADAPTER_CACHE: dict[int, Any] = {}
 
 
 def _build_adapter(target: Any) -> Any:
-    """Return a cached :class:`pydantic.TypeAdapter` for ``target``.
+    """Return a cached :class:`pydantic.TypeAdapter` for ``target``, or
+    ``None`` when *target* is not a type Pydantic can introspect.
 
     Caching is keyed on ``id(target)`` because Pydantic type adapters are
     immutable once built and constructing them is non-trivial for
     discriminated unions (Pydantic walks every variant to assemble the tag
     map). The cache is process-wide and never invalidated — safe because
     application types are defined at import time and never change.
+
+    Returns ``None`` for non-Pydantic types such as ``msgspec.Struct``
+    subclasses so that callers can fall back to direct encoder serialization
+    without triggering a ``PydanticSchemaError``.
     """
     if not _PYDANTIC_AVAILABLE:
         return None
     key = id(target)
-    cached = _ADAPTER_CACHE.get(key)
-    if cached is not None:
-        return cached
-    adapter = _TypeAdapter(target)
+    # Use ``key in`` rather than ``.get()`` so that a cached ``None``
+    # (non-Pydantic type) is not retried on every call.
+    if key in _ADAPTER_CACHE:
+        return _ADAPTER_CACHE[key]
+    try:
+        adapter: Any = _TypeAdapter(target)
+    except Exception:  # PydanticSchemaError, PydanticUserError, TypeError, …
+        adapter = None
     _ADAPTER_CACHE[key] = adapter
     return adapter
 

@@ -1819,12 +1819,16 @@ async def _coerce_streaming_response(
 
     def _dump(item: Any) -> bytes:
         if adapter is not None:
+            # Pydantic type: convert to a JSON-safe dict first, then encode.
+            # This preserves discriminated-union serialisation and custom
+            # Pydantic field serialisers while still routing the final bytes
+            # through the application's configured encoder.
             payload = adapter.dump_python(item, mode="json")
-        elif hasattr(item, "model_dump"):
-            payload = item.model_dump(mode="json")
-        else:
-            payload = item
-        return json_encoder.encode_compact(payload)
+            return json_encoder.encode_compact(payload)
+        # Non-Pydantic type (msgspec.Struct, dataclass, plain dict, …):
+        # pass directly to the encoder so native backends (msgspec, orjson)
+        # can serialise their own types without a Pydantic intermediary.
+        return json_encoder.encode_compact(item)
 
     def _frame(item: Any) -> list[bytes]:
         body = _dump(item)

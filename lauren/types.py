@@ -1034,6 +1034,10 @@ def _json_default(obj: Any) -> Any:
         return obj.decode("utf-8", errors="replace")
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return dataclasses.asdict(obj)
+    # msgspec.Struct — detected via __struct_fields__ without importing msgspec.
+    # Converts to a plain dict so orjson / stdlib encoders can handle the value.
+    if hasattr(obj, "__struct_fields__"):
+        return {field: getattr(obj, field) for field in obj.__struct_fields__}
     if hasattr(obj, "__dict__"):
         # Last-resort: return the instance dict (filtering out private attrs
         # and non-data attributes).

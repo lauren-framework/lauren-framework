@@ -9,6 +9,22 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- **`StreamingResponse[T]` with non-Pydantic item types** — Using
+  `MsgspecEncoder` or `OrjsonEncoder` with a `StreamingResponse[Greeting]`
+  where `Greeting` is a `msgspec.Struct` (or any non-Pydantic type) no longer
+  raises `PydanticSchemaError`. Three changes were required:
+  1. `lauren/streaming.py` `_build_adapter` now catches any exception from
+     `pydantic.TypeAdapter(target)` and caches/returns `None` for non-Pydantic
+     types, using `key in _ADAPTER_CACHE` to correctly distinguish "not yet
+     cached" from "cached as None".
+  2. `lauren/_asgi/__init__.py` `_dump` (inside `_coerce_streaming_response`)
+     now passes items directly to `encoder.encode_compact(item)` when no
+     Pydantic adapter is available, letting native backends serialise their own
+     types without a Pydantic intermediary.
+  3. `lauren/types.py` `_json_default` now handles `msgspec.Struct` instances
+     (detected via `__struct_fields__`) by converting them to plain dicts,
+     fixing the `OrjsonEncoder` fallback path for struct values.
+
 - **Integration tests** — tests/integration/test_docs_custom_route_handlers.py — 16 tests covering every code snippet in the guide: instance/static/classmethod
 bindings, both @staticmethod/@get orderings, decorators with and without @wraps (including the silent-404 and runtime-500 failure modes), the @feature flag
 decorator (flag absent → fallback, flag present → original), class-body if/else conditional, and the retry_on_error custom descriptor. Two gotchas caught
