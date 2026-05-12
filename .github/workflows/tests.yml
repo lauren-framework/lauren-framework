@@ -92,7 +92,7 @@ jobs:
       # Optional: enable Codecov by adding CODECOV_TOKEN to repo secrets.
       - name: Upload to Codecov
         if: env.CODECOV_TOKEN != ''
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
