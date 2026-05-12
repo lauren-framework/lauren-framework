@@ -38,9 +38,7 @@ class RecordingApp:
 
 async def _echo_path_app(scope, receive, send):
     """Return JSON with the received path and root_path."""
-    payload = json.dumps(
-        {"path": scope["path"], "root_path": scope.get("root_path", "")}
-    ).encode()
+    payload = json.dumps({"path": scope["path"], "root_path": scope.get("root_path", "")}).encode()
     await send(
         {
             "type": "http.response.start",

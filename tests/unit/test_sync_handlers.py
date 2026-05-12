@@ -163,23 +163,17 @@ class SyncBodyModule:
 
 class TestSyncWithBody:
     def test_post_with_body(self):
-        r = build(SyncBodyModule).post(
-            "/body/create", json={"name": "Widget", "price": 9.99}
-        )
+        r = build(SyncBodyModule).post("/body/create", json={"name": "Widget", "price": 9.99})
         assert r.status_code == 200
         assert r.json() == {"name": "Widget", "price": 9.99}
 
     def test_put_with_path_and_body(self):
-        r = build(SyncBodyModule).put(
-            "/body/update/7", json={"name": "Gadget", "price": 19.99}
-        )
+        r = build(SyncBodyModule).put("/body/update/7", json={"name": "Gadget", "price": 19.99})
         assert r.status_code == 200
         assert r.json() == {"id": 7, "name": "Gadget"}
 
     def test_patch(self):
-        r = build(SyncBodyModule).patch(
-            "/body/patch/3", json={"name": "Thingamajig", "price": 1.5}
-        )
+        r = build(SyncBodyModule).patch("/body/patch/3", json={"name": "Thingamajig", "price": 1.5})
         assert r.json() == {"id": 3, "updated": True, "name": "Thingamajig"}
 
     def test_delete(self):

@@ -32,9 +32,7 @@ class _Mod:
 
 
 def _build(logger=None):
-    return LaurenFactory.create(
-        _Mod, logger=logger or InMemoryLogger(level=LogLevel.DEBUG)
-    )
+    return LaurenFactory.create(_Mod, logger=logger or InMemoryLogger(level=LogLevel.DEBUG))
 
 
 # Signal handling requires a real event loop and a POSIX platform for the
@@ -71,9 +69,7 @@ class TestInstallSignalHandlers:
 
         async def scenario():
             event = install_signal_handlers(app, drain_timeout=1.0)
-            asyncio.get_running_loop().call_later(
-                0.05, lambda: os.kill(os.getpid(), signal.SIGINT)
-            )
+            asyncio.get_running_loop().call_later(0.05, lambda: os.kill(os.getpid(), signal.SIGINT))
             await asyncio.wait_for(event.wait(), timeout=2.0)
             await asyncio.sleep(0.2)
 
@@ -97,17 +93,9 @@ class TestInstallSignalHandlers:
         # Only ONE "Signal SIGTERM received \u2014 beginning graceful shutdown"
         # message should appear; the second raise should be logged as a
         # duplicate (WARN-level "ignoring").
-        init_msgs = [
-            r
-            for r in logger.records
-            if r.context == "Shutdown" and "beginning" in r.message
-        ]
+        init_msgs = [r for r in logger.records if r.context == "Shutdown" and "beginning" in r.message]
         assert len(init_msgs) == 1
-        ignored = [
-            r
-            for r in logger.records
-            if r.context == "Shutdown" and "ignoring" in r.message
-        ]
+        ignored = [r for r in logger.records if r.context == "Shutdown" and "ignoring" in r.message]
         assert len(ignored) >= 1
 
     def test_wait_for_shutdown_returns_on_signal(self):
@@ -115,9 +103,7 @@ class TestInstallSignalHandlers:
 
         async def scenario():
             event = install_signal_handlers(app, drain_timeout=1.0)
-            asyncio.get_running_loop().call_later(
-                0.05, lambda: os.kill(os.getpid(), signal.SIGTERM)
-            )
+            asyncio.get_running_loop().call_later(0.05, lambda: os.kill(os.getpid(), signal.SIGTERM))
             await asyncio.wait_for(wait_for_shutdown(event), timeout=2.0)
             # Give the shutdown task a moment to complete.
             await asyncio.sleep(0.2)

@@ -124,9 +124,7 @@ def test_nginx_prefix_stripped() -> None:
 
 def test_nginx_path_param_works() -> None:
     app = _build(root_path="/api")
-    status, body = asyncio.run(
-        _raw_request(app, "/api/v1/echo/test123", asgi_root_path="")
-    )
+    status, body = asyncio.run(_raw_request(app, "/api/v1/echo/test123", asgi_root_path=""))
     assert status == 200
     assert json.loads(body)["value"] == "test123"
 
@@ -160,9 +158,7 @@ def test_uvicorn_prefix_no_double_strip() -> None:
 
 def test_uvicorn_path_param_works() -> None:
     app = _build(root_path="/api")
-    status, body = asyncio.run(
-        _raw_request(app, "/v1/echo/hello", asgi_root_path="/api")
-    )
+    status, body = asyncio.run(_raw_request(app, "/v1/echo/hello", asgi_root_path="/api"))
     assert status == 200
     assert json.loads(body)["value"] == "hello"
 

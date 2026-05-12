@@ -191,9 +191,7 @@ class TestResponse:
         assert r.headers["x-trace"] == "abc"
 
     def test_with_cookie(self):
-        r = Response.json({}).with_cookie(
-            "session", "abc", max_age=3600, http_only=True, secure=True
-        )
+        r = Response.json({}).with_cookie("session", "abc", max_age=3600, http_only=True, secure=True)
         cookie = r.headers["set-cookie"]
         assert "session=abc" in cookie
         assert "HttpOnly" in cookie

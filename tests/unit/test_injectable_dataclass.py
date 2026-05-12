@@ -65,9 +65,7 @@ class TestInjectableDataclassWithFactories:
         class Settings:
             tags: list[str] = field(default_factory=list)
             aliases: dict[str, str] = field(default_factory=dict)
-            database_url: str = field(
-                default_factory=lambda: os.environ.get("DB_URL", "sqlite://")
-            )
+            database_url: str = field(default_factory=lambda: os.environ.get("DB_URL", "sqlite://"))
 
         c = DIContainer()
         c.register(Settings)

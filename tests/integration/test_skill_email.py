@@ -95,9 +95,7 @@ class EmailService:
             )
         )
 
-    async def send_order_confirmation(
-        self, to_addr: str, order_id: str, total: float
-    ) -> None:
+    async def send_order_confirmation(self, to_addr: str, order_id: str, total: float) -> None:
         await self._backend.send(
             EmailMessage(
                 to=[to_addr],
@@ -215,9 +213,7 @@ class TestEmailBackendViaClient:
 
     def test_find_by_recipient(self) -> None:
         client = build_app()
-        client.post(
-            "/email/welcome", json={"to": "alice@example.com", "username": "Alice"}
-        )
+        client.post("/email/welcome", json={"to": "alice@example.com", "username": "Alice"})
         client.post("/email/welcome", json={"to": "bob@example.com", "username": "Bob"})
         assert len(client.get("/email/inbox/alice@example.com").json()) == 1
         assert len(client.get("/email/inbox/bob@example.com").json()) == 1
@@ -234,18 +230,14 @@ class TestEmailBackendViaClient:
 class TestEmailServiceViaClient:
     def test_welcome_email_subject_contains_username(self) -> None:
         client = build_app()
-        client.post(
-            "/email/welcome", json={"to": "alice@example.com", "username": "Alice"}
-        )
+        client.post("/email/welcome", json={"to": "alice@example.com", "username": "Alice"})
         msgs = client.get("/email/inbox/alice@example.com").json()
         assert len(msgs) == 1
         assert "Alice" in msgs[0]["subject"]
 
     def test_welcome_email_has_html_body(self) -> None:
         client = build_app()
-        client.post(
-            "/email/welcome", json={"to": "alice@example.com", "username": "Alice"}
-        )
+        client.post("/email/welcome", json={"to": "alice@example.com", "username": "Alice"})
         msgs = client.get("/email/inbox/alice@example.com").json()
         assert msgs[0]["html_body"] != ""
 
@@ -267,9 +259,7 @@ class TestEmailServiceViaClient:
 
     def test_from_addr_is_noreply_by_default(self) -> None:
         client = build_app()
-        client.post(
-            "/email/welcome", json={"to": "user@example.com", "username": "User"}
-        )
+        client.post("/email/welcome", json={"to": "user@example.com", "username": "User"})
         msgs = client.get("/email/inbox/user@example.com").json()
         assert msgs[0]["from_addr"] == "noreply@example.com"
 
@@ -277,17 +267,13 @@ class TestEmailServiceViaClient:
 class TestEmailIntegration:
     def test_welcome_endpoint_returns_sent(self) -> None:
         client = build_app()
-        r = client.post(
-            "/email/welcome", json={"to": "alice@example.com", "username": "Alice"}
-        )
+        r = client.post("/email/welcome", json={"to": "alice@example.com", "username": "Alice"})
         assert r.status_code == 200
         assert r.json()["sent"] is True
 
     def test_welcome_email_is_stored_in_backend(self) -> None:
         client = build_app()
-        client.post(
-            "/email/welcome", json={"to": "alice@example.com", "username": "Alice"}
-        )
+        client.post("/email/welcome", json={"to": "alice@example.com", "username": "Alice"})
         assert len(_test_backend.find("alice@example.com")) == 1
 
     def test_reset_endpoint(self) -> None:

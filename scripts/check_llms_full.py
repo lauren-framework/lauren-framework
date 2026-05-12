@@ -42,10 +42,7 @@ def main(argv: list[str]) -> int:
         print("Either add them to llms-full.txt or remove them from `lauren.__all__`.")
         return 1
 
-    print(
-        f"OK: all {len(public)} public symbols of `lauren` "
-        f"are referenced in llms-full.txt"
-    )
+    print(f"OK: all {len(public)} public symbols of `lauren` are referenced in llms-full.txt")
 
     if "--list-extras" in argv:
         # Heuristic: top-level `lauren.<Name>` mentions that are no longer public.

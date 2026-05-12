@@ -128,9 +128,7 @@ class TestSQLAlchemyModels:
 
     def test_get_user_by_id(self):
         client = build_app()
-        create_r = client.post(
-            "/users/", json={"name": "Bob", "email": "bob@example.com"}
-        )
+        create_r = client.post("/users/", json={"name": "Bob", "email": "bob@example.com"})
         user_id = create_r.json()["id"]
 
         r = client.get(f"/users/{user_id}")

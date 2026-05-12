@@ -39,17 +39,11 @@ class PresignedUrlService:
         self._secret = secret
         self._base_url = base_url
 
-    def generate_upload_url(
-        self, bucket: str, key: str, ttl_seconds: int = 900
-    ) -> dict:
+    def generate_upload_url(self, bucket: str, key: str, ttl_seconds: int = 900) -> dict:
         expires = int(time.time()) + ttl_seconds
         to_sign = f"{bucket}/{key}:{expires}"
-        sig = hmac.new(
-            self._secret.encode(), to_sign.encode(), hashlib.sha256
-        ).hexdigest()
-        params = urlencode(
-            {"bucket": bucket, "key": key, "expires": expires, "signature": sig}
-        )
+        sig = hmac.new(self._secret.encode(), to_sign.encode(), hashlib.sha256).hexdigest()
+        params = urlencode({"bucket": bucket, "key": key, "expires": expires, "signature": sig})
         return {
             "url": f"{self._base_url}/upload?{params}",
             "method": "PUT",
@@ -60,9 +54,7 @@ class PresignedUrlService:
         if time.time() > expires:
             return False
         to_sign = f"{bucket}/{key}:{expires}"
-        expected = hmac.new(
-            self._secret.encode(), to_sign.encode(), hashlib.sha256
-        ).hexdigest()
+        expected = hmac.new(self._secret.encode(), to_sign.encode(), hashlib.sha256).hexdigest()
         return hmac.compare_digest(expected, signature)
 
 
@@ -112,9 +104,7 @@ def build_app() -> TestClient:
 class TestPresignedUrls:
     def test_generate_returns_url_and_method(self) -> None:
         client = build_app()
-        r = client.post(
-            "/storage/presign", json={"bucket": "my-bucket", "key": "video.mp4"}
-        )
+        r = client.post("/storage/presign", json={"bucket": "my-bucket", "key": "video.mp4"})
         assert r.status_code == 200
         body = r.json()
         assert "url" in body
@@ -123,9 +113,7 @@ class TestPresignedUrls:
 
     def test_generated_url_contains_bucket_and_key(self) -> None:
         client = build_app()
-        r = client.post(
-            "/storage/presign", json={"bucket": "photos", "key": "image.jpg"}
-        )
+        r = client.post("/storage/presign", json={"bucket": "photos", "key": "image.jpg"})
         url = r.json()["url"]
         assert "photos" in url
         assert "image.jpg" in url
@@ -155,9 +143,7 @@ class TestPresignedUrls:
         svc = PresignedUrlService(secret="test-secret")
         expired_time = int(time.time()) - 100  # already expired
         to_sign = f"bucket/file.txt:{expired_time}"
-        sig = hmac.new(
-            svc._secret.encode(), to_sign.encode(), hashlib.sha256
-        ).hexdigest()
+        sig = hmac.new(svc._secret.encode(), to_sign.encode(), hashlib.sha256).hexdigest()
         assert svc.verify_url("bucket", "file.txt", expired_time, sig) is False
 
     def test_verify_wrong_signature_returns_false(self) -> None:
@@ -175,15 +161,11 @@ class TestPresignedUrls:
         signature = parsed["signature"][0]
 
         client = build_app()
-        r = client.get(
-            f"/storage/verify?bucket=b&key=k.txt&expires={expires}&signature={signature}"
-        )
+        r = client.get(f"/storage/verify?bucket=b&key=k.txt&expires={expires}&signature={signature}")
         assert r.status_code == 200
         assert r.json()["valid"] is True
 
     def test_custom_ttl(self) -> None:
         client = build_app()
-        r = client.post(
-            "/storage/presign", json={"bucket": "b", "key": "k", "ttl_seconds": 60}
-        )
+        r = client.post("/storage/presign", json={"bucket": "b", "key": "k", "ttl_seconds": 60})
         assert r.json()["expires_in"] == 60

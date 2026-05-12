@@ -51,9 +51,7 @@ def _print_table(title: str, results: list[BenchResult]) -> None:
     print()
 
 
-def _build_multipart(
-    field: str, data: bytes, filename: str, boundary: str = "B"
-) -> tuple[bytes, str]:
+def _build_multipart(field: str, data: bytes, filename: str, boundary: str = "B") -> tuple[bytes, str]:
     delim = f"--{boundary}".encode()
     body = (
         delim + b"\r\n"
@@ -103,9 +101,7 @@ class TestUploadFileBench:
                 content=multipart_body,
                 headers={"content-type": content_type},
             )
-            client.post(
-                "/u/raw", content=multipart_body, headers={"content-type": content_type}
-            )
+            client.post("/u/raw", content=multipart_body, headers={"content-type": content_type})
         gc.collect()
 
         t0 = time.perf_counter()
@@ -119,9 +115,7 @@ class TestUploadFileBench:
 
         t0 = time.perf_counter()
         for _ in range(n):
-            client.post(
-                "/u/raw", content=multipart_body, headers={"content-type": content_type}
-            )
+            client.post("/u/raw", content=multipart_body, headers={"content-type": content_type})
         raw_secs = time.perf_counter() - t0
 
         results = [

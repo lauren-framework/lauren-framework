@@ -123,20 +123,14 @@ def _resolve_forward_import(ref: Any, declaring_cls: type) -> type:
         if sys_mod is None:
             continue
         resolved = getattr(sys_mod, name, None)
-        if (
-            resolved is not None
-            and isinstance(resolved, type)
-            and id(resolved) not in seen_ids
-        ):
+        if resolved is not None and isinstance(resolved, type) and id(resolved) not in seen_ids:
             candidates.append(resolved)
             seen_ids.add(id(resolved))
 
     if len(candidates) == 1:
         return candidates[0]
     if len(candidates) > 1:
-        locations = ", ".join(
-            getattr(c, "__module__", "?") + "." + c.__name__ for c in candidates
-        )
+        locations = ", ".join(getattr(c, "__module__", "?") + "." + c.__name__ for c in candidates)
         raise ValueError(
             f"{declaring_cls.__name__} has an ambiguous forward import {name!r}: "
             f"found {len(candidates)} classes with that name ({locations}). "
@@ -267,10 +261,7 @@ class ModuleGraph:
                 # Declaring the same provider in two modules is
                 # ambiguous and rejected here so errors surface at
                 # startup rather than at resolution.
-                if (
-                    token in self._provider_owner
-                    and self._provider_owner[token] is not m.cls
-                ):
+                if token in self._provider_owner and self._provider_owner[token] is not m.cls:
                     raise ModuleExportViolation(
                         f"Provider {_describe_token(token)} is declared in both "
                         f"{self._provider_owner[token].__name__} and {m.cls.__name__}; "

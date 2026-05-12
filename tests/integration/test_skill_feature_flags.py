@@ -21,9 +21,7 @@ class FeatureFlagService:
     def __init__(self) -> None:
         self._flags: dict[str, dict] = {}
 
-    def register(
-        self, name: str, enabled: bool = True, rollout_pct: float = 100.0
-    ) -> None:
+    def register(self, name: str, enabled: bool = True, rollout_pct: float = 100.0) -> None:
         self._flags[name] = {"enabled": enabled, "rollout_pct": rollout_pct}
 
     def is_enabled(self, flag: str, user_id: str = "") -> bool:

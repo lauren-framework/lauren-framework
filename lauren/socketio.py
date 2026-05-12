@@ -381,15 +381,12 @@ def on_socketio_event(
         # ``@on_socketio_event`` (without parens) silently misroutes
         # the decoration target into ``event``; reject explicitly.
         raise DecoratorUsageError(
-            "@on_socketio_event must be called with an event name "
-            '(e.g. @on_socketio_event("chat:message"))'
+            '@on_socketio_event must be called with an event name (e.g. @on_socketio_event("chat:message"))'
         )
 
     def decorator(fn: F) -> F:
         if not (inspect.isfunction(fn) or inspect.iscoroutinefunction(fn)):
-            raise DecoratorUsageError(
-                f"@on_socketio_event must decorate a method, not a {type(fn).__name__}"
-            )
+            raise DecoratorUsageError(f"@on_socketio_event must decorate a method, not a {type(fn).__name__}")
         meta = SocketIOEventMeta(event_name=event, summary=summary)
         setattr(fn, SOCKETIO_EVENT_META, meta)
         return fn
@@ -424,9 +421,7 @@ def socketio_controller(
 
     def decorator(cls: type) -> type:
         if not isinstance(cls, type):
-            raise DecoratorUsageError(
-                f"@socketio_controller must decorate a class, got {type(cls).__name__}"
-            )
+            raise DecoratorUsageError(f"@socketio_controller must decorate a class, got {type(cls).__name__}")
 
         # Collect the user's @on_socketio_event-marked methods.
         events: dict[str, Callable[..., Any]] = {}
@@ -436,8 +431,7 @@ def socketio_controller(
                 continue
             if meta.event_name in events:
                 raise DecoratorUsageError(
-                    f"Duplicate @on_socketio_event({meta.event_name!r}) "
-                    f"on {cls.__name__}"
+                    f"Duplicate @on_socketio_event({meta.event_name!r}) on {cls.__name__}"
                 )
             events[meta.event_name] = member
 
@@ -451,9 +445,7 @@ def socketio_controller(
 
         connect_hook = events.get("connect")
         disconnect_hook = events.get("disconnect")
-        event_hooks = {
-            name: fn for name, fn in events.items() if name not in RESERVED_EVENT_NAMES
-        }
+        event_hooks = {name: fn for name, fn in events.items() if name not in RESERVED_EVENT_NAMES}
 
         # @on_connect: complete the Engine.IO + Socket.IO handshake,
         # build a SocketIOConnection, attach it to ws.state, then run

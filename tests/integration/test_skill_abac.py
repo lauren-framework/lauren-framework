@@ -186,13 +186,8 @@ class TestABACEvaluator:
 
     def test_evaluator_multiple_conditions(self):
         ev = _make_evaluator()
-        assert (
-            ev.evaluate({"role": "finance", "department": "HQ"}, "read_finance") is True
-        )
-        assert (
-            ev.evaluate({"role": "finance", "department": "Remote"}, "read_finance")
-            is False
-        )
+        assert ev.evaluate({"role": "finance", "department": "HQ"}, "read_finance") is True
+        assert ev.evaluate({"role": "finance", "department": "Remote"}, "read_finance") is False
 
     def test_evaluator_non_applicable_action_permits(self):
         ev = _make_evaluator()

@@ -115,12 +115,7 @@ class QueueController:
 
     @get("/dlq")
     async def get_dlq(self) -> dict:
-        return {
-            "dlq": [
-                {"id": t.id, "error": t.last_error, "attempts": t.attempts}
-                for t in self._queue.dlq
-            ]
-        }
+        return {"dlq": [{"id": t.id, "error": t.last_error, "attempts": t.attempts} for t in self._queue.dlq]}
 
     @get("/processed")
     async def get_processed(self) -> dict:
@@ -294,8 +289,6 @@ class TestRetryQueueController:
     def test_multiple_enqueues(self) -> None:
         client = build_app()
         for i in range(3):
-            client.post(
-                "/queue/enqueue", json={"task_id": f"t{i}", "payload": {"i": i}}
-            )
+            client.post("/queue/enqueue", json={"task_id": f"t{i}", "payload": {"i": i}})
         r = client.get("/queue/size")
         assert r.json()["queue_size"] == 3

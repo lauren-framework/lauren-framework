@@ -464,10 +464,7 @@ class TestInjectableExtractor:
                 execution_context: ExecutionContext,
                 extraction: Extraction,
             ) -> object:
-                return (
-                    f"{self._prefix}:{extraction.name}"
-                    f":{execution_context.request.method}"
-                )
+                return f"{self._prefix}:{extraction.name}:{execution_context.request.method}"
 
         instance = HeaderEcho(prefix="test")
         container = self._MockContainer({HeaderEcho: instance})
@@ -483,9 +480,7 @@ class TestInjectableExtractor:
             has_default=False,
             marker_cls=HeaderEcho,
         )
-        value = await extract_parameter(
-            req, ext, container=container, execution_context=ctx
-        )
+        value = await extract_parameter(req, ext, container=container, execution_context=ctx)
         assert value == "test:x:DELETE"
 
     @pytest.mark.asyncio
@@ -754,10 +749,7 @@ class TestExtractMethodDetectionInheritance:
         inst = Child()
         container = self._MockContainer({Child: inst})
         req = make_request()
-        assert (
-            await extract_parameter(req, self._ext("a2a", Child), container=container)
-            == "parent_im"
-        )
+        assert await extract_parameter(req, self._ext("a2a", Child), container=container) == "parent_im"
 
     def test_injectable_own_dict_check_not_hasattr(self):
         """__dict__ check: Child that inherits @injectable is NOT treated as injectable.
@@ -862,9 +854,7 @@ class TestExtractMethodDetectionInheritance:
         inst = Child()
         container = self._MockContainer({Child: inst})
         req = make_request()
-        result = await extract_parameter(
-            req, self._ext("a4", Child), container=container
-        )
+        result = await extract_parameter(req, self._ext("a4", Child), container=container)
         assert result == "child_im"
 
     # ------------------------------------------------------------------
@@ -978,9 +968,7 @@ class TestExtractMethodDetectionInheritance:
         inst = Child()
         container = self._MockContainer({Child: inst})
         req = make_request()
-        result = await extract_parameter(
-            req, self._ext("a7", Child), container=container
-        )
+        result = await extract_parameter(req, self._ext("a7", Child), container=container)
         assert result == "child"
 
     # ------------------------------------------------------------------
@@ -1617,9 +1605,7 @@ class TestCustomExtractorEdgeCases:
             has_default=False,
             marker_cls=BoomExtractor,
         )
-        with pytest.raises(
-            ExtractorError, match="custom extractor BoomExtractor failed"
-        ):
+        with pytest.raises(ExtractorError, match="custom extractor BoomExtractor failed"):
             await extract_parameter(req, ext)
 
     @pytest.mark.asyncio

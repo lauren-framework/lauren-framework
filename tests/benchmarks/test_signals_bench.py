@@ -58,10 +58,7 @@ def _print_table(title: str, results: list[BenchResult]) -> None:
     print("-" * 68)
     for r in results:
         speedup = baseline / r.seconds
-        print(
-            f"{r.mode:<30} {r.per_op_us:>10.3f} {r.ops_per_sec:>14,.0f} "
-            f"{speedup:>9.2f}x"
-        )
+        print(f"{r.mode:<30} {r.per_op_us:>10.3f} {r.ops_per_sec:>14,.0f} {speedup:>9.2f}x")
     print()
 
 
@@ -148,8 +145,7 @@ class TestSignalBusMicroBench:
         # Empty bus must stay under 1 s/op \u2014 the fast-path check on
         # ``_listeners`` inside emit is a single dict truthiness test.
         assert empty_result.per_op_us < 1.0, (
-            f"empty emit was {empty_result.per_op_us:.3f} s/op; "
-            f"the no-listener fast path regressed"
+            f"empty emit was {empty_result.per_op_us:.3f} s/op; the no-listener fast path regressed"
         )
 
     def test_empty_bus_overhead_is_near_zero(self) -> None:
@@ -165,10 +161,7 @@ class TestSignalBusMicroBench:
         t0 = time.perf_counter()
         asyncio.run(run())
         elapsed = time.perf_counter() - t0
-        print(
-            f"\n\n=== empty bus: {n} emits in {elapsed:.4f}s "
-            f"({(elapsed / n) * 1_000_000:.3f} s/op)\n"
-        )
+        print(f"\n\n=== empty bus: {n} emits in {elapsed:.4f}s ({(elapsed / n) * 1_000_000:.3f} s/op)\n")
         assert elapsed / n < 1e-6, "empty emit exceeded 1 s/op"
 
 
@@ -240,6 +233,4 @@ class TestSignalBusEndToEnd:
         # Perf: adding two sync listeners must not slow the app by
         # more than 20% \u2014 observability overhead must be negligible.
         slowdown = loaded_secs / empty_secs
-        assert slowdown <= 1.9, (
-            f"2 listeners caused {slowdown:.2f}x slowdown; budget is 1.20x"
-        )
+        assert slowdown <= 1.9, f"2 listeners caused {slowdown:.2f}x slowdown; budget is 1.20x"

@@ -258,8 +258,7 @@ def compile_gateways(
             )
             all_metas.append(meta)
             logger.log(
-                f"Mapped {{WEBSOCKET {entry.path_template} #{event}}} "
-                f"→ {cls.__name__}.{fn.__name__}",
+                f"Mapped {{WEBSOCKET {entry.path_template} #{event}}} → {cls.__name__}.{fn.__name__}",
                 context="RouterExplorer",
                 event=event,
                 path=entry.path_template,
@@ -445,9 +444,7 @@ def _compile_ws_signature(
                 Extraction(
                     name=name,
                     source="ws_error",
-                    inner_type=ann
-                    if ann is not _inspect.Parameter.empty
-                    else Exception,
+                    inner_type=ann if ann is not _inspect.Parameter.empty else Exception,
                     field_descriptor=None,
                     default=default,
                     has_default=has_default,
@@ -544,8 +541,7 @@ def _compile_ws_signature(
             continue
 
         raise UnresolvableParameterError(
-            f"Cannot resolve parameter {name!r} in "
-            f"{controller_cls.__name__}.{fn.__name__}",
+            f"Cannot resolve parameter {name!r} in {controller_cls.__name__}.{fn.__name__}",
             detail={
                 "class": controller_cls.__name__,
                 "handler": fn.__name__,
@@ -782,15 +778,11 @@ async def handle_websocket(
                     except Exception:
                         import logging as _logging
 
-                        _logging.getLogger("lauren").exception(
-                            "Error in @on_error handler"
-                        )
+                        _logging.getLogger("lauren").exception("Error in @on_error handler")
                 if not handled:
                     import logging as _logging
 
-                    _logging.getLogger("lauren").exception(
-                        "Unhandled error in @on_message handler"
-                    )
+                    _logging.getLogger("lauren").exception("Unhandled error in @on_message handler")
                     await _emit_error_frame(
                         ws,
                         WebSocketError(
@@ -819,11 +811,7 @@ async def handle_websocket(
         await _finalize_scope(container, request_cache)
 
         # Publish the disconnect code on the app logger for observability.
-        close_code = (
-            disconnect_reason.close_code
-            if disconnect_reason is not None
-            else ws.close_code
-        )
+        close_code = disconnect_reason.close_code if disconnect_reason is not None else ws.close_code
         logger.log(
             f"WebSocket closed {path} code={close_code}",
             context="WebSocket",
@@ -869,9 +857,7 @@ async def _dispatch_text(
     # the top level don't have to wrap everything in ``data``.
     if compiled.payload_adapter is not None:
         try:
-            payload = compiled.payload_adapter.validate_python(
-                payload if event != payload else frame
-            )
+            payload = compiled.payload_adapter.validate_python(payload if event != payload else frame)
         except pydantic.ValidationError as e:  # type: ignore[union-attr]
             raise WebSocketValidationError(
                 "validation error",
@@ -897,9 +883,7 @@ async def _dispatch_binary(
     ws: WebSocket,
 ) -> None:
     """Route a binary frame to ``@on_message("__binary__")``."""
-    compiled = gateway.messages.get(BINARY_EVENT) or gateway.messages.get(
-        WILDCARD_EVENT
-    )
+    compiled = gateway.messages.get(BINARY_EVENT) or gateway.messages.get(WILDCARD_EVENT)
     if compiled is None:
         raise WebSocketValidationError(
             "no handler for binary frames",
@@ -953,9 +937,7 @@ async def _finalize_scope(
             except Exception:
                 import logging as _logging
 
-                _logging.getLogger("lauren").exception(
-                    "Error in @pre_destruct on %s (ws)", cls.__name__
-                )
+                _logging.getLogger("lauren").exception("Error in @pre_destruct on %s (ws)", cls.__name__)
         aclose = getattr(instance, "aclose", None)
         if callable(aclose):
             try:
@@ -965,9 +947,7 @@ async def _finalize_scope(
             except Exception:
                 import logging as _logging
 
-                _logging.getLogger("lauren").exception(
-                    "Error in aclose on %s (ws)", cls.__name__
-                )
+                _logging.getLogger("lauren").exception("Error in aclose on %s (ws)", cls.__name__)
 
 
 async def _bind_ws_kwargs(

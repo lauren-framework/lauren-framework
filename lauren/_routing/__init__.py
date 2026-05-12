@@ -112,9 +112,7 @@ _EMPTY_PARAMS: dict[str, str] = {}
 class Router:
     """In-memory radix router with a static-prefix fast path."""
 
-    HTTP_METHODS = frozenset(
-        {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
-    )
+    HTTP_METHODS = frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"})
 
     def __init__(self) -> None:
         self._root = _Node()
@@ -181,9 +179,7 @@ class Router:
             elif kind == "wildcard":
                 is_static_route = False
                 if i != len(segments) - 1:
-                    raise RouterConflictError(
-                        "Wildcard must be the last segment", detail={"path": path}
-                    )
+                    raise RouterConflictError("Wildcard must be the last segment", detail={"path": path})
                 if node.child_wildcard is None:
                     node.child_wildcard = _Node(kind="wildcard", segment=name)
                 elif node.child_wildcard.segment != name:
@@ -317,9 +313,7 @@ class Router:
             if self._has_dynamic_routes:
                 segments = _split_segments(path)
                 skip_first = segments[0] if segments else None
-                node, params = self._match(
-                    self._root, segments, 0, {}, _skip_static_seg=skip_first
-                )
+                node, params = self._match(self._root, segments, 0, {}, _skip_static_seg=skip_first)
                 if node is not None and method in node.handlers:
                     return node.handlers[method], params
             allow = sorted(static_methods.keys())
@@ -364,9 +358,7 @@ class Router:
         seg = segments[idx]
         # 1) static (highest priority) -- unless the top-level static
         # branch was masked out by the fast-path fallback.
-        skip_this_static = (
-            idx == 0 and _skip_static_seg is not None and seg == _skip_static_seg
-        )
+        skip_this_static = idx == 0 and _skip_static_seg is not None and seg == _skip_static_seg
         if not skip_this_static:
             static_child = node.children_static.get(seg)
             if static_child is not None:

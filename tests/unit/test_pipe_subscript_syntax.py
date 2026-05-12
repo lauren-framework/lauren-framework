@@ -398,9 +398,7 @@ class TestSubscriptPipesEndToEnd:
         @controller("/c")
         class C:
             @get("/{n}")
-            async def h(
-                self, n: Path[int, annotated_pipe] = pipe(default_pipe)
-            ) -> dict:
+            async def h(self, n: Path[int, annotated_pipe] = pipe(default_pipe)) -> dict:
                 return {"n": n}
 
         @module(controllers=[C])

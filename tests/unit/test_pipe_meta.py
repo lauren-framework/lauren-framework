@@ -235,9 +235,7 @@ class TestChainEndToEnd:
             @get("/{uid}")
             async def show(
                 self,
-                uid: Path[int] = (
-                    PathField(ge=1) | pipe(validate_path) | path_is_string | UserLookup
-                ),
+                uid: Path[int] = (PathField(ge=1) | pipe(validate_path) | path_is_string | UserLookup),
             ) -> dict:
                 return uid
 

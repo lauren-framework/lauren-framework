@@ -274,10 +274,7 @@ def build(session: nox.Session) -> None:
 def build_check(session: nox.Session) -> None:
     """Validate the built distributions with ``twine check``."""
     if not DIST_DIR.exists() or not any(DIST_DIR.iterdir()):
-        session.error(
-            "dist/ is empty; run `nox -s build` first or chain them: "
-            "`nox -s build build_check`."
-        )
+        session.error("dist/ is empty; run `nox -s build` first or chain them: `nox -s build build_check`.")
     session.install("twine>=5.1")
     session.run("twine", "check", *[str(p) for p in DIST_DIR.iterdir()])
 

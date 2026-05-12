@@ -60,12 +60,7 @@ def parse_sse_body(body: bytes) -> list[dict[str, str]]:
     for line in text.split("\n"):
         if line == "":
             if current:
-                events.append(
-                    {
-                        k: ("\n".join(v) if k == "data" else v[0])
-                        for k, v in current.items()
-                    }
-                )
+                events.append({k: ("\n".join(v) if k == "data" else v[0]) for k, v in current.items()})
                 current = {}
             continue
         if line.startswith(":"):

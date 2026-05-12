@@ -32,11 +32,7 @@ def llms_full_txt() -> str:
     covers every public API, idiomatic usage patterns, and common
     anti-patterns.
     """
-    return (
-        resources.files(__package__)
-        .joinpath("llms-full.txt")
-        .read_text(encoding="utf-8")
-    )
+    return resources.files(__package__).joinpath("llms-full.txt").read_text(encoding="utf-8")
 
 
 __all__ = ["llms_txt", "llms_full_txt"]

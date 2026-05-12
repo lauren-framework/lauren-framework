@@ -388,9 +388,7 @@ class TestUseFactoryContainer:
     async def test_optional_dep_present_uses_value(self):
         container = DIContainer()
         container.register_value("LOGGER", "stdout")
-        container.register_factory(
-            "OUT", lambda log: f"log={log}", inject=[OptionalDep("LOGGER")]
-        )
+        container.register_factory("OUT", lambda log: f"log={log}", inject=[OptionalDep("LOGGER")])
         container.compile()
         assert await container.resolve("OUT") == "log=stdout"
 
@@ -570,9 +568,7 @@ class TestCrossHelperInteraction:
 
         container = DIContainer()
         container.register_class("OPTS", RealOptions)
-        container.register_factory(
-            "CONN", lambda opts: f"connected:{opts.url}", inject=["OPTS"]
-        )
+        container.register_factory("CONN", lambda opts: f"connected:{opts.url}", inject=["OPTS"])
         container.compile()
         assert await container.resolve("CONN") == "connected:real"
 
@@ -582,9 +578,7 @@ class TestCrossHelperInteraction:
         container.register_factory("ORIGINAL", lambda: "value")
         container.register_alias("NICE_NAME", "ORIGINAL")
         container.compile()
-        assert await container.resolve("NICE_NAME") is await container.resolve(
-            "ORIGINAL"
-        )
+        assert await container.resolve("NICE_NAME") is await container.resolve("ORIGINAL")
 
     @pytest.mark.asyncio
     async def test_class_token_overridden_by_value(self):

@@ -50,9 +50,7 @@ class EventStore:
         self._events: list[DomainEvent] = []
 
     def append(self, event: DomainEvent) -> None:
-        existing_count = sum(
-            1 for e in self._events if e.aggregate_id == event.aggregate_id
-        )
+        existing_count = sum(1 for e in self._events if e.aggregate_id == event.aggregate_id)
         event.version = existing_count + 1
         self._events.append(event)
 
@@ -107,9 +105,7 @@ class OrderCommandHandler:
         self._store = store
 
     def create_order(self, order_id: str) -> OrderAggregate:
-        event = DomainEvent(
-            aggregate_id=order_id, event_type="OrderCreated", payload={}
-        )
+        event = DomainEvent(aggregate_id=order_id, event_type="OrderCreated", payload={})
         self._store.append(event)
         return self._load(order_id)
 
@@ -124,9 +120,7 @@ class OrderCommandHandler:
         return self._load(order_id)
 
     def complete_order(self, order_id: str) -> OrderAggregate:
-        event = DomainEvent(
-            aggregate_id=order_id, event_type="OrderCompleted", payload={}
-        )
+        event = DomainEvent(aggregate_id=order_id, event_type="OrderCompleted", payload={})
         self._store.append(event)
         return self._load(order_id)
 

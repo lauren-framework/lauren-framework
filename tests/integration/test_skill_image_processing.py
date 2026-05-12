@@ -79,17 +79,13 @@ class ImageController:
 
     @post("/resize")
     async def resize(self, file_data: Bytes) -> dict:
-        result = self._processor.process(
-            file_data, [{"op": "resize", "width": 50, "height": 50}]
-        )
+        result = self._processor.process(file_data, [{"op": "resize", "width": 50, "height": 50}])
         info = self._processor.get_info(result)
         return info
 
     @post("/thumbnail")
     async def thumbnail(self, file_data: Bytes) -> dict:
-        result = self._processor.process(
-            file_data, [{"op": "thumbnail", "width": 30, "height": 30}]
-        )
+        result = self._processor.process(file_data, [{"op": "thumbnail", "width": 30, "height": 30}])
         info = self._processor.get_info(result)
         return info
 
@@ -156,9 +152,7 @@ class TestImageProcessor:
     def test_thumbnail_preserves_aspect_ratio(self) -> None:
         processor = ImageProcessor()
         data = _make_test_image(200, 100)
-        result = processor.process(
-            data, [{"op": "thumbnail", "width": 50, "height": 50}]
-        )
+        result = processor.process(data, [{"op": "thumbnail", "width": 50, "height": 50}])
         info = processor.get_info(result)
         # thumbnail fits within 50x50 preserving aspect ratio
         assert info["width"] <= 50
@@ -167,9 +161,7 @@ class TestImageProcessor:
     def test_crop_reduces_dimensions(self) -> None:
         processor = ImageProcessor()
         data = _make_test_image(100, 100)
-        result = processor.process(
-            data, [{"op": "crop", "left": 10, "top": 10, "right": 60, "bottom": 60}]
-        )
+        result = processor.process(data, [{"op": "crop", "left": 10, "top": 10, "right": 60, "bottom": 60}])
         info = processor.get_info(result)
         assert info["width"] == 50
         assert info["height"] == 50

@@ -197,30 +197,68 @@ $ curl -X POST "http://localhost:8000/1/orders?priority=high&dry_run=true" \
 
 ## Extracting a model from the query string
 
-If you want a Pydantic model's fields to come from query params instead of the body, annotate with `Query[Model]`. Lauren collects each field individually from the query string and validates the assembled dict:
+Use `Query[Model]` to collect multiple query-string fields into a single typed
+object.  Lauren supports **Pydantic models**, **`msgspec.Struct`** subclasses,
+and **Python dataclasses** — all work identically.  Fields are collected by
+name and coerced to the declared types (`"5"` → `5` for `int`, etc.).
 
 ```python
 from lauren import Query
 
-
+# Pydantic model
 class Filters(BaseModel):
     active: bool = True
     min_price: float = 0.0
     tags: list[str] = []
 
+# msgspec.Struct (same ergonomics)
+import msgspec
+
+class PageParams(msgspec.Struct):
+    page: int
+    size: int = 20
+
+# Python dataclass (same ergonomics)
+from dataclasses import dataclass, field
+
+@dataclass
+class SearchParams:
+    q: str
+    limit: int = 10
+
 
 @get("/")
 async def list_items(self, f: Query[Filters]) -> dict:
-    return {
-        "active": f.active,
-        "min_price": f.min_price,
-    }
+    return {"active": f.active, "min_price": f.min_price}
+
+@get("/users")
+async def get_users(self, params: Query[PageParams]) -> dict:
+    return {"page": params.page, "size": params.size}
+
+@get("/search")
+async def search(self, params: Query[SearchParams]) -> dict:
+    return {"q": params.q, "limit": params.limit}
 ```
 
 ```console
 $ curl "http://localhost:8000/?active=false&min_price=5.0"
 {"active": false, "min_price": 5.0}
+
+$ curl "http://localhost:8000/users?page=2&size=50"
+{"page": 2, "size": 50}
 ```
+
+!!! tip "Implicit body promotion"
+    A **bare** parameter annotated as a `msgspec.Struct` or dataclass (without
+    any extractor marker) is automatically promoted to a **JSON body**
+    parameter, exactly like a bare Pydantic model:
+
+    ```python
+    @post("/users")
+    async def create_user(self, body: PageParams) -> dict:
+        # body is a PageParams instance populated from the request body
+        return {"page": body.page, "size": body.size}
+    ```
 
 ## Explicit markers still work
 
@@ -258,7 +296,7 @@ async def update(
 |---|---|---|
 | Unannotated parameter (`def h(self, x):`) | No type to coerce to | Annotate explicitly: `x: str` |
 | `list[MyService]` | The element type is not a scalar — only `list[scalar]` (e.g. `list[int]`, `list[str]`) auto-promotes | Use `@injectable(multi=True)` + DI for multi-binding, or `Json[list[MyService]]` for a JSON array |
-| Custom class (non-Pydantic) | Ambiguous: DI token or body? | `@injectable` + auto-DI, or `Json[MyClass]`, or a custom extractor |
+| Custom class (non-Pydantic, non-struct, non-dataclass) | Ambiguous: DI token or body? | `@injectable` + auto-DI, or `Json[MyClass]`, or a custom extractor |
 | `Header[str]`, `Cookie[str]` | Can only come from headers/cookies | Always explicit |
 
 ## DI still runs first
@@ -291,6 +329,10 @@ class AppModule: ...
 | `ids: list[int]` | Query multi-value |
 | `item: CreateItem` (BaseModel) | JSON body |
 | `item: Optional[CreateItem] = None` | JSON body, nullable |
-| `f: Query[Filters]` (explicit) | Query fields from model |
+| `body: MyStruct` (msgspec.Struct) | JSON body |
+| `body: MyDC` (dataclass) | JSON body |
+| `f: Query[Filters]` (Pydantic, explicit) | Query fields from model |
+| `params: Query[PageParams]` (msgspec.Struct, explicit) | Query fields from struct |
+| `params: Query[PageParams]` (dataclass, explicit) | Query fields from dataclass |
 | `token: Header[str]` (explicit) | Header |
 | `s: MyService` (DI registered) | DI injection |

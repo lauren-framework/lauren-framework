@@ -272,9 +272,7 @@ def on_connect(fn: F) -> F:
     lands wherever ``setattr`` will accept it.
     """
     if not _is_method_target(fn):
-        raise DecoratorUsageError(
-            "@on_connect must decorate a method, not a class or non-callable"
-        )
+        raise DecoratorUsageError("@on_connect must decorate a method, not a class or non-callable")
     setattr(fn, WS_ON_CONNECT, True)
     return fn
 
@@ -288,9 +286,7 @@ def on_disconnect(fn: F) -> F:
     handshake.
     """
     if not _is_method_target(fn):
-        raise DecoratorUsageError(
-            "@on_disconnect must decorate a method, not a class or non-callable"
-        )
+        raise DecoratorUsageError("@on_disconnect must decorate a method, not a class or non-callable")
     setattr(fn, WS_ON_DISCONNECT, True)
     return fn
 
@@ -327,9 +323,7 @@ def on_message(
 
     def decorator(fn: F) -> F:
         if not _is_method_target(fn):
-            raise DecoratorUsageError(
-                "@on_message must decorate a method, not a class or non-callable"
-            )
+            raise DecoratorUsageError("@on_message must decorate a method, not a class or non-callable")
         existing: list[WsMessageMeta] = (
             list(fn.__dict__.get(WS_ON_MESSAGE, []))
             if hasattr(fn, "__dict__")
@@ -359,9 +353,7 @@ def on_error(fn: F) -> F:
     open.
     """
     if not _is_method_target(fn):
-        raise DecoratorUsageError(
-            "@on_error must decorate a method, not a class or non-callable"
-        )
+        raise DecoratorUsageError("@on_error must decorate a method, not a class or non-callable")
     setattr(fn, WS_ON_ERROR, True)
     return fn
 
@@ -427,10 +419,7 @@ class WebSocket:
         self._path_template = path_template
         self._path_params = dict(path_params)
         self._headers = Headers(
-            [
-                (k.decode("latin-1"), v.decode("latin-1"))
-                for k, v in scope.get("headers", [])
-            ]
+            [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope.get("headers", [])]
         )
         self._query_string: bytes = scope.get("query_string", b"") or b""
         self._state = State()
@@ -438,9 +427,7 @@ class WebSocket:
         # Subprotocol negotiation. A server can select one of the
         # client-offered protocols during ``accept()``; we track the
         # client list here for introspection.
-        self._client_subprotocols: tuple[str, ...] = tuple(
-            scope.get("subprotocols") or ()
-        )
+        self._client_subprotocols: tuple[str, ...] = tuple(scope.get("subprotocols") or ())
         self._selected_subprotocol: str | None = None
         # Close code + reason are filled in by :meth:`close` or by
         # handling of the ``websocket.disconnect`` message.
@@ -509,17 +496,13 @@ class WebSocket:
         subprotocol before any application logic runs.
         """
         if self._state_code != self.STATE_CONNECTING:
-            raise WebSocketError(
-                f"cannot accept(): connection is in state {self._state_code!r}"
-            )
+            raise WebSocketError(f"cannot accept(): connection is in state {self._state_code!r}")
         msg: dict[str, Any] = {"type": "websocket.accept"}
         if subprotocol is not None:
             msg["subprotocol"] = subprotocol
             self._selected_subprotocol = subprotocol
         if headers:
-            msg["headers"] = [
-                (k.encode("latin-1"), v.encode("latin-1")) for k, v in headers
-            ]
+            msg["headers"] = [(k.encode("latin-1"), v.encode("latin-1")) for k, v in headers]
         await self._send(msg)
         # The first message from the peer after accept is the
         # ``websocket.connect`` frame, which our runtime has already

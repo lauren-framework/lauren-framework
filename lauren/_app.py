@@ -146,47 +146,31 @@ class Lauren:
 
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             self._assert_not_compiled("register a route")
-            self._route_buffer.append(
-                _PendingRoute(method=method, path=path, fn=fn, kwargs=kwargs)
-            )
+            self._route_buffer.append(_PendingRoute(method=method, path=path, fn=fn, kwargs=kwargs))
             return fn
 
         return decorator
 
-    def get(
-        self, path: str = "/", **kw: Any
-    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def get(self, path: str = "/", **kw: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """Register a ``GET`` route. Mirrors FastAPI's ``@app.get``."""
         return self._make_route("GET", path, **kw)
 
-    def post(
-        self, path: str = "/", **kw: Any
-    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def post(self, path: str = "/", **kw: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         return self._make_route("POST", path, **kw)
 
-    def put(
-        self, path: str = "/", **kw: Any
-    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def put(self, path: str = "/", **kw: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         return self._make_route("PUT", path, **kw)
 
-    def patch(
-        self, path: str = "/", **kw: Any
-    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def patch(self, path: str = "/", **kw: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         return self._make_route("PATCH", path, **kw)
 
-    def delete(
-        self, path: str = "/", **kw: Any
-    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def delete(self, path: str = "/", **kw: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         return self._make_route("DELETE", path, **kw)
 
-    def head(
-        self, path: str = "/", **kw: Any
-    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def head(self, path: str = "/", **kw: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         return self._make_route("HEAD", path, **kw)
 
-    def options(
-        self, path: str = "/", **kw: Any
-    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def options(self, path: str = "/", **kw: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         return self._make_route("OPTIONS", path, **kw)
 
     # ------------------------------------------------------------------
@@ -225,9 +209,7 @@ class Lauren:
         for r in other._route_buffer:
             merged_path = _join_paths(normalized, r.path)
             self._route_buffer.append(
-                _PendingRoute(
-                    method=r.method, path=merged_path, fn=r.fn, kwargs=dict(r.kwargs)
-                )
+                _PendingRoute(method=r.method, path=merged_path, fn=r.fn, kwargs=dict(r.kwargs))
             )
         for m in other._modules:
             if m not in self._modules:
@@ -285,8 +267,7 @@ class Lauren:
             from .exceptions import ExceptionHandlerConfigError
 
             raise ExceptionHandlerConfigError(
-                f"{getattr(handler, '__name__', repr(handler))} is not "
-                "decorated with @exception_handler.",
+                f"{getattr(handler, '__name__', repr(handler))} is not decorated with @exception_handler.",
             )
         if handler not in self._exception_filters:
             self._exception_filters.append(handler)
@@ -569,9 +550,7 @@ def _wrap_function_as_method(fn: Callable[..., Any]) -> Callable[..., Any]:
 
     # Forward annotations so ``_compile_handler_signature`` sees the real
     # parameter hints. ``__signature__`` is what ``inspect.signature`` uses.
-    new_params = [
-        inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD)
-    ] + params
+    new_params = [inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD)] + params
     method.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
         parameters=new_params, return_annotation=sig.return_annotation
     )

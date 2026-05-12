@@ -101,12 +101,9 @@ class PushNotificationService:
         )
         return await self._backend.send(notification)
 
-    async def notify_all(
-        self, tokens: list[str], title: str, body: str, data: dict | None = None
-    ) -> dict:
+    async def notify_all(self, tokens: list[str], title: str, body: str, data: dict | None = None) -> dict:
         notifications = [
-            PushNotification(device_token=t, title=title, body=body, data=data or {})
-            for t in tokens
+            PushNotification(device_token=t, title=title, body=body, data=data or {}) for t in tokens
         ]
         results = await self._backend.send_batch(notifications)
         return {
@@ -149,16 +146,12 @@ class PushController:
 
     @post("/send")
     async def send(self, body: Json[SendToDeviceRequest]) -> dict:
-        delivered = await self._service.send_to_device(
-            body.device_token, body.title, body.body, body.data
-        )
+        delivered = await self._service.send_to_device(body.device_token, body.title, body.body, body.data)
         return {"delivered": delivered}
 
     @post("/broadcast")
     async def broadcast(self, body: Json[NotifyAllRequest]) -> dict:
-        return await self._service.notify_all(
-            body.tokens, body.title, body.body, body.data
-        )
+        return await self._service.notify_all(body.tokens, body.title, body.body, body.data)
 
     @get("/sent-count")
     async def sent_count(self) -> dict:
@@ -223,25 +216,19 @@ def build_app() -> TestClient:
 class TestPushBackendViaClient:
     def test_send_returns_true(self) -> None:
         client = build_app()
-        r = client.post(
-            "/push/send", json={"device_token": "t1", "title": "Hi", "body": "Body"}
-        )
+        r = client.post("/push/send", json={"device_token": "t1", "title": "Hi", "body": "Body"})
         assert r.json()["delivered"] is True
 
     def test_send_stores_notification(self) -> None:
         client = build_app()
-        client.post(
-            "/push/send", json={"device_token": "t1", "title": "Hi", "body": "Body"}
-        )
+        client.post("/push/send", json={"device_token": "t1", "title": "Hi", "body": "Body"})
         r = client.get("/push/inbox/t1")
         assert len(r.json()) == 1
 
     def test_failed_token_returns_false(self) -> None:
         client = build_app()
         client.post("/push/mark-failed", json={"device_token": "bad-token"})
-        r = client.post(
-            "/push/send", json={"device_token": "bad-token", "title": "Hi", "body": ""}
-        )
+        r = client.post("/push/send", json={"device_token": "bad-token", "title": "Hi", "body": ""})
         assert r.json()["delivered"] is False
         assert len(client.get("/push/inbox/bad-token").json()) == 0
 
@@ -310,9 +297,7 @@ class TestPushNotificationServiceViaClient:
 
     def test_notification_defaults(self) -> None:
         client = build_app()
-        client.post(
-            "/push/send", json={"device_token": "d1", "title": "T", "body": "B"}
-        )
+        client.post("/push/send", json={"device_token": "d1", "title": "T", "body": "B"})
         msg = client.get("/push/inbox/d1").json()[0]
         assert msg["badge"] == 0
         assert msg["sound"] == "default"

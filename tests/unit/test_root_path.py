@@ -61,9 +61,7 @@ def _make_scope(
     }
 
 
-async def _call(
-    app: LaurenApp, path: str, *, asgi_root_path: str = ""
-) -> tuple[int, bytes]:
+async def _call(app: LaurenApp, path: str, *, asgi_root_path: str = "") -> tuple[int, bytes]:
     scope = _make_scope(path, asgi_root_path=asgi_root_path)
     sent_body = False
 

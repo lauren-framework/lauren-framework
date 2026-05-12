@@ -241,10 +241,7 @@ def test_response_body_has_no_whitespace_with_any_encoder(
             in_string = not in_string
             continue
         if not in_string and ch in (" ", "\t", "\n", "\r"):
-            pytest.fail(
-                f"non-compact whitespace at byte {byte!r} "
-                f"with encoder={encoder.name}: body={body!r}"
-            )
+            pytest.fail(f"non-compact whitespace at byte {byte!r} with encoder={encoder.name}: body={body!r}")
 
 
 # ---------------------------------------------------------------------------

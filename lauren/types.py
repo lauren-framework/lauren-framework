@@ -194,9 +194,7 @@ class State:
 
     def require(self, key: str, expected: type[T]) -> T:
         if key not in self._data:  # type: ignore[attr-defined]
-            raise MissingStateError(
-                f"required state key {key!r} is missing", detail={"key": key}
-            )
+            raise MissingStateError(f"required state key {key!r} is missing", detail={"key": key})
         val = self.get_typed(key, expected)
         assert val is not None  # require key exists but value may legitimately be falsy
         return val
@@ -381,9 +379,7 @@ class Request:
     def query_params(self) -> dict[str, list[str]]:
         if self._query_params is None:
             parsed: dict[str, list[str]] = {}
-            for k, v in parse_qsl(
-                self._raw_query_string.decode("latin-1"), keep_blank_values=True
-            ):
+            for k, v in parse_qsl(self._raw_query_string.decode("latin-1"), keep_blank_values=True):
                 parsed.setdefault(k, []).append(v)
             self._query_params = parsed
         return self._query_params
@@ -588,10 +584,7 @@ class UploadFile:
         return self._data
 
     def __repr__(self) -> str:
-        return (
-            f"UploadFile(filename={self.filename!r}, "
-            f"content_type={self.content_type!r}, size={self.size})"
-        )
+        return f"UploadFile(filename={self.filename!r}, content_type={self.content_type!r}, size={self.size})"
 
 
 # ---------------------------------------------------------------------------
@@ -806,9 +799,7 @@ class Response:
         return cls(body, status=status, headers=headers, media_type="application/json")
 
     @classmethod
-    def text(
-        cls, data: str, *, status: int = 200, headers: Headers | None = None
-    ) -> "Response":
+    def text(cls, data: str, *, status: int = 200, headers: Headers | None = None) -> "Response":
         return cls(
             data,
             status=status,
@@ -817,9 +808,7 @@ class Response:
         )
 
     @classmethod
-    def html(
-        cls, data: str, *, status: int = 200, headers: Headers | None = None
-    ) -> "Response":
+    def html(cls, data: str, *, status: int = 200, headers: Headers | None = None) -> "Response":
         return cls(
             data,
             status=status,
@@ -847,9 +836,7 @@ class Response:
         return cls(b"", status=204)
 
     @classmethod
-    def created(
-        cls, data: Any | None = None, *, location: str | None = None
-    ) -> "Response":
+    def created(cls, data: Any | None = None, *, location: str | None = None) -> "Response":
         resp = cls.json(data, status=201) if data is not None else cls.empty(201)
         if location:
             resp = resp.with_header("location", location)
@@ -899,9 +886,7 @@ class Response:
                         parts.append(f"id: {event['id']}")
                     payload = event.get("data", "")
                     if not isinstance(payload, str):
-                        payload = jsonlib.dumps(
-                            payload, default=_json_default, separators=(",", ":")
-                        )
+                        payload = jsonlib.dumps(payload, default=_json_default, separators=(",", ":"))
                     parts.append(f"data: {payload}")
                     data = "\n".join(parts) + "\n\n"
                 yield data.encode("utf-8")
@@ -925,9 +910,7 @@ class Response:
     ) -> "Response":
         new = Response.__new__(Response)
         new._status = self._status if status is None else status
-        new._headers = (
-            MutableHeaders(list(self._headers.raw())) if headers is None else headers
-        )
+        new._headers = MutableHeaders(list(self._headers.raw())) if headers is None else headers
         new._body = self._body if body is None else body
         new._stream = self._stream if stream is ... else stream
         new._media_type = self._media_type
@@ -1041,11 +1024,7 @@ def _json_default(obj: Any) -> Any:
     if hasattr(obj, "__dict__"):
         # Last-resort: return the instance dict (filtering out private attrs
         # and non-data attributes).
-        return {
-            k: v
-            for k, v in obj.__dict__.items()
-            if not k.startswith("_") and not callable(v)
-        }
+        return {k: v for k, v in obj.__dict__.items() if not k.startswith("_") and not callable(v)}
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
@@ -1134,9 +1113,7 @@ class InterceptorProtocol(Protocol):
                 return result
     """
 
-    async def intercept(
-        self, context: ExecutionContext, call_handler: CallHandler
-    ) -> "Any": ...
+    async def intercept(self, context: ExecutionContext, call_handler: CallHandler) -> "Any": ...
 
 
 __all__ = [

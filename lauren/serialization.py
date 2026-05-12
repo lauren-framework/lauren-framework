@@ -130,9 +130,7 @@ class StdlibJSONEncoder:
         # correct UTF-8 byte stream for multilingual content. Matching
         # the behaviour of orjson / msgspec here means all three
         # encoders are byte-equivalent for typical payloads.
-        return _stdlib_json.dumps(
-            value, default=self._default, ensure_ascii=False
-        ).encode("utf-8")
+        return _stdlib_json.dumps(value, default=self._default, ensure_ascii=False).encode("utf-8")
 
     def encode_compact(self, value: Any) -> bytes:
         return _stdlib_json.dumps(
@@ -174,8 +172,7 @@ class OrjsonEncoder:
             import orjson
         except ImportError as exc:  # pragma: no cover - import guarded in auto_encoder
             raise RuntimeError(
-                "OrjsonEncoder requires the 'orjson' package; "
-                "install it with `pip install orjson`."
+                "OrjsonEncoder requires the 'orjson' package; install it with `pip install orjson`."
             ) from exc
         self._orjson = orjson
         # OPT_NON_STR_KEYS accepts int / float / UUID dict keys without
@@ -224,8 +221,7 @@ class MsgspecEncoder:
             import msgspec
         except ImportError as exc:  # pragma: no cover - import guarded in auto_encoder
             raise RuntimeError(
-                "MsgspecEncoder requires the 'msgspec' package; "
-                "install it with `pip install msgspec`."
+                "MsgspecEncoder requires the 'msgspec' package; install it with `pip install msgspec`."
             ) from exc
         # msgspec accepts a ``default=`` callback for unknown types,
         # wired identically to orjson/stdlib.

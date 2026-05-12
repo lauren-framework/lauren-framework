@@ -644,9 +644,7 @@ class TestControllerLikeDecoratorsAreSymmetric:
             (lambda: controller("/x"), "__lauren_controller__"),
         ],
     )
-    def test_undecorated_subclass_lacks_own_marker(
-        self, decorator_factory, marker_attr
-    ):
+    def test_undecorated_subclass_lacks_own_marker(self, decorator_factory, marker_attr):
         Decorated = decorator_factory()(type("Decorated", (), {}))
 
         class Subclass(Decorated):

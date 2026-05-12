@@ -22,9 +22,7 @@ class MFAService:
     def generate_secret(self) -> str:
         return pyotp.random_base32()
 
-    def get_provisioning_uri(
-        self, secret: str, username: str, issuer: str = "MyApp"
-    ) -> str:
+    def get_provisioning_uri(self, secret: str, username: str, issuer: str = "MyApp") -> str:
         totp = pyotp.TOTP(secret)
         return totp.provisioning_uri(name=username, issuer_name=issuer)
 
@@ -120,9 +118,7 @@ class TestMFATotp:
         code_for_secret1 = svc.current_code(secret1)
 
         client = build_app()
-        r = client.post(
-            "/mfa/verify", json={"secret": secret2, "token": code_for_secret1}
-        )
+        r = client.post("/mfa/verify", json={"secret": secret2, "token": code_for_secret1})
         assert r.status_code == 200
         assert r.json()["valid"] is False
 

@@ -20,9 +20,7 @@ class LaurenError(Exception):
     #: Suggested HTTP status for runtime errors. ``None`` for startup errors.
     status_code: int | None = None
 
-    def __init__(
-        self, message: str = "", *, detail: dict[str, Any] | None = None
-    ) -> None:
+    def __init__(self, message: str = "", *, detail: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.message = message
         self.detail: dict[str, Any] = detail or {}

@@ -818,9 +818,7 @@ class TestDiContainerRegisterCustom:
         class ImplB:
             pass
 
-        cp = CustomProvider(
-            provide=TokenB, kind="class", use_class=ImplB, scope=Scope.SINGLETON
-        )
+        cp = CustomProvider(provide=TokenB, kind="class", use_class=ImplB, scope=Scope.SINGLETON)
         c = DIContainer()
         c.register_custom(cp)
         result = await c.resolve(TokenB)
@@ -841,9 +839,7 @@ class TestDiContainerRegisterCustom:
             calls.append(1)
             return TokenC()
 
-        cp = CustomProvider(
-            provide=TokenC, kind="factory", factory=factory_fn, scope=Scope.SINGLETON
-        )
+        cp = CustomProvider(provide=TokenC, kind="factory", factory=factory_fn, scope=Scope.SINGLETON)
         c = DIContainer()
         c.register_custom(cp)
         result = await c.resolve(TokenC)
@@ -887,9 +883,7 @@ class TestDiContainerRegisterCustom:
             called.append(1)
             return TokenD("async")
 
-        cp = CustomProvider(
-            provide=TokenD, kind="factory", factory=async_factory, scope=Scope.SINGLETON
-        )
+        cp = CustomProvider(provide=TokenD, kind="factory", factory=async_factory, scope=Scope.SINGLETON)
         c = DIContainer()
         c.register_custom(cp)
         result = await c.resolve(TokenD)

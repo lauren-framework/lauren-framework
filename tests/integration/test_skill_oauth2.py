@@ -45,9 +45,7 @@ class OAuth2Controller:
     @get("/login-url")
     async def login_url(self) -> dict:
         authorize_url = (
-            "https://github.com/login/oauth/authorize"
-            f"?client_id={self._svc._client_id}"
-            "&scope=read:user"
+            f"https://github.com/login/oauth/authorize?client_id={self._svc._client_id}&scope=read:user"
         )
         return {"url": authorize_url}
 

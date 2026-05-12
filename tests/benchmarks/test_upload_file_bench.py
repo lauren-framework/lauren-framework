@@ -81,10 +81,7 @@ def _print_table(title: str, results: list[BenchResult]) -> None:
     print("-" * 62)
     for r in results:
         rps = r.iterations / r.seconds
-        print(
-            f"{r.mode:<26} {r.per_op_ms:>10.3f} {rps:>12,.0f} "
-            f"{r.throughput_mib_s:>10.2f}"
-        )
+        print(f"{r.mode:<26} {r.per_op_ms:>10.3f} {rps:>12,.0f} {r.throughput_mib_s:>10.2f}")
     print()
 
 

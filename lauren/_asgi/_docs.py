@@ -13,9 +13,7 @@ from typing import Any
 from ..types import Response
 
 
-DEFAULT_SWAGGER_JS = (
-    "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"
-)
+DEFAULT_SWAGGER_JS = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"
 DEFAULT_SWAGGER_CSS = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css"
 DEFAULT_REDOC_JS = "https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js"
 

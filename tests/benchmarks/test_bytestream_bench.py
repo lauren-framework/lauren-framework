@@ -132,10 +132,7 @@ def _measure(client: TestClient, path: str, payload: bytes, n: int) -> BenchResu
 def _print_table(title: str, results: list[BenchResult]) -> None:
     baseline_mem = max(r.peak_bytes for r in results)
     print(f"\n\n=== {title} ===")
-    print(
-        f"{'mode':<28} {'ms/req':>10} {'peak MiB':>10} "
-        f"{'peak/body':>10} {'mem ratio':>10}"
-    )
+    print(f"{'mode':<28} {'ms/req':>10} {'peak MiB':>10} {'peak/body':>10} {'mem ratio':>10}")
     print("-" * 78)
     for r in results:
         mem_ratio = r.peak_bytes / baseline_mem
@@ -202,6 +199,4 @@ class TestByteStreamBench:
         # the overhead of the async iterator dispatch is real at this
         # scale. The real savings are on the large-upload test above.
         ratio = streamed.seconds / buf.seconds
-        assert ratio <= 1.5, (
-            f"ByteStream overhead on tiny body exceeded 1.5x: ratio={ratio:.2f}"
-        )
+        assert ratio <= 1.5, f"ByteStream overhead on tiny body exceeded 1.5x: ratio={ratio:.2f}"

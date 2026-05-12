@@ -188,9 +188,7 @@ class DCUseValueController:
 
 @module(
     controllers=[DCUseValueController],
-    providers=[
-        use_value(provide=RawDataclass, value=RawDataclass(url="injected", port=9999))
-    ],
+    providers=[use_value(provide=RawDataclass, value=RawDataclass(url="injected", port=9999))],
 )
 class DCUseValueModule:
     pass
@@ -301,11 +299,7 @@ class PMUseValueController:
 
 @module(
     controllers=[PMUseValueController],
-    providers=[
-        use_value(
-            provide=PydanticConfig, value=PydanticConfig(host="db.internal", port=5433)
-        )
-    ],
+    providers=[use_value(provide=PydanticConfig, value=PydanticConfig(host="db.internal", port=5433))],
 )
 class PMUseValueModule:
     pass

@@ -360,9 +360,7 @@ class TestBodyPipes:
         @controller("/users")
         class C:
             @post("/")
-            async def create(
-                self, body: Annotated[Json[CreateUser], pipe(normalize)]
-            ) -> dict:
+            async def create(self, body: Annotated[Json[CreateUser], pipe(normalize)]) -> dict:
                 return body
 
         @module(controllers=[C])

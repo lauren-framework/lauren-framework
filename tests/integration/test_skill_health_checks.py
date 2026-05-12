@@ -35,11 +35,7 @@ class HealthService:
             except Exception as exc:
                 results[name] = {"status": "error", "error": str(exc)}
         if results:
-            overall = (
-                "ok"
-                if all(r["status"] == "ok" for r in results.values())
-                else "degraded"
-            )
+            overall = "ok" if all(r["status"] == "ok" for r in results.values()) else "degraded"
         else:
             overall = "ok"
         return {"status": overall, "checks": results}
@@ -164,9 +160,7 @@ class TestHealthChecks:
     def test_full_status_with_error_check(self):
         app = build_app()
         svc = asyncio.run(app.container.resolve(HealthService))
-        svc.register_check(
-            "cache", lambda: (_ for _ in ()).throw(RuntimeError("timeout"))
-        )
+        svc.register_check("cache", lambda: (_ for _ in ()).throw(RuntimeError("timeout")))
         client = TestClient(app)
         r = client.get("/health/")
         data = r.json()

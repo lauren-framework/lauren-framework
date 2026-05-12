@@ -146,11 +146,7 @@ class LoggingModule:
 
 
 def build_app() -> TestClient:
-    return TestClient(
-        LaurenFactory.create(
-            LoggingModule, global_middlewares=[CorrelationIdMiddleware]
-        )
-    )
+    return TestClient(LaurenFactory.create(LoggingModule, global_middlewares=[CorrelationIdMiddleware]))
 
 
 # ---------------------------------------------------------------------------
@@ -237,10 +233,7 @@ class TestStructuredLogger:
             logger.info("test info")
         finally:
             correlation_id.reset(token)
-        assert any(
-            r["message"] == "test info" and r["correlation_id"] == "abc-123"
-            for r in logger.records
-        )
+        assert any(r["message"] == "test info" and r["correlation_id"] == "abc-123" for r in logger.records)
 
     def test_structured_logger_records_error(self) -> None:
         token = correlation_id.set("err-cid")
@@ -249,7 +242,4 @@ class TestStructuredLogger:
             logger.error("an error occurred")
         finally:
             correlation_id.reset(token)
-        assert any(
-            r["level"] == "ERROR" and r["message"] == "an error occurred"
-            for r in logger.records
-        )
+        assert any(r["level"] == "ERROR" and r["message"] == "an error occurred" for r in logger.records)

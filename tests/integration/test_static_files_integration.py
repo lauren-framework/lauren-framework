@@ -138,9 +138,7 @@ def test_conditional_get_304(tmp_path: Path) -> None:
 def test_stale_etag_returns_200(tmp_path: Path) -> None:
     (tmp_path / "style.css").write_bytes(b"h1{color:blue}")
     client = _build(tmp_path)
-    r = client.request(
-        "GET", "/static/style.css", headers={"if-none-match": '"old-etag"'}
-    )
+    r = client.request("GET", "/static/style.css", headers={"if-none-match": '"old-etag"'})
     assert r.status_code == 200
 
 

@@ -63,6 +63,7 @@ from ..extractors import (
     _ParamSpec,
     _is_pydantic_model_type,
     _is_implicit_query_type,
+    _is_struct_type,
     _peel_optional,
     extract_parameter,
     is_pipe,
@@ -191,9 +192,7 @@ def _compile_handler_signature(
         ):
             continue
         ann = hints.get(name, param.annotation)
-        source, inner, reads_body, marker_cls, ann_fd, ann_pipes = parse_extractor_hint(
-            ann
-        )
+        source, inner, reads_body, marker_cls, ann_fd, ann_pipes = parse_extractor_hint(ann)
         default = param.default
         has_default = default is not inspect.Parameter.empty
 
@@ -275,9 +274,7 @@ def _compile_handler_signature(
                 param_names.append(name)
                 continue
             # ExecutionContext injection — short-circuited at dispatch time.
-            if ann is ExecutionContext or (
-                isinstance(ann, type) and issubclass(ann, ExecutionContext)
-            ):
+            if ann is ExecutionContext or (isinstance(ann, type) and issubclass(ann, ExecutionContext)):
                 extractions.append(
                     Extraction(
                         name=name,
@@ -292,9 +289,7 @@ def _compile_handler_signature(
                 param_names.append(name)
                 continue
             # BackgroundTasks parameter — detected and short-circuited at dispatch time.
-            if ann is _BackgroundTasks or (
-                isinstance(ann, type) and issubclass(ann, _BackgroundTasks)
-            ):
+            if ann is _BackgroundTasks or (isinstance(ann, type) and issubclass(ann, _BackgroundTasks)):
                 extractions.append(
                     Extraction(
                         name=name,
@@ -324,9 +319,7 @@ def _compile_handler_signature(
             # this is how non-class tokens (strings, Token instances)
             # reach into route handler signatures.
             inject_token = _extract_inject_token(ann)
-            if inject_token is not None and container.has_provider(
-                inject_token, owning_module=owning_module
-            ):
+            if inject_token is not None and container.has_provider(inject_token, owning_module=owning_module):
                 extractions.append(
                     Extraction(
                         name=name,
@@ -343,13 +336,9 @@ def _compile_handler_signature(
 
             is_multi_list = _multi_binding_element_type(ann) is not None
             looks_like_di_token = (
-                isinstance(ann, type)
-                or (callable(ann) and not isinstance(ann, type))
-                or is_multi_list
+                isinstance(ann, type) or (callable(ann) and not isinstance(ann, type)) or is_multi_list
             )
-            if looks_like_di_token and container.has_provider(
-                ann, owning_module=owning_module
-            ):
+            if looks_like_di_token and container.has_provider(ann, owning_module=owning_module):
                 extractions.append(
                     Extraction(
                         name=name,
@@ -402,6 +391,24 @@ def _compile_handler_signature(
                 )
                 param_names.append(name)
                 continue
+            if _is_struct_type(ann):
+                # msgspec.Struct / dataclass — auto-promote to JSON body,
+                # mirroring the Pydantic model behaviour above.
+                body_inner, _ = _peel_optional(ann)
+                extractions.append(
+                    Extraction(
+                        name=name,
+                        source="json",
+                        inner_type=body_inner,
+                        field_descriptor=fd,
+                        default=default,
+                        has_default=has_default,
+                        reads_body=True,
+                        pipes=pipes,
+                    )
+                )
+                param_names.append(name)
+                continue
             if _is_implicit_query_type(ann):
                 inner_type = ann
                 extractions.append(
@@ -420,8 +427,7 @@ def _compile_handler_signature(
             from ..exceptions import UnresolvableParameterError
 
             raise UnresolvableParameterError(
-                f"Cannot resolve parameter {name!r} in "
-                f"{controller_cls.__name__}.{fn.__name__}",
+                f"Cannot resolve parameter {name!r} in {controller_cls.__name__}.{fn.__name__}",
                 detail={
                     "class": controller_cls.__name__,
                     "handler": fn.__name__,
@@ -877,8 +883,7 @@ class LaurenApp:
         self._shutdown_running = True
         self._running = False
         self._logger.log(
-            f"Shutdown initiated (drain_timeout={drain_timeout}s, "
-            f"in_flight={len(self._in_flight)})",
+            f"Shutdown initiated (drain_timeout={drain_timeout}s, in_flight={len(self._in_flight)})",
             context="Shutdown",
             in_flight=len(self._in_flight),
             drain_timeout=drain_timeout,
@@ -919,8 +924,7 @@ class LaurenApp:
                         await result
                 except Exception as exc:
                     self._logger.error(
-                        f"on_shutdown callback {getattr(cb, '__name__', repr(cb))} "
-                        f"raised: {exc}",
+                        f"on_shutdown callback {getattr(cb, '__name__', repr(cb))} raised: {exc}",
                         context="Shutdown",
                         error=type(exc).__name__,
                     )
@@ -1037,10 +1041,7 @@ class LaurenApp:
         if int(level) < int(self._logger.level):
             return
         msg_handler = f" → {handler}" if handler else ""
-        message = (
-            f"{request.method} {request.path} {status} "
-            f"{format_duration_ms(duration)}{msg_handler}"
-        )
+        message = f"{request.method} {request.path} {status} {format_duration_ms(duration)}{msg_handler}"
         extra: dict[str, Any] = {
             "method": request.method,
             "path": request.path,
@@ -1135,9 +1136,7 @@ class LaurenApp:
                     req._handler_class = compiled.controller_cls
                     req._handler_func = compiled.handler_fn
                     req._route_template = entry.path_template
-                    handler_qualname = getattr(
-                        compiled.handler_fn, "__qualname__", None
-                    )
+                    handler_qualname = getattr(compiled.handler_fn, "__qualname__", None)
 
                     # Build effective per-route middleware list: controller → route.
                     # Global middlewares already wrap _route_and_run so they are
@@ -1152,9 +1151,7 @@ class LaurenApp:
 
                     # Effective interceptor chain: global interceptors are outermost,
                     # then controller-level, then method-level.
-                    effective_interceptors = list(self._global_interceptors) + list(
-                        compiled.interceptors
-                    )
+                    effective_interceptors = list(self._global_interceptors) + list(compiled.interceptors)
 
                     # Effective exception-handler chain. Route handlers come
                     # first (they are most specific), then controller, then
@@ -1162,9 +1159,9 @@ class LaurenApp:
                     # controller; appending globals here keeps the per-app
                     # configuration mutable without having to recompile every
                     # CompiledHandler when globals change in tests.
-                    effective_exception_handlers = list(
-                        compiled.exception_handlers
-                    ) + list(self._global_exception_handlers)
+                    effective_exception_handlers = list(compiled.exception_handlers) + list(
+                        self._global_exception_handlers
+                    )
 
                     owning_module = compiled.owning_module
 
@@ -1182,9 +1179,7 @@ class LaurenApp:
                             # restriction; per-route guards resolve within
                             # the controller's owning module just like
                             # before.
-                            guard_owning = (
-                                owning_module if guard_cls in compiled.guards else None
-                            )
+                            guard_owning = owning_module if guard_cls in compiled.guards else None
                             guard = await self._container.resolve(
                                 guard_cls,
                                 request_cache=request_cache,
@@ -1221,9 +1216,7 @@ class LaurenApp:
                                 elif ext.source == "background_tasks":
                                     # Lazy-create once per request; same instance
                                     # for all bg params in the same handler.
-                                    _bg: _BackgroundTasks | None = req2.state.get(
-                                        _BG_TASKS_ATTR
-                                    )
+                                    _bg: _BackgroundTasks | None = req2.state.get(_BG_TASKS_ATTR)
                                     if _bg is None:
                                         _bg = _BackgroundTasks()
                                         req2.state._lauren_bg_tasks = _bg
@@ -1261,9 +1254,7 @@ class LaurenApp:
                             _bound = (
                                 _descriptor.__get__(controller, compiled.controller_cls)
                                 if _descriptor is not None
-                                else compiled.handler_fn.__get__(
-                                    controller, compiled.controller_cls
-                                )
+                                else compiled.handler_fn.__get__(controller, compiled.controller_cls)
                             )
                             if compiled.is_coroutine:
                                 return await _bound(**kwargs)
@@ -1274,20 +1265,14 @@ class LaurenApp:
                         # outward so the first declared interceptor is outermost).
                         call_handler: CallHandler = CallHandler(_invoke_handler)
                         for inter_cls in reversed(effective_interceptors):
-                            inter_owning = (
-                                owning_module
-                                if inter_cls in compiled.interceptors
-                                else None
-                            )
+                            inter_owning = owning_module if inter_cls in compiled.interceptors else None
                             inter_inst = await self._container.resolve(
                                 inter_cls,
                                 request_cache=request_cache,
                                 framework_values=framework_values,
                                 owning_module=inter_owning,
                             )
-                            call_handler = _wrap_interceptor(
-                                inter_inst, ctx, call_handler
-                            )
+                            call_handler = _wrap_interceptor(inter_inst, ctx, call_handler)
 
                         result = await call_handler.handle()
 
@@ -1295,9 +1280,7 @@ class LaurenApp:
                         # iterable of ``T`` which we must frame according to the
                         # request's Accept header. Falls back to the generic coercer
                         # for every other return shape (feature 7).
-                        if compiled.streaming_item_type is not None and not isinstance(
-                            result, Response
-                        ):
+                        if compiled.streaming_item_type is not None and not isinstance(result, Response):
                             return await _coerce_streaming_response(
                                 result,
                                 item_type=compiled.streaming_item_type,
@@ -1312,11 +1295,7 @@ class LaurenApp:
                         # Middleware declared on the controller resolves within that
                         # controller's module; global middleware resolves with no
                         # module restriction (it is application-wide).
-                        mw_owning = (
-                            owning_module
-                            if mw_cls in compiled.middleware_chain
-                            else None
-                        )
+                        mw_owning = owning_module if mw_cls in compiled.middleware_chain else None
                         mw_instance = await self._container.resolve(
                             mw_cls,
                             framework_values=framework_values,
@@ -1390,33 +1369,23 @@ class LaurenApp:
                         # order so the most recently constructed instance
                         # tears down first — analogous to the LIFO order used
                         # by the application-level scheduler at shutdown.
-                        providers_by_cls = {
-                            p.cls: p for p in self._container.all_providers()
-                        }
+                        providers_by_cls = {p.cls: p for p in self._container.all_providers()}
                         # Snapshot the cache keys *before* the arena clears
                         # the pooled dict; otherwise we'd iterate an empty
                         # mapping as soon as the lease exits.
                         request_scoped_instances = [
-                            (cls, request_cache[cls])
-                            for cls in reversed(list(request_cache.keys()))
+                            (cls, request_cache[cls]) for cls in reversed(list(request_cache.keys()))
                         ]
                         for cls, instance in request_scoped_instances:
                             provider = providers_by_cls.get(cls)
-                            if (
-                                provider is not None
-                                and provider.pre_destruct is not None
-                            ):
+                            if provider is not None and provider.pre_destruct is not None:
                                 try:
-                                    bound = getattr(
-                                        instance, provider.pre_destruct.__name__
-                                    )
+                                    bound = getattr(instance, provider.pre_destruct.__name__)
                                     res = bound()
                                     if inspect.isawaitable(res):
                                         await res
                                 except Exception:
-                                    logger.exception(
-                                        "Error in @pre_destruct on %s", cls.__name__
-                                    )
+                                    logger.exception("Error in @pre_destruct on %s", cls.__name__)
                             aclose = getattr(instance, "aclose", None)
                             if callable(aclose):
                                 try:
@@ -1502,12 +1471,7 @@ class LaurenApp:
             return
         if scope["type"] != "http":
             return
-        headers = Headers(
-            [
-                (k.decode("latin-1"), v.decode("latin-1"))
-                for k, v in scope.get("headers", [])
-            ]
-        )
+        headers = Headers([(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope.get("headers", [])])
         client = scope.get("client") or (None, None)
         server = scope.get("server") or (None, None)
         # Resolve the effective request path, stripping a configured
@@ -1533,12 +1497,8 @@ class LaurenApp:
             path=effective_path,
             raw_query_string=scope.get("query_string", b"") or b"",
             headers=headers,
-            client=ClientInfo(
-                client[0] if client else None, client[1] if client else None
-            ),
-            server=ServerInfo(
-                server[0] if server else None, server[1] if server else None
-            ),
+            client=ClientInfo(client[0] if client else None, client[1] if client else None),
+            server=ServerInfo(server[0] if server else None, server[1] if server else None),
             receive=receive,
             app_state=self._app_state,
             max_body_size=self._max_body_size,
@@ -1688,9 +1648,7 @@ def _wrap_middleware(instance: Any, next_call: CallNext) -> CallNext:
     return wrapped
 
 
-def _wrap_interceptor(
-    instance: Any, ctx: ExecutionContext, next_handler: CallHandler
-) -> CallHandler:
+def _wrap_interceptor(instance: Any, ctx: ExecutionContext, next_handler: CallHandler) -> CallHandler:
     """Wrap *next_handler* with *instance*'s ``intercept`` method."""
 
     async def fn() -> Any:
@@ -1749,14 +1707,8 @@ def _coerce_to_response(value: Any, *, encoder: JSONEncoder | None = None) -> Re
         except TypeError:
             pass  # fall through to generic JSON path
     # Sequence of Pydantic models (common: return list of DTOs).
-    if (
-        isinstance(value, list)
-        and value
-        and all(hasattr(v, "model_dump") for v in value)
-    ):
-        return Response.json(
-            [v.model_dump(mode="json") for v in value], encoder=encoder
-        )
+    if isinstance(value, list) and value and all(hasattr(v, "model_dump") for v in value):
+        return Response.json([v.model_dump(mode="json") for v in value], encoder=encoder)
     # Dataclass instance?
     try:
         import dataclasses
@@ -1805,8 +1757,7 @@ async def _coerce_streaming_response(
     """
     if not hasattr(iterable, "__aiter__") and not inspect.isasyncgen(iterable):
         raise TypeError(
-            f"StreamingResponse handler must return an async iterable, "
-            f"got {type(iterable).__name__}"
+            f"StreamingResponse handler must return an async iterable, got {type(iterable).__name__}"
         )
     accept = request.headers.get("accept") or ""
     fmt = negotiate_stream_format(accept, default="jsonlines")
@@ -1952,9 +1903,7 @@ def _error_response(
         # Allow subclasses to override the ``type`` URI by declaring a
         # class-level ``problem_type`` attribute. Defaults to the
         # status-derived URN so the field is always stable.
-        problem_type = getattr(err, "problem_type", None) or _problem_type_for(
-            final_status
-        )
+        problem_type = getattr(err, "problem_type", None) or _problem_type_for(final_status)
         title = getattr(err, "problem_title", None) or _http_status_title(final_status)
         payload: dict[str, Any] = {
             "type": problem_type,
@@ -2020,9 +1969,7 @@ async def _send_response(
             async for chunk in stream:
                 if isinstance(chunk, str):
                     chunk = chunk.encode("utf-8")
-                await send(
-                    {"type": "http.response.body", "body": chunk, "more_body": True}
-                )
+                await send({"type": "http.response.body", "body": chunk, "more_body": True})
             await send({"type": "http.response.body", "body": b"", "more_body": False})
         except asyncio.CancelledError:
             raise
@@ -2162,8 +2109,7 @@ class LaurenFactory:
                 from ..exceptions import GuardConfigError
 
                 raise GuardConfigError(
-                    f"global guard {getattr(g, '__name__', repr(g))} must define "
-                    "'can_activate(context)'",
+                    f"global guard {getattr(g, '__name__', repr(g))} must define 'can_activate(context)'",
                 )
             if g not in {pp.cls for pp in container.all_providers()}:
                 _ensure_injectable(g)
@@ -2229,8 +2175,7 @@ class LaurenFactory:
         t0 = time.perf_counter()
         container.compile()
         _log.verbose(
-            f"Phase 4/7 DI graph compiled "
-            f"({format_duration_ms(time.perf_counter() - t0)})",
+            f"Phase 4/7 DI graph compiled ({format_duration_ms(time.perf_counter() - t0)})",
             context="DIContainer",
         )
 
@@ -2246,10 +2191,7 @@ class LaurenFactory:
             # carry both ``@controller`` and ``@ws_controller`` markers
             # (unusual but legal), in which case the HTTP side still
             # compiles its HTTP routes here.
-            if (
-                WS_CONTROLLER_META in ctrl_cls.__dict__
-                and CONTROLLER_META not in ctrl_cls.__dict__
-            ):
+            if WS_CONTROLLER_META in ctrl_cls.__dict__ and CONTROLLER_META not in ctrl_cls.__dict__:
                 continue
             ctrl_meta = _own_controller_meta(ctrl_cls)
             # Read own-class middleware/guards/interceptors/metadata so a
@@ -2258,9 +2200,7 @@ class LaurenFactory:
             ctrl_guards = list(ctrl_cls.__dict__.get(USE_GUARDS, []))
             ctrl_interceptors = list(ctrl_cls.__dict__.get(USE_INTERCEPTORS, []))
             ctrl_exc_handlers = list(ctrl_cls.__dict__.get(USE_EXCEPTION_HANDLERS, []))
-            ctrl_extra_meta: dict[str, Any] = dict(
-                ctrl_cls.__dict__.get(SET_METADATA, {})
-            )
+            ctrl_extra_meta: dict[str, Any] = dict(ctrl_cls.__dict__.get(SET_METADATA, {}))
 
             # Register controller's guards/middleware/interceptors as providers
             for cls in ctrl_mw + ctrl_guards + ctrl_interceptors:
@@ -2352,9 +2292,7 @@ class LaurenFactory:
                     )
                     # Resolve the handler's return annotation once at
                     # startup so the request path stays reflection-free.
-                    return_hint = _safe_type_hints(fn).get(
-                        "return", inspect.Parameter.empty
-                    )
+                    return_hint = _safe_type_hints(fn).get("return", inspect.Parameter.empty)
                     streaming_item = extract_streaming_item_type(return_hint)
                     compiled = CompiledHandler(
                         controller_cls=ctrl_cls,
@@ -2416,9 +2354,7 @@ class LaurenFactory:
         from .._ws_runtime import compile_gateways
 
         ws_router = Router()
-        ws_gateways = compile_gateways(
-            graph, container, ws_router=ws_router, logger=_log
-        )
+        ws_gateways = compile_gateways(graph, container, ws_router=ws_router, logger=_log)
         ws_router.freeze()
 
         # Re-compile after late registrations.
@@ -2454,11 +2390,7 @@ class LaurenFactory:
                 "pass either `arena` or `arena_capacity`, not both",
                 detail={"arena": type(arena).__name__, "capacity": arena_capacity},
             )
-        final_arena = arena or (
-            RequestArena(capacity=arena_capacity)
-            if arena_capacity is not None
-            else None
-        )
+        final_arena = arena or (RequestArena(capacity=arena_capacity) if arena_capacity is not None else None)
         app = LaurenApp(
             router=router,
             container=container,
@@ -2514,8 +2446,7 @@ class LaurenFactory:
         for mount_path, mount_app in (mounts or {}).items():
             app.mount(mount_path, mount_app)
         _log.log(
-            f"LaurenFactory.create completed "
-            f"({format_duration_ms(time.perf_counter() - overall_t0)} total)",
+            f"LaurenFactory.create completed ({format_duration_ms(time.perf_counter() - overall_t0)} total)",
             context="LaurenFactory",
             total_ms=round((time.perf_counter() - overall_t0) * 1000, 3),
             routes=len(compiled_handlers),
@@ -2619,9 +2550,7 @@ def _register_docs_routes(
     # The JSON endpoint must exist whenever docs or redoc are requested;
     # both UIs fetch it. If the user only asked for one UI, we still expose
     # the JSON at a sensible default so the UI has somewhere to fetch from.
-    effective_openapi_url = openapi_url or (
-        "/openapi.json" if (docs_url or redoc_url) else None
-    )
+    effective_openapi_url = openapi_url or ("/openapi.json" if (docs_url or redoc_url) else None)
 
     routes: list[tuple[str, str, Any]] = []
 
@@ -2640,9 +2569,7 @@ def _register_docs_routes(
 
         async def swagger_ui(self_unused) -> Response:
             body = swagger_ui_html(openapi_url=effective_openapi_url or "/openapi.json")
-            return Response.text(body).with_header(
-                "content-type", "text/html; charset=utf-8"
-            )
+            return Response.text(body).with_header("content-type", "text/html; charset=utf-8")
 
         swagger_ui.__lauren_docs_stub__ = True  # type: ignore[attr-defined]
         swagger_ui.__lauren_app__ = None  # type: ignore[attr-defined]
@@ -2653,9 +2580,7 @@ def _register_docs_routes(
 
         async def redoc(self_unused) -> Response:
             body = redoc_html(openapi_url=effective_openapi_url or "/openapi.json")
-            return Response.text(body).with_header(
-                "content-type", "text/html; charset=utf-8"
-            )
+            return Response.text(body).with_header("content-type", "text/html; charset=utf-8")
 
         redoc.__lauren_docs_stub__ = True  # type: ignore[attr-defined]
         redoc.__lauren_app__ = None  # type: ignore[attr-defined]
@@ -2666,9 +2591,7 @@ def _register_docs_routes(
     # it can be resolved during request dispatch without needing DI deps.
     if routes:
         if INJECTABLE_META not in _DocsController.__dict__:
-            setattr(
-                _DocsController, INJECTABLE_META, InjectableMeta(scope=DScope.SINGLETON)
-            )
+            setattr(_DocsController, INJECTABLE_META, InjectableMeta(scope=DScope.SINGLETON))
 
     for method, path, fn in routes:
         rmeta = RouteMeta(

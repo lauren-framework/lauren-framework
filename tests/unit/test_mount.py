@@ -34,9 +34,7 @@ def _app():
 
 async def _echo_app(scope, receive, send):
     """Return 200 with path + root_path as JSON."""
-    body = (
-        f'{{"path": "{scope["path"]}", "root_path": "{scope.get("root_path", "")}"}}'
-    ).encode()
+    body = (f'{{"path": "{scope["path"]}", "root_path": "{scope.get("root_path", "")}"}}').encode()
     await send(
         {
             "type": "http.response.start",

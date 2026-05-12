@@ -43,9 +43,7 @@ class ApiKeyService:
     def create_key(self, owner: str, scopes: list[str]) -> str:
         raw = os.urandom(32).hex()
         key_hash = hashlib.sha256(raw.encode()).hexdigest()
-        self._store[key_hash] = ApiKeyRecord(
-            key_hash=key_hash, owner=owner, scopes=scopes
-        )
+        self._store[key_hash] = ApiKeyRecord(key_hash=key_hash, owner=owner, scopes=scopes)
         return raw
 
     def lookup(self, raw_key: str) -> ApiKeyRecord | None:

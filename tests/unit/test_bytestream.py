@@ -88,8 +88,7 @@ async def test_multi_chunk_body_preserves_chunk_boundaries() -> None:
     """
     chunks = [b"alpha-", b"beta-", b"gamma-", b"delta-", b"omega"]
     messages = [
-        {"type": "http.request", "body": c, "more_body": i < len(chunks) - 1}
-        for i, c in enumerate(chunks)
+        {"type": "http.request", "body": c, "more_body": i < len(chunks) - 1} for i, c in enumerate(chunks)
     ]
     req = _build_request(messages)
     stream = ByteStream(req)
@@ -104,8 +103,7 @@ async def test_concatenated_chunks_match_full_body() -> None:
     must equal the body a buffered read would produce."""
     chunks = [b"line-" + bytes(str(i), "ascii") + b"\n" for i in range(200)]
     messages = [
-        {"type": "http.request", "body": c, "more_body": i < len(chunks) - 1}
-        for i, c in enumerate(chunks)
+        {"type": "http.request", "body": c, "more_body": i < len(chunks) - 1} for i, c in enumerate(chunks)
     ]
     req = _build_request(messages)
     stream = ByteStream(req)
@@ -287,8 +285,7 @@ async def test_buffered_empty_body_yields_no_chunks() -> None:
 async def test_read_all_returns_concatenated_body() -> None:
     chunks = [b"one-", b"two-", b"three"]
     messages = [
-        {"type": "http.request", "body": c, "more_body": i < len(chunks) - 1}
-        for i, c in enumerate(chunks)
+        {"type": "http.request", "body": c, "more_body": i < len(chunks) - 1} for i, c in enumerate(chunks)
     ]
     req = _build_request(messages)
     stream = ByteStream(req)

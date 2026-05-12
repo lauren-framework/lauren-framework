@@ -241,9 +241,7 @@ class TestWsRequestProxy:
         app = LaurenFactory.create(M)
 
         async def run():
-            async with WsTestClient(app).connect(
-                "/ck", headers={"cookie": "session=abc; user=def"}
-            ):
+            async with WsTestClient(app).connect("/ck", headers={"cookie": "session=abc; user=def"}):
                 pass
 
         asyncio.run(run())

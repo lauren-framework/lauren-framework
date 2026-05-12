@@ -125,10 +125,7 @@ class ProductController:
 
     @get("/")
     async def list_products(self) -> list[dict]:
-        return [
-            {"id": p.id, "name": p.name, "price_cents": p.price_cents}
-            for p in self._db.list_products()
-        ]
+        return [{"id": p.id, "name": p.name, "price_cents": p.price_cents} for p in self._db.list_products()]
 
     @post("/")
     async def create_product(self, body: Json[CreateProductBody]) -> dict:
@@ -171,9 +168,7 @@ class TestSQLAlchemyAsync:
 
     def test_get_product_by_id(self):
         client = build_app()
-        create_r = client.post(
-            "/products/", json={"name": "Gadget", "price_cents": 4999}
-        )
+        create_r = client.post("/products/", json={"name": "Gadget", "price_cents": 4999})
         pid = create_r.json()["id"]
 
         r = client.get(f"/products/{pid}")

@@ -230,11 +230,7 @@ class TestRichOpenAPI:
 
         app = LaurenFactory.create(M)
         schema = app.openapi()
-        param = next(
-            p
-            for p in schema["paths"]["/users/{uid}"]["get"]["parameters"]
-            if p["name"] == "uid"
-        )
+        param = next(p for p in schema["paths"]["/users/{uid}"]["get"]["parameters"] if p["name"] == "uid")
         assert param["schema"]["type"] == "integer"
 
 

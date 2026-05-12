@@ -647,15 +647,11 @@ class TestServerClose:
 
         async def run():
             # Bad token \u2014 connection closed immediately with 1008.
-            async with WsTestClient(app).connect(
-                "/auth", query_string="token=wrong"
-            ) as ws:
+            async with WsTestClient(app).connect("/auth", query_string="token=wrong") as ws:
                 assert ws._closed is True
                 assert ws.close_code == 1008
             # Valid token \u2014 ping works.
-            async with WsTestClient(app).connect(
-                "/auth", query_string="token=secret"
-            ) as ws:
+            async with WsTestClient(app).connect("/auth", query_string="token=secret") as ws:
                 await ws.send_json({"event": "ping"})
                 assert await ws.receive_json() == {"pong": True}
 
@@ -692,9 +688,7 @@ class TestBroadcastRoom:
                 )
 
             @on_message("chat.send")
-            async def send(
-                self, ws: WebSocket, body: Json[ChatMessage], room_id
-            ) -> None:
+            async def send(self, ws: WebSocket, body: Json[ChatMessage], room_id) -> None:
                 await self._rooms.broadcast(
                     room_id,
                     {"event": "chat", "text": body.text},

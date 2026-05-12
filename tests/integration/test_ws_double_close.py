@@ -125,9 +125,7 @@ class TestCloseAndRaise:
         """Connection rejected — no unhandled exception should escape the handler."""
 
         async def run():
-            async with WsTestClient(app).connect(
-                "/reject-both", query_string="token=bad"
-            ) as ws:
+            async with WsTestClient(app).connect("/reject-both", query_string="token=bad") as ws:
                 assert ws._closed is True
 
         asyncio.run(run())
@@ -136,9 +134,7 @@ class TestCloseAndRaise:
         """The custom close code (4401) must reach the client."""
 
         async def run():
-            async with WsTestClient(app).connect(
-                "/reject-both", query_string="token=bad"
-            ) as ws:
+            async with WsTestClient(app).connect("/reject-both", query_string="token=bad") as ws:
                 assert ws.close_code == 4401
 
         asyncio.run(run())
@@ -147,9 +143,7 @@ class TestCloseAndRaise:
         """A valid token should allow the handshake to proceed normally."""
 
         async def run():
-            async with WsTestClient(app).connect(
-                "/reject-both", query_string="token=valid"
-            ) as ws:
+            async with WsTestClient(app).connect("/reject-both", query_string="token=valid") as ws:
                 assert ws._accepted is True
 
         asyncio.run(run())
@@ -160,9 +154,7 @@ class TestCloseAndRaise:
         async def run():
             client = WsTestClient(app)
             for _ in range(5):
-                async with client.connect(
-                    "/reject-both", query_string="token=wrong"
-                ) as ws:
+                async with client.connect("/reject-both", query_string="token=wrong") as ws:
                     assert ws._closed is True
 
         asyncio.run(run())
@@ -174,9 +166,7 @@ class TestCloseAndRaise:
             client = WsTestClient(app)
             # Reject a few times
             for _ in range(3):
-                async with client.connect(
-                    "/reject-both", query_string="token=bad"
-                ) as ws:
+                async with client.connect("/reject-both", query_string="token=bad") as ws:
                     assert ws._closed is True
 
             # Then check the app is still healthy
@@ -195,27 +185,21 @@ class TestCloseAndRaise:
 class TestRaiseOnly:
     def test_raise_only_rejected(self, app):
         async def run():
-            async with WsTestClient(app).connect(
-                "/reject-raise-only", query_string="token=bad"
-            ) as ws:
+            async with WsTestClient(app).connect("/reject-raise-only", query_string="token=bad") as ws:
                 assert ws._closed is True
 
         asyncio.run(run())
 
     def test_raise_only_close_code(self, app):
         async def run():
-            async with WsTestClient(app).connect(
-                "/reject-raise-only", query_string="token=bad"
-            ) as ws:
+            async with WsTestClient(app).connect("/reject-raise-only", query_string="token=bad") as ws:
                 assert ws.close_code == 4403
 
         asyncio.run(run())
 
     def test_raise_only_valid_accepted(self, app):
         async def run():
-            async with WsTestClient(app).connect(
-                "/reject-raise-only", query_string="token=valid"
-            ) as ws:
+            async with WsTestClient(app).connect("/reject-raise-only", query_string="token=valid") as ws:
                 assert ws._accepted is True
 
         asyncio.run(run())
@@ -229,18 +213,14 @@ class TestRaiseOnly:
 class TestCloseOnly:
     def test_close_only_rejected(self, app):
         async def run():
-            async with WsTestClient(app).connect(
-                "/reject-close-only", query_string="token=bad"
-            ) as ws:
+            async with WsTestClient(app).connect("/reject-close-only", query_string="token=bad") as ws:
                 assert ws._closed is True
 
         asyncio.run(run())
 
     def test_close_only_close_code(self, app):
         async def run():
-            async with WsTestClient(app).connect(
-                "/reject-close-only", query_string="token=bad"
-            ) as ws:
+            async with WsTestClient(app).connect("/reject-close-only", query_string="token=bad") as ws:
                 assert ws.close_code == 4404
 
         asyncio.run(run())
@@ -262,15 +242,11 @@ class TestMixedRejectionStrategies:
                 assert ws._closed is True
                 assert ws.close_code == 4401
 
-            async with client.connect(
-                "/reject-raise-only", query_string="token=x"
-            ) as ws:
+            async with client.connect("/reject-raise-only", query_string="token=x") as ws:
                 assert ws._closed is True
                 assert ws.close_code == 4403
 
-            async with client.connect(
-                "/reject-close-only", query_string="token=x"
-            ) as ws:
+            async with client.connect("/reject-close-only", query_string="token=x") as ws:
                 assert ws._closed is True
                 assert ws.close_code == 4404
 
@@ -286,9 +262,7 @@ class TestMixedRejectionStrategies:
             client = WsTestClient(app)
             for i in range(4):
                 if i % 2 == 0:
-                    async with client.connect(
-                        "/reject-both", query_string="token=bad"
-                    ) as ws:
+                    async with client.connect("/reject-both", query_string="token=bad") as ws:
                         assert ws._closed is True
                 else:
                     async with client.connect("/accept-ok") as ws:

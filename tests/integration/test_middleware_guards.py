@@ -70,9 +70,7 @@ class MwModule:
 
 
 def build():
-    return TestClient(
-        LaurenFactory.create(MwModule, global_middlewares=[TraceMiddleware])
-    )
+    return TestClient(LaurenFactory.create(MwModule, global_middlewares=[TraceMiddleware]))
 
 
 class TestMiddleware:

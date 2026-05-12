@@ -477,9 +477,7 @@ def _json_lines(stream: _io.StringIO) -> list[dict]:
     return [_json.loads(ln) for ln in stream.getvalue().splitlines() if ln.strip()]
 
 
-def _make_loggers() -> tuple[
-    ConsoleLogger, JsonLogger, InMemoryLogger, _io.StringIO, _io.StringIO
-]:
+def _make_loggers() -> tuple[ConsoleLogger, JsonLogger, InMemoryLogger, _io.StringIO, _io.StringIO]:
     """Return fresh logger instances with capturable streams to avoid test bleed."""
     cs = _io.StringIO()
     js = _io.StringIO()
@@ -492,9 +490,7 @@ def _make_loggers() -> tuple[
     )
 
 
-def _build_app(
-    root_module: type, console: ConsoleLogger, json_log: JsonLogger, mem: InMemoryLogger
-):
+def _build_app(root_module: type, console: ConsoleLogger, json_log: JsonLogger, mem: InMemoryLogger):
     """Wire all three logger types as global providers."""
     return LaurenFactory.create(
         root_module,
@@ -520,9 +516,7 @@ def test_fulfillment_module_all_three_logger_types() -> None:
 
     # ShippingService → ConsoleLogger
     console_out = cs.getvalue()
-    assert "shipped ORD-001" in console_out, (
-        "ShippingService must write to ConsoleLogger"
-    )
+    assert "shipped ORD-001" in console_out, "ShippingService must write to ConsoleLogger"
     assert "ShippingService" in console_out
 
     # BillingService → JsonLogger
@@ -588,12 +582,8 @@ def test_composite_app_both_modules_all_six_services_log_correctly() -> None:
     assert audit and any("login:usr-42" in l["message"] for l in audit)
 
     # Logger/InMemoryLogger: both WarehouseService (fulfillment) and SessionService (users)
-    assert any("packed widget-A" in m for m in all_mem_msgs), (
-        "WarehouseService → Logger"
-    )
-    assert any("session started for usr-42" in m for m in all_mem_msgs), (
-        "SessionService → Logger"
-    )
+    assert any("packed widget-A" in m for m in all_mem_msgs), "WarehouseService → Logger"
+    assert any("session started for usr-42" in m for m in all_mem_msgs), "SessionService → Logger"
 
 
 def test_multiple_requests_accumulate_records_in_all_loggers() -> None:
@@ -608,18 +598,14 @@ def test_multiple_requests_accumulate_records_in_all_loggers() -> None:
 
     # InMemoryLogger: three WarehouseService records
     warehouse_msgs = [m for m in mem.messages() if "packed widget-A" in m]
-    assert len(warehouse_msgs) == 3, (
-        f"expected 3 warehouse records, got {warehouse_msgs}"
-    )
+    assert len(warehouse_msgs) == 3, f"expected 3 warehouse records, got {warehouse_msgs}"
 
     # JsonLogger: three BillingService JSON records
     billing_lines = [l for l in _json_lines(js) if l.get("context") == "BillingService"]
     assert len(billing_lines) == 3, f"expected 3 billing records, got {billing_lines}"
 
     # ConsoleLogger: three ShippingService lines
-    shipping_lines = [
-        ln for ln in cs.getvalue().splitlines() if "ShippingService" in ln
-    ]
+    shipping_lines = [ln for ln in cs.getvalue().splitlines() if "ShippingService" in ln]
     assert len(shipping_lines) == 3, f"expected 3 shipping lines, got {shipping_lines}"
 
 
@@ -655,9 +641,7 @@ def test_concrete_and_protocol_tokens_resolve_independently() -> None:
     resolved_json = asyncio.run(app.container.resolve(JsonLogger))
     resolved_logger = asyncio.run(app.container.resolve(Logger))
 
-    assert resolved_console is console, (
-        "ConsoleLogger token → pre-built console instance"
-    )
+    assert resolved_console is console, "ConsoleLogger token → pre-built console instance"
     assert resolved_json is json_log, "JsonLogger token → pre-built json_log instance"
     assert resolved_logger is mem, "Logger protocol token → InMemoryLogger instance"
     # All three are distinct objects

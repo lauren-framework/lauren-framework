@@ -47,9 +47,7 @@ class AuditLogService:
         changes: dict,
     ) -> AuditEntry:
         ts = time.time()
-        entry_id = hashlib.sha256(
-            f"{user_id}{action}{resource_id}{ts}".encode()
-        ).hexdigest()[:16]
+        entry_id = hashlib.sha256(f"{user_id}{action}{resource_id}{ts}".encode()).hexdigest()[:16]
         entry = AuditEntry(
             entry_id=entry_id,
             timestamp=ts,
@@ -66,11 +64,7 @@ class AuditLogService:
         return [e for e in self._entries if e.user_id == user_id]
 
     def get_by_resource(self, resource_type: str, resource_id: str) -> list[AuditEntry]:
-        return [
-            e
-            for e in self._entries
-            if e.resource_type == resource_type and e.resource_id == resource_id
-        ]
+        return [e for e in self._entries if e.resource_type == resource_type and e.resource_id == resource_id]
 
     def get_all(self) -> list[AuditEntry]:
         return list(self._entries)

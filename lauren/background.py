@@ -56,13 +56,9 @@ class BackgroundTasks:
     """
 
     def __init__(self) -> None:
-        self._queue: list[
-            tuple[Callable[..., Any], tuple[Any, ...], dict[str, Any], TaskHandle]
-        ] = []
+        self._queue: list[tuple[Callable[..., Any], tuple[Any, ...], dict[str, Any], TaskHandle]] = []
 
-    def add_task(
-        self, func: Callable[..., Any], *args: Any, **kwargs: Any
-    ) -> TaskHandle:
+    def add_task(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> TaskHandle:
         """Enqueue *func* to run after the response is sent.
 
         Returns a :class:`TaskHandle` whose :attr:`~TaskHandle.task_id`
@@ -92,9 +88,7 @@ class BackgroundTasks:
             t0 = time.perf_counter()
             func_name = getattr(func, "__qualname__", repr(func))
             try:
-                await signals.emit(
-                    BackgroundTaskStarted(task_id=handle.task_id, func=func)
-                )
+                await signals.emit(BackgroundTaskStarted(task_id=handle.task_id, func=func))
                 if inspect.iscoroutinefunction(func):
                     await func(*args, **kwargs)
                 else:

@@ -251,9 +251,7 @@ class RespController:
 
     @get("/cookie")
     async def cookie(self) -> Response:
-        return Response.json({"ok": True}).with_cookie(
-            "session", "tok", http_only=True, secure=True
-        )
+        return Response.json({"ok": True}).with_cookie("session", "tok", http_only=True, secure=True)
 
     @get("/created")
     async def created(self) -> Response:

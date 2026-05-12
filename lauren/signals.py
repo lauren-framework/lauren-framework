@@ -412,9 +412,7 @@ class SignalBus:
     # Internals
     # ------------------------------------------------------------------
 
-    def _log_listener_error(
-        self, fn: Listener, event: LifecycleEvent, exc: BaseException
-    ) -> None:
+    def _log_listener_error(self, fn: Listener, event: LifecycleEvent, exc: BaseException) -> None:
         """Record a listener failure without escalating it."""
         name = getattr(fn, "__qualname__", None) or getattr(fn, "__name__", repr(fn))
         event_name = type(event).__name__
@@ -429,9 +427,7 @@ class SignalBus:
         else:  # pragma: no cover - fallback for tests without a logger
             import logging as _stdlib
 
-            _stdlib.getLogger("lauren.signals").exception(
-                "signal listener %s failed on %s", name, event_name
-            )
+            _stdlib.getLogger("lauren.signals").exception("signal listener %s failed on %s", name, event_name)
 
 
 # ---------------------------------------------------------------------------

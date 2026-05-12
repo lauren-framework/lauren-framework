@@ -79,9 +79,7 @@ class TestJWTTokens:
         svc = JWTService()
         token = svc.create_token("user-42")
         client = build_app()
-        r = client.get(
-            "/protected/profile", headers={"authorization": f"Bearer {token}"}
-        )
+        r = client.get("/protected/profile", headers={"authorization": f"Bearer {token}"})
         assert r.status_code == 200
         assert r.json() == {"user_id": "user-42"}
 

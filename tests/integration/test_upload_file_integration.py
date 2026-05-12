@@ -101,9 +101,7 @@ def test_single_upload_delivers_file_with_metadata() -> None:
     body, ct = _multipart_body(
         [("file", payload, {"filename": "greeting.txt", "content_type": "text/plain"})]
     )
-    r = TestClient(app).post(
-        "/upload/single", content=body, headers={"content-type": ct}
-    )
+    r = TestClient(app).post("/upload/single", content=body, headers={"content-type": ct})
     assert r.status_code == 200
     assert r.json() == {
         "filename": "greeting.txt",
@@ -129,9 +127,7 @@ def test_single_upload_preserves_binary_integrity() -> None:
             )
         ]
     )
-    r = TestClient(app).post(
-        "/upload/single", content=body, headers={"content-type": ct}
-    )
+    r = TestClient(app).post("/upload/single", content=body, headers={"content-type": ct})
     assert r.status_code == 200
     assert r.json()["sha256"] == hashlib.sha256(payload).hexdigest()
     assert r.json()["size"] == len(payload)
@@ -268,9 +264,7 @@ class _AliasModule:
 
 def test_upload_file_respects_alias() -> None:
     app = LaurenFactory.create(_AliasModule)
-    body, ct = _multipart_body(
-        [("uploaded_document", b"pdf-data", {"filename": "report.pdf"})]
-    )
+    body, ct = _multipart_body([("uploaded_document", b"pdf-data", {"filename": "report.pdf"})])
     r = TestClient(app).post("/aliased/", content=body, headers={"content-type": ct})
     assert r.status_code == 200
     assert r.json() == {"filename": "report.pdf"}
@@ -285,9 +279,7 @@ def test_missing_required_upload_returns_422() -> None:
     app = LaurenFactory.create(_UploadModule)
     # Valid multipart body but the expected ``file`` field is absent.
     body, ct = _multipart_body([("other_field", b"ignored", {})])
-    r = TestClient(app).post(
-        "/upload/single", content=body, headers={"content-type": ct}
-    )
+    r = TestClient(app).post("/upload/single", content=body, headers={"content-type": ct})
     assert r.status_code == 422
     payload = r.json()
     assert payload["error"]["detail"]["field"] == "file"
@@ -385,9 +377,7 @@ class _InspectModule:
 
 def test_upload_file_exposes_expected_api() -> None:
     app = LaurenFactory.create(_InspectModule)
-    body, ct = _multipart_body(
-        [("file", b"hello", {"filename": "h.txt", "content_type": "text/plain"})]
-    )
+    body, ct = _multipart_body([("file", b"hello", {"filename": "h.txt", "content_type": "text/plain"})])
     r = TestClient(app).post("/inspect/", content=body, headers={"content-type": ct})
     assert r.status_code == 200
     payload = r.json()

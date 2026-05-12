@@ -80,9 +80,7 @@ def test_peel_optional_collapses_pep604_multi_branch_with_none() -> None:
 
 
 def test_outer_optional_path_has_source_and_inner_type() -> None:
-    src, inner, reads_body, marker, fd, pipes = parse_extractor_hint(
-        Optional[Path[int]]
-    )
+    src, inner, reads_body, marker, fd, pipes = parse_extractor_hint(Optional[Path[int]])
     assert src == "path"
     assert inner is int
     assert marker is Path

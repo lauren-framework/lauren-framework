@@ -357,9 +357,7 @@ class TestPydanticBodyParams:
         @controller("/users")
         class UserController:
             @patch("/{user_id}")
-            async def update(
-                self, user_id: int, body: Optional[PatchUser] = None
-            ) -> dict:
+            async def update(self, user_id: int, body: Optional[PatchUser] = None) -> dict:
                 if body is None:
                     return {"user_id": user_id, "changed": False}
                 return {"user_id": user_id, "name": body.name}
@@ -377,9 +375,7 @@ class TestPydanticBodyParams:
         @controller("/users")
         class UserController:
             @patch("/{user_id}")
-            async def update(
-                self, user_id: int, body: Optional[PatchUser] = None
-            ) -> dict:
+            async def update(self, user_id: int, body: Optional[PatchUser] = None) -> dict:
                 if body is None:
                     return {"user_id": user_id, "changed": False}
                 return {"user_id": user_id, "changed": True}
@@ -552,9 +548,7 @@ class TestExplicitMarkersCoexistWithImplicit:
             async def h(self, count: Json[int]) -> dict:
                 return {"count": count}
 
-        r = _app(C).post(
-            "/", content=b"7", headers={"Content-Type": "application/json"}
-        )
+        r = _app(C).post("/", content=b"7", headers={"Content-Type": "application/json"})
         assert r.status_code == 200
         assert r.json() == {"count": 7}
 

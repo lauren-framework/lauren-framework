@@ -60,9 +60,7 @@ class JobController:
         return {"status": "queued", "user_id": body.user_id}
 
     @post("/submit-batch")
-    async def submit_batch(
-        self, body: Json[list[JobRequest]], tasks: BackgroundTasks
-    ) -> dict:
+    async def submit_batch(self, body: Json[list[JobRequest]], tasks: BackgroundTasks) -> dict:
         for req in body:
             # body items may be dicts or Pydantic model instances
             user_id = req.user_id if hasattr(req, "user_id") else req["user_id"]

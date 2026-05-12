@@ -86,6 +86,9 @@ python_version = "3.12"
 # Ignore missing third-party stubs
 ignore_missing_imports = true
 
+[tool.ruff]
+line-length = 110
+
 [tool.ruff.lint]
 ignore = ["E741", "E742", "E743"]  # Ignore ambiguous variable names (e.g. "l", "O", "I")
 

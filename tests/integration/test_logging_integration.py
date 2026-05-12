@@ -99,9 +99,7 @@ class TestStartupEvents:
         logger = InMemoryLogger(level=LogLevel.DEBUG)
         _build(logger)
         completion = next(
-            r
-            for r in logger.records
-            if r.context == "LaurenFactory" and "completed" in r.message.lower()
+            r for r in logger.records if r.context == "LaurenFactory" and "completed" in r.message.lower()
         )
         assert completion.extra["routes"] == 4
         assert completion.extra["providers"] >= 1
@@ -161,11 +159,7 @@ class TestRequestLogging:
         client = TestClient(app)
         logger.clear()
         client.get("/api/boom")
-        request_errors = [
-            x
-            for x in logger.records
-            if x.context == "Request" and x.level is LogLevel.ERROR
-        ]
+        request_errors = [x for x in logger.records if x.context == "Request" and x.level is LogLevel.ERROR]
         # Two records expected: (1) the unhandled-exception notice and
         # (2) the request trace with status=500.
         assert len(request_errors) == 2

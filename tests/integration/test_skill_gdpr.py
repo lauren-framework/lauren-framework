@@ -139,9 +139,7 @@ class TestGDPRExport:
 
     def test_export_contains_profile(self):
         client, registry = build_client_and_registry()
-        registry.register_profile(
-            "alice", {"name": "Alice", "email": "alice@example.com"}
-        )
+        registry.register_profile("alice", {"name": "Alice", "email": "alice@example.com"})
         r = client.get("/gdpr/export/alice")
         data = jsonlib.loads(r.body)
         assert data["profile"]["name"] == "Alice"

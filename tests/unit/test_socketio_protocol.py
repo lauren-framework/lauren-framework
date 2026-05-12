@@ -132,16 +132,12 @@ class TestSocketIoEncoding:
         assert out == "1"
 
     def test_event_with_args(self):
-        out = encode_socketio(
-            SocketIOPacket(type=SIO_EVENT, data=["chat", {"msg": "hi"}])
-        )
+        out = encode_socketio(SocketIOPacket(type=SIO_EVENT, data=["chat", {"msg": "hi"}]))
         assert out == '2["chat",{"msg":"hi"}]'
 
     def test_event_with_ack_id(self):
         # Ack ids appear immediately before the JSON payload.
-        out = encode_socketio(
-            SocketIOPacket(type=SIO_EVENT, ack_id=7, data=["pong", 1])
-        )
+        out = encode_socketio(SocketIOPacket(type=SIO_EVENT, ack_id=7, data=["pong", 1]))
         assert out == '27["pong",1]'
 
     def test_event_in_namespace(self):
@@ -157,9 +153,7 @@ class TestSocketIoEncoding:
         assert out == '2/admin,["alert","fire"]'
 
     def test_ack_packet(self):
-        out = encode_socketio(
-            SocketIOPacket(type=SIO_ACK, ack_id=42, data=[{"ok": True}])
-        )
+        out = encode_socketio(SocketIOPacket(type=SIO_ACK, ack_id=42, data=[{"ok": True}]))
         assert out == '342[{"ok":true}]'
 
     def test_connect_error(self):

@@ -68,9 +68,7 @@ def test_resolve_forwardref_strict_raises() -> None:
 def test_resolve_forwardref_replace_any() -> None:
     from typing import Any as _Any
 
-    resolved = resolve_forwardref(
-        "StillUndefined", strategy=ResolutionStrategy.REPLACE_ANY
-    )
+    resolved = resolve_forwardref("StillUndefined", strategy=ResolutionStrategy.REPLACE_ANY)
     assert resolved is _Any
 
 
@@ -383,9 +381,7 @@ def test_resolver_syntax_error_returns_fallback() -> None:
     # ForwardRef itself validates the string on construction in Python 3.12+
     # so we use eval_str approach instead to test the resolver's SyntaxError handler.
     # Use a valid-but-unresolvable name to test the LENIENT fallback.
-    resolved = resolve_forwardref(
-        "_VeryUnknownTypeXYZ123", strategy=ResolutionStrategy.LENIENT
-    )
+    resolved = resolve_forwardref("_VeryUnknownTypeXYZ123", strategy=ResolutionStrategy.LENIENT)
     assert isinstance(resolved, ForwardRef)
 
 

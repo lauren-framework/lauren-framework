@@ -65,9 +65,7 @@ def _print_table(title: str, results: list[BenchResult]) -> None:
     print("-" * 58)
     for r in results:
         ratio = r.seconds / baseline
-        print(
-            f"{r.mode:<22} {r.per_op_us:>10.2f} {r.ops_per_sec:>12,.0f} {ratio:>9.2f}x"
-        )
+        print(f"{r.mode:<22} {r.per_op_us:>10.2f} {r.ops_per_sec:>12,.0f} {ratio:>9.2f}x")
     print()
 
 

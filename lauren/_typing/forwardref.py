@@ -513,9 +513,7 @@ def resolve_type_hints(
     for name, ann in raw.items():
         resolved[name] = resolver.resolve(ann)
         if stdlib_failed:
-            resolved[name] = _mark_if_from_typing_only(
-                ann, resolved[name], owner_globals
-            )
+            resolved[name] = _mark_if_from_typing_only(ann, resolved[name], owner_globals)
         if not include_extras and _is_annotated(resolved[name]):
             # Mirror the stdlib behaviour when extras are not wanted.
             resolved[name] = get_args(resolved[name])[0]

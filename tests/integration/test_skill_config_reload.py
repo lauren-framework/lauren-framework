@@ -115,9 +115,7 @@ class TestDynamicConfigReload:
     def test_multiple_updates_accumulate(self):
         client = build_app()
         client.post("/admin/config/", json={"key": "maintenance_mode", "value": True})
-        client.post(
-            "/admin/config/", json={"key": "allowed_origins", "value": "localhost"}
-        )
+        client.post("/admin/config/", json={"key": "allowed_origins", "value": "localhost"})
         r = client.get("/admin/config/")
         cfg = r.json()
         assert cfg["maintenance_mode"] is True

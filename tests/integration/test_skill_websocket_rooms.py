@@ -61,9 +61,7 @@ class ChatGateway:
 
     @on_message("send")
     async def send_message(self, ws: WebSocket, body: Json[ChatMessage]) -> None:
-        await self._rooms.broadcast(
-            body.room, {"event": "message", "content": body.content}
-        )
+        await self._rooms.broadcast(body.room, {"event": "message", "content": body.content})
 
     @on_message("leave")
     async def leave_room(self, ws: WebSocket, body: Json[dict]) -> None:
@@ -125,9 +123,7 @@ class TestWebSocketRooms:
                     await ws2.receive_json()  # joined ack
 
                     # ws1 sends a message — both should receive it
-                    await ws1.send_json(
-                        {"event": "send", "room": "lobby", "content": "hello everyone"}
-                    )
+                    await ws1.send_json({"event": "send", "room": "lobby", "content": "hello everyone"})
 
                     msg1 = await ws1.receive_json()
                     msg2 = await ws2.receive_json()
@@ -155,9 +151,7 @@ class TestWebSocketRooms:
                     await ws2.receive_json()
 
                     # ws1 broadcasts to room-a; ws2 should NOT receive it
-                    await ws1.send_json(
-                        {"event": "send", "room": "room-a", "content": "private"}
-                    )
+                    await ws1.send_json({"event": "send", "room": "room-a", "content": "private"})
                     msg = await ws1.receive_json()
                     received.append(msg)
                     assert msg["content"] == "private"

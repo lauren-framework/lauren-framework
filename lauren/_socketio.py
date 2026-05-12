@@ -276,9 +276,7 @@ def decode_socketio(payload: str) -> SocketIOPacket:
 
     # 1. Packet type — exactly one digit per spec.
     if not payload[0].isdigit():
-        raise SocketIOProtocolError(
-            f"first char of Socket.IO payload must be a digit, got {payload[0]!r}"
-        )
+        raise SocketIOProtocolError(f"first char of Socket.IO payload must be a digit, got {payload[0]!r}")
     packet_type = int(payload[0])
     if packet_type not in {
         SIO_CONNECT,
@@ -298,9 +296,7 @@ def decode_socketio(payload: str) -> SocketIOPacket:
         comma = payload.find(",", cursor)
         if comma == -1:
             # ``42/admin`` with no trailing comma — invalid per spec.
-            raise SocketIOProtocolError(
-                "namespace not terminated by ',' in Socket.IO payload"
-            )
+            raise SocketIOProtocolError("namespace not terminated by ',' in Socket.IO payload")
         namespace = payload[cursor:comma]
         cursor = comma + 1
 
@@ -320,13 +316,9 @@ def decode_socketio(payload: str) -> SocketIOPacket:
         try:
             data = _jsonlib.loads(rest)
         except _jsonlib.JSONDecodeError as exc:
-            raise SocketIOProtocolError(
-                f"invalid JSON in Socket.IO payload: {exc}"
-            ) from exc
+            raise SocketIOProtocolError(f"invalid JSON in Socket.IO payload: {exc}") from exc
 
-    return SocketIOPacket(
-        type=packet_type, namespace=namespace, ack_id=ack_id, data=data
-    )
+    return SocketIOPacket(type=packet_type, namespace=namespace, ack_id=ack_id, data=data)
 
 
 # ---------------------------------------------------------------------------
@@ -386,8 +378,7 @@ class EventRegistry:
     def register(self, event: str, fn: Any) -> None:
         if event in self.handlers:
             raise ValueError(
-                f"duplicate Socket.IO event handler for {event!r} on "
-                f"{getattr(fn, '__qualname__', fn)!r}"
+                f"duplicate Socket.IO event handler for {event!r} on {getattr(fn, '__qualname__', fn)!r}"
             )
         self.handlers[event] = fn
 

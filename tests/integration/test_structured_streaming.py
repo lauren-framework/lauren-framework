@@ -69,9 +69,7 @@ Event = Annotated[Union[ImageEvent, TextEvent], Field(discriminator="kind")]
 @controller("/stream", tags=["stream"])
 class StreamController:
     @post("/transcribe", response_model=Transcript)
-    async def transcribe(
-        self, audio: Stream[AudioChunk]
-    ) -> StreamingResponse[Transcript]:
+    async def transcribe(self, audio: Stream[AudioChunk]) -> StreamingResponse[Transcript]:
         async def produce() -> AsyncIterator[Transcript]:
             async for chunk in audio:
                 # The contract: ``chunk`` is a validated AudioChunk.
@@ -384,10 +382,6 @@ class TestStreamingOpenAPI:
             for method, op in item.items():
                 if path == "/openapi.json":
                     continue
-                if path.startswith("/stream/transcribe") or path.startswith(
-                    "/stream/events"
-                ):
+                if path.startswith("/stream/transcribe") or path.startswith("/stream/events"):
                     continue
-                assert "x-streaming" not in op, (
-                    f"x-streaming leaked into {method} {path}"
-                )
+                assert "x-streaming" not in op, f"x-streaming leaked into {method} {path}"

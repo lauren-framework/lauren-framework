@@ -149,18 +149,13 @@ class TestClient:
             nonlocal status, out_headers
             if msg["type"] == "http.response.start":
                 status = msg["status"]
-                out_headers = [
-                    (k.decode("latin-1"), v.decode("latin-1"))
-                    for k, v in msg.get("headers", [])
-                ]
+                out_headers = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in msg.get("headers", [])]
                 started.set()
             elif msg["type"] == "http.response.body":
                 out_body.extend(msg.get("body", b""))
 
         await self._app(scope, receive, send)
-        return TestResponse(
-            status_code=status, headers=out_headers, body=bytes(out_body)
-        )
+        return TestResponse(status_code=status, headers=out_headers, body=bytes(out_body))
 
     async def arequest(self, method: str, url: str, **kwargs: Any) -> TestResponse:
         return await self._request(method, url, **kwargs)
@@ -263,14 +258,9 @@ class WebSocketTestSession:
         if headers is None:
             items: list[tuple[bytes, bytes]] = []
         elif isinstance(headers, Mapping):
-            items = [
-                (k.encode("latin-1"), str(v).encode("latin-1"))
-                for k, v in headers.items()
-            ]
+            items = [(k.encode("latin-1"), str(v).encode("latin-1")) for k, v in headers.items()]
         else:
-            items = [
-                (k.encode("latin-1"), str(v).encode("latin-1")) for k, v in headers
-            ]
+            items = [(k.encode("latin-1"), str(v).encode("latin-1")) for k, v in headers]
         self._headers = items
         self._subprotocols = tuple(subprotocols or ())
         # Queues: client → server and server → client. Using
@@ -340,9 +330,7 @@ class WebSocketTestSession:
         # so the server loop unblocks and the server task can finish.
         if self._accepted and not self._closed:
             try:
-                await self._to_server.put(
-                    {"type": "websocket.disconnect", "code": 1000}
-                )
+                await self._to_server.put({"type": "websocket.disconnect", "code": 1000})
             except Exception:
                 pass
         await self._wait_server()
@@ -351,15 +339,11 @@ class WebSocketTestSession:
 
     async def send_text(self, text: str) -> None:
         self._require_open()
-        await self._to_server.put(
-            {"type": "websocket.receive", "text": text, "bytes": None}
-        )
+        await self._to_server.put({"type": "websocket.receive", "text": text, "bytes": None})
 
     async def send_bytes(self, data: bytes) -> None:
         self._require_open()
-        await self._to_server.put(
-            {"type": "websocket.receive", "text": None, "bytes": data}
-        )
+        await self._to_server.put({"type": "websocket.receive", "text": None, "bytes": data})
 
     async def send_json(self, payload: Any) -> None:
         await self.send_text(jsonlib.dumps(payload))
@@ -386,9 +370,7 @@ class WebSocketTestSession:
             # an abnormal closure so the test fails fast instead of hanging.
             self._closed = True
             self.close_code = 1006
-            raise RuntimeError(
-                "server coroutine exited without sending websocket.close"
-            )
+            raise RuntimeError("server coroutine exited without sending websocket.close")
         return msg
 
     async def receive_text(self) -> str:
@@ -424,9 +406,7 @@ class WebSocketTestSession:
         if self._closed:
             raise RuntimeError("cannot send on a closed session")
         if not self._accepted:
-            raise RuntimeError(
-                "cannot send before the server has accepted the connection"
-            )
+            raise RuntimeError("cannot send before the server has accepted the connection")
 
     async def _wait_server(self) -> None:
         if self._server_task is None:

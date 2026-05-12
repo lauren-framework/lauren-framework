@@ -117,9 +117,7 @@ class TestHandlerListParameterHappyPath:
             UnresolvableParameterError,
         )
 
-        assert isinstance(
-            excinfo.value, (MissingProviderError, UnresolvableParameterError)
-        )
+        assert isinstance(excinfo.value, (MissingProviderError, UnresolvableParameterError))
 
 
 # ---------------------------------------------------------------------------

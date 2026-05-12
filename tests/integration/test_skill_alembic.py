@@ -54,9 +54,7 @@ class MigrationDemoService:
 
     def get_tables(self) -> list[str]:
         with self._engine.connect() as conn:
-            rows = conn.execute(
-                text("SELECT name FROM sqlite_master WHERE type='table'")
-            )
+            rows = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
             return [r[0] for r in rows]
 
     def get_columns(self, table: str = "items_migration") -> list[str]:
@@ -67,18 +65,14 @@ class MigrationDemoService:
     def run_upgrade(self) -> None:
         """Simulate an Alembic upgrade() — adds the description column."""
         with self._engine.connect() as conn:
-            conn.execute(
-                text("ALTER TABLE items_migration ADD COLUMN description TEXT")
-            )
+            conn.execute(text("ALTER TABLE items_migration ADD COLUMN description TEXT"))
             conn.commit()
 
     def insert_item(self, name: str, description: str | None = None) -> dict:
         with self._engine.connect() as conn:
             if description is not None:
                 conn.execute(
-                    text(
-                        "INSERT INTO items_migration (name, description) VALUES (:n, :d)"
-                    ),
+                    text("INSERT INTO items_migration (name, description) VALUES (:n, :d)"),
                     {"n": name, "d": description},
                 )
             else:
@@ -88,9 +82,7 @@ class MigrationDemoService:
                 )
             conn.commit()
             row = conn.execute(
-                text(
-                    "SELECT id, name FROM items_migration WHERE name = :n ORDER BY id DESC LIMIT 1"
-                ),
+                text("SELECT id, name FROM items_migration WHERE name = :n ORDER BY id DESC LIMIT 1"),
                 {"n": name},
             ).fetchone()
             return {"id": row[0], "name": row[1]}
@@ -191,8 +183,6 @@ class TestAlembicPattern:
     def test_insert_item_with_description_after_migration(self) -> None:
         client = build_app()
         client.post("/schema/upgrade")
-        r = client.post(
-            "/schema/items", json={"name": "Gadget", "description": "A fine gadget"}
-        )
+        r = client.post("/schema/items", json={"name": "Gadget", "description": "A fine gadget"})
         assert r.status_code == 200
         assert r.json()["name"] == "Gadget"

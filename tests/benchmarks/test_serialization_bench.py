@@ -110,9 +110,7 @@ def _print_table(title: str, results: list[BenchResult]) -> None:
     print("-" * 50)
     for r in results:
         speedup = baseline / r.seconds
-        print(
-            f"{r.name:<12} {r.per_op_us:>10.2f} {r.ops_per_sec:>14,.0f} {speedup:>9.2f}"
-        )
+        print(f"{r.name:<12} {r.per_op_us:>10.2f} {r.ops_per_sec:>14,.0f} {speedup:>9.2f}")
     print()
 
 
@@ -152,8 +150,7 @@ class TestEncoderMicroBench:
         payload = _small_dict()
         encoders = _get_encoders()
         results = [
-            _time_it(name, 20_000, lambda e=enc: e.encode_compact(payload))
-            for name, enc in encoders.items()
+            _time_it(name, 20_000, lambda e=enc: e.encode_compact(payload)) for name, enc in encoders.items()
         ]
         _print_table("encoder: small dict (200 bytes)", results)
         by_name = {r.name: r for r in results}
@@ -162,22 +159,16 @@ class TestEncoderMicroBench:
         # for slow CI.
         if "orjson" in by_name:
             speedup = by_name["stdlib"].seconds / by_name["orjson"].seconds
-            assert speedup >= 2.0, (
-                f"orjson only {speedup:.2f}\u00d7 faster than stdlib \u2014 regression?"
-            )
+            assert speedup >= 2.0, f"orjson only {speedup:.2f}\u00d7 faster than stdlib \u2014 regression?"
         if "msgspec" in by_name:
             speedup = by_name["stdlib"].seconds / by_name["msgspec"].seconds
-            assert speedup >= 2.0, (
-                f"msgspec only {speedup:.2f}\u00d7 faster than stdlib \u2014 "
-                f"regression?"
-            )
+            assert speedup >= 2.0, f"msgspec only {speedup:.2f}\u00d7 faster than stdlib \u2014 regression?"
 
     def test_list_of_dicts_encoder_bench(self) -> None:
         payload = _list_of_dicts(100)
         encoders = _get_encoders()
         results = [
-            _time_it(name, 2_000, lambda e=enc: e.encode_compact(payload))
-            for name, enc in encoders.items()
+            _time_it(name, 2_000, lambda e=enc: e.encode_compact(payload)) for name, enc in encoders.items()
         ]
         _print_table("encoder: list[dict] \u00d7 100", results)
         by_name = {r.name: r for r in results}
@@ -194,8 +185,7 @@ class TestEncoderMicroBench:
         payload = _nested_tree(depth=5, width=3)
         encoders = _get_encoders()
         results = [
-            _time_it(name, 5_000, lambda e=enc: e.encode_compact(payload))
-            for name, enc in encoders.items()
+            _time_it(name, 5_000, lambda e=enc: e.encode_compact(payload)) for name, enc in encoders.items()
         ]
         _print_table("encoder: nested tree (depth=5, width=3)", results)
         # No hard assertion \u2014 deeply nested dicts are a known
@@ -270,9 +260,7 @@ class TestEncoderEndToEndBench:
             # We observe ~1.3\u20131.8\u00d7 end-to-end on this shape. Even a
             # 5% improvement beats the stdlib baseline \u2014 assert on the
             # sign of the effect only so the test is robust on noisy CI.
-            assert speedup >= 1.0, (
-                f"orjson slower end-to-end: {speedup:.2f}\u00d7 \u2014 investigate"
-            )
+            assert speedup >= 1.0, f"orjson slower end-to-end: {speedup:.2f}\u00d7 \u2014 investigate"
 
     def test_end_to_end_small_response(self) -> None:
         encoders = _get_encoders()

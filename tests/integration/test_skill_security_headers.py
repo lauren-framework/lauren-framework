@@ -70,12 +70,8 @@ class SimpleCorsMiddleware:
             response = await call_next(request)
             cors_origin = origin if origin else "*"
             response = response.with_header("Access-Control-Allow-Origin", cors_origin)
-            response = response.with_header(
-                "Access-Control-Allow-Methods", ", ".join(self._allow_methods)
-            )
-            response = response.with_header(
-                "Access-Control-Allow-Headers", ", ".join(self._allow_headers)
-            )
+            response = response.with_header("Access-Control-Allow-Methods", ", ".join(self._allow_methods))
+            response = response.with_header("Access-Control-Allow-Headers", ", ".join(self._allow_headers))
             return response
         return await call_next(request)
 
@@ -129,9 +125,7 @@ def build_cors_client(allow_origins=None):
             if "*" in self._allow_origins or origin in self._allow_origins:
                 response = await call_next(request)
                 cors_origin = origin if origin else "*"
-                response = response.with_header(
-                    "Access-Control-Allow-Origin", cors_origin
-                )
+                response = response.with_header("Access-Control-Allow-Origin", cors_origin)
                 response = response.with_header(
                     "Access-Control-Allow-Methods", ", ".join(self._allow_methods)
                 )

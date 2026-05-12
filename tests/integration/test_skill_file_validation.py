@@ -125,9 +125,7 @@ class TestFileValidator:
 
     def test_detect_unknown(self) -> None:
         validator = FileValidator()
-        assert (
-            validator.detect_mime_type(b"just plain text") == "application/octet-stream"
-        )
+        assert validator.detect_mime_type(b"just plain text") == "application/octet-stream"
 
     def test_validate_jpeg_ok(self) -> None:
         validator = FileValidator()
@@ -151,9 +149,7 @@ class TestFileValidator:
 
     def test_validate_custom_allowed_types(self) -> None:
         validator = FileValidator()
-        result = validator.validate(
-            b"plain text", allowed_types={"application/octet-stream"}
-        )
+        result = validator.validate(b"plain text", allowed_types={"application/octet-stream"})
         assert result["valid"] is True
 
 

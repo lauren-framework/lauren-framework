@@ -72,9 +72,7 @@ class SearchEngineController:
         self._idx = idx
 
     @post("/{index_name}")
-    async def index_document(
-        self, index_name: Path[str], body: Json[IndexDocBody]
-    ) -> dict:
+    async def index_document(self, index_name: Path[str], body: Json[IndexDocBody]) -> dict:
         self._idx.index(index_name, body.doc_id, body.data)
         return {"indexed": body.doc_id, "index": index_name}
 
@@ -126,25 +124,19 @@ class TestSearchEngineIntegration:
 
     def test_search_returns_empty_when_no_match(self) -> None:
         client = build_app()
-        client.post(
-            "/index/docs", json={"doc_id": "1", "data": {"title": "Python tutorial"}}
-        )
+        client.post("/index/docs", json={"doc_id": "1", "data": {"title": "Python tutorial"}})
         r = client.get("/index/docs/search?q=golang")
         assert r.json() == []
 
     def test_search_is_case_insensitive(self) -> None:
         client = build_app()
-        client.post(
-            "/index/docs", json={"doc_id": "1", "data": {"title": "PYTHON Guide"}}
-        )
+        client.post("/index/docs", json={"doc_id": "1", "data": {"title": "PYTHON Guide"}})
         r = client.get("/index/docs/search?q=python")
         assert len(r.json()) == 1
 
     def test_delete_removes_document(self) -> None:
         client = build_app()
-        client.post(
-            "/index/docs", json={"doc_id": "1", "data": {"title": "To be deleted"}}
-        )
+        client.post("/index/docs", json={"doc_id": "1", "data": {"title": "To be deleted"}})
         client.delete("/index/docs/1")
         r = client.get("/index/docs/search?q=deleted")
         assert r.json() == []
@@ -160,9 +152,7 @@ class TestSearchEngineIntegration:
             "/index/articles",
             json={"doc_id": "a1", "data": {"title": "Article about Python"}},
         )
-        client.post(
-            "/index/products", json={"doc_id": "p1", "data": {"name": "Python book"}}
-        )
+        client.post("/index/products", json={"doc_id": "p1", "data": {"name": "Python book"}})
         articles = client.get("/index/articles/search?q=python").json()
         products = client.get("/index/products/search?q=python").json()
         assert len(articles) == 1
@@ -171,8 +161,6 @@ class TestSearchEngineIntegration:
 
     def test_index_returns_doc_id(self) -> None:
         client = build_app()
-        r = client.post(
-            "/index/test", json={"doc_id": "doc-42", "data": {"x": "value"}}
-        )
+        r = client.post("/index/test", json={"doc_id": "doc-42", "data": {"x": "value"}})
         assert r.status_code == 200
         assert r.json()["indexed"] == "doc-42"

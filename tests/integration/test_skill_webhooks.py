@@ -56,9 +56,7 @@ class WebhookDispatcher:
         self._deliveries: list[WebhookDelivery] = []
 
     def _sign(self, payload_bytes: bytes) -> str:
-        return hmac.new(
-            self._secret.encode(), payload_bytes, hashlib.sha256
-        ).hexdigest()
+        return hmac.new(self._secret.encode(), payload_bytes, hashlib.sha256).hexdigest()
 
     async def dispatch(
         self,
@@ -67,9 +65,7 @@ class WebhookDispatcher:
         payload: dict,
         max_retries: int = 3,
     ) -> WebhookDelivery:
-        body = json.dumps(
-            {"event": event, "data": payload, "timestamp": int(time.time())}
-        ).encode()
+        body = json.dumps({"event": event, "data": payload, "timestamp": int(time.time())}).encode()
         signature = self._sign(body)
         delivery = WebhookDelivery(
             webhook_id=str(uuid.uuid4()),
@@ -151,9 +147,7 @@ class WebhookRegistry:
 
 @injectable(scope=Scope.SINGLETON)
 class WebhookService:
-    def __init__(
-        self, dispatcher: WebhookDispatcher, registry: WebhookRegistry
-    ) -> None:
+    def __init__(self, dispatcher: WebhookDispatcher, registry: WebhookRegistry) -> None:
         self._dispatcher = dispatcher
         self._registry = registry
 
@@ -320,9 +314,7 @@ class TestWebhookDelivery:
 
         with patch("httpx.AsyncClient", return_value=mock_client):
             delivery = asyncio.run(
-                dispatcher.dispatch(
-                    "https://example.com/hook", "test.event", {"key": "val"}
-                )
+                dispatcher.dispatch("https://example.com/hook", "test.event", {"key": "val"})
             )
 
         assert delivery.status == "delivered"
@@ -339,9 +331,7 @@ class TestWebhookDelivery:
 
         with patch("httpx.AsyncClient", return_value=mock_client):
             delivery = asyncio.run(
-                dispatcher.dispatch(
-                    "https://example.com/hook", "test.event", {}, max_retries=3
-                )
+                dispatcher.dispatch("https://example.com/hook", "test.event", {}, max_retries=3)
             )
 
         assert delivery.status == "failed"
@@ -361,9 +351,7 @@ class TestWebhookDelivery:
 
         with patch("httpx.AsyncClient", return_value=mock_client):
             delivery = asyncio.run(
-                dispatcher.dispatch(
-                    "https://example.com/hook", "test.event", {}, max_retries=2
-                )
+                dispatcher.dispatch("https://example.com/hook", "test.event", {}, max_retries=2)
             )
 
         assert delivery.status == "failed"
@@ -382,9 +370,7 @@ class TestWebhookDelivery:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch("httpx.AsyncClient", return_value=mock_client):
-            asyncio.run(
-                dispatcher.dispatch("https://example.com/hook", "order.created", {})
-            )
+            asyncio.run(dispatcher.dispatch("https://example.com/hook", "order.created", {}))
 
         deliveries = dispatcher.get_deliveries("order.created")
         assert len(deliveries) == 1

@@ -40,22 +40,16 @@ class InputSanitizer:
         return bool(self._SQL_RE.search(value))
 
     def strip_xss(self, value: str) -> str:
-        cleaned = re.sub(
-            r"<script[^>]*>.*?</script>", "", value, flags=re.DOTALL | re.IGNORECASE
-        )
+        cleaned = re.sub(r"<script[^>]*>.*?</script>", "", value, flags=re.DOTALL | re.IGNORECASE)
         cleaned = re.sub(r"<[^>]+>", "", cleaned)
         return html.escape(cleaned)
 
     def generate_csrf_token(self, session_id: str, secret: str = "csrf-secret") -> str:
         raw = secrets.token_hex(16)
-        sig = hmac.new(
-            secret.encode(), f"{session_id}:{raw}".encode(), hashlib.sha256
-        ).hexdigest()
+        sig = hmac.new(secret.encode(), f"{session_id}:{raw}".encode(), hashlib.sha256).hexdigest()
         return f"{raw}:{sig}"
 
-    def validate_csrf_token(
-        self, token: str, session_id: str, secret: str = "csrf-secret"
-    ) -> bool:
+    def validate_csrf_token(self, token: str, session_id: str, secret: str = "csrf-secret") -> bool:
         try:
             raw, sig = token.rsplit(":", 1)
             expected = hmac.new(

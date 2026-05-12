@@ -100,9 +100,7 @@ class BulkController:
         self._processor = processor
 
     @post("/import")
-    async def import_data(
-        self, body: Bytes, fmt: Query[str] = QueryField(default="csv")
-    ) -> dict:
+    async def import_data(self, body: Bytes, fmt: Query[str] = QueryField(default="csv")) -> dict:
         if fmt == "csv":
             records = self._processor.import_csv(body)
         elif fmt == "json":
@@ -217,9 +215,7 @@ class TestBulkProcessorUnit:
 class TestBulkController:
     def test_import_csv_via_endpoint(self) -> None:
         client = build_app()
-        csv_data = _make_csv(
-            [{"name": "Alice", "score": "95"}, {"name": "Bob", "score": "88"}]
-        )
+        csv_data = _make_csv([{"name": "Alice", "score": "95"}, {"name": "Bob", "score": "88"}])
         r = client.post("/bulk/import?fmt=csv", content=csv_data)
         assert r.status_code == 200
         body = r.json()

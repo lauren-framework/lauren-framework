@@ -513,9 +513,7 @@ def _mark_as_pipe(target: Any) -> Any:
             f"@pipe() can only decorate a function or class, got {type(target).__name__}.",
         )
     try:
-        existing = (
-            target.__dict__.get(PIPE_META) if hasattr(target, "__dict__") else None
-        )
+        existing = target.__dict__.get(PIPE_META) if hasattr(target, "__dict__") else None
     except Exception:  # pragma: no cover - extremely exotic targets
         existing = None
     if existing is None:
@@ -613,9 +611,7 @@ class _ParamSpec:
             )
         if isinstance(other, FieldDescriptor):
             if self.field_descriptor is not None:
-                raise TypeError(
-                    "A parameter chain may include at most one FieldDescriptor."
-                )
+                raise TypeError("A parameter chain may include at most one FieldDescriptor.")
             return _ParamSpec(field_descriptor=other, pipes=self.pipes)
         if is_pipe(other):
             return _ParamSpec(
@@ -775,9 +771,7 @@ def parse_extractor_hint(
     origin = get_origin(annotation)
     pipes: list[Any] = []
     fd: FieldDescriptor | None = None
-    if origin is Annotated or (
-        hasattr(annotation, "__metadata__") and hasattr(annotation, "__origin__")
-    ):
+    if origin is Annotated or (hasattr(annotation, "__metadata__") and hasattr(annotation, "__origin__")):
         args = get_args(annotation)
         inner = args[0]
         source: str | None = None
@@ -813,11 +807,7 @@ def parse_extractor_hint(
         for extra in args[1:]:
             # Extractor marker (class or instance).
             candidate = extra if isinstance(extra, type) else type(extra)
-            if (
-                isinstance(candidate, type)
-                and issubclass(candidate, ExtractionMarker)
-                and source is None
-            ):
+            if isinstance(candidate, type) and issubclass(candidate, ExtractionMarker) and source is None:
                 source = candidate.source
                 reads_body = candidate.reads_body
                 marker_cls = candidate
@@ -825,8 +815,7 @@ def parse_extractor_hint(
             if isinstance(extra, FieldDescriptor):
                 if fd is not None:
                     raise ExtractorError(
-                        "multiple FieldDescriptor entries in Annotated[...]; "
-                        "keep at most one per parameter",
+                        "multiple FieldDescriptor entries in Annotated[...]; keep at most one per parameter",
                     )
                 fd = extra
                 continue
@@ -898,6 +887,87 @@ def _is_pydantic_model_type(annotation: Any) -> bool:
         return False
     inner, _ = _peel_optional(annotation)
     return isinstance(inner, type) and issubclass(inner, _BaseModel)
+
+
+def _is_msgspec_struct_type(annotation: Any) -> bool:
+    """Return ``True`` when *annotation* (possibly ``Optional[T]``) is a
+    ``msgspec.Struct`` subclass.
+
+    Detection is attribute-based (``__struct_fields__`` + ``__struct_config__``)
+    so the check never imports msgspec at module load time.
+    """
+    inner, _ = _peel_optional(annotation)
+    if not isinstance(inner, type):
+        return False
+    return hasattr(inner, "__struct_fields__") and hasattr(inner, "__struct_config__")
+
+
+def _is_dataclass_type(annotation: Any) -> bool:
+    """Return ``True`` when *annotation* (possibly ``Optional[T]``) is a
+    Python :mod:`dataclasses` dataclass.
+    """
+    import dataclasses
+
+    inner, _ = _peel_optional(annotation)
+    return isinstance(inner, type) and dataclasses.is_dataclass(inner)
+
+
+def _is_struct_type(annotation: Any) -> bool:
+    """Return ``True`` when *annotation* is a supported struct-like type
+    (``msgspec.Struct`` **or** Python dataclass).
+
+    Used by :func:`lauren._asgi._compile_handler_signature` to auto-promote
+    bare struct parameters to JSON body extraction, mirroring Pydantic
+    behaviour, and by the extraction layer to dispatch to the correct
+    converter.
+    """
+    return _is_msgspec_struct_type(annotation) or _is_dataclass_type(annotation)
+
+
+def _convert_struct(data: Any, struct_cls: type, field_name: str) -> Any:
+    """Convert *data* (a plain dict or list of string values) to an instance
+    of *struct_cls*, applying type coercion.
+
+    Dispatches to:
+
+    * ``msgspec.convert(data, struct_cls, strict=False)`` — handles
+      ``msgspec.Struct`` subclasses.  ``strict=False`` coerces string
+      values from query-string extraction to the declared field types
+      (e.g. ``"5"`` → ``5`` for ``int`` fields).
+    * Manual field-by-field coercion + direct construction — for Python
+      :mod:`dataclasses` instances.
+
+    Raises :class:`ExtractorError` on validation failure.
+    """
+    import dataclasses
+
+    try:
+        if hasattr(struct_cls, "__struct_fields__"):
+            # msgspec.Struct — use msgspec.convert for full type coercion.
+            import msgspec as _msgspec
+
+            return _msgspec.convert(data, struct_cls, strict=False)
+        if dataclasses.is_dataclass(struct_cls):
+            # Dataclass — coerce each field individually then construct.
+            import typing
+
+            hints = typing.get_type_hints(struct_cls)
+            coerced: dict[str, Any] = {}
+            for f in dataclasses.fields(struct_cls):
+                if f.name not in data:
+                    continue
+                v = data[f.name]
+                target_t = hints.get(f.name, Any)
+                coerced[f.name] = _coerce_scalar(str(v), target_t) if isinstance(v, str) else v
+            return struct_cls(**coerced)
+    except ExtractorError:
+        raise
+    except Exception as exc:
+        raise ExtractorError(
+            "validation error",
+            detail={"field": field_name, "errors": str(exc)},
+        ) from exc
+    return data
 
 
 #: Primitive Python types that can be meaningfully coerced from a query-string
@@ -1081,9 +1151,7 @@ async def _invoke_pipe(target: Any, value: Any, ctx: PipeContext) -> Any:
     """
     # Class-based pipe: resolve via DI when visible, else instantiate.
     if _inspect.isclass(target):
-        if ctx.container is not None and ctx.container.has_provider(
-            target, owning_module=ctx.owning_module
-        ):
+        if ctx.container is not None and ctx.container.has_provider(target, owning_module=ctx.owning_module):
             instance = await ctx.container.resolve(
                 target,
                 request_cache=ctx.request_cache,
@@ -1244,6 +1312,35 @@ async def _extract_raw(
                     return None
                 return _validate_pydantic(fields_dict, peeled_inner, extraction.name)
 
+            if _is_struct_type(peeled_inner):
+                # msgspec.Struct / dataclass — collect individual query-string
+                # fields by name and hand them to _convert_struct, which applies
+                # type coercion so "5" → 5 for int fields, etc.
+                struct_fields_dict: dict[str, Any] = {}
+                if _is_msgspec_struct_type(peeled_inner):
+                    import msgspec as _msgspec
+
+                    for sf in _msgspec.structs.fields(peeled_inner):
+                        # Check both the Python attr name and the encoded name
+                        # (may differ when the struct uses rename=).
+                        for key_candidate in (sf.encode_name, sf.name):
+                            raw = request.query_params.get(key_candidate, [])  # type: ignore[assignment]
+                            if raw:
+                                struct_fields_dict[sf.name] = raw[0] if len(raw) == 1 else raw
+                                break
+                else:
+                    import dataclasses
+
+                    for sf in dataclasses.fields(peeled_inner):
+                        raw = request.query_params.get(sf.name, [])  # type: ignore[assignment]
+                        if raw:
+                            struct_fields_dict[sf.name] = raw[0] if len(raw) == 1 else raw
+                if not struct_fields_dict and _inner_opt:
+                    if extraction.has_default:
+                        return extraction.default
+                    return None
+                return _convert_struct(struct_fields_dict, peeled_inner, extraction.name)
+
             key = fd.alias if fd and fd.alias else extraction.name
             raw_list = request.query_params.get(key, [])
             origin = get_origin(inner)
@@ -1273,9 +1370,7 @@ async def _extract_raw(
                     return extraction.default
                 if fd and fd.default is not ...:
                     return fd.default
-                raise ExtractorFieldError(
-                    f"missing header {key!r}", detail={"field": key}
-                )
+                raise ExtractorFieldError(f"missing header {key!r}", detail={"field": key})
             value = _coerce_scalar(raw, inner)
             return fd.validate(extraction.name, value) if fd else value
 
@@ -1287,9 +1382,7 @@ async def _extract_raw(
                     return extraction.default
                 if fd and fd.default is not ...:
                     return fd.default
-                raise ExtractorFieldError(
-                    f"missing cookie {key!r}", detail={"field": key}
-                )
+                raise ExtractorFieldError(f"missing cookie {key!r}", detail={"field": key})
             value = _coerce_scalar(raw, inner)
             return fd.validate(extraction.name, value) if fd else value
 
@@ -1298,24 +1391,16 @@ async def _extract_raw(
             if not body:
                 if extraction.has_default:
                     return extraction.default
-                raise ExtractorFieldError(
-                    "missing JSON body", detail={"field": extraction.name}
-                )
+                raise ExtractorFieldError("missing JSON body", detail={"field": extraction.name})
             try:
                 data = jsonlib.loads(body)
             except jsonlib.JSONDecodeError as e:
-                raise ExtractorError(
-                    f"invalid JSON: {e}", detail={"field": extraction.name}
-                ) from e
+                raise ExtractorError(f"invalid JSON: {e}", detail={"field": extraction.name}) from e
             return _validate_json(data, inner, extraction.name)
 
         if source == "form":
             form_data = await request.form()
-            if (
-                _PYDANTIC_AVAILABLE
-                and isinstance(inner, type)
-                and issubclass(inner, _BaseModel)
-            ):
+            if _PYDANTIC_AVAILABLE and isinstance(inner, type) and issubclass(inner, _BaseModel):
                 flat = {k: v[0] if len(v) == 1 else v for k, v in form_data.items()}
                 return _validate_pydantic(flat, inner, extraction.name)
             return form_data
@@ -1355,9 +1440,7 @@ async def _extract_raw(
 
         if source == "depends":
             if container is None:
-                raise MissingProviderError(
-                    "No DI container available for Depends extractor"
-                )
+                raise MissingProviderError("No DI container available for Depends extractor")
             return await container.resolve(
                 inner,
                 request_cache=request_cache,
@@ -1396,9 +1479,7 @@ async def _extract_raw(
                 if "extract" in _mro_cls.__dict__:
                     _extract_attr = _mro_cls.__dict__["extract"]
                     break
-            _is_instance_method = not isinstance(
-                _extract_attr, (classmethod, staticmethod)
-            )
+            _is_instance_method = not isinstance(_extract_attr, (classmethod, staticmethod))
 
             if _is_instance_method:
                 # ── Instance method form ────────────────────────────────────
@@ -1546,11 +1627,7 @@ async def _extract_upload_file(
 
     origin = get_origin(inner)
     if origin in (list, tuple):
-        if (
-            not files
-            and not extraction.has_default
-            and not (fd and fd.default is not ...)
-        ):
+        if not files and not extraction.has_default and not (fd and fd.default is not ...):
             raise ExtractorFieldError(
                 f"missing upload {field_name!r}",
                 detail={"field": field_name},
@@ -1584,12 +1661,12 @@ def _validate_json(data: Any, target: Any, field_name: str) -> Any:
                 "validation error",
                 detail={"field": field_name, "errors": e.errors()},
             ) from e
-    if (
-        _PYDANTIC_AVAILABLE
-        and isinstance(target, type)
-        and issubclass(target, _BaseModel)
-    ):
+    if _PYDANTIC_AVAILABLE and isinstance(target, type) and issubclass(target, _BaseModel):
         return _validate_pydantic(data, target, field_name)
+    if _is_struct_type(target):
+        # msgspec.Struct / dataclass — JSON data is already a dict with proper
+        # Python types, so conversion is purely structural (no string coercion).
+        return _convert_struct(data, target, field_name)
     if target is Any or target is None:
         return data
     # primitive types

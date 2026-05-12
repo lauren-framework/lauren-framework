@@ -107,10 +107,7 @@ def _print_table(title: str, results: list[BenchResult]) -> None:
     print("-" * 64)
     for r in results:
         speedup = baseline / r.seconds
-        print(
-            f"{r.mode:<28} {r.per_op_us:>10.3f} {r.ops_per_sec:>12,.0f} "
-            f"{speedup:>9.2f}x"
-        )
+        print(f"{r.mode:<28} {r.per_op_us:>10.3f} {r.ops_per_sec:>12,.0f} {speedup:>9.2f}x")
     print()
 
 
@@ -143,9 +140,7 @@ class TestRouterFindBench:
         speedup = dynamic_result.seconds / static_result.seconds
         # We measure \u22482.5-4x locally. Assert \u22651.3x so the test is
         # robust on slow CI while still proving the fast path delivers.
-        assert speedup >= 1.3, (
-            f"static fast path only {speedup:.2f}x faster than radix walk; regression?"
-        )
+        assert speedup >= 1.3, f"static fast path only {speedup:.2f}x faster than radix walk; regression?"
 
     def test_static_lookup_in_mixed_router_still_fast(self) -> None:
         """Static lookups in a router that also contains dynamic
@@ -160,19 +155,14 @@ class TestRouterFindBench:
         result.mode = "static in mixed router"
 
         print(f"\n\n=== static lookup in mixed router ({n} iterations) ===")
-        print(
-            f"{result.mode:<28} {result.per_op_us:>10.3f} s/op "
-            f"{result.ops_per_sec:>12,.0f} ops/sec\n"
-        )
+        print(f"{result.mode:<28} {result.per_op_us:>10.3f} s/op {result.ops_per_sec:>12,.0f} ops/sec\n")
 
         # Sanity: should still be much faster than a dynamic lookup
         # in the same router. This is mostly a smoke check \u2014 the
         # real correctness comes from the unit-test suite.
         dyn_result = _time_find(mixed, "GET", "/dynamic/d12/99", n)
         speedup = dyn_result.seconds / result.seconds
-        assert speedup >= 1.2, (
-            f"static-in-mixed only {speedup:.2f}x faster than dynamic-in-mixed"
-        )
+        assert speedup >= 1.2, f"static-in-mixed only {speedup:.2f}x faster than dynamic-in-mixed"
 
     def test_fast_path_does_not_allocate_params_dict(self) -> None:
         """The fast path returns the shared ``_EMPTY_PARAMS`` sentinel
@@ -242,9 +232,7 @@ class TestRouterEndToEndBench:
         dynamic_secs = time.perf_counter() - start
 
         results = [
-            BenchResult(
-                mode="dynamic GET /users/{id}", iterations=n, seconds=dynamic_secs
-            ),
+            BenchResult(mode="dynamic GET /users/{id}", iterations=n, seconds=dynamic_secs),
             BenchResult(mode="static GET /health", iterations=n, seconds=static_secs),
         ]
         _print_table(f"end-to-end GET throughput {n} requests", results)
@@ -252,6 +240,4 @@ class TestRouterEndToEndBench:
         # Static must not be slower end-to-end than dynamic. On this
         # workload we typically observe \u22481.05-1.15x faster.
         speedup = dynamic_secs / static_secs
-        assert speedup >= 0.5, (
-            f"static end-to-end slower than dynamic: speedup={speedup:.2f}x"
-        )
+        assert speedup >= 0.5, f"static end-to-end slower than dynamic: speedup={speedup:.2f}x"

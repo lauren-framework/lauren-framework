@@ -216,12 +216,7 @@ def test_iter_parts_raises_on_disposition_missing_name() -> None:
 
 def test_iter_parts_raises_on_unterminated_part() -> None:
     boundary = "B"
-    body = (
-        b"--B\r\n"
-        b'Content-Disposition: form-data; name="x"\r\n'
-        b"\r\n"
-        b"orphan-body-no-closing-boundary"
-    )
+    body = b'--B\r\nContent-Disposition: form-data; name="x"\r\n\r\norphan-body-no-closing-boundary'
     with pytest.raises(ExtractorError, match="missing trailing boundary"):
         list(iter_parts(body, boundary))
 

@@ -453,9 +453,7 @@ def is_discriminated_union(target: Any) -> bool:
         union_types.add(_types.UnionType)  # type: ignore[arg-type]
     except AttributeError:  # pragma: no cover - py<3.10
         pass
-    if inner_origin not in union_types and inner_origin is not getattr(
-        _types, "UnionType", None
-    ):
+    if inner_origin not in union_types and inner_origin is not getattr(_types, "UnionType", None):
         # Try harder — pydantic's tagged unions often come through as
         # Union specialisations whose ``get_origin`` is ``typing.Union``.
         if str(inner_origin) not in ("typing.Union", "types.UnionType"):

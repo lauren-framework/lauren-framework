@@ -300,9 +300,7 @@ class TestInterceptorExecution:
 
         @interceptor()
         class Spy:
-            async def intercept(
-                self, ctx: ExecutionContext, call_handler: CallHandler
-            ) -> Any:
+            async def intercept(self, ctx: ExecutionContext, call_handler: CallHandler) -> Any:
                 captured.append(ctx)
                 return await call_handler.handle()
 
@@ -332,9 +330,7 @@ class TestInterceptorExecution:
 
         @interceptor()
         class MetaSpy:
-            async def intercept(
-                self, ctx: ExecutionContext, call_handler: CallHandler
-            ) -> Any:
+            async def intercept(self, ctx: ExecutionContext, call_handler: CallHandler) -> Any:
                 captured_meta.append(ctx.get_metadata("role", None))
                 return await call_handler.handle()
 

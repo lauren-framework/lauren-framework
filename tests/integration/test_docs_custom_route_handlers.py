@@ -302,9 +302,7 @@ class TestCustomDecoratorsWithoutWraps:
             value = "injected"
 
         def bad_inner(fn):
-            def wrapper(
-                *args, **kwargs
-            ):  # no @wraps — (*args, **kwargs) hides signature
+            def wrapper(*args, **kwargs):  # no @wraps — (*args, **kwargs) hides signature
                 return fn(*args, **kwargs)
 
             return wrapper

@@ -97,9 +97,7 @@ def _python_type_to_schema(tp: Any) -> dict[str, Any]:
     return {}  # unknown -> permissive
 
 
-def _apply_field_descriptor(
-    schema: dict[str, Any], fd: FieldDescriptor
-) -> dict[str, Any]:
+def _apply_field_descriptor(schema: dict[str, Any], fd: FieldDescriptor) -> dict[str, Any]:
     """Annotate ``schema`` with constraints from ``fd``."""
     if fd.ge is not None:
         schema["minimum"] = fd.ge
@@ -140,9 +138,7 @@ def _ensure_component(components: dict[str, Any], model: type) -> str:
     return f"#/components/schemas/{name}"
 
 
-def _schema_for_discriminated_union(
-    target: Any, components: dict[str, Any]
-) -> dict[str, Any]:
+def _schema_for_discriminated_union(target: Any, components: dict[str, Any]) -> dict[str, Any]:
     """Build a ``oneOf`` + ``discriminator`` schema for a tagged union.
 
     Emits the canonical OpenAPI 3.1 shape (feature 6)::
@@ -203,9 +199,7 @@ def _variant_tag_value(variant: type, key: str | None) -> Any:
     return None
 
 
-def _schema_for_extraction(
-    ext: Extraction, components: dict[str, Any]
-) -> dict[str, Any]:
+def _schema_for_extraction(ext: Extraction, components: dict[str, Any]) -> dict[str, Any]:
     """Build a JSON-Schema fragment describing an extraction's input shape.
 
     Pipes are intentionally not reflected in the schema: they transform the
@@ -217,12 +211,7 @@ def _schema_for_extraction(
     # rather than a bare ``$ref``.
     if _PYDANTIC and is_discriminated_union(inner):
         return _schema_for_discriminated_union(inner, components)
-    if (
-        _PYDANTIC
-        and isinstance(inner, type)
-        and _BaseModel is not None
-        and issubclass(inner, _BaseModel)
-    ):
+    if _PYDANTIC and isinstance(inner, type) and _BaseModel is not None and issubclass(inner, _BaseModel):
         return {"$ref": _ensure_component(components, inner)}
     schema = _python_type_to_schema(inner)
     if ext.field_descriptor is not None:
@@ -243,9 +232,7 @@ _PARAM_LOCATIONS = {
 }
 
 
-def _build_parameter(
-    ext: Extraction, components: dict[str, Any]
-) -> dict[str, Any] | None:
+def _build_parameter(ext: Extraction, components: dict[str, Any]) -> dict[str, Any] | None:
     loc = _PARAM_LOCATIONS.get(ext.source)
     if loc is None:
         return None
@@ -268,34 +255,24 @@ def _build_parameter(
     return param
 
 
-def _build_request_body(
-    ext: Extraction, components: dict[str, Any]
-) -> dict[str, Any] | None:
+def _build_request_body(ext: Extraction, components: dict[str, Any]) -> dict[str, Any] | None:
     """Build a ``requestBody`` fragment from a body-reading extraction."""
     if ext.source == "json":
         return {
             "required": not ext.has_default,
-            "content": {
-                "application/json": {"schema": _schema_for_extraction(ext, components)}
-            },
+            "content": {"application/json": {"schema": _schema_for_extraction(ext, components)}},
         }
     if ext.source == "form":
         return {
             "required": not ext.has_default,
             "content": {
-                "application/x-www-form-urlencoded": {
-                    "schema": _schema_for_extraction(ext, components)
-                }
+                "application/x-www-form-urlencoded": {"schema": _schema_for_extraction(ext, components)}
             },
         }
     if ext.source == "bytes":
         return {
             "required": not ext.has_default,
-            "content": {
-                "application/octet-stream": {
-                    "schema": {"type": "string", "format": "binary"}
-                }
-            },
+            "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}},
         }
     return None
 
@@ -308,9 +285,7 @@ def _build_responses(
 ) -> dict[str, Any]:
     responses: dict[str, Any] = {}
     for code, v in (rmeta.responses or {}).items():
-        responses[str(code)] = (
-            dict(v) if isinstance(v, dict) else {"description": str(v)}
-        )
+        responses[str(code)] = dict(v) if isinstance(v, dict) else {"description": str(v)}
     if not responses:
         responses["200"] = {"description": "Success"}
     if rmeta.response_model is not None and _PYDANTIC:
@@ -470,12 +445,8 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             op["parameters"] = params
         if request_body is not None:
             op["requestBody"] = request_body
-        streaming_item = (
-            getattr(compiled, "streaming_item_type", None) if compiled else None
-        )
-        op["responses"] = _build_responses(
-            rmeta, components, streaming_item_type=streaming_item
-        )
+        streaming_item = getattr(compiled, "streaming_item_type", None) if compiled else None
+        op["responses"] = _build_responses(rmeta, components, streaming_item_type=streaming_item)
         if streaming_item is not None:
             # Feature 7 — vendor extension telling OpenAPI tooling this
             # operation yields a structured, typed stream.

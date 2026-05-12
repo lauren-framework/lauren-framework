@@ -581,9 +581,7 @@ class TestA6UseExisting:
 
         @injectable()
         class ServiceB:
-            def __init__(
-                self, alias_log: Annotated[RealLogger, Inject("AliasLogger")]
-            ) -> None:
+            def __init__(self, alias_log: Annotated[RealLogger, Inject("AliasLogger")]) -> None:
                 self.log = alias_log
 
         @controller("/a6")
@@ -690,9 +688,7 @@ class TestA7TokenAndInject:
                 self.val = val
 
         @module(
-            providers=[
-                use_value(provide=Token("SHARED_VAL", unique=False), value="shared_v")
-            ],
+            providers=[use_value(provide=Token("SHARED_VAL", unique=False), value="shared_v")],
             exports=[SHARED],
         )
         class SharedMod:
@@ -991,9 +987,7 @@ class TestCInjectionPositions:
         @controller("/c3implicit")
         class C:
             @get("/")
-            async def h(
-                self, svc: AutoSvc
-            ) -> dict:  # no Depends — still resolved via DI
+            async def h(self, svc: AutoSvc) -> dict:  # no Depends — still resolved via DI
                 return {"val": svc.value()}
 
         @module(controllers=[C], providers=[AutoSvc])
@@ -1242,9 +1236,7 @@ class TestD3GuardInjection:
         class M:
             pass
 
-        r = TestClient(LaurenFactory.create(M)).get(
-            "/d3state/", headers={"x-token": "abc"}
-        )
+        r = TestClient(LaurenFactory.create(M)).get("/d3state/", headers={"x-token": "abc"})
         assert r.json()["user_id"] == "user_abc"
 
     def test_guard_with_set_metadata(self):
@@ -1498,9 +1490,7 @@ class TestD6MiddlewareInjection:
         class M:
             pass
 
-        r = TestClient(LaurenFactory.create(M, global_middlewares=[RequestId])).get(
-            "/d6plain/"
-        )
+        r = TestClient(LaurenFactory.create(M, global_middlewares=[RequestId])).get("/d6plain/")
         assert r.header("x-rid") is not None
 
     def test_middleware_with_di_injection(self):
@@ -1532,9 +1522,7 @@ class TestD6MiddlewareInjection:
         class M:
             pass
 
-        TestClient(LaurenFactory.create(M, global_middlewares=[AccessLog])).get(
-            "/d6di/"
-        )
+        TestClient(LaurenFactory.create(M, global_middlewares=[AccessLog])).get("/d6di/")
         assert any("GET" in entry for entry in log)
 
     def test_controller_level_middleware_with_di(self):

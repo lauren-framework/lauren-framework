@@ -115,9 +115,7 @@ def test_single_upload_delivers_file_contents() -> None:
 def test_single_upload_missing_field_returns_422() -> None:
     """An upload endpoint that gets the wrong field name should\n    surface a clean 422 with a machine-readable detail dict,\n    not silently succeed with ``None``.\n"""
     app = LaurenFactory.create(_SingleUploadModule)
-    body, content_type = _build_multipart(
-        [("wrong_name", b"data", {"filename": "x.txt"})]
-    )
+    body, content_type = _build_multipart([("wrong_name", b"data", {"filename": "x.txt"})])
     r = TestClient(app).post(
         "/upload/avatar",
         content=body,

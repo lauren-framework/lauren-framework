@@ -109,9 +109,7 @@ class TaskController:
         return TaskResponse(**self._repo.get(task_id))
 
     @put("/{task_id}")
-    async def update_task(
-        self, task_id: Path[int], body: Json[UpdateTask]
-    ) -> TaskResponse:
+    async def update_task(self, task_id: Path[int], body: Json[UpdateTask]) -> TaskResponse:
         task = self._repo.update(task_id, **body.model_dump(exclude_none=True))
         return TaskResponse(**task)
 
@@ -159,9 +157,7 @@ class TestRestCrud:
 
     def test_create_with_description(self) -> None:
         client = build_app()
-        r = client.post(
-            "/tasks/", json={"title": "Read book", "description": "Chapter 1"}
-        )
+        r = client.post("/tasks/", json={"title": "Read book", "description": "Chapter 1"})
         assert r.status_code == 201
         assert r.json()["description"] == "Chapter 1"
 

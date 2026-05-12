@@ -125,9 +125,7 @@ def injectable(
         try:
             setattr(target, INJECTABLE_META, meta)
         except (AttributeError, TypeError) as exc:  # pragma: no cover
-            raise DecoratorUsageError(
-                f"@injectable cannot attach metadata to {target!r}"
-            ) from exc
+            raise DecoratorUsageError(f"@injectable cannot attach metadata to {target!r}") from exc
         return target
 
     return decorator
@@ -442,9 +440,7 @@ def use_middlewares(*classes: type | None) -> Callable[[_T], _T]:
     filtered: tuple[type, ...] = tuple(c for c in classes if c is not None)
     for c in filtered:
         if not hasattr(c, "dispatch"):
-            raise MiddlewareConfigError(
-                f"{_describe(c)} must define 'dispatch(request, call_next)'"
-            )
+            raise MiddlewareConfigError(f"{_describe(c)} must define 'dispatch(request, call_next)'")
 
     def decorator(target: _T) -> _T:
         # Read own dict when target is a class so subclasses don't silently
@@ -496,9 +492,7 @@ def use_guards(*classes: type | None) -> Callable[[_T], _T]:
     filtered: tuple[type, ...] = tuple(c for c in classes if c is not None)
     for c in filtered:
         if not hasattr(c, "can_activate"):
-            raise GuardConfigError(
-                f"{_describe(c)} must define 'can_activate(context)'"
-            )
+            raise GuardConfigError(f"{_describe(c)} must define 'can_activate(context)'")
 
     def decorator(target: _T) -> _T:
         if isinstance(target, type):
@@ -569,9 +563,7 @@ def interceptor(*args: Any) -> Callable[[C], C]:
 
     def _apply(cls: C) -> C:
         if not hasattr(cls, "intercept"):
-            raise InterceptorConfigError(
-                f"@interceptor class {cls.__name__} must define 'intercept'"
-            )
+            raise InterceptorConfigError(f"@interceptor class {cls.__name__} must define 'intercept'")
         setattr(cls, INTERCEPTOR_META, True)
         if not hasattr(cls, INJECTABLE_META):
             setattr(cls, INJECTABLE_META, InjectableMeta(scope=Scope.SINGLETON))
@@ -712,8 +704,7 @@ def exception_handler(
     for exc in exceptions:
         if not (isinstance(exc, type) and issubclass(exc, BaseException)):
             raise ExceptionHandlerConfigError(
-                f"@exception_handler arguments must be exception classes; "
-                f"got {_describe(exc)}.",
+                f"@exception_handler arguments must be exception classes; got {_describe(exc)}.",
                 detail={"argument": _describe(exc)},
             )
 
@@ -753,9 +744,7 @@ def exception_handler(
         try:
             setattr(target, EXCEPTION_HANDLER_META, ExceptionHandlerMeta(captured))
         except (AttributeError, TypeError):  # pragma: no cover
-            raise ExceptionHandlerConfigError(
-                f"Cannot attach exception-handler metadata to {target!r}"
-            )
+            raise ExceptionHandlerConfigError(f"Cannot attach exception-handler metadata to {target!r}")
         return target
 
     return decorator
@@ -815,9 +804,7 @@ def use_exception_handlers(
         try:
             setattr(target, USE_EXCEPTION_HANDLERS, existing)
         except (AttributeError, TypeError):  # pragma: no cover
-            raise ExceptionHandlerConfigError(
-                f"Cannot attach exception handlers to {target!r}"
-            )
+            raise ExceptionHandlerConfigError(f"Cannot attach exception handlers to {target!r}")
         return target
 
     return decorator
@@ -951,9 +938,7 @@ def openapi_security(
 
     def decorator(cls: C) -> C:
         if not isinstance(cls, type):
-            raise GuardConfigError(
-                f"@openapi_security must decorate a class; got {cls!r}."
-            )
+            raise GuardConfigError(f"@openapi_security must decorate a class; got {cls!r}.")
         setattr(cls, OPENAPI_SECURITY_META, OpenAPISecurityMeta(captured))
         return cls
 

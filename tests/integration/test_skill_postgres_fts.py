@@ -66,10 +66,7 @@ class SearchService:
     def search(self, query: str) -> list[dict]:
         with Session(self._engine) as s:
             rows = s.execute(
-                text(
-                    "SELECT id, title, body FROM documents "
-                    "WHERE title LIKE :q OR body LIKE :q"
-                ),
+                text("SELECT id, title, body FROM documents WHERE title LIKE :q OR body LIKE :q"),
                 {"q": f"%{query}%"},
             ).fetchall()
             return [{"id": r[0], "title": r[1], "body": r[2]} for r in rows]

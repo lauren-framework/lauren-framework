@@ -235,9 +235,7 @@ class DIContainer:
 
     # -- Registration ------------------------------------------------------
 
-    def register(
-        self, target: type | Callable[..., Any], *, owning_module: type | None = None
-    ) -> Provider:
+    def register(self, target: type | Callable[..., Any], *, owning_module: type | None = None) -> Provider:
         """Register a class or function provider.
 
         Both flavours are accepted. The decorator
@@ -548,9 +546,7 @@ class DIContainer:
         self._bind_token(token, provider)
         return provider
 
-    def register_custom(
-        self, custom: CustomProvider, *, owning_module: type | None = None
-    ) -> Provider:
+    def register_custom(self, custom: CustomProvider, *, owning_module: type | None = None) -> Provider:
         """Single entry point that dispatches to the right helper.
 
         Used by :class:`LaurenFactory` so the module-graph compiler
@@ -652,9 +648,7 @@ class DIContainer:
                     },
                 )
 
-        def resolve_one(
-            token: Any, *, for_scope: Scope, owning_module: type | None
-        ) -> list[Provider]:
+        def resolve_one(token: Any, *, for_scope: Scope, owning_module: type | None) -> list[Provider]:
             """Resolve ``token`` to the list of dep-graph providers it expands to.
 
             Normal (scalar) tokens resolve to a single-element list. A
@@ -681,15 +675,9 @@ class DIContainer:
                         "Register at least one provider with multi=True.",
                         detail={"token": _describe(token)},
                     )
-                visible = [
-                    b for b in inner_bindings if self._is_visible(b, owning_module)
-                ]
+                visible = [b for b in inner_bindings if self._is_visible(b, owning_module)]
                 if not visible:
-                    owner_name = (
-                        owning_module.__name__
-                        if owning_module is not None
-                        else "<global>"
-                    )
+                    owner_name = owning_module.__name__ if owning_module is not None else "<global>"
                     raise MissingProviderError(
                         f"No provider for {_describe(element_type)} "
                         f"(requested as {_describe(token)}) "
@@ -741,13 +729,9 @@ class DIContainer:
                 )
             # Filter by visibility first — a caller can only see bindings
             # within its module's reach.
-            visible_bindings = [
-                b for b in bindings if self._is_visible(b, owning_module)
-            ]
+            visible_bindings = [b for b in bindings if self._is_visible(b, owning_module)]
             if not visible_bindings:
-                owner_name = (
-                    owning_module.__name__ if owning_module is not None else "<global>"
-                )
+                owner_name = owning_module.__name__ if owning_module is not None else "<global>"
                 raise MissingProviderError(
                     f"No provider for {_describe(token)} "
                     f"visible from module {owner_name}. "
@@ -885,9 +869,7 @@ class DIContainer:
             return True
         return any(self._is_visible(b, owning_module) for b in bindings)
 
-    def get_provider(
-        self, token: Any, *, owning_module: type | None = None
-    ) -> Provider:
+    def get_provider(self, token: Any, *, owning_module: type | None = None) -> Provider:
         bindings = self._token_bindings.get(token)
         if not bindings:
             raise MissingProviderError(f"No provider for {_describe(token)}")
@@ -895,8 +877,7 @@ class DIContainer:
             bindings = [b for b in bindings if self._is_visible(b, owning_module)]
             if not bindings:
                 raise MissingProviderError(
-                    f"No provider for {_describe(token)} "
-                    f"visible from module {owning_module.__name__}"
+                    f"No provider for {_describe(token)} visible from module {owning_module.__name__}"
                 )
         if len(bindings) > 1 and not all(b.multi for b in bindings):
             raise ProtocolAmbiguityError(f"Multiple bindings for {_describe(token)}")
@@ -950,9 +931,7 @@ class DIContainer:
         # Narrow to visible bindings.
         visible_bindings = [b for b in bindings if self._is_visible(b, owning_module)]
         if not visible_bindings:
-            owner_name = (
-                owning_module.__name__ if owning_module is not None else "<global>"
-            )
+            owner_name = owning_module.__name__ if owning_module is not None else "<global>"
             raise MissingProviderError(
                 f"No provider for {_describe(token)} visible from module {owner_name}",
                 detail={
@@ -964,15 +943,11 @@ class DIContainer:
         if all(b.multi for b in visible_bindings) and len(visible_bindings) > 1:
             results = []
             for b in visible_bindings:
-                results.append(
-                    await self._instantiate(b, request_cache, framework_values)
-                )
+                results.append(await self._instantiate(b, request_cache, framework_values))
             return results
         if len(visible_bindings) > 1:
             raise ProtocolAmbiguityError(f"Multiple bindings for {_describe(token)}")
-        return await self._instantiate(
-            visible_bindings[0], request_cache, framework_values
-        )
+        return await self._instantiate(visible_bindings[0], request_cache, framework_values)
 
     async def _resolve_multi_list(
         self,
@@ -1006,15 +981,12 @@ class DIContainer:
         bindings = self._token_bindings.get(element_type)
         if not bindings:
             raise MissingProviderError(
-                f"No provider for {_describe(element_type)} "
-                f"(requested as {_describe(token)})",
+                f"No provider for {_describe(element_type)} (requested as {_describe(token)})",
                 detail={"token": _describe(token)},
             )
         visible = [b for b in bindings if self._is_visible(b, owning_module)]
         if not visible:
-            owner_name = (
-                owning_module.__name__ if owning_module is not None else "<global>"
-            )
+            owner_name = owning_module.__name__ if owning_module is not None else "<global>"
             raise MissingProviderError(
                 f"No provider for {_describe(element_type)} "
                 f"(requested as {_describe(token)}) "
@@ -1036,9 +1008,7 @@ class DIContainer:
             )
         results: list[Any] = []
         for provider in visible:
-            results.append(
-                await self._instantiate(provider, request_cache, framework_values)
-            )
+            results.append(await self._instantiate(provider, request_cache, framework_values))
         return results
 
     async def _instantiate(
@@ -1124,9 +1094,7 @@ class DIContainer:
             # the consumer-facing token may be a string while the
             # implementation is a real Python class. Pick the right
             # one to pass to the constructor.
-            target = (
-                provider.factory if provider.provider_kind == "class" else provider.cls
-            )
+            target = provider.factory if provider.provider_kind == "class" else provider.cls
             instance = await _construct_class(target, kwargs, field_values)  # type: ignore[arg-type]
         else:
             # Function provider: call the factory; the return value IS
@@ -1256,9 +1224,7 @@ def _has_unresolved(hints: dict[str, Any]) -> bool:
     return any(_walk(v) for v in hints.values())
 
 
-def _safe_type_hints(
-    fn: Callable[..., Any], *, include_extras: bool = True
-) -> dict[str, Any]:
+def _safe_type_hints(fn: Callable[..., Any], *, include_extras: bool = True) -> dict[str, Any]:
     """Resolve a callable's annotations, tolerating unresolved refs.
 
     Delegates to :func:`lauren._typing.resolve_type_hints`, which first
@@ -1343,9 +1309,7 @@ def _safe_class_hints(cls: type, *, include_extras: bool = False) -> dict[str, A
     # rather than trusting ``cls.__globals__`` (plain classes don't have
     # that attribute; only functions do).
     module = _sys.modules.get(getattr(cls, "__module__", ""))
-    globalns: dict[str, Any] = (
-        dict(getattr(module, "__dict__", {})) if module is not None else {}
-    )
+    globalns: dict[str, Any] = dict(getattr(module, "__dict__", {})) if module is not None else {}
     try:
         return resolve_type_hints(
             cls,
@@ -1421,9 +1385,7 @@ def _inspect_class_deps(cls: type) -> list[tuple[str, Any]]:
     )
 
 
-def _resolve_class_signature_hints(
-    cls: type, sig: inspect.Signature
-) -> inspect.Signature:
+def _resolve_class_signature_hints(cls: type, sig: inspect.Signature) -> inspect.Signature:
     """Replace string annotations on ``sig`` with resolved types.
 
     With ``from __future__ import annotations`` (or any other
@@ -1600,15 +1562,10 @@ def _inspect_callable_deps(
     # Replace each parameter's annotation with the resolved type-hint
     # so forward refs work, then dispatch to the shared walker.
     new_params = [
-        param.replace(annotation=hints.get(name, param.annotation))
-        for name, param in sig.parameters.items()
+        param.replace(annotation=hints.get(name, param.annotation)) for name, param in sig.parameters.items()
     ]
     sig = sig.replace(parameters=new_params)
-    target_name = (
-        owning_class.__name__
-        if owning_class is not None
-        else getattr(fn, "__name__", "?")
-    )
+    target_name = owning_class.__name__ if owning_class is not None else getattr(fn, "__name__", "?")
     return _params_to_deps(
         sig,
         callable_name=getattr(fn, "__name__", "<callable>"),
@@ -1925,9 +1882,7 @@ def _callable_default_map(provider: Provider) -> dict[str, bool]:
         sig = inspect.signature(target)
     except (TypeError, ValueError):
         return {}
-    return {
-        n: (p.default is not inspect.Parameter.empty) for n, p in sig.parameters.items()
-    }
+    return {n: (p.default is not inspect.Parameter.empty) for n, p in sig.parameters.items()}
 
 
 async def _construct_class(
@@ -2018,9 +1973,7 @@ def _filter_kwargs_for_signature(
     names the signature doesn't declare explicitly when no var-keyword
     parameter is present.
     """
-    has_var_kw = any(
-        p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-    )
+    has_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
     if has_var_kw:
         return {k: v for k, v in kwargs.items() if k not in skip}
     accepted = {

@@ -294,9 +294,7 @@ class EventStream(Response):
         extra_headers: "Headers | Mapping[str, str] | Iterable[tuple[str, str]] | None" = None,
     ) -> None:
         if keep_alive is not None and keep_alive <= 0:
-            raise ValueError(
-                f"keep_alive must be positive when set, got {keep_alive!r}"
-            )
+            raise ValueError(f"keep_alive must be positive when set, got {keep_alive!r}")
 
         async_iter = _ensure_async_iterable(iterable)
         self._source: AsyncIterable[Any] = async_iter

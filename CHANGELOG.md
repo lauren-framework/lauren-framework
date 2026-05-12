@@ -9,6 +9,15 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- **`Query[T]` and `Json[T]` with non-Pydantic struct types** — `msgspec.Struct`
+  subclasses and Python `dataclass` types now work correctly as parameter
+  annotations, including with `OrjsonEncoder`.  Previously, `Query[PageParams]`
+  returned a raw string instead of a `PageParams` instance; `Json[PageParams]`
+  returned a raw dict without instantiation.  A bare `params: PageParams`
+  annotation now auto-promotes to a JSON body parameter, mirroring the existing
+  Pydantic behaviour.  New helpers: `_is_msgspec_struct_type`,
+  `_is_dataclass_type`, `_is_struct_type`, `_convert_struct`.
+
 - **`StreamingResponse[T]` with non-Pydantic item types** — Using
   `MsgspecEncoder` or `OrjsonEncoder` with a `StreamingResponse[Greeting]`
   where `Greeting` is a `msgspec.Struct` (or any non-Pydantic type) no longer

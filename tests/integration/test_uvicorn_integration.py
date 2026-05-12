@@ -74,9 +74,7 @@ class AppModule:
 # ---------------------------------------------------------------------------
 
 
-def _run_server(
-    app, host: str, port: int, started_event: threading.Event, server_holder: list
-) -> None:
+def _run_server(app, host: str, port: int, started_event: threading.Event, server_holder: list) -> None:
     """Run uvicorn in a background thread; set *started_event* once ready."""
 
     async def _serve() -> None:

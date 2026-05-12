@@ -77,9 +77,7 @@ class Token:
 
     def __init__(self, name: str, *, unique: bool = True) -> None:
         if not isinstance(name, str) or not name:
-            raise ValueError(
-                f"Token(name) requires a non-empty string name; got {name!r}."
-            )
+            raise ValueError(f"Token(name) requires a non-empty string name; got {name!r}.")
         self._name = name
         self._unique = unique
 
@@ -237,8 +235,7 @@ class CustomProvider:
         valid = {"value", "class", "factory", "existing"}
         if self.kind not in valid:
             raise ValueError(
-                f"CustomProvider.kind must be one of {sorted(valid)}, "
-                f"got {self.kind!r}",
+                f"CustomProvider.kind must be one of {sorted(valid)}, got {self.kind!r}",
             )
 
 

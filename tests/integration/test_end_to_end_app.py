@@ -73,9 +73,7 @@ class InMemoryProductRepository:
     async def startup(self) -> None:
         self._started = True
         # seed
-        self._items[self._next_id] = Product(
-            id=self._next_id, name="Widget", price=9.99
-        )
+        self._items[self._next_id] = Product(id=self._next_id, name="Widget", price=9.99)
         self._next_id += 1
 
     @pre_destruct
@@ -305,9 +303,7 @@ class TestEndToEnd:
 
     def test_full_lifecycle(self):
         async def run():
-            app = LaurenFactory.create(
-                AppModule, global_middlewares=[RequestIdMiddleware]
-            )
+            app = LaurenFactory.create(AppModule, global_middlewares=[RequestIdMiddleware])
             await app.startup()
             repo = await app.container.resolve(InMemoryProductRepository)
             assert repo._started is True

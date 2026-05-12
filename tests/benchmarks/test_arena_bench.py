@@ -103,9 +103,7 @@ def _print_table(title: str, results: list[BenchResult]) -> None:
     print("-" * 58)
     for r in results:
         speedup = baseline / r.seconds
-        print(
-            f"{r.mode:<20} {r.per_op_us:>10.2f} {r.ops_per_sec:>12,.0f} {speedup:>9.2f}"
-        )
+        print(f"{r.mode:<20} {r.per_op_us:>10.2f} {r.ops_per_sec:>12,.0f} {speedup:>9.2f}")
     print()
 
 
@@ -168,10 +166,7 @@ class TestArenaBench:
         hits = stats.request_hits
         total = stats.request_hits + stats.request_misses
         hit_rate = hits / total if total else 0.0
-        print(
-            f"\nrequest pool: {hits}/{total} hits "
-            f"({hit_rate:.1%}), drops={stats.request_drops}"
-        )
+        print(f"\nrequest pool: {hits}/{total} hits ({hit_rate:.1%}), drops={stats.request_drops}")
         assert hit_rate >= 0.95, (
             f"request-object pool hit rate fell to {hit_rate:.1%} "
             f"pool may be undersized or release path is broken"
@@ -192,9 +187,7 @@ class TestArenaBench:
         hits = stats.hits
         total = stats.hits + stats.misses
         hit_rate = hits / total if total else 0.0
-        print(
-            f"\nbundle pool: {hits}/{total} hits ({hit_rate:.1%}), drops={stats.drops}"
-        )
+        print(f"\nbundle pool: {hits}/{total} hits ({hit_rate:.1%}), drops={stats.drops}")
         assert hit_rate >= 0.95
 
     def test_custom_capacity_takes_effect(self) -> None:

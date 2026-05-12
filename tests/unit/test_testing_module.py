@@ -670,9 +670,7 @@ class TestWebSocketTestSession:
             # We're now in a running event loop context
             # Use run_in_executor to test the _run_sync thread path
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None, lambda: client.request("GET", "/echo")
-            )
+            result = await loop.run_in_executor(None, lambda: client.request("GET", "/echo"))
             return result
 
         resp = await make_request()

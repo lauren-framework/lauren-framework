@@ -242,9 +242,7 @@ class TestUseClassEnvironmentSwap:
             providers=[
                 use_class(
                     provide=ConfigService,
-                    use=DevelopmentConfigService
-                    if env == "development"
-                    else ProductionConfigService,
+                    use=DevelopmentConfigService if env == "development" else ProductionConfigService,
                 ),
             ],
         )
@@ -292,9 +290,7 @@ class TestUseFactory:
         @controller("/db")
         class DbController:
             @get("/")
-            async def info(
-                self, conn: Annotated[_DatabaseConnection, Inject("CONNECTION")]
-            ) -> dict:
+            async def info(self, conn: Annotated[_DatabaseConnection, Inject("CONNECTION")]) -> dict:
                 return {"host": conn.options["host"]}
 
         @module(
@@ -326,9 +322,7 @@ class TestUseFactory:
         @controller("/db")
         class DbController:
             @get("/")
-            async def info(
-                self, conn: Annotated[_DatabaseConnection, Inject("CONNECTION")]
-            ) -> dict:
+            async def info(self, conn: Annotated[_DatabaseConnection, Inject("CONNECTION")]) -> dict:
                 return {"prefix": conn.log_prefix}
 
         @module(
@@ -355,9 +349,7 @@ class TestUseFactory:
         @controller("/db")
         class DbController:
             @get("/")
-            async def info(
-                self, conn: Annotated[_DatabaseConnection, Inject("CONNECTION")]
-            ) -> dict:
+            async def info(self, conn: Annotated[_DatabaseConnection, Inject("CONNECTION")]) -> dict:
                 return {"prefix": conn.log_prefix}
 
         @module(
@@ -449,9 +441,7 @@ class TestUseExisting:
                 return {"id": id(log)}
 
             @get("/via-alias")
-            async def via_alias(
-                self, log: Annotated[LoggerService, Inject("AliasedLogger")]
-            ) -> dict:
+            async def via_alias(self, log: Annotated[LoggerService, Inject("AliasedLogger")]) -> dict:
                 return {"id": id(log)}
 
         @module(

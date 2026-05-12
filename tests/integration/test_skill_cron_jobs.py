@@ -41,9 +41,7 @@ class SchedulerService:
         entry = (func, interval_seconds, name or func.__name__)
         self._jobs.append(entry)
         if self._started:
-            task = asyncio.create_task(
-                self._run_interval(func, interval_seconds, entry[2])
-            )
+            task = asyncio.create_task(self._run_interval(func, interval_seconds, entry[2]))
             self._tasks.append(task)
 
     def job_names(self) -> list[str]:

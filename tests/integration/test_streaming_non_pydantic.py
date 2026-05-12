@@ -115,9 +115,7 @@ class TestMsgspecEncoderStreamingResponse:
         assert r.status_code == 200
 
     def test_ndjson_body_is_valid(self) -> None:
-        r = self._make_client().get(
-            "/greet/stream", headers={"Accept": "application/x-ndjson"}
-        )
+        r = self._make_client().get("/greet/stream", headers={"Accept": "application/x-ndjson"})
         assert r.status_code == 200
         lines = [line for line in r.text.strip().split("\n") if line]
         assert len(lines) == 3
@@ -126,15 +124,9 @@ class TestMsgspecEncoderStreamingResponse:
             assert obj == {"message": f"hello {i}", "count": i}
 
     def test_sse_body_is_valid(self) -> None:
-        r = self._make_client().get(
-            "/greet/stream", headers={"Accept": "text/event-stream"}
-        )
+        r = self._make_client().get("/greet/stream", headers={"Accept": "text/event-stream"})
         assert r.status_code == 200
-        data_lines = [
-            line[len("data: ") :]
-            for line in r.text.split("\n")
-            if line.startswith("data: ")
-        ]
+        data_lines = [line[len("data: ") :] for line in r.text.split("\n") if line.startswith("data: ")]
         assert len(data_lines) == 3
         for i, data in enumerate(data_lines):
             obj = json.loads(data)
@@ -179,9 +171,7 @@ class TestOrjsonEncoderStreamingResponse:
         assert r.status_code == 200
 
     def test_ndjson_body_is_valid(self) -> None:
-        r = self._make_client().get(
-            "/items/stream", headers={"Accept": "application/x-ndjson"}
-        )
+        r = self._make_client().get("/items/stream", headers={"Accept": "application/x-ndjson"})
         assert r.status_code == 200
         lines = [line for line in r.text.strip().split("\n") if line]
         assert len(lines) == 2
@@ -222,9 +212,7 @@ class TestPydanticModelStreamingRegressions:
         return TestClient(LaurenFactory.create(AppModule, **kwargs))
 
     def test_stdlib_encoder(self) -> None:
-        r = self._make_pydantic_client().get(
-            "/p/stream", headers={"Accept": "application/x-ndjson"}
-        )
+        r = self._make_pydantic_client().get("/p/stream", headers={"Accept": "application/x-ndjson"})
         assert r.status_code == 200
         lines = [line for line in r.text.strip().split("\n") if line]
         assert json.loads(lines[0]) == {"label": "first", "score": 10}

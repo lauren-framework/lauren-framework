@@ -84,9 +84,7 @@ APP = LaurenFactory.create(AppModule)
 
 @pytest_asyncio.fixture
 async def client():
-    async with httpx.AsyncClient(
-        transport=ASGITransport(app=APP), base_url="http://test"
-    ) as c:
+    async with httpx.AsyncClient(transport=ASGITransport(app=APP), base_url="http://test") as c:
         yield c
 
 
@@ -190,9 +188,7 @@ class TestSubscriptCombinedWithOtherForms:
             pass
 
         app = LaurenFactory.create(M)
-        async with httpx.AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as c:
+        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             ra = await c.get("/mixed/subscript/7")
             assert ra.json() == {"via": "subscript", "v": 7}
 
@@ -228,8 +224,6 @@ class TestSubscriptCombinedWithOtherForms:
             pass
 
         app = LaurenFactory.create(M)
-        async with httpx.AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as c:
+        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             await c.get("/order/1")
         assert events == ["ann", "def"]

@@ -78,10 +78,7 @@ class TestExceptionHandlerDecoratorContract:
                     return Response.no_content()
 
         # Either DecoratorUsageError or ExceptionHandlerConfigError is fine.
-        assert (
-            "exception_handler" in str(ei.value).lower()
-            or "parentheses" in str(ei.value).lower()
-        )
+        assert "exception_handler" in str(ei.value).lower() or "parentheses" in str(ei.value).lower()
 
     def test_empty_parens_rejected(self):
         with pytest.raises(ExceptionHandlerConfigError) as ei:
@@ -241,9 +238,7 @@ def _build_domain_app(*, with_global_tenant_filter: bool = True):
     return TestClient(
         LaurenFactory.create(
             DomainModule,
-            global_exception_handlers=[TenantErrorHandler]
-            if with_global_tenant_filter
-            else None,
+            global_exception_handlers=[TenantErrorHandler] if with_global_tenant_filter else None,
         )
     )
 

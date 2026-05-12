@@ -205,9 +205,7 @@ class TestServerSentEventConstruction:
         assert ev.encode() == b"data: hello\n\n"
 
     def test_full_envelope(self):
-        ev = ServerSentEvent(
-            data={"x": 1}, event="m", id="42", retry=2000, comment="meta"
-        )
+        ev = ServerSentEvent(data={"x": 1}, event="m", id="42", retry=2000, comment="meta")
         out = ev.encode()
         assert out.startswith(b": meta\nevent: m\nid: 42\nretry: 2000\n")
         assert out.endswith(b"\n\n")
@@ -233,9 +231,7 @@ class TestServerSentEventFromDict:
         assert ev.encode() == b"data: hi\n\n"
 
     def test_promotes_full_dict(self):
-        ev = ServerSentEvent.from_dict(
-            {"event": "m", "id": "1", "retry": 500, "data": [1, 2]}
-        )
+        ev = ServerSentEvent.from_dict({"event": "m", "id": "1", "retry": 500, "data": [1, 2]})
         out = ev.encode()
         assert b"event: m\n" in out
         assert b"id: 1\n" in out

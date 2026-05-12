@@ -30,9 +30,7 @@ class FieldEncryptor:
         from cryptography.fernet import MultiFernet
 
         if self._old_keys:
-            multi = MultiFernet(
-                [Fernet(k) for k in [self._primary_key] + self._old_keys]
-            )
+            multi = MultiFernet([Fernet(k) for k in [self._primary_key] + self._old_keys])
             return multi.decrypt(token.encode()).decode()
         return self._fernet.decrypt(token.encode()).decode()
 

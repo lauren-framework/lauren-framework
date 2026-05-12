@@ -53,12 +53,8 @@ class MetricsService:
     def get_metrics(self) -> bytes:
         return generate_latest(self._registry)
 
-    def record_request(
-        self, method: str, endpoint: str, status: int, duration: float
-    ) -> None:
-        self.request_count.labels(
-            method=method, endpoint=endpoint, status=str(status)
-        ).inc()
+    def record_request(self, method: str, endpoint: str, status: int, duration: float) -> None:
+        self.request_count.labels(method=method, endpoint=endpoint, status=str(status)).inc()
         self.request_duration.labels(method=method, endpoint=endpoint).observe(duration)
 
 
@@ -86,9 +82,7 @@ class MetricsController:
 
     @post("/record")
     async def record(self, body: Json[RecordRequestBody]) -> dict:
-        self._metrics.record_request(
-            body.method, body.endpoint, body.status, body.duration
-        )
+        self._metrics.record_request(body.method, body.endpoint, body.status, body.duration)
         return {"recorded": True, "method": body.method, "endpoint": body.endpoint}
 
 

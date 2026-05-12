@@ -212,11 +212,7 @@ class TestCustomDescriptor:
         # Filter out class-level __get__(None, cls) calls from Python's
         # descriptor protocol during class attribute access; we want the
         # dispatch-time call where obj is the DI-built instance.
-        dispatch_calls = [
-            (inst, owner)
-            for inst, owner in _RouteDescriptor.get_calls
-            if inst is not None
-        ]
+        dispatch_calls = [(inst, owner) for inst, owner in _RouteDescriptor.get_calls if inst is not None]
         assert len(dispatch_calls) >= 1
         instance, owner = dispatch_calls[0]
         assert isinstance(instance, Check2Controller)

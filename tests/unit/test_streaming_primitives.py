@@ -73,10 +73,7 @@ class TestNegotiation:
     def test_first_match_wins(self):
         # Clients sometimes concatenate: "text/event-stream, application/json"
         # \u2014 the SSE flavour must win because it appears first.
-        assert (
-            negotiate_stream_format("text/event-stream, application/json+stream")
-            == "sse"
-        )
+        assert negotiate_stream_format("text/event-stream, application/json+stream") == "sse"
 
     def test_parameters_are_stripped(self):
         assert negotiate_stream_format("text/event-stream; charset=utf-8") == "sse"

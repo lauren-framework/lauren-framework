@@ -104,9 +104,7 @@ def test_every_encoder_produces_identical_parsed_output(payload: object) -> None
     """
     for encoder in _available_encoders():
         blob = encoder.encode_compact(payload)
-        assert stdlib_json.loads(blob) == payload, (
-            f"encoder={encoder.name} payload={payload!r}"
-        )
+        assert stdlib_json.loads(blob) == payload, f"encoder={encoder.name} payload={payload!r}"
 
 
 @pytest.mark.parametrize("payload", _COMMON_PAYLOADS)

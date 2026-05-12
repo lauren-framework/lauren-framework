@@ -255,17 +255,11 @@ class ConsoleLogger(_BaseLogger):
         pid = self._colour(_ANSI["dim"], f"{record.pid} ") if self._show_pid else ""
         time_part = self._colour(_ANSI["gray"], ts)
         level_part = self._colour(level_colour + _ANSI["bold"], level_label)
-        context = (
-            self._colour(_ANSI["yellow"], f"[{record.context}] ")
-            if record.context
-            else ""
-        )
+        context = self._colour(_ANSI["yellow"], f"[{record.context}] ") if record.context else ""
         message = record.message
         if record.extra:
             # Render extras as key=value suffix, compact and aligned right.
-            rendered = " ".join(
-                f"{k}={_compact_repr(v)}" for k, v in record.extra.items()
-            )
+            rendered = " ".join(f"{k}={_compact_repr(v)}" for k, v in record.extra.items())
             message = f"{message}  {self._colour(_ANSI['dim'], rendered)}"
         return f"{name} {pid}{time_part} {level_part} {context}{message}"
 

@@ -101,9 +101,7 @@ class SessionModule:
 
 
 def build_app() -> TestClient:
-    return TestClient(
-        LaurenFactory.create(SessionModule, global_middlewares=[SessionMiddleware])
-    )
+    return TestClient(LaurenFactory.create(SessionModule, global_middlewares=[SessionMiddleware]))
 
 
 def _extract_session_cookie(response: TestResponse) -> str | None:
@@ -159,9 +157,7 @@ class TestSessionStore:
         sid = _extract_session_cookie(r1)
         assert sid is not None
 
-        client.post(
-            "/session/set", json={"key": "b", "value": "2"}, cookies={"session_id": sid}
-        )
+        client.post("/session/set", json={"key": "b", "value": "2"}, cookies={"session_id": sid})
         r3 = client.get("/session/", cookies={"session_id": sid})
         session = r3.json()["session"]
         assert session.get("a") == "1"

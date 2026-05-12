@@ -97,9 +97,7 @@ class TenantDataService:
         tid = tenant_id or self._current_tenant()
         with Session(self._engine) as s:
             rows = s.query(TenantRecord).filter_by(tenant_id=tid).all()
-            return [
-                {"id": r.id, "tenant_id": r.tenant_id, "name": r.name} for r in rows
-            ]
+            return [{"id": r.id, "tenant_id": r.tenant_id, "name": r.name} for r in rows]
 
     def count_all(self) -> int:
         with Session(self._engine) as s:
@@ -162,9 +160,7 @@ class TestMultiTenantIsolation:
     def test_create_record_for_tenant(self):
         app = build_app()
         client = TestClient(app)
-        r = client.post(
-            "/records/", json={"name": "Widget"}, headers=tenant_headers("tenant-a")
-        )
+        r = client.post("/records/", json={"name": "Widget"}, headers=tenant_headers("tenant-a"))
         assert r.status_code == 200
         data = r.json()
         assert data["name"] == "Widget"
@@ -199,12 +195,8 @@ class TestMultiTenantIsolation:
     def test_multiple_records_same_tenant(self):
         app = build_app()
         client = TestClient(app)
-        client.post(
-            "/records/", json={"name": "r1"}, headers=tenant_headers("tenant-x")
-        )
-        client.post(
-            "/records/", json={"name": "r2"}, headers=tenant_headers("tenant-x")
-        )
+        client.post("/records/", json={"name": "r1"}, headers=tenant_headers("tenant-x"))
+        client.post("/records/", json={"name": "r2"}, headers=tenant_headers("tenant-x"))
         r = client.get("/records/", headers=tenant_headers("tenant-x"))
         assert len(r.json()) == 2
 
