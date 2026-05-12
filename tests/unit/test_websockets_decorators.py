@@ -509,3 +509,201 @@ class TestWebSocketDirectUnit:
                 pass
 
         assert _is_method_target(Foo.__dict__["method"])
+
+
+# ---------------------------------------------------------------------------
+# Coverage-gap tests
+# ---------------------------------------------------------------------------
+
+
+class TestWsControllerDecoratorScope:
+    """Lines 253-255: @ws_controller marks class as REQUEST-scoped when not already set."""
+
+    def test_marks_class_as_request_scoped(self):
+        from lauren.websockets import ws_controller
+        from lauren._di import INJECTABLE_META
+        from lauren.types import Scope
+
+        @ws_controller("/room")
+        class MyGateway:
+            pass
+
+        meta = getattr(MyGateway, INJECTABLE_META, None)
+        assert meta is not None
+        assert meta.scope == Scope.REQUEST
+
+    def test_does_not_overwrite_existing_injectable_meta(self):
+        from lauren import injectable
+        from lauren.types import Scope
+        from lauren.websockets import ws_controller
+
+        @ws_controller("/room2")
+        @injectable(scope=Scope.SINGLETON)
+        class AlreadyDecorated:
+            pass
+
+        from lauren._di import INJECTABLE_META
+
+        meta = getattr(AlreadyDecorated, INJECTABLE_META, None)
+        # @injectable(SINGLETON) was applied before ws_controller checks;
+        # INJECTABLE_META is in __dict__, so ws_controller must not overwrite.
+        assert meta is not None
+
+
+class TestWebSocketReceiveTypeMismatch:
+    """Lines 540, 552, 558: receive_text/bytes raise on wrong frame type."""
+
+    def _make_ws(self, messages):
+        from lauren.websockets import WebSocket
+
+        idx = 0
+
+        async def receive():
+            nonlocal idx
+            msg = messages[idx]
+            idx += 1
+            return msg
+
+        async def send(msg):
+            pass
+
+        scope = {
+            "type": "websocket",
+            "path": "/ws",
+            "headers": [],
+            "query_string": b"",
+        }
+        ws = WebSocket(scope=scope, receive=receive, send=send, path_template="/ws", path_params={})
+        # Mark as open to skip the accept handshake
+        ws._state_code = WebSocket.STATE_OPEN
+        return ws
+
+    @pytest.mark.asyncio
+    async def test_receive_text_binary_frame_raises(self):
+        from lauren.websockets import WebSocketError
+
+        ws = self._make_ws(
+            [
+                {"type": "websocket.receive", "bytes": b"data", "text": None},
+            ]
+        )
+        with pytest.raises(WebSocketError, match="expected text frame"):
+            await ws.receive_text()
+
+    @pytest.mark.asyncio
+    async def test_receive_bytes_text_frame_raises(self):
+        from lauren.websockets import WebSocketError
+
+        ws = self._make_ws(
+            [
+                {"type": "websocket.receive", "text": "hello", "bytes": None},
+            ]
+        )
+        with pytest.raises(WebSocketError, match="expected binary frame"):
+            await ws.receive_bytes()
+
+    @pytest.mark.asyncio
+    async def test_receive_text_wrong_message_type_raises(self):
+        from lauren.websockets import WebSocketError
+
+        ws = self._make_ws(
+            [
+                {"type": "websocket.connect"},
+            ]
+        )
+        with pytest.raises(WebSocketError, match="unexpected message type"):
+            await ws.receive_text()
+
+
+class TestEnsureOpen:
+    """Line 621: _ensure_open raises when not in OPEN state."""
+
+    def test_ensure_open_when_closed_raises(self):
+        from lauren.websockets import WebSocket, WebSocketError
+
+        async def receive():
+            return {"type": "websocket.disconnect"}
+
+        async def send(msg):
+            pass
+
+        scope = {"type": "websocket", "path": "/", "headers": [], "query_string": b""}
+        ws = WebSocket(scope=scope, receive=receive, send=send, path_template="/ws", path_params={})
+        # State is CONNECTING initially — not OPEN
+        with pytest.raises(WebSocketError, match="cannot send_text"):
+            ws._ensure_open("send_text")
+
+
+class TestBroadcastGroupUnsubscribeCleanup:
+    """Lines 690->exit, 758-763: unsubscribe removes empty group; broadcast evicts dead."""
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_last_member_removes_group(self):
+        from lauren.websockets import BroadcastGroup
+
+        bg = BroadcastGroup()
+
+        class FakeWS:
+            pass
+
+        ws = FakeWS()
+        await bg.subscribe("room", ws)
+        assert "room" in bg.groups()
+        await bg.unsubscribe("room", ws)
+        assert "room" not in bg.groups()
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_one_of_two_keeps_group(self):
+        from lauren.websockets import BroadcastGroup
+
+        bg = BroadcastGroup()
+
+        class FakeWS:
+            pass
+
+        ws1, ws2 = FakeWS(), FakeWS()
+        await bg.subscribe("room", ws1)
+        await bg.subscribe("room", ws2)
+        await bg.unsubscribe("room", ws1)
+        assert "room" in bg.groups()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_removes_dead_connections(self):
+        from lauren.websockets import BroadcastGroup
+
+        bg = BroadcastGroup()
+        sent = []
+
+        class LiveWS:
+            async def send_text(self, msg):
+                sent.append(msg)
+
+        class DeadWS:
+            async def send_text(self, msg):
+                raise OSError("connection closed")
+
+        live = LiveWS()
+        dead = DeadWS()
+        await bg.subscribe("room", live)
+        await bg.subscribe("room", dead)
+        count = await bg.broadcast("room", "hello")
+        assert count == 1
+        assert sent == ["hello"]
+        # Dead connection cleaned up
+        members = bg._members.get("room", set())
+        assert dead not in members
+
+    @pytest.mark.asyncio
+    async def test_broadcast_removes_group_when_all_dead(self):
+        from lauren.websockets import BroadcastGroup
+
+        bg = BroadcastGroup()
+
+        class DeadWS:
+            async def send_text(self, msg):
+                raise OSError("dead")
+
+        dead = DeadWS()
+        await bg.subscribe("room", dead)
+        await bg.broadcast("room", "msg")
+        assert "room" not in bg.groups()

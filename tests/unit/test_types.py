@@ -518,3 +518,213 @@ class TestJsonDefault:
 
         with pytest.raises(TypeError, match="not JSON serializable"):
             _json_default(_Slotted())
+
+
+# ---------------------------------------------------------------------------
+# Coverage-gap tests
+# ---------------------------------------------------------------------------
+
+
+class TestStateGetTypedAndRequire:
+    """Lines 187, 199-200: get_typed type mismatch and require missing key."""
+
+    def test_get_typed_type_mismatch_raises(self):
+        from lauren.exceptions import StateTypeError
+
+        s = State({"user": "alice"})
+        with pytest.raises(StateTypeError, match="state\\['user'\\]"):
+            s.get_typed("user", int)
+
+    def test_get_typed_none_key_returns_none(self):
+        s = State({})
+        assert s.get_typed("missing", str) is None
+
+    def test_require_missing_key_raises(self):
+        from lauren.exceptions import MissingStateError
+
+        s = State({})
+        with pytest.raises(MissingStateError, match="missing"):
+            s.require("missing", str)
+
+    def test_require_type_mismatch_raises(self):
+        from lauren.exceptions import StateTypeError
+
+        s = State({"n": "hello"})
+        with pytest.raises(StateTypeError):
+            s.require("n", int)
+
+    def test_require_correct_type_returns_value(self):
+        s = State({"count": 42})
+        assert s.require("count", int) == 42
+
+
+class TestAppStateSealed:
+    """Lines 227: AppState raises on mutation after seal."""
+
+    def test_setattr_after_seal_raises(self):
+        app = AppState()
+        app.seal()
+        with pytest.raises(RuntimeError, match="sealed"):
+            app.x = "value"
+
+    def test_set_after_seal_raises(self):
+        app = AppState()
+        app.seal()
+        with pytest.raises(RuntimeError, match="sealed"):
+            app.set("key", "value")
+
+    def test_writes_before_seal_succeed(self):
+        app = AppState()
+        app.set("key", "value")
+        assert app.get("key") == "value"
+
+
+class TestRequestCookies:
+    """Lines 393-402, 438-441: cookies parsing and caching."""
+
+    def _make_request_with_cookie_header(self, cookie: str) -> Request:
+        async def recv():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        return Request(
+            method="GET",
+            path="/",
+            raw_query_string=b"",
+            headers=Headers([("cookie", cookie)]),
+            path_params=None,
+            receive=recv,
+        )
+
+    def test_cookies_parsed_from_header(self):
+        req = self._make_request_with_cookie_header("a=1; b=2")
+        assert req.cookies == {"a": "1", "b": "2"}
+
+    def test_cookies_cached_on_second_access(self):
+        req = self._make_request_with_cookie_header("x=42")
+        first = req.cookies
+        second = req.cookies
+        assert first is second
+
+    def test_cookies_empty_when_no_header(self):
+        async def recv():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        req = Request(
+            method="GET",
+            path="/",
+            raw_query_string=b"",
+            headers=Headers([]),
+            path_params=None,
+            receive=recv,
+        )
+        assert req.cookies == {}
+
+    def test_pair_without_equals_skipped(self):
+        req = self._make_request_with_cookie_header("valid=ok; badpair; another=yes")
+        cookies = req.cookies
+        assert "valid" in cookies
+        assert "another" in cookies
+        assert "badpair" not in cookies
+
+
+class TestResponseBuilderMethods:
+    """Lines 841-843, 880, 883-890: created, redirect, sse."""
+
+    def test_created_with_data(self):
+        r = Response.created({"id": 1}, location="/items/1")
+        assert r.status == 201
+        assert r.headers.get("location") == "/items/1"
+
+    def test_created_without_data(self):
+        r = Response.created()
+        assert r.status == 201
+
+    def test_redirect(self):
+        r = Response.redirect("/new", status=301)
+        assert r.status == 301
+        assert r.headers.get("location") == "/new"
+
+    def test_redirect_default_status(self):
+        r = Response.redirect("/home")
+        assert r.status == 307
+
+    def test_sse_string_event(self):
+        import asyncio
+
+        async def gen():
+            yield "hello"
+
+        r = Response.sse(gen())
+        assert r._stream is not None
+
+        async def collect():
+            chunks: list[bytes] = []
+            async for chunk in r._stream:
+                chunks.append(chunk)
+            return chunks
+
+        chunks = asyncio.run(collect())
+        assert any(b"data: hello" in c for c in chunks)
+
+    def test_sse_dict_event_with_event_and_id(self):
+        import asyncio
+
+        async def gen():
+            yield {"event": "update", "id": "1", "data": "payload"}
+
+        r = Response.sse(gen())
+
+        async def collect():
+            parts: list[str] = []
+            async for chunk in r._stream:
+                parts.append(chunk.decode("utf-8"))
+            return "".join(parts)
+
+        body = asyncio.run(collect())
+        assert "event: update" in body
+        assert "id: 1" in body
+        assert "data: payload" in body
+
+
+class TestResponseWithCookieFull:
+    """Lines 944-946, 963-965: with_cookie full options."""
+
+    def test_all_cookie_options(self):
+        r = Response(b"")
+        r2 = r.with_cookie(
+            "sess",
+            "token123",
+            max_age=3600,
+            path="/app",
+            domain="example.com",
+            secure=True,
+            http_only=True,
+            same_site="Strict",
+        )
+        cookie = r2.headers.get("set-cookie", "")
+        assert "sess=token123" in cookie
+        assert "Max-Age=3600" in cookie
+        assert "Path=/app" in cookie
+        assert "Domain=example.com" in cookie
+        assert "Secure" in cookie
+        assert "HttpOnly" in cookie
+        assert "SameSite=Strict" in cookie
+
+
+class TestJsonDefaultMsgspecStruct:
+    """Line 1023: _json_default handles msgspec.Struct."""
+
+    def test_msgspec_struct_serialized_as_dict(self):
+        try:
+            import msgspec
+        except ImportError:
+            pytest.skip("msgspec not installed")
+
+        class Point(msgspec.Struct):
+            x: int
+            y: int
+
+        from lauren.types import _json_default
+
+        result = _json_default(Point(x=3, y=7))
+        assert result == {"x": 3, "y": 7}

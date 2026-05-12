@@ -2055,3 +2055,251 @@ class TestPipeArityEdgeCases:
         )
         with pytest.raises(ExtractorError):
             await extract_parameter(req, ext)
+
+
+# ---------------------------------------------------------------------------
+# Coverage-gap tests
+# ---------------------------------------------------------------------------
+
+
+class TestPathAutoWrapCallable:
+    """Line 171: Path[int, callable] auto-wraps plain callable as pipe."""
+
+    def test_plain_callable_in_path_annotation(self):
+        def double(v):
+            return int(v) * 2
+
+        # Path[int, double] triggers __class_getitem__ with a tuple;
+        # the plain callable is auto-wrapped via pipe().
+        ann = Path[int, double]
+        src, inner, _, _, fd, pipes = parse_extractor_hint(ann)
+        assert src == "path"
+        assert len(pipes) == 1
+
+
+class TestFieldDescriptorFactories:
+    """Lines 420, 424: QueryField / HeaderField / CookieField factories."""
+
+    def test_query_field_returns_field_descriptor(self):
+        from lauren.extractors import QueryField
+
+        fd = QueryField(default="q")
+        assert isinstance(fd, FieldDescriptor)
+        assert fd.default == "q"
+
+    def test_header_field_returns_field_descriptor(self):
+        from lauren.extractors import HeaderField
+
+        fd = HeaderField(alias="X-Token")
+        assert isinstance(fd, FieldDescriptor)
+        assert fd.alias == "X-Token"
+
+    def test_cookie_field_returns_field_descriptor(self):
+        from lauren.extractors import CookieField
+
+        fd = CookieField(default=None)
+        assert isinstance(fd, FieldDescriptor)
+
+
+class TestMarkAsPipeErrors:
+    """Lines 522-523: _mark_as_pipe raises TypeError for non-callable targets."""
+
+    def test_mark_non_callable_raises(self):
+        from lauren.extractors import _mark_as_pipe
+
+        with pytest.raises(TypeError, match="@pipe\\(\\) can only decorate"):
+            _mark_as_pipe(42)
+
+    def test_mark_builtin_raises(self):
+        from lauren.extractors import _mark_as_pipe
+
+        # Built-in functions don't allow setattr → TypeError with helpful message.
+        with pytest.raises(TypeError):
+            _mark_as_pipe(len)
+
+
+class TestParamSpecConflicts:
+    """Lines 607-608, 615: _ParamSpec.__or__ rejects two FieldDescriptors."""
+
+    def test_two_field_descriptors_raises(self):
+        from lauren.extractors import _ParamSpec
+
+        ps1 = _ParamSpec(field_descriptor=FieldDescriptor(ge=1))
+        ps2 = _ParamSpec(field_descriptor=FieldDescriptor(le=10))
+        with pytest.raises(TypeError, match="at most one FieldDescriptor"):
+            ps1 | ps2
+
+    def test_or_with_second_field_descriptor_raises(self):
+        from lauren.extractors import _ParamSpec
+
+        ps = _ParamSpec(field_descriptor=FieldDescriptor(ge=1))
+        with pytest.raises(TypeError, match="at most one FieldDescriptor"):
+            ps | FieldDescriptor(le=10)
+
+
+class TestPeelOptionalEdgeCases:
+    """Lines 685-695: _peel_optional edge cases."""
+
+    def test_optional_int(self):
+        from lauren.extractors import _peel_optional
+
+        inner, is_opt = _peel_optional(int | None)
+        assert inner is int
+        assert is_opt is True
+
+    def test_plain_type_not_optional(self):
+        from lauren.extractors import _peel_optional
+
+        inner, is_opt = _peel_optional(str)
+        assert inner is str
+        assert is_opt is False
+
+
+class TestParseExtractorHintMultipleFD:
+    """Lines 828-835: parse_extractor_hint raises on multiple FieldDescriptors."""
+
+    def test_multiple_field_descriptors_raises(self):
+        from typing import Annotated
+        from lauren.exceptions import ExtractorError as _ExtractorError
+
+        with pytest.raises(_ExtractorError, match="multiple FieldDescriptor"):
+            parse_extractor_hint(Annotated[Query[int], FieldDescriptor(ge=1), FieldDescriptor(le=100)])
+
+
+class TestIsPydanticModelTypeNoPydantic:
+    """Line 887: _is_pydantic_model_type returns False when _BaseModel is None."""
+
+    def test_returns_false_without_pydantic(self, monkeypatch):
+        import lauren.extractors as _ext
+
+        monkeypatch.setattr(_ext, "_BaseModel", None)
+        from lauren.extractors import _is_pydantic_model_type
+
+        assert _is_pydantic_model_type(int) is False
+
+
+class TestCoerceScalarEdgeCases2:
+    """Lines 1075-1076, 1089, 1096: bytes, complex, non-optional union coercion."""
+
+    def test_bytes_coercion(self):
+        from lauren.extractors import _coerce_scalar
+
+        assert _coerce_scalar("hello", bytes) == b"hello"
+
+    def test_complex_coercion(self):
+        from lauren.extractors import _coerce_scalar
+
+        assert _coerce_scalar("3+4j", complex) == complex(3, 4)
+
+    def test_complex_invalid_raises(self):
+        from lauren.extractors import _coerce_scalar
+
+        with pytest.raises(ExtractorFieldError):
+            _coerce_scalar("not-complex", complex)
+
+    def test_union_first_branch_wins(self):
+        from lauren.extractors import _coerce_scalar
+
+        result = _coerce_scalar("5", int | str)
+        assert result == 5
+        assert isinstance(result, int)
+
+    def test_union_second_branch_fallthrough(self):
+        from lauren.extractors import _coerce_scalar
+
+        # int can't coerce "abc" but str can → second branch wins
+        result = _coerce_scalar("abc", int | str)
+        assert result == "abc"
+        assert isinstance(result, str)
+
+
+class TestPathMissingWithFdDefault:
+    """Line 1277: fd.default returned when path param is absent."""
+
+    @pytest.mark.asyncio
+    async def test_optional_path_returns_fd_default(self):
+        from lauren.extractors import Extraction, extract_parameter
+
+        req = make_request(path_params={})
+        ext = Extraction(
+            name="id",
+            source="path",
+            inner_type=int,
+            field_descriptor=FieldDescriptor(default=None),
+            default=...,
+            has_default=False,
+            marker_cls=None,
+            pipes=(),
+        )
+        assert await extract_parameter(req, ext) is None
+
+
+class TestQueryMsgspecStructEncoded:
+    """Lines 1321-1330: msgspec struct query extraction."""
+
+    @pytest.mark.asyncio
+    async def test_struct_query_extraction(self):
+        try:
+            import msgspec
+        except ImportError:
+            pytest.skip("msgspec not installed")
+
+        class Item(msgspec.Struct):
+            page: int
+            size: int = 10
+
+        from lauren.extractors import Extraction, extract_parameter
+
+        req = make_request(query=b"page=3&size=25")
+        ext = Extraction(
+            name="params",
+            source="query",
+            inner_type=Item,
+            field_descriptor=None,
+            default=...,
+            has_default=False,
+            marker_cls=None,
+            pipes=(),
+        )
+        result = await extract_parameter(req, ext)
+        assert isinstance(result, Item)
+        assert result.page == 3
+        assert result.size == 25
+
+
+class TestHeaderCookieWithFdDefault:
+    """Lines 1373, 1385: header/cookie missing uses fd.default."""
+
+    @pytest.mark.asyncio
+    async def test_missing_header_returns_fd_default(self):
+        from lauren.extractors import Extraction, extract_parameter
+
+        req = make_request(headers=[])
+        ext = Extraction(
+            name="token",
+            source="header",
+            inner_type=str,
+            field_descriptor=FieldDescriptor(alias="x-auth-token", default=None),
+            default=...,
+            has_default=False,
+            marker_cls=None,
+            pipes=(),
+        )
+        assert await extract_parameter(req, ext) is None
+
+    @pytest.mark.asyncio
+    async def test_missing_cookie_returns_fd_default(self):
+        from lauren.extractors import Extraction, extract_parameter
+
+        req = make_request(headers=[])
+        ext = Extraction(
+            name="session",
+            source="cookie",
+            inner_type=str,
+            field_descriptor=FieldDescriptor(default="anon"),
+            default=...,
+            has_default=False,
+            marker_cls=None,
+            pipes=(),
+        )
+        assert await extract_parameter(req, ext) == "anon"
