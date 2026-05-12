@@ -1559,10 +1559,10 @@ class LaurenApp:
             # No response can be sent — re-raise so the ASGI server can
             # close the connection cleanly.
             raise
-        except BaseException:
-            # An unexpected exception escaped handle() (e.g. a BaseException
-            # from a misbehaving signal listener that was not caught by the
-            # try/except inside handle(), or any other exotic error).
+        except Exception:
+            # An unexpected exception escaped handle() (e.g. from a
+            # misbehaving signal listener that was not caught by the
+            # try/except inside handle(), or any other error).
             # Attempt a best-effort 500 response with Connection: close so
             # the client is not left hanging and the keep-alive pool is not
             # poisoned with a connection that received no bytes.
