@@ -719,8 +719,6 @@ class Response:
     ``bytes`` blob or an async iterable for streaming responses.
     """
 
-    __slots__ = ("_status", "_headers", "_body", "_stream", "_media_type")
-
     def __init__(
         self,
         body: bytes | str | None = b"",
@@ -868,6 +866,123 @@ class Response:
         )
 
     @classmethod
+    async def file(
+        cls,
+        path: str,
+        *,
+        media_type: str | None = None,
+        filename: str | None = None,
+        inline: bool = False,
+        chunk_size: int = 65536,
+        headers: "Headers | None" = None,
+    ) -> "Response":
+        """Stream a file from the filesystem asynchronously.
+
+        Uses ``anyio.open_file`` for non-blocking reads so the event loop
+        is never blocked, even for large files.  MIME type is auto-detected
+        from the file extension when ``media_type`` is omitted.
+
+        :param path: Filesystem path to the file (``str`` or ``Path``).
+        :param media_type: Content-Type override.  Detected automatically
+            from the extension when ``None`` (falls back to
+            ``application/octet-stream`` for unknown extensions).
+        :param filename: Name sent in the ``Content-Disposition`` header.
+            Defaults to the basename of ``path``.
+        :param inline: When ``True`` the browser displays the file inline
+            (``Content-Disposition: inline``).  When ``False`` (the default)
+            the browser opens a Save-As dialog
+            (``Content-Disposition: attachment``).
+        :param chunk_size: Read buffer size in bytes.  Default is 64 KB.
+        :param headers: Extra response headers merged before the
+            Content-Type and Content-Disposition headers are applied.
+        :raises FileNotFoundError: When ``path`` does not point to an
+            existing file.
+        :return: A streaming :class:`Response` ready to be returned from
+            a handler.
+
+        Example — serve a generated PDF::
+
+            @get("/report")
+            async def report(self) -> Response:
+                return await Response.file(
+                    "/tmp/report.pdf",
+                    filename="quarterly-report.pdf",
+                )
+
+        Example — serve an image inline::
+
+            @get("/logo")
+            async def logo(self) -> Response:
+                return await Response.file(
+                    "static/logo.png",
+                    inline=True,
+                )
+        """
+        import mimetypes
+        import pathlib
+
+        import anyio
+
+        file_path = pathlib.Path(path)  # type: ignore[arg-type]
+        if not file_path.is_file():
+            raise FileNotFoundError(f"Response.file: no such file: {file_path!s}")
+
+        resolved_media_type = media_type
+        if resolved_media_type is None:
+            guessed, _ = mimetypes.guess_type(str(file_path))
+            resolved_media_type = guessed or "application/octet-stream"
+
+        resolved_filename = filename or file_path.name
+        disposition_type = "inline" if inline else "attachment"
+        content_disposition = f'{disposition_type}; filename="{resolved_filename}"'
+
+        _chunk = chunk_size
+
+        async def _stream() -> AsyncIterator[bytes]:
+            async with await anyio.open_file(str(file_path), "rb") as fh:
+                while True:
+                    chunk = await fh.read(_chunk)
+                    if not chunk:
+                        break
+                    yield chunk
+
+        hdr = MutableHeaders(list((headers or Headers()).raw()))
+        hdr.set("content-disposition", content_disposition)
+
+        return cls(
+            b"",
+            status=200,
+            headers=hdr,
+            media_type=resolved_media_type,
+            stream=_stream(),
+        )
+
+    @classmethod
+    def xml(
+        cls,
+        data: str,
+        *,
+        status: int = 200,
+        headers: "Headers | None" = None,
+    ) -> "Response":
+        """Build an XML response with ``Content-Type: application/xml``.
+
+        :param data: Raw XML content as a string (encoded to UTF-8) or bytes.
+        :param status: HTTP status code (default 200).
+        :param headers: Optional extra headers.
+
+        Example::
+
+            @get("/feed")
+            async def atom_feed(self) -> Response:
+                xml = "<feed>...</feed>"
+                return Response.xml(xml)
+        """
+        if isinstance(data, str):
+            data = data.encode("utf-8")  # type: ignore[assignment]
+        return cls(data, status=status, headers=headers, media_type="application/xml")
+
+    @classmethod
     def sse(
         cls,
         iterable: AsyncIterable[str | dict[str, Any]],
@@ -908,7 +1023,7 @@ class Response:
         body: bytes | None = None,  # type: ignore[valid-type]
         stream: AsyncIterable[bytes] | None = ...,  # type: ignore[assignment, valid-type]
     ) -> "Response":
-        new = Response.__new__(Response)
+        new = type(self).__new__(type(self))
         new._status = self._status if status is None else status
         new._headers = MutableHeaders(list(self._headers.raw())) if headers is None else headers
         new._body = self._body if body is None else body

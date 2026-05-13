@@ -728,3 +728,166 @@ class TestJsonDefaultMsgspecStruct:
 
         result = _json_default(Point(x=3, y=7))
         assert result == {"x": 3, "y": 7}
+
+
+# ---------------------------------------------------------------------------
+# Response.file() and Response.xml()
+# ---------------------------------------------------------------------------
+
+
+class TestResponseFile:
+    """Unit tests for Response.file() async factory."""
+
+    @pytest.mark.asyncio
+    async def test_streams_file_contents(self, tmp_path):
+        f = tmp_path / "hello.txt"
+        f.write_bytes(b"hello world")
+        r = await Response.file(str(f))
+        chunks = []
+        async for chunk in r._stream:
+            chunks.append(chunk)
+        assert b"".join(chunks) == b"hello world"
+
+    @pytest.mark.asyncio
+    async def test_status_200(self, tmp_path):
+        f = tmp_path / "data.bin"
+        f.write_bytes(b"\x00")
+        r = await Response.file(f)
+        assert r.status == 200
+
+    @pytest.mark.asyncio
+    async def test_auto_detects_pdf_mime(self, tmp_path):
+        f = tmp_path / "report.pdf"
+        f.write_bytes(b"%PDF")
+        r = await Response.file(f)
+        assert r.media_type == "application/pdf"
+
+    @pytest.mark.asyncio
+    async def test_auto_detects_png_mime(self, tmp_path):
+        f = tmp_path / "img.png"
+        f.write_bytes(b"\x89PNG")
+        r = await Response.file(f)
+        assert "image/png" in r.media_type
+
+    @pytest.mark.asyncio
+    async def test_unknown_extension_octet_stream(self, tmp_path):
+        f = tmp_path / "data.xyzzy"
+        f.write_bytes(b"data")
+        r = await Response.file(f)
+        assert r.media_type == "application/octet-stream"
+
+    @pytest.mark.asyncio
+    async def test_custom_media_type_overrides_guess(self, tmp_path):
+        f = tmp_path / "export.bin"
+        f.write_bytes(b"data")
+        r = await Response.file(f, media_type="application/vnd.ms-excel")
+        assert r.media_type == "application/vnd.ms-excel"
+
+    @pytest.mark.asyncio
+    async def test_attachment_disposition_by_default(self, tmp_path):
+        f = tmp_path / "file.pdf"
+        f.write_bytes(b"%PDF")
+        r = await Response.file(f)
+        cd = r.headers.get("content-disposition", "")
+        assert cd.startswith("attachment")
+
+    @pytest.mark.asyncio
+    async def test_inline_disposition(self, tmp_path):
+        f = tmp_path / "logo.png"
+        f.write_bytes(b"\x89PNG")
+        r = await Response.file(f, inline=True)
+        cd = r.headers.get("content-disposition", "")
+        assert cd.startswith("inline")
+
+    @pytest.mark.asyncio
+    async def test_filename_defaults_to_basename(self, tmp_path):
+        f = tmp_path / "quarterly.pdf"
+        f.write_bytes(b"%PDF")
+        r = await Response.file(f)
+        cd = r.headers.get("content-disposition", "")
+        assert 'filename="quarterly.pdf"' in cd
+
+    @pytest.mark.asyncio
+    async def test_custom_filename(self, tmp_path):
+        f = tmp_path / "tmp123.pdf"
+        f.write_bytes(b"%PDF")
+        r = await Response.file(f, filename="report-q4.pdf")
+        cd = r.headers.get("content-disposition", "")
+        assert 'filename="report-q4.pdf"' in cd
+
+    @pytest.mark.asyncio
+    async def test_missing_file_raises_file_not_found(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            await Response.file(tmp_path / "nonexistent.txt")
+
+    @pytest.mark.asyncio
+    async def test_extra_headers_merged(self, tmp_path):
+        f = tmp_path / "data.bin"
+        f.write_bytes(b"x")
+        r = await Response.file(f, headers=Headers([("x-custom", "value")]))
+        assert r.headers.get("x-custom") == "value"
+
+    @pytest.mark.asyncio
+    async def test_stream_is_set_body_is_empty(self, tmp_path):
+        f = tmp_path / "data.txt"
+        f.write_bytes(b"abc")
+        r = await Response.file(f)
+        assert r.body == b""
+        assert r._stream is not None
+
+    @pytest.mark.asyncio
+    async def test_custom_chunk_size_reads_whole_file(self, tmp_path):
+        data = b"x" * 1000
+        f = tmp_path / "big.bin"
+        f.write_bytes(data)
+        r = await Response.file(f, chunk_size=100)
+        chunks = []
+        async for chunk in r._stream:
+            chunks.append(chunk)
+        assert b"".join(chunks) == data
+
+    @pytest.mark.asyncio
+    async def test_path_object_accepted(self, tmp_path):
+        import pathlib
+
+        f = tmp_path / "file.txt"
+        f.write_bytes(b"ok")
+        r = await Response.file(pathlib.Path(f))
+        assert r.status == 200
+
+
+class TestResponseXml:
+    """Unit tests for Response.xml() factory."""
+
+    def test_string_encoded_to_utf8(self):
+        r = Response.xml("<root/>")
+        assert r.body == b"<root/>"
+
+    def test_bytes_passed_through(self):
+        r = Response.xml(b"<root/>")
+        assert r.body == b"<root/>"
+
+    def test_content_type_application_xml(self):
+        r = Response.xml("<root/>")
+        assert r.headers.get("content-type") == "application/xml"
+
+    def test_media_type_property(self):
+        r = Response.xml("<root/>")
+        assert r.media_type == "application/xml"
+
+    def test_status_200_default(self):
+        r = Response.xml("<root/>")
+        assert r.status == 200
+
+    def test_custom_status(self):
+        r = Response.xml("<root/>", status=201)
+        assert r.status == 201
+
+    def test_extra_headers_merged(self):
+        r = Response.xml("<root/>", headers=Headers([("x-custom", "yes")]))
+        assert r.headers.get("x-custom") == "yes"
+
+    def test_unicode_content_preserved(self):
+        xml = "<greeting>héllo wörld</greeting>"
+        r = Response.xml(xml)
+        assert "héllo wörld".encode() in r.body

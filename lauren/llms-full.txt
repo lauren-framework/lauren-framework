@@ -263,16 +263,34 @@ Immutable value object. All `with_*` methods return new instances.
 - `Response.json(data, *, status=200, headers=None)`
 - `Response.text(data, *, status=200, headers=None)`
 - `Response.html(data, *, status=200, headers=None)`
+- `Response.xml(data, *, status=200, headers=None)` — `Content-Type: application/xml`; accepts `str` or `bytes`
 - `Response.bytes(data, *, status=200, media_type="application/octet-stream", headers=None)`
 - `Response.empty(status=204)`, `Response.no_content()`, `Response.created(data=None, *, location=None)`, `Response.accepted(data=None)`
 - `Response.redirect(location, *, status=307)`
 - `Response.stream(async_iterable, *, status=200, media_type=..., headers=None)`
 - `Response.sse(async_iterable_of_events)`
+- `await Response.file(path, *, media_type=None, filename=None, inline=False, chunk_size=65536, headers=None)` — async; streams a file via `anyio`; auto-detects MIME; sets `Content-Disposition`; raises `FileNotFoundError` if path absent
 
-**Builders (return new instance):**
+**Builders (return new instance, preserving subclass type):**
 - `with_status(status)`, `with_header(k, v)`, `with_headers({k: v, ...})`, `without_header(k)`, `with_media_type(mt)`, `with_body(bytes|str)`
 - `with_cookie(key, value, *, max_age=None, path="/", domain=None, secure=False, http_only=False, same_site=None)`
 - `delete_cookie(key, *, path="/")`
+
+**Subclassing:**
+`Response` has no `__slots__` and is designed to be subclassed.  Any `Response` subclass returned from a handler is passed through `_coerce_to_response` unchanged (the `isinstance` check fires immediately).  All `with_*` builders preserve the concrete subclass type via `type(self).__new__(type(self))` in `_clone`.  Add domain factory classmethods, extra instance attributes, or computed properties freely.
+
+```python
+class JsonApiResponse(Response):
+    @classmethod
+    def resource(cls, data: dict, *, status: int = 200) -> "JsonApiResponse":
+        import json
+        body = json.dumps({"data": data}, separators=(",", ":")).encode()
+        return cls(body, status=status, media_type="application/vnd.api+json")
+
+@get("/{id}")
+async def get_user(self, id: int) -> JsonApiResponse:
+    return JsonApiResponse.resource({"id": id, "name": "Alice"})
+```
 
 ### `State` (request-scoped) and `AppState` (sealed after startup)
 
@@ -1019,7 +1037,10 @@ Lauren serializes the return value automatically.
 | Read per-route metadata in a guard | `ctx.get_metadata("key", default)` |
 | Attach a singleton explicitly | `app.container.set_singleton(MyCls, instance)` |
 | Run post-construct hook | `@post_construct` on an `async def` method of an `@injectable` |
-| Serve a large file | `Response.stream(async_iterable, media_type="application/pdf")` |
+| Serve a file (auto MIME, streamed) | `return await Response.file("/path/to/file.pdf")` |
+| Serve a file with custom name | `return await Response.file(path, filename="report.pdf")` |
+| Serve a file inline (browser preview) | `return await Response.file(path, inline=True)` |
+| Serve XML | `return Response.xml("<root>...</root>")` |
 | Serve Server-Sent Events | `Response.sse(async_iterable_of_dicts)` |
 
 ---

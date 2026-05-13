@@ -148,6 +148,8 @@ nav:
     - Custom Extractors: guides/custom-extractors.md
     - Pipes: guides/pipes.md
     - File Uploads: guides/file-uploads.md
+    - File Responses & XML: guides/file-responses.md
+    - Custom Responses: guides/custom-responses.md
     - Custom Guards: guides/custom-guards.md
     - Custom Middleware: guides/custom-middleware.md
     - Interceptors: guides/interceptors.md
