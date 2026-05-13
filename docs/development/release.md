@@ -28,6 +28,40 @@ git checkout -b release/v1.2.3
 Use the version you are about to publish as the branch name — it makes
 pull-request titles self-documenting.
 
+### 1.1.1 Pick the Next Version with Nox
+
+You do not edit a version string in source control. Instead, derive the
+next semantic version from the latest `vX.Y.Z` git tag:
+
+```bash
+# patch bump (default)
+nox -s ver_inc
+
+# explicit minor / major bump
+nox -s ver_inc -- --minor
+nox -s ver_inc -- --major
+
+# inspect the previous version if you need to back up a proposal
+nox -s ver_dec -- --minor
+```
+
+The session prints:
+
+- The latest release tag it found.
+- The proposed next tag.
+- A copy/paste-ready annotated tag command, for example:
+
+```bash
+git tag -a v1.3.0 -m "Release v1.3.0"
+git push origin v1.3.0
+```
+
+Use that proposed version in the release branch name:
+
+```bash
+git checkout -b release/v1.3.0
+```
+
 ### 1.2 Update `CHANGELOG.md`
 
 `lauren` follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
@@ -69,15 +103,21 @@ commit (no squash — the tag must point to a commit that is already on
 
 ## 2. Tag the Release
 
-After the release PR lands on `main`, tag it:
+After the release PR lands on `main`, derive the final tag and create it:
 
 ```bash
 git checkout main
 git pull origin main
 
+# Optional: re-check the next version from the latest tag history.
+nox -s ver_inc -- --minor
+
 # Annotated tag — the message becomes the release description on GitHub.
 git tag -a v1.2.3 -m "Release v1.2.3"
 ```
+
+If you already ran `ver_inc`, you can copy the exact `git tag -a ...`
+command from its output instead of typing it manually.
 
 ### Push the Tag
 

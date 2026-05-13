@@ -39,7 +39,9 @@ Design principles
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import subprocess
 from pathlib import Path
 
 import nox
@@ -249,6 +251,88 @@ def docs_serve(session: nox.Session) -> None:
 # ---------------------------------------------------------------------------
 # Build & release
 # ---------------------------------------------------------------------------
+_SEMVER_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+
+
+def _latest_release_tag() -> tuple[str, tuple[int, int, int]]:
+    result = subprocess.run(
+        ["git", "tag", "--list", "v*"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    tags = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    parsed: list[tuple[tuple[int, int, int], str]] = []
+    for tag in tags:
+        match = _SEMVER_TAG_RE.fullmatch(tag)
+        if match is None:
+            continue
+        parsed.append(((int(match.group(1)), int(match.group(2)), int(match.group(3))), tag))
+    if not parsed:
+        raise RuntimeError(
+            "No release tags matching v<major>.<minor>.<patch> were found. "
+            "Create an initial tag such as v0.1.0 first."
+        )
+    version, tag = max(parsed, key=lambda item: item[0])
+    return tag, version
+
+
+def _version_bump_kind(session: nox.Session) -> str:
+    allowed = {"--major": "major", "--minor": "minor", "--patch": "patch"}
+    selected = [allowed[arg] for arg in session.posargs if arg in allowed]
+    if not selected:
+        return "patch"
+    if len(selected) > 1:
+        session.error("Choose exactly one of --major, --minor, or --patch.")
+    return selected[0]
+
+
+def _adjust_version(version: tuple[int, int, int], kind: str, *, delta: int) -> tuple[int, int, int]:
+    major, minor, patch = version
+    if kind == "major":
+        major += delta
+        if major < 0:
+            raise ValueError("Cannot decrement major below 0.")
+        if delta > 0:
+            return major, 0, 0
+        return major, 0, 0
+    if kind == "minor":
+        minor += delta
+        if minor < 0:
+            raise ValueError("Cannot decrement minor below 0.")
+        return major, minor, 0
+    if kind == "patch":
+        patch += delta
+        if patch < 0:
+            raise ValueError("Cannot decrement patch below 0.")
+        return major, minor, patch
+    raise ValueError(f"Unsupported version bump kind: {kind}")
+
+
+def _render_version(version: tuple[int, int, int]) -> str:
+    return ".".join(str(part) for part in version)
+
+
+def _log_version_suggestion(session: nox.Session, *, action: str, delta: int) -> None:
+    current_tag, current_version = _latest_release_tag()
+    kind = _version_bump_kind(session)
+    try:
+        next_version = _adjust_version(current_version, kind, delta=delta)
+    except ValueError as exc:
+        session.error(str(exc))
+    next_version_str = _render_version(next_version)
+    next_tag = f"v{next_version_str}"
+    session.log(f"Latest release tag: {current_tag}")
+    session.log(f"{action} {kind}: {current_tag} -> {next_tag}")
+    session.log("")
+    session.log("Copy/paste:")
+    session.log(f'  git tag -a {next_tag} -m "Release {next_tag}"')
+    session.log("")
+    session.log("Then push it with:")
+    session.log(f"  git push origin {next_tag}")
+
+
 def _clean_build_artifacts() -> None:
     for path in (DIST_DIR, BUILD_DIR):
         if path.exists():
@@ -268,6 +352,32 @@ def build(session: nox.Session) -> None:
         session.log("Built artefacts:")
         for art in sorted(DIST_DIR.iterdir()):
             session.log(f"  {art.name}  ({art.stat().st_size} bytes)")
+
+
+@nox.session(python=PRIMARY_PYTHON, name="ver_inc")
+def ver_inc(session: nox.Session) -> None:
+    """Print the next release tag after incrementing major/minor/patch.
+
+    Examples::
+
+        nox -s ver_inc
+        nox -s ver_inc -- --minor
+        nox -s ver_inc -- --major
+    """
+    _log_version_suggestion(session, action="Increment", delta=1)
+
+
+@nox.session(python=PRIMARY_PYTHON, name="ver_dec")
+def ver_dec(session: nox.Session) -> None:
+    """Print the previous release tag after decrementing major/minor/patch.
+
+    Examples::
+
+        nox -s ver_dec -- --patch
+        nox -s ver_dec -- --minor
+        nox -s ver_dec -- --major
+    """
+    _log_version_suggestion(session, action="Decrement", delta=-1)
 
 
 @nox.session(python=PRIMARY_PYTHON, name="build_check")
@@ -481,6 +591,8 @@ def help_session(session: nox.Session) -> None:
                 "build_check",
                 "release",
                 "release_test",
+                "ver_inc",
+                "ver_dec",
                 "clean",
                 "llms_check",
                 "prek",
@@ -520,4 +632,6 @@ __all__ = [
     "tests_unit",
     "tests_verbose",
     "typecheck",
+    "ver_dec",
+    "ver_inc",
 ]
