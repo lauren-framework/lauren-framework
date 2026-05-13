@@ -7,6 +7,22 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Changed
+
+- **`lauren/extractors.py` typing coverage** — substantially expanded static
+  type information across the extractor pipeline without changing runtime
+  behaviour. Added explicit type aliases and protocols for DI resolution,
+  request caches, pipe targets, custom extractor call shapes, multipart upload
+  caching, and parsed extractor hints; tightened the internal annotations for
+  `FieldDescriptor`, `_ParamSpec`, `Extraction`, pipe execution, struct
+  conversion, and custom extractor dispatch. The module now passes the full
+  repository `mypy` check with the stronger annotations in place.
+
+- **Typed field helper factories** — `PathField()`, `QueryField()`,
+  `HeaderField()`, and `CookieField()` now expose their accepted keyword
+  arguments via a shared typed kwargs shape instead of `**kwargs: Any`,
+  improving IDE completion and static checking for descriptor construction.
+
 ### Documentation
 
 - Refreshed the README, MkDocs pages, AI-agent guides, skills index, and

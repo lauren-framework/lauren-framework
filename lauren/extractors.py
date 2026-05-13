@@ -40,29 +40,98 @@ import inspect as _inspect
 import json as jsonlib
 import types as _types
 from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Mapping
 from typing import (
     Annotated,
     Any,
+    ClassVar,
+    NotRequired,
+    Protocol,
+    TypeAlias,
+    TypeGuard,
+    TypedDict,
     TypeVar,
     Union,
+    Unpack,
+    cast,
     get_args,
     get_origin,
-    ClassVar,
+    overload,
 )
 
 from .exceptions import ExtractorError, ExtractorFieldError, MissingProviderError
+from .types import ByteStream as RequestByteStream
 from .types import ExecutionContext, Request
+from .types import UploadFile as UploadedFile
 
 try:
     import pydantic
 
     _PYDANTIC_AVAILABLE = True
-    _BaseModel = pydantic.BaseModel
+    from pydantic import BaseModel
+
+    _BaseModel: type[BaseModel] | None = pydantic.BaseModel
 except ImportError:  # pragma: no cover
     _PYDANTIC_AVAILABLE = False
-    _BaseModel = None  # type: ignore[assignment,misc]
+    pydantic = None  # type: ignore[assignment]
+    _BaseModel = None
 
 T = TypeVar("T")
+V = TypeVar("V")
+
+RequestCache: TypeAlias = dict[type[Any], object]
+FrameworkValues: TypeAlias = dict[type[Any], object]
+PipeResult: TypeAlias = object | Awaitable[object]
+PipeCallable: TypeAlias = Callable[[object], PipeResult] | Callable[[object, "PipeContext"], PipeResult]
+PipeDecoratorTarget: TypeAlias = type[Any] | PipeCallable
+
+
+class ResolverProtocol(Protocol):
+    def has_provider(self, token: object, *, owning_module: type[Any] | None = None) -> bool: ...
+
+    async def resolve(
+        self,
+        token: object,
+        *,
+        request_cache: RequestCache | None = None,
+        framework_values: FrameworkValues | None = None,
+        owning_module: type[Any] | None = None,
+    ) -> object: ...
+
+
+class PipeInstanceProtocol(Protocol):
+    def transform(self, value: object, ctx: "PipeContext") -> PipeResult: ...
+
+
+class InstanceExtractorProtocol(Protocol):
+    async def extract(
+        self,
+        execution_context: ExecutionContext | None,
+        extraction: "Extraction",
+    ) -> object: ...
+
+
+class LegacyExtractorProtocol(Protocol):
+    @classmethod
+    async def extract(
+        cls,
+        request: Request,
+        extraction: "Extraction",
+        *,
+        container: ResolverProtocol | None,
+        request_cache: RequestCache | None,
+        owning_module: type[Any] | None = None,
+    ) -> object: ...
+
+
+ParsedExtractorHint: TypeAlias = tuple[
+    str | None,
+    object,
+    bool,
+    type["ExtractionMarker"] | None,
+    "FieldDescriptor | None",
+    tuple[PipeDecoratorTarget, ...],
+]
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +212,7 @@ class ExtractionMarker:
     source: ClassVar[str] = "unknown"
     reads_body: ClassVar[bool] = False
 
-    def __class_getitem__(cls, item: T) -> T:
+    def __class_getitem__(cls, item: T) -> Any:
         # Returns ``Annotated[item, marker_instance]`` so user code can write
         # ``user_id: Path[int]`` and we can detect it in type hints.
         #
@@ -158,7 +227,7 @@ class ExtractionMarker:
             if len(item) == 1:
                 return Annotated[item[0], cls]  # type: ignore[valid-type, return-value]
             base_type = item[0]
-            extras: list[Any] = []
+            extras: list[object] = []
             for extra in item[1:]:
                 if isinstance(extra, FieldDescriptor):
                     extras.append(extra)
@@ -344,9 +413,9 @@ class ByteStream(ExtractionMarker):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class FieldDescriptor:
-    default: Any = ...
+    default: object = ...
     alias: str | None = None
     ge: float | None = None
     le: float | None = None
@@ -356,7 +425,7 @@ class FieldDescriptor:
     max_length: int | None = None
     pattern: str | None = None
     description: str | None = None
-    example: Any = None
+    example: object | None = None
 
     # ------------------------------------------------------------------
     # Composition — ``PathField(...) | pipe(fn) | MyPipeClass`` builds a
@@ -364,14 +433,14 @@ class FieldDescriptor:
     # ``__lauren_pipe__``-marked callables.
     # ------------------------------------------------------------------
 
-    def __or__(self, other: Any) -> "_ParamSpec":
+    def __or__(self, other: object) -> "_ParamSpec":
         return _ParamSpec(field_descriptor=self) | other
 
     __ror__ = __or__
 
-    def validate(self, name: str, value: Any) -> Any:
+    def validate(self, name: str, value: V) -> V:
         if value is None and self.default is not ...:
-            return self.default
+            return cast(V, self.default)
         if isinstance(value, (int, float)):
             if self.ge is not None and value < self.ge:
                 raise ExtractorFieldError(
@@ -409,19 +478,33 @@ class FieldDescriptor:
         return value
 
 
-def PathField(**kwargs: Any) -> FieldDescriptor:
+class FieldDescriptorKwargs(TypedDict, total=False):
+    default: object
+    alias: str | None
+    ge: float | None
+    le: float | None
+    gt: float | None
+    lt: float | None
+    min_length: int | None
+    max_length: int | None
+    pattern: str | None
+    description: str | None
+    example: NotRequired[object | None]
+
+
+def PathField(**kwargs: Unpack[FieldDescriptorKwargs]) -> FieldDescriptor:
     return FieldDescriptor(**kwargs)
 
 
-def QueryField(**kwargs: Any) -> FieldDescriptor:
+def QueryField(**kwargs: Unpack[FieldDescriptorKwargs]) -> FieldDescriptor:
     return FieldDescriptor(**kwargs)
 
 
-def HeaderField(**kwargs: Any) -> FieldDescriptor:
+def HeaderField(**kwargs: Unpack[FieldDescriptorKwargs]) -> FieldDescriptor:
     return FieldDescriptor(**kwargs)
 
 
-def CookieField(**kwargs: Any) -> FieldDescriptor:
+def CookieField(**kwargs: Unpack[FieldDescriptorKwargs]) -> FieldDescriptor:
     return FieldDescriptor(**kwargs)
 
 
@@ -433,7 +516,7 @@ def CookieField(**kwargs: Any) -> FieldDescriptor:
 PIPE_META = "__lauren_pipe__"
 
 
-@dataclass
+@dataclass(slots=True)
 class PipeMeta:
     """Marker metadata attached to any callable acting as a pipe.
 
@@ -453,10 +536,10 @@ class PipeMeta:
     #: kept even though ``target.__lauren_pipe__ is self`` so that future
     #: versions can carry additional fields (description, scope, etc.)
     #: without changing the public shape.
-    target: Any
+    target: PipeDecoratorTarget
 
 
-@dataclass
+@dataclass(slots=True)
 class PipeContext:
     """Context object passed to a pipe's transform function."""
 
@@ -470,11 +553,11 @@ class PipeContext:
     source: str
     #: Python type declared inside the extractor marker (e.g. ``int`` for
     #: ``Path[int]``).
-    inner_type: Any
+    inner_type: object
     #: The DI container — lets a pipe resolve services on demand.
-    container: Any
+    container: ResolverProtocol | None
     #: The per-request DI cache, forwarded unchanged.
-    request_cache: dict[type, Any] | None
+    request_cache: RequestCache | None
     #: The module class declaring the controller (for DI visibility).
     owning_module: type | None
     #: The field descriptor attached to the parameter, if any.
@@ -498,11 +581,11 @@ class Pipe:
                 return self.repo.get(value)
     """
 
-    async def transform(self, value: Any, ctx: PipeContext) -> Any:
+    async def transform(self, value: object, ctx: PipeContext) -> object:
         raise NotImplementedError
 
 
-def _mark_as_pipe(target: Any) -> Any:
+def _mark_as_pipe(target: PipeDecoratorTarget) -> PipeDecoratorTarget:
     """Attach :class:`PipeMeta` to ``target`` and return it unchanged.
 
     Idempotent — re-marking is a no-op. Raises :class:`TypeError` if the
@@ -529,7 +612,17 @@ def _mark_as_pipe(target: Any) -> Any:
     return target
 
 
-def pipe(target: Any = None) -> Any:
+@overload
+def pipe() -> Callable[[PipeDecoratorTarget], PipeDecoratorTarget]: ...
+
+
+@overload
+def pipe(target: PipeDecoratorTarget) -> PipeDecoratorTarget: ...
+
+
+def pipe(
+    target: PipeDecoratorTarget | None = None,
+) -> Callable[[PipeDecoratorTarget], PipeDecoratorTarget] | PipeDecoratorTarget:
     """Mark a function or class as a pipe.
 
     Works in three interchangeable forms:
@@ -562,7 +655,7 @@ def pipe(target: Any = None) -> Any:
     """
     if target is None:
         # ``@pipe()`` — return a decorator.
-        def decorator(obj: Any) -> Any:
+        def decorator(obj: PipeDecoratorTarget) -> PipeDecoratorTarget:
             return _mark_as_pipe(obj)
 
         return decorator
@@ -570,12 +663,12 @@ def pipe(target: Any = None) -> Any:
     return _mark_as_pipe(target)
 
 
-def is_pipe(obj: Any) -> bool:
+def is_pipe(obj: object) -> TypeGuard[PipeDecoratorTarget]:
     """Return True if ``obj`` carries the ``__lauren_pipe__`` marker."""
     return getattr(obj, PIPE_META, None) is not None
 
 
-@dataclass
+@dataclass(slots=True)
 class _ParamSpec:
     """Composite parameter-level default produced by ``|`` composition.
 
@@ -587,17 +680,17 @@ class _ParamSpec:
     """
 
     field_descriptor: FieldDescriptor | None = None
-    pipes: tuple[Any, ...] = ()
+    pipes: tuple[PipeDecoratorTarget, ...] = ()
 
     @property
-    def default(self) -> Any:
+    def default(self) -> object:
         """Expose the underlying :class:`FieldDescriptor` default (if any)
         so ``_ParamSpec`` remains a drop-in replacement for a bare
         ``FieldDescriptor`` default. Returns ``...`` when no descriptor
         was included in the chain."""
         return self.field_descriptor.default if self.field_descriptor else ...
 
-    def __or__(self, other: Any) -> "_ParamSpec":
+    def __or__(self, other: object) -> "_ParamSpec":
         if isinstance(other, _ParamSpec):
             # Reject ambiguous conflicts — two descriptors in one chain.
             if self.field_descriptor is not None and other.field_descriptor is not None:
@@ -637,27 +730,27 @@ class _ParamSpec:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class Extraction:
     """A single parameter extraction step."""
 
     name: str
     source: str
-    inner_type: Any
+    inner_type: object
     field_descriptor: FieldDescriptor | None
-    default: Any
+    default: object
     has_default: bool
     reads_body: bool = False
     #: The marker class, preserved when a custom extractor is in play.
-    marker_cls: type | None = None
+    marker_cls: type[ExtractionMarker] | None = None
     #: Ordered tuple of pipe callables applied to the extracted value in
     #: the order they appear (annotation metadata first, then default-side).
     #: Each entry carries the ``__lauren_pipe__`` marker attached by
     #: :func:`pipe`. An empty tuple means "no pipes" — the common case.
-    pipes: tuple[Any, ...] = ()
+    pipes: tuple[PipeDecoratorTarget, ...] = ()
 
 
-def _peel_optional(annotation: Any) -> tuple[Any, bool]:
+def _peel_optional(annotation: object) -> tuple[object, bool]:
     """Strip a ``None`` branch off a ``Union`` / PEP 604 union.
 
     Returns ``(unwrapped, is_optional)`` where ``unwrapped`` is the
@@ -701,16 +794,7 @@ def _peel_optional(annotation: Any) -> tuple[Any, bool]:
     return Union[tuple(args)], True  # type: ignore[valid-type]
 
 
-def parse_extractor_hint(
-    annotation: Any,
-) -> tuple[
-    str | None,
-    Any,
-    bool,
-    type | None,
-    FieldDescriptor | None,
-    tuple[Any, ...],
-]:
+def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
     """Inspect an annotation and return its extractor metadata.
 
     Returns a 6-tuple ``(source, inner_type, reads_body, marker_cls,
@@ -770,19 +854,19 @@ def parse_extractor_hint(
                 inner_pipes,
             )
     origin = get_origin(annotation)
-    pipes: list[Any] = []
+    pipes: list[PipeDecoratorTarget] = []
     fd: FieldDescriptor | None = None
     if origin is Annotated or (hasattr(annotation, "__metadata__") and hasattr(annotation, "__origin__")):
         args = get_args(annotation)
         inner = args[0]
         source: str | None = None
         reads_body = False
-        marker_cls: type | None = None
+        marker_cls: type[ExtractionMarker] | None = None
         # Pydantic ``FieldInfo`` with a ``discriminator=...`` must ride
         # along with the inner type so the JSON validator / streaming
         # reader can still detect the tagged union after this parser
         # has unwrapped the outer Annotated[...] (feature 6).
-        preserved_metadata: list[Any] = []
+        preserved_metadata: list[object] = []
         # If the inner is itself an ``Annotated`` (e.g. ``Path[int]`` is
         # ``Annotated[int, Path]``) we recurse so users can write
         # ``Annotated[Path[int], pipe(...), PathField(...)]`` without losing
@@ -877,7 +961,7 @@ def parse_extractor_hint(
     return None, annotation, False, None, None, ()
 
 
-def _is_pydantic_model_type(annotation: Any) -> bool:
+def _is_pydantic_model_type(annotation: object) -> bool:
     """Return ``True`` when *annotation* (possibly ``Optional[T]``) is a Pydantic model.
 
     Used by :func:`lauren._asgi._compile_handler_signature` to auto-promote
@@ -890,7 +974,7 @@ def _is_pydantic_model_type(annotation: Any) -> bool:
     return isinstance(inner, type) and issubclass(inner, _BaseModel)
 
 
-def _is_msgspec_struct_type(annotation: Any) -> bool:
+def _is_msgspec_struct_type(annotation: object) -> bool:
     """Return ``True`` when *annotation* (possibly ``Optional[T]``) is a
     ``msgspec.Struct`` subclass.
 
@@ -903,7 +987,7 @@ def _is_msgspec_struct_type(annotation: Any) -> bool:
     return hasattr(inner, "__struct_fields__") and hasattr(inner, "__struct_config__")
 
 
-def _is_dataclass_type(annotation: Any) -> bool:
+def _is_dataclass_type(annotation: object) -> bool:
     """Return ``True`` when *annotation* (possibly ``Optional[T]``) is a
     Python :mod:`dataclasses` dataclass.
     """
@@ -913,7 +997,7 @@ def _is_dataclass_type(annotation: Any) -> bool:
     return isinstance(inner, type) and dataclasses.is_dataclass(inner)
 
 
-def _is_struct_type(annotation: Any) -> bool:
+def _is_struct_type(annotation: object) -> bool:
     """Return ``True`` when *annotation* is a supported struct-like type
     (``msgspec.Struct`` **or** Python dataclass).
 
@@ -925,7 +1009,7 @@ def _is_struct_type(annotation: Any) -> bool:
     return _is_msgspec_struct_type(annotation) or _is_dataclass_type(annotation)
 
 
-def _convert_struct(data: Any, struct_cls: type, field_name: str) -> Any:
+def _convert_struct(data: object, struct_cls: type[Any], field_name: str) -> object:
     """Convert *data* (a plain dict or list of string values) to an instance
     of *struct_cls*, applying type coercion.
 
@@ -953,11 +1037,12 @@ def _convert_struct(data: Any, struct_cls: type, field_name: str) -> Any:
             import typing
 
             hints = typing.get_type_hints(struct_cls)
-            coerced: dict[str, Any] = {}
+            mapping_data = cast(dict[str, object], data)
+            coerced: dict[str, object] = {}
             for f in dataclasses.fields(struct_cls):
-                if f.name not in data:
+                if f.name not in mapping_data:
                     continue
-                v = data[f.name]
+                v = mapping_data[f.name]
                 target_t = hints.get(f.name, Any)
                 coerced[f.name] = _coerce_scalar(str(v), target_t) if isinstance(v, str) else v
             return struct_cls(**coerced)
@@ -973,10 +1058,10 @@ def _convert_struct(data: Any, struct_cls: type, field_name: str) -> Any:
 
 #: Primitive Python types that can be meaningfully coerced from a query-string
 #: segment without any DI or body-parsing machinery.
-_SCALAR_TYPES: frozenset[type] = frozenset({int, float, str, bool, bytes, complex})
+_SCALAR_TYPES: frozenset[type[Any]] = frozenset({int, float, str, bool, bytes, complex})
 
 
-def _is_implicit_query_type(annotation: Any) -> bool:
+def _is_implicit_query_type(annotation: object) -> bool:
     """Return ``True`` when *annotation* should be auto-promoted to a query param.
 
     Recognised shapes (all can optionally be wrapped in ``Optional[...]``
@@ -1010,7 +1095,7 @@ def _is_implicit_query_type(annotation: Any) -> bool:
     return False
 
 
-def _is_discriminator_fieldinfo(obj: Any) -> bool:
+def _is_discriminator_fieldinfo(obj: object) -> bool:
     """Detect a ``pydantic.Field(discriminator=...)`` metadata entry.
 
     Keeps the check attribute-based so the module stays importable when
@@ -1021,7 +1106,7 @@ def _is_discriminator_fieldinfo(obj: Any) -> bool:
     return isinstance(disc, str) and bool(disc)
 
 
-def _dc_replace_default(fd: "FieldDescriptor", new_default: Any) -> "FieldDescriptor":
+def _dc_replace_default(fd: FieldDescriptor, new_default: object) -> FieldDescriptor:
     """Return a copy of ``fd`` with the ``default`` slot replaced.
 
     Used when synthesising an optional descriptor on an ``Optional[Path[T]]``
@@ -1035,7 +1120,7 @@ def _dc_replace_default(fd: "FieldDescriptor", new_default: Any) -> "FieldDescri
     return _replace(fd, default=new_default)
 
 
-def _coerce_scalar(value: str, target: Any) -> Any:
+def _coerce_scalar(value: str | None, target: object) -> object:
     """Coerce a raw string value (from a path / query / header) to
     ``target``.
 
@@ -1098,14 +1183,14 @@ def _coerce_scalar(value: str, target: Any) -> Any:
 
 
 async def _run_pipes(
-    value: Any,
+    value: object,
     extraction: Extraction,
     *,
     request: Request,
-    container: Any,
-    request_cache: dict[type, Any] | None,
+    container: ResolverProtocol | None,
+    request_cache: RequestCache | None,
     owning_module: type | None,
-) -> Any:
+) -> object:
     """Apply every pipe on ``extraction`` to ``value`` in order."""
     if not extraction.pipes:
         return value
@@ -1129,14 +1214,14 @@ async def _run_pipes(
 #: with the DI container. Keyed by the class object itself; stays tiny
 #: because it only grows with the number of distinct pipe classes declared
 #: across the whole application.
-_PIPE_INSTANCE_CACHE: dict[type, Any] = {}
+_PIPE_INSTANCE_CACHE: dict[type[Any], PipeInstanceProtocol] = {}
 # Process-wide cache for non-injectable instance-method extractors.
 # Mirrors _PIPE_INSTANCE_CACHE: the extractor class is instantiated once
 # (no-arg constructor) and the same instance is reused across all requests.
-_EXTRACTOR_INSTANCE_CACHE: dict[type, Any] = {}
+_EXTRACTOR_INSTANCE_CACHE: dict[type[ExtractionMarker], InstanceExtractorProtocol] = {}
 
 
-async def _invoke_pipe(target: Any, value: Any, ctx: PipeContext) -> Any:
+async def _invoke_pipe(target: PipeDecoratorTarget, value: object, ctx: PipeContext) -> object:
     """Run a single pipe, resolving its transform callable lazily.
 
     Supported shapes for ``target``:
@@ -1163,13 +1248,13 @@ async def _invoke_pipe(target: Any, value: Any, ctx: PipeContext) -> Any:
             instance = _PIPE_INSTANCE_CACHE.get(target)
             if instance is None:
                 instance = target()
-                _PIPE_INSTANCE_CACHE[target] = instance
+                _PIPE_INSTANCE_CACHE[target] = instance  # type: ignore[assignment]
         if not hasattr(instance, "transform"):
             raise ExtractorError(
                 f"pipe target {target.__name__} must define 'transform(value, ctx)'",
                 detail={"field": ctx.name, "pipe": target.__name__},
             )
-        fn = instance.transform
+        fn: PipeCallable = instance.transform
     else:
         fn = target
 
@@ -1191,9 +1276,9 @@ async def _invoke_pipe(target: Any, value: Any, ctx: PipeContext) -> Any:
 
     try:
         if arity <= 1:
-            result = fn(value)
+            result = cast(Callable[[object], PipeResult], fn)(value)
         else:
-            result = fn(value, ctx)
+            result = cast(Callable[[object, PipeContext], PipeResult], fn)(value, ctx)
     except ExtractorError:
         raise
     except Exception as exc:
@@ -1211,11 +1296,11 @@ async def extract_parameter(
     request: Request,
     extraction: Extraction,
     *,
-    container: Any = None,
-    request_cache: dict[type, Any] | None = None,
+    container: ResolverProtocol | None = None,
+    request_cache: RequestCache | None = None,
     owning_module: type | None = None,
     execution_context: ExecutionContext | None = None,
-) -> Any:
+) -> object:
     """Execute a single extraction. Raises :class:`ExtractorError` on failure.
 
     ``owning_module`` is the module class that declared the controller whose
@@ -1254,11 +1339,11 @@ async def _extract_raw(
     request: Request,
     extraction: Extraction,
     *,
-    container: Any = None,
-    request_cache: dict[type, Any] | None = None,
+    container: ResolverProtocol | None = None,
+    request_cache: RequestCache | None = None,
     owning_module: type | None = None,
     execution_context: ExecutionContext | None = None,
-) -> Any:
+) -> object:
     """Source-specific extraction without pipe application."""
     source = extraction.source
     inner = extraction.inner_type
@@ -1291,10 +1376,11 @@ async def _extract_raw(
             peeled_inner, _inner_opt = _peel_optional(inner)
             if (
                 _PYDANTIC_AVAILABLE
+                and _BaseModel is not None
                 and isinstance(peeled_inner, type)
                 and issubclass(peeled_inner, _BaseModel)
             ):
-                fields_dict: dict[str, Any] = {}
+                fields_dict: dict[str, object] = {}
                 for f_name, f_info in peeled_inner.model_fields.items():
                     f_alias = (
                         f_info.alias  # type: ignore[attr-defined]
@@ -1317,7 +1403,7 @@ async def _extract_raw(
                 # msgspec.Struct / dataclass — collect individual query-string
                 # fields by name and hand them to _convert_struct, which applies
                 # type coercion so "5" → 5 for int fields, etc.
-                struct_fields_dict: dict[str, Any] = {}
+                struct_fields_dict: dict[str, object] = {}
                 if _is_msgspec_struct_type(peeled_inner):
                     import msgspec as _msgspec
 
@@ -1332,7 +1418,7 @@ async def _extract_raw(
                 else:
                     import dataclasses
 
-                    for sf in dataclasses.fields(peeled_inner):
+                    for sf in dataclasses.fields(cast(type[Any], peeled_inner)):
                         raw = request.query_params.get(sf.name, [])  # type: ignore[assignment]
                         if raw:
                             struct_fields_dict[sf.name] = raw[0] if len(raw) == 1 else raw
@@ -1340,7 +1426,7 @@ async def _extract_raw(
                     if extraction.has_default:
                         return extraction.default
                     return None
-                return _convert_struct(struct_fields_dict, peeled_inner, extraction.name)
+                return _convert_struct(struct_fields_dict, cast(type[Any], peeled_inner), extraction.name)
 
             key = fd.alias if fd and fd.alias else extraction.name
             raw_list = request.query_params.get(key, [])
@@ -1401,7 +1487,12 @@ async def _extract_raw(
 
         if source == "form":
             form_data = await request.form()
-            if _PYDANTIC_AVAILABLE and isinstance(inner, type) and issubclass(inner, _BaseModel):
+            if (
+                _PYDANTIC_AVAILABLE
+                and _BaseModel is not None
+                and isinstance(inner, type)
+                and issubclass(inner, _BaseModel)
+            ):
                 flat = {k: v[0] if len(v) == 1 else v for k, v in form_data.items()}
                 return _validate_pydantic(flat, inner, extraction.name)
             return form_data
@@ -1411,9 +1502,7 @@ async def _extract_raw(
 
         if source == "byte_stream":
             # Lazy import to avoid a circular import at module load.
-            from .types import ByteStream as _ByteStream
-
-            return _ByteStream(request)
+            return RequestByteStream(request)
 
         if source == "upload_file":
             # ``UploadFile`` extraction: parse the multipart body on
@@ -1475,7 +1564,7 @@ async def _extract_raw(
             # Walk the MRO to find where 'extract' is actually defined so we
             # correctly detect classmethod vs. instance method regardless of
             # inheritance depth.
-            _extract_attr: Any = None
+            _extract_attr: object | None = None
             for _mro_cls in marker_cls.__mro__:
                 if "extract" in _mro_cls.__dict__:
                     _extract_attr = _mro_cls.__dict__["extract"]
@@ -1495,36 +1584,40 @@ async def _extract_raw(
                             "no DI container is available; ensure it is registered "
                             "in a module's providers list.",
                         )
-                    instance = await container.resolve(
+                    resolved = await container.resolve(
                         marker_cls,
                         request_cache=request_cache,
                         framework_values={Request: request, type(request): request},
                         owning_module=owning_module,
                     )
+                    instance = cast(InstanceExtractorProtocol, resolved)
                 else:
                     # Non-injectable: use a process-wide no-arg instance.
-                    instance = _EXTRACTOR_INSTANCE_CACHE.get(marker_cls)
-                    if instance is None:
-                        instance = marker_cls()
+                    cached_instance = _EXTRACTOR_INSTANCE_CACHE.get(marker_cls)
+                    if cached_instance is None:
+                        instance = cast(InstanceExtractorProtocol, marker_cls())
                         _EXTRACTOR_INSTANCE_CACHE[marker_cls] = instance
+                    else:
+                        instance = cached_instance
 
                 return await instance.extract(execution_context, extraction)
 
             # ── Legacy classmethod form (backward compat) ──────────────────
+            legacy_marker = cast(LegacyExtractorProtocol, marker_cls)
             try:
-                sig = _inspect.signature(marker_cls.extract)  # type: ignore[attr-defined]
-                params = sig.parameters
+                sig = _inspect.signature(legacy_marker.extract)
+                legacy_params: Mapping[str, object] = sig.parameters
             except (TypeError, ValueError):
-                params = {}  # type: ignore[assignment]
-            if "owning_module" in params:
-                return await marker_cls.extract(  # type: ignore[attr-defined]
+                legacy_params = {}
+            if "owning_module" in legacy_params:
+                return await legacy_marker.extract(
                     request,
                     extraction,
                     container=container,
                     request_cache=request_cache,
                     owning_module=owning_module,
                 )
-            return await marker_cls.extract(  # type: ignore[attr-defined]
+            return await legacy_marker.extract(
                 request,
                 extraction,
                 container=container,
@@ -1569,7 +1662,7 @@ async def _extract_raw(
 _UPLOAD_CACHE_ATTR = "__lauren_upload_cache__"
 
 
-async def _parse_multipart_once(request: Request) -> dict[str, list[Any]]:
+async def _parse_multipart_once(request: Request) -> dict[str, list[UploadedFile]]:
     """Parse the multipart body of ``request`` at most once.
 
     Caches the resulting ``{field_name: [UploadFile, ...]}`` dict on
@@ -1580,18 +1673,17 @@ async def _parse_multipart_once(request: Request) -> dict[str, list[Any]]:
     next lease (``Request.reset`` wipes per-request attrs).
     """
     from ._multipart import iter_parts, parse_boundary
-    from .types import UploadFile as _UploadFile
 
     cached = getattr(request, _UPLOAD_CACHE_ATTR, None)
     if cached is not None:
-        return cached
+        return cast(dict[str, list[UploadedFile]], cached)
 
     content_type = request.headers.get("content-type") or ""
     boundary = parse_boundary(content_type)
     body = await request.body()
-    grouped: dict[str, list[Any]] = {}
+    grouped: dict[str, list[UploadedFile]] = {}
     for part in iter_parts(body, boundary):
-        upload = _UploadFile(
+        upload = UploadedFile(
             data=part.data,
             filename=part.filename,
             content_type=part.content_type,
@@ -1606,9 +1698,9 @@ async def _parse_multipart_once(request: Request) -> dict[str, list[Any]]:
 async def _extract_upload_file(
     request: Request,
     extraction: Extraction,
-    fd: "FieldDescriptor | None",
-    inner: Any,
-) -> Any:
+    fd: FieldDescriptor | None,
+    inner: object,
+) -> UploadedFile | list[UploadedFile] | object:
     """Produce the value for an ``UploadFile`` / ``list[UploadFile]`` parameter.
 
     Matches parts against the handler parameter name (or the
@@ -1648,7 +1740,7 @@ async def _extract_upload_file(
     return files[0]
 
 
-def _validate_json(data: Any, target: Any, field_name: str) -> Any:
+def _validate_json(data: object, target: object, field_name: str) -> object:
     # Discriminated-union validation — delegated to a Pydantic ``TypeAdapter``
     # so error messages point at the offending variant (feature 6).
     from .streaming import is_discriminated_union, _build_adapter
@@ -1662,13 +1754,18 @@ def _validate_json(data: Any, target: Any, field_name: str) -> Any:
                 "validation error",
                 detail={"field": field_name, "errors": e.errors()},
             ) from e
-    if _PYDANTIC_AVAILABLE and isinstance(target, type) and issubclass(target, _BaseModel):
+    if (
+        _PYDANTIC_AVAILABLE
+        and _BaseModel is not None
+        and isinstance(target, type)
+        and issubclass(target, _BaseModel)
+    ):
         return _validate_pydantic(data, target, field_name)
     if _is_struct_type(target):
         # msgspec.Struct / dataclass — JSON data is already a dict with proper
         # Python types, so conversion is purely structural (no string coercion).
-        return _convert_struct(data, target, field_name)
-    if target is Any or target is None:
+        return _convert_struct(data, cast(type[Any], target), field_name)
+    if target is None:
         return data
     # primitive types
     if isinstance(data, target) if isinstance(target, type) else False:
@@ -1681,7 +1778,7 @@ def _validate_json(data: Any, target: Any, field_name: str) -> Any:
     return data
 
 
-def _validate_pydantic(data: Any, model: type, field_name: str) -> Any:
+def _validate_pydantic(data: object, model: type[pydantic.BaseModel], field_name: str) -> pydantic.BaseModel:
     try:
         return model.model_validate(data)  # type: ignore[attr-defined]
     except pydantic.ValidationError as e:
