@@ -164,6 +164,7 @@ npx skills add lauren-framework/lauren-framework --local
 |---|---|
 | [`migrating-from-fastapi`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/migrating-from-fastapi) | FastAPI → Lauren: routing, DI, middleware side-by-side |
 | [`using-companion-packages`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/using-companion-packages) | CORS, auth guards, structured logging together |
+| [`building-companion-packages`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/building-companion-packages) | Package layout, DI/module integration, `llms*.txt`, CI/CD, and publishing for companion packages |
 | [`graceful-shutdown`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/graceful-shutdown) | Connection draining, `@pre_destruct` shutdown hooks |
 | [`docker-compose-setup`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/docker-compose-setup) | Multi-stage Dockerfile, docker-compose stack |
 

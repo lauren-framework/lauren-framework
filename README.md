@@ -73,7 +73,7 @@ API patterns, observability, security, and more.
 
 | Resource | What it contains |
 |---|---|
-| [`llms.txt`](https://raw.githubusercontent.com/lauren-framework/lauren-framework/refs/heads/main/llms.txt) | 2 KB framework overview — start here |
+| [`lauren/llms.txt`](https://raw.githubusercontent.com/lauren-framework/lauren-framework/refs/heads/main/lauren/llms.txt) | 2 KB framework overview — start here |
 | [`lauren/llms-full.txt`](https://raw.githubusercontent.com/lauren-framework/lauren-framework/refs/heads/main/lauren/llms-full.txt) | 25 KB complete reference — all APIs, patterns, common errors |
 | [`AGENTS.md`](https://github.com/lauren-framework/lauren-framework/blob/main/AGENTS.md) | Agent rules, by-task lookup, file ownership, common errors, definition of done |
 | [`CLAUDE.md`](https://github.com/lauren-framework/lauren-framework/blob/main/CLAUDE.md) | Conventions, commands, golden rules, pattern selection guide |
@@ -106,6 +106,8 @@ core ideas:
 * **Implicit extractors** — Path params, query strings, and JSON bodies are
   auto-detected from type annotations. Write `id: int`, `q: str`,
   `body: MyModel` without boilerplate unless you need the explicit form.
+  `Query[T]` and `Json[T]` support Pydantic models, `msgspec.Struct`, and
+  Python `dataclass` types.
 * **Three-scope DI** — `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes with
   Protocol bindings, multi-bindings (`list[T]`), and NestJS-style custom
   providers (`use_value` / `use_class` / `use_factory` / `use_existing`).
@@ -121,6 +123,9 @@ core ideas:
   `Last-Event-ID` resumability for AI token-streaming patterns.
 * **Typed streaming** — `StreamingResponse[T]` auto-negotiates between SSE,
   NDJSON, and JSON Lines based on the client's `Accept` header.
+* **Custom responses & file delivery** — Return your own `Response` subclasses,
+  stream downloads with `await Response.file(...)`, or emit XML with
+  `Response.xml(...)` while keeping the dispatch pipeline untouched.
 * **Background tasks** — `BackgroundTasks` extractor fires work after the
   response is sent. `TaskHandle` exposes cancel/await. Signals notify on
   start, complete, and failure.

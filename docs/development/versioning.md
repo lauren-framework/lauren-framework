@@ -63,6 +63,31 @@ checkout without installing the package).  In all normal workflows
 PEP 440 pre-release identifiers are appended directly to the numeric
 version, e.g. `1.2.3rc1`.
 
+### Deriving the Next Tag
+
+Use the built-in nox helpers to inspect the latest semantic-version tag and
+print the next annotated tag command before you cut a release:
+
+```bash
+# Default patch bump
+nox -s ver_inc
+
+# Explicit semantic bump
+nox -s ver_inc -- --minor
+nox -s ver_inc -- --major
+
+# Inspect the previous version if you need to undo a proposal
+nox -s ver_dec -- --minor
+```
+
+Each session prints the latest `vX.Y.Z` tag it found, the proposed next or
+previous tag, and a copy/paste-ready command such as:
+
+```bash
+git tag -a v1.2.3 -m "Release v1.2.3"
+git push origin v1.2.3
+```
+
 ### Creating a Tag
 
 ```bash

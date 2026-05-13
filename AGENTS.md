@@ -31,6 +31,10 @@ make docs-serve              # live-reload at http://localhost:8000
 # Build a release wheel:
 make build                   # → ./dist/*.whl + ./dist/*.tar.gz
 make build-check             # twine check
+
+# Derive the next semantic tag before a release:
+nox -s ver_inc -- --minor
+nox -s ver_dec -- --patch
 ```
 
 ## What Agents Should Always Do
@@ -231,6 +235,7 @@ Welcome aboard.
 | FastAPI → lauren side-by-side equivalents | `skills/migrating-from-fastapi/` |
 | CORS, auth guards, structured logging | `skills/using-companion-packages/` |
 | Copy-paste: CRUD, health check, background job, SSE | `skills/common-patterns/` |
+| Build a first-party or third-party companion package | `skills/building-companion-packages/` |
 
 Full index: [`skills/README.md`](skills/README.md)
 
@@ -244,8 +249,9 @@ Full index: [`skills/README.md`](skills/README.md)
 | Strict inheritance rules (why subclasses must re-decorate) | `docs/core-concepts/inheritance.md` |
 | WebSocket patterns | `docs/guides/websockets.md` |
 | SSE / streaming | `docs/guides/sse.md` |
+| Custom response subclasses and response factories | `docs/guides/custom-responses.md` / `docs/guides/file-responses.md` |
 | Testing playbook | `docs/guides/testing.md` |
-| Release / versioning process | `docs/development/release.md` |
+| Release / versioning process | `docs/development/release.md` / `docs/development/versioning.md` |
 
 ## Common Startup Errors
 

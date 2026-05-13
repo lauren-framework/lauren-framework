@@ -17,15 +17,15 @@ pip install pydantic
 ## Install from source
 
 ```bash
-git clone https://github.com/your-org/lauren.git
-cd lauren
+git clone https://github.com/lauren-framework/lauren-framework.git
+cd lauren-framework
 pip install -e .
 pip install pytest pytest-asyncio   # to run the test suite
 ```
 
 ## Run the tests
 
-Lauren ships with **252+ unit tests** covering routing, DI, extractors, modules, lifecycle, middleware, guards, exception handlers, OpenAPI, the strict inheritance guard, auto-serialization, structured logging, signal handling, WebSockets, Server-Sent Events, and the Socket.IO adapter:
+Lauren ships with **1500+ unit and integration tests** covering routing, DI, extractors, modules, lifecycle, middleware, guards, exception handlers, OpenAPI, the strict inheritance guard, auto-serialization, structured logging, signal handling, WebSockets, Server-Sent Events, Socket.IO, streaming, and background tasks:
 
 ```bash
 python -m pytest tests/

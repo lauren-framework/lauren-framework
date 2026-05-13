@@ -8,18 +8,19 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 
 - **Radix-tree router** with O(depth) lookup, static > param > wildcard priority, per-method dispatch with `Allow` header on 405.
 - **Dependency Injection** with `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes, Protocol binding, multi-bindings (`list[T]` injection), circular detection, scope-violation checks, and the four NestJS-style custom-provider recipes (`use_value`, `use_class`, `use_factory`, `use_existing`) plus `Token` and `Inject`.
-- **Extractor system** for typed request decomposition (`Path[int]`, `Query[str]`, `Header[str]`, `Cookie[str]`, `Json[Model]`, `Form[Model]`, `Bytes`, `State`, `Depends[T]`, plus user-defined extractors via a classmethod hook).
+- **Extractor system** for typed request decomposition (`Path[int]`, `Query[str]`, `Header[str]`, `Cookie[str]`, `Json[Model]`, `Form[Model]`, `Bytes`, `State`, `Depends[T]`), model extraction for Pydantic / `msgspec.Struct` / Python `dataclass` types, plus user-defined extractors via an `ExtractionMarker.extract` instance method (legacy classmethod form still supported).
 - **Module system** with explicit imports/exports and circular-import detection (NestJS-style).
 - **Lifecycle hooks** (`@post_construct`, `@pre_destruct`) run in topological order with timeouts.
 - **First-class WebSockets** — `@ws_controller(path)`, `@on_connect`, `@on_message("event")`, `@on_disconnect`, `@on_error`, with typed Pydantic-validated frames, discriminated-union dispatch, and `BroadcastGroup` rooms.
 - **Server-Sent Events** — `EventStream`, `ServerSentEvent`, `last_event_id`. Per the HTML living standard. Optional keep-alive heartbeats.
-- **Typed streaming** — `StreamingResponse[T]` content-negotiates between SSE / NDJSON / JSON Lines from the `Accept` header.
+- **Typed streaming** — `StreamingResponse[T]` content-negotiates between SSE / NDJSON / JSON Lines from the `Accept` header, including non-Pydantic item types.
+- **Response shaping** — `Response.file(...)`, `Response.xml(...)`, immutable `with_*` builders, and custom `Response` subclasses that pass through dispatch unchanged while preserving their concrete type.
 - **Socket.IO compatibility** — Engine.IO v4 / Socket.IO v5 adapter with `@socketio_controller` and `@on_socketio_event`.
 - **ASGI runtime** with `LaurenFactory.create()` seven-phase startup, lifespan protocol, graceful drain.
 - **Sync handler support**: plain `def` handlers are automatically offloaded to a thread pool via `anyio.to_thread.run_sync`; they never block the event loop. All extractors, return-type coercion, and binding styles (instance / classmethod / static) work identically for sync and async handlers.
 - **OpenAPI 3.1** generation from Pydantic models; Swagger UI / ReDoc-ready schemas.
 - **Middleware (onion)**, **Guards**, and **Exception Handlers** — all attachable globally, per-controller, or per-route.
-- **Auto-serialization**: return dicts, Pydantic models, dataclasses, or `(body, status)` tuples and lauren builds the Response for you.
+- **Auto-serialization**: return dicts, Pydantic models, dataclasses, `msgspec.Struct` values, custom `Response` subclasses, or `(body, status)` tuples and lauren builds the Response for you.
 - **Strict inheritance**: subclasses are controllers / injectables / WS gateways / exception handlers / middlewares only when explicitly re-decorated.
 - **Structured logging** with NestJS-style `ConsoleLogger` (coloured) and `JsonLogger` (production); all four built-in loggers are `@injectable(provides=(Logger,))` — pass one in `global_providers=[ConsoleLogger]` and any service can declare `log: Logger` to receive it.
 - **Graceful shutdown hooks** via `app.on_shutdown(fn)` plus `install_signal_handlers` for SIGTERM/SIGINT-driven drain.
@@ -32,7 +33,7 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 
 ## Documentation for LLMs
 
-- [Full reference](llms-full.txt): complete API surface, all decorators, extractors, types, errors, examples — including WebSocket gateways, SSE, structured streaming, custom providers, and exception handlers.
+- [Full reference](llms-full.txt): complete API surface, all decorators, extractors, response factories, types, errors, and examples — including WebSocket gateways, SSE, structured streaming, custom providers, custom responses, and exception handlers.
 
 ## Examples
 
@@ -42,5 +43,6 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 - [Typed streaming](#streaming): `StreamingResponse[T]` with content negotiation.
 - [Custom providers](#custom-providers): `use_value` / `use_class` / `use_factory` / `use_existing`.
 - [Custom extractors](#custom-extractors): creating domain extractors like `CurrentUser`.
+- [Custom responses](#response): subclassing `Response`, file downloads, XML output.
 - [Guards & middleware](#guards-middleware): applying authorization at class or route level.
 - [Exception handlers](#exception-handlers): typed error → response mapping.

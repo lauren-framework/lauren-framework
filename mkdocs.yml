@@ -2,7 +2,7 @@ site_name: Lauren Framework
 site_description: A metadata-first, enterprise-ready Python web framework — inspired by Axum, FastAPI, and NestJS.
 site_author: Lauren Framework Team
 site_url: https://lauren-py.dev/
-repo_url: https://github.com/your-org/lauren
+repo_url: https://github.com/lauren-framework/lauren-framework
 repo_name: lauren
 copyright: Copyright &copy; 2026 Lauren Framework — Enterprise-grade Python ASGI
 
@@ -114,7 +114,7 @@ watch:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/your-org/lauren
+      link: https://github.com/lauren-framework/lauren-framework
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/lauren/
   generator: false

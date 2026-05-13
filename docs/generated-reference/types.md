@@ -172,6 +172,73 @@ def redirect(cls, location: str, status: int = 307) -> 'Response'
 def stream(cls, iterable: AsyncIterable[bytes], status: int = 200, media_type: str = 'application/octet-stream', headers: Headers | None = None) -> 'Response'
 ```
 
+#### `Response.file`
+
+```python
+def file(cls, path: str, media_type: str | None = None, filename: str | None = None, inline: bool = False, chunk_size: int = 65536, headers: 'Headers | None' = None) -> 'Response'
+```
+
+Stream a file from the filesystem asynchronously.
+
+Uses ``anyio.open_file`` for non-blocking reads so the event loop
+is never blocked, even for large files.  MIME type is auto-detected
+from the file extension when ``media_type`` is omitted.
+
+:param path: Filesystem path to the file (``str`` or ``Path``).
+:param media_type: Content-Type override.  Detected automatically
+    from the extension when ``None`` (falls back to
+    ``application/octet-stream`` for unknown extensions).
+:param filename: Name sent in the ``Content-Disposition`` header.
+    Defaults to the basename of ``path``.
+:param inline: When ``True`` the browser displays the file inline
+    (``Content-Disposition: inline``).  When ``False`` (the default)
+    the browser opens a Save-As dialog
+    (``Content-Disposition: attachment``).
+:param chunk_size: Read buffer size in bytes.  Default is 64 KB.
+:param headers: Extra response headers merged before the
+    Content-Type and Content-Disposition headers are applied.
+:raises FileNotFoundError: When ``path`` does not point to an
+    existing file.
+:return: A streaming :class:`Response` ready to be returned from
+    a handler.
+
+Example — serve a generated PDF::
+
+    @get("/report")
+    async def report(self) -> Response:
+        return await Response.file(
+            "/tmp/report.pdf",
+            filename="quarterly-report.pdf",
+        )
+
+Example — serve an image inline::
+
+    @get("/logo")
+    async def logo(self) -> Response:
+        return await Response.file(
+            "static/logo.png",
+            inline=True,
+        )
+
+#### `Response.xml`
+
+```python
+def xml(cls, data: str, status: int = 200, headers: 'Headers | None' = None) -> 'Response'
+```
+
+Build an XML response with ``Content-Type: application/xml``.
+
+:param data: Raw XML content as a string (encoded to UTF-8) or bytes.
+:param status: HTTP status code (default 200).
+:param headers: Optional extra headers.
+
+Example::
+
+    @get("/feed")
+    async def atom_feed(self) -> Response:
+        xml = "<feed>...</feed>"
+        return Response.xml(xml)
+
 #### `Response.sse`
 
 ```python

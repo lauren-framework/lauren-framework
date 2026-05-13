@@ -34,6 +34,16 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     `UploadFile` for single and multi-file multipart uploads, mixed forms with `Form[T]`, optional files, Unicode filenames.
 
+-   :material-file-download-outline: [__File Responses & XML__](file-responses.md)
+
+    ---
+    `await Response.file(...)` for streamed downloads, browser-inline previews, and XML responses with `Response.xml(...)`.
+
+-   :material-shape-plus: [__Custom Responses__](custom-responses.md)
+
+    ---
+    Subclass `Response`, preserve the concrete type through dispatch, and expose domain-specific response builders or streaming bodies.
+
 -   :material-shield-key: [__Custom Guards__](custom-guards.md)
 
     ---

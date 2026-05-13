@@ -36,6 +36,10 @@ nox -s docs                         # strict build (fails on warnings)
 
 # Sync public API reference
 nox -s llms_check                   # verify llms-full.txt matches lauren.__all__
+
+# Release helpers
+nox -s ver_inc -- --minor          # suggest the next minor tag + git tag command
+nox -s ver_dec -- --patch          # inspect the previous patch tag
 ```
 
 ## 1. Project Identity

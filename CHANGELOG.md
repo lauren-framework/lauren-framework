@@ -7,16 +7,60 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Documentation
+
+- Refreshed the README, MkDocs pages, AI-agent guides, skills index, and
+  `llms*.txt` references so they reflect the current `v1.2.0` framework
+  surface, release workflow, and companion-package ecosystem.
+
+## [1.2.0] - 2026-05-13
+
+### Added
+
+- **Custom `Response` subclasses** — handlers may now return any `Response`
+  subclass and the dispatch pipeline preserves the concrete type unchanged.
+  Builder methods such as `with_header()` and `with_cookie()` clone the same
+  subclass, so domain-specific response types can add factory helpers, extra
+  attributes, and streaming bodies safely.
+
+- **Response guides** — added dedicated documentation for custom response
+  subclasses, `Response.file()`, and `Response.xml()` to make response shaping,
+  downloads, and XML output first-class documented patterns.
+
+### Changed
+
+- **Release version helpers** — `nox -s ver_inc` and `nox -s ver_dec` now
+  derive the next semantic version from existing `vX.Y.Z` tags and print
+  copy/paste-ready annotated tag commands for release engineers.
+
+## [1.1.0] - 2026-05-12
+
 ### Fixed
 
 - **`Query[T]` and `Json[T]` with non-Pydantic struct types** — `msgspec.Struct`
   subclasses and Python `dataclass` types now work correctly as parameter
-  annotations, including with `OrjsonEncoder`.  Previously, `Query[PageParams]`
+  annotations, including with `OrjsonEncoder`. Previously, `Query[PageParams]`
   returned a raw string instead of a `PageParams` instance; `Json[PageParams]`
-  returned a raw dict without instantiation.  A bare `params: PageParams`
+  returned a raw dict without instantiation. A bare `params: PageParams`
   annotation now auto-promotes to a JSON body parameter, mirroring the existing
-  Pydantic behaviour.  New helpers: `_is_msgspec_struct_type`,
+  Pydantic behaviour. New helpers: `_is_msgspec_struct_type`,
   `_is_dataclass_type`, `_is_struct_type`, `_convert_struct`.
+
+## [1.0.2] - 2026-05-12
+
+### Added
+
+- **Descriptor-based route handlers** — route dispatch now resolves handlers
+  through `__get__`, which makes `@staticmethod`, `@classmethod`, decorators
+  that preserve `__wrapped__`, environment-conditional handlers, and advanced
+  custom descriptors all behave consistently on the request path.
+
+- **Companion-package authoring skill** — added
+  `skills/building-companion-packages/` with guidance for building, testing,
+  versioning, and publishing first-party or third-party Lauren ecosystem
+  packages.
+
+### Fixed
 
 - **`StreamingResponse[T]` with non-Pydantic item types** — Using
   `MsgspecEncoder` or `OrjsonEncoder` with a `StreamingResponse[Greeting]`
@@ -34,36 +78,11 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
      (detected via `__struct_fields__`) by converting them to plain dicts,
      fixing the `OrjsonEncoder` fallback path for struct values.
 
-- **Integration tests** — tests/integration/test_docs_custom_route_handlers.py — 16 tests covering every code snippet in the guide: instance/static/classmethod
-bindings, both @staticmethod/@get orderings, decorators with and without @wraps (including the silent-404 and runtime-500 failure modes), the @feature flag
-decorator (flag absent → fallback, flag present → original), class-body if/else conditional, and the retry_on_error custom descriptor. Two gotchas caught
-during testing: (a) Python 3.11's inspect.iscoroutinefunction doesn't follow __wrapped__ (only 3.12+ does), so wrapped must explicitly be async def when fn
-is async; (b) the env var must be set before the class body executes since decorators run at class-definition time.
-
 ### Changed
-- Updated CLAUDE.md and contributor docs.
-- Enhanced typing across the framework.
-- Own-module provider now takes priority in structural Protocol resolution.
 
-- The guide is at docs/guides/custom-route-handlers.md and the index is updated. Here's what it covers:
-
-  Binding styles — three sections with working examples:
-  - Instance method (default) — normal DI-injected self
-  - @staticmethod — no receiver; DI still works for request-level parameters like Inject(); both decorator orderings shown and explained
-  - @classmethod — cls is the controller class, instance still resolved for lifecycle hooks
-
-  Writing your own decorators — the @functools.wraps rule is front and center, with:
-  - The minimal skeleton every decorator should follow
-  - A !!! warning block showing the two distinct failure modes (silent 404 vs runtime 500) with a clear causal explanation of each
-  - A decorator-order diagram and the rule that either order is fine as long as every decorator in the chain uses @wraps
-
-  Environment-conditional implementations — two patterns:
-  - A reusable @feature(flag, fallback) decorator that picks an implementation at class-body time with zero per-request overhead, using @functools.wraps to
-  carry the route marker across
-  - A plain if/else in the class body evaluated at import time for the cleanest zero-overhead approach
-
-  - Custom descriptors (advanced) — the __get__ protocol section documents the three requirements (callable, update_wrapper, __wrapped__) with a concrete
-  retry_on_error descriptor example that shows exactly how it connects to Lauren's __get__-based dispatch.
+- **Documentation and examples** — expanded the custom route handlers and
+  implicit-parameter documentation to cover descriptor dispatch, decorator
+  ordering with `@functools.wraps`, and non-Pydantic struct extraction.
 
 ## [1.0.1] - 2026-05-09
 
@@ -115,5 +134,9 @@ is async; (b) the env var must be set before the class body executes since decor
   complete reference) shipped inside the wheel.
 - **`TestClient` / `WsTestClient`** — in-process ASGI test clients.
 
-[Unreleased]: https://github.com/your-org/lauren/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/your-org/lauren/releases/tag/v1.0.0
+[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.2.0
+[1.1.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.1.0
+[1.0.2]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.0.2
+[1.0.1]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.0.1
+[1.0.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.0.0

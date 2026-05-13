@@ -47,6 +47,7 @@ from typing import (
     Union,
     get_args,
     get_origin,
+    ClassVar,
 )
 
 from .exceptions import ExtractorError, ExtractorFieldError, MissingProviderError
@@ -139,8 +140,8 @@ class ExtractionMarker:
     the instance method form above.
     """
 
-    source: str = "unknown"
-    reads_body: bool = False
+    source: ClassVar[str] = "unknown"
+    reads_body: ClassVar[bool] = False
 
     def __class_getitem__(cls, item: T) -> T:
         # Returns ``Annotated[item, marker_instance]`` so user code can write

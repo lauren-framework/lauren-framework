@@ -14,6 +14,7 @@
 | [testing-lauren-apps](testing-lauren-apps/) | `TestClient`, `WsTestClient`, async tests, mock providers, startup-failure assertions |
 | [migrating-from-fastapi](migrating-from-fastapi/) | Side-by-side FastAPI → lauren equivalents (routing, DI, middleware, errors) |
 | [using-companion-packages](using-companion-packages/) | CORS, auth guards (`jwt_bearer`, `api_key`), structured logging with `lauren-logging` |
+| [building-companion-packages](building-companion-packages/) | Package structure, DI/module integration, CI/CD, `llms*.txt`, and publishing for Lauren ecosystem packages |
 | [common-patterns](common-patterns/) | Copy-paste complete patterns: auth CRUD, health check, background job, typed SSE stream |
 
 ## Quick nav by error

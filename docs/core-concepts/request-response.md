@@ -85,6 +85,8 @@ Response.json(data, *, status=200, headers=None)
 Response.text(data, *, status=200, headers=None)
 Response.html(data, *, status=200, headers=None)
 Response.bytes(data, *, status=200, media_type="application/octet-stream", headers=None)
+Response.xml(data, *, status=200, headers=None)
+await Response.file(path, *, media_type=None, filename=None, inline=False, chunk_size=65536, headers=None)
 Response.empty(status=204)
 Response.no_content()
 Response.created(data=None, *, location=None)
@@ -109,6 +111,12 @@ resp = (
 
 `without_header(name)`, `delete_cookie(name)`, and `with_body(bytes_or_str)` round out the toolkit.
 
+Every `with_*` builder preserves the concrete response type. That means a custom
+`Response` subclass returned by a handler passes through dispatch unchanged and
+keeps its subclass-specific helpers and attributes when you chain builders. See
+[Custom Responses](../guides/custom-responses.md) and
+[File Responses & XML](../guides/file-responses.md).
+
 ## Auto-serialization — return what feels right
 
 You almost never have to construct a `Response` yourself. Lauren accepts these handler return shapes and builds the `Response` for you:
@@ -121,9 +129,10 @@ You almost never have to construct a `Response` yourself. Lauren accepts these h
 | Pydantic v2 `BaseModel` | JSON 200 via `model_dump(mode="json")` |
 | `list[BaseModel]` | JSON array of dumps |
 | Dataclass instance | JSON 200 |
+| `msgspec.Struct` instance | JSON 200 |
 | `(body, status)` | the body + given status |
 | `(body, status, headers)` | the body + status + extra headers |
-| `Response` instance | passed through unchanged |
+| `Response` instance (including subclasses) | passed through unchanged |
 
 Live example, every form in one controller:
 
@@ -169,6 +178,7 @@ The encoder that backs `Response.json(...)` and auto-serialization handles, out 
 * `set` / `frozenset` (as list)
 * `bytes` (UTF-8 decoded)
 * dataclasses (recursively dumped)
+* `msgspec.Struct` instances (converted field-by-field)
 
 You can swap to faster encoders (`OrjsonEncoder`, `MsgspecEncoder`) by calling `Response.json(..., encoder=...)` or, more usefully, by configuring an app-level encoder.
 

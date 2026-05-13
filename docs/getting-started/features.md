@@ -78,7 +78,7 @@ async def show(
 ) -> ItemOut: ...
 ```
 
-Built-in extractors: `Path`, `Query`, `Header`, `Cookie`, `Json`, `Form`, `Bytes`, `State`, `Depends`, `UploadFile`, `ByteStream`. Plus **custom extractors** ([guide](../guides/custom-extractors.md)) — implement `extract` once and use the type as a parameter annotation forever.
+Built-in extractors: `Path`, `Query`, `Header`, `Cookie`, `Json`, `Form`, `Bytes`, `State`, `Depends`, `UploadFile`, `ByteStream`. `Query[T]` and `Json[T]` support Pydantic models, `msgspec.Struct`, and Python dataclasses. Plus **custom extractors** ([guide](../guides/custom-extractors.md)) — implement `extract` once and use the type as a parameter annotation forever.
 
 ## 5. Modules with explicit `imports` / `exports`
 
@@ -124,7 +124,7 @@ async def h6(self) -> None:        return None                      # 204 No Con
 async def h7(self):                return Response.html("<h1>hi</h1>")  # raw Response
 ```
 
-The default JSON encoder handles Pydantic models, enums, datetimes, UUIDs, `Decimal`, `pathlib.Path`, sets, and dataclasses out of the box.
+The default JSON encoder handles Pydantic models, enums, datetimes, UUIDs, `Decimal`, `pathlib.Path`, sets, dataclasses, and `msgspec.Struct` instances out of the box. `Response` subclasses also pass through unchanged, so you can add domain-specific response types without fighting the runtime.
 
 ## 8. Strict decorator inheritance
 
