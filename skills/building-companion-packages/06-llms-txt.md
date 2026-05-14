@@ -235,3 +235,25 @@ Task-lookup table for non-Claude AI agents (Cursor, Copilot, etc.):
 - [ ] Integration test covers the new behaviour
 - [ ] CHANGELOG.md updated under `[Unreleased]`
 ```
+
+## Release-time doc refresh workflow
+
+When package behaviour changed since the last release, derive the documentation
+update from the git diff instead of hand-curating a summary first:
+
+```bash
+git --no-pager log -p $(git describe --tags --abbrev=0)..HEAD
+```
+
+Use that output to refresh, together, as one coherent set:
+
+- `CHANGELOG.md`
+- `docs/`
+- `README.md`
+- `llms.txt`
+- `llms-full.txt`
+- `CLAUDE.md`
+- `AGENTS.md`
+
+This keeps the human docs, AI-ingestion files, and release notes aligned with
+the actual shipped code.

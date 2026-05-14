@@ -18,7 +18,7 @@ class Db:
         await self.pool.close()
 ```
 
-Hooks may be `async def` or plain `def`. The lifecycle scheduler awaits coroutine results and runs sync hooks directly.
+Hooks may be `async def` or plain `def`. The lifecycle scheduler awaits coroutine results and offloads sync hooks to a worker thread, so blocking startup or shutdown work does not freeze the event loop.
 
 ## When they run
 
@@ -57,7 +57,7 @@ This is what makes lifecycle ordering *correct*: a `Repo` whose `@post_construct
 
 ## Timeouts and best-effort teardown
 
-`@pre_destruct` hooks run with a per-hook timeout. If one hangs, Lauren logs a `DestructTimeoutError`, abandons that hook, and moves on to the next. **Teardown never aborts halfway through** — every other hook still runs.
+`@pre_destruct` hooks run with a per-hook timeout. If one hangs, Lauren logs a `DestructTimeoutError`, abandons that hook, and moves on to the next. **Teardown never aborts halfway through** — every other hook still runs. The same timeout protection now applies consistently to both `async def` and plain `def` hooks because sync work runs in a thread instead of inline on the loop.
 
 ```python
 await app.shutdown(drain_timeout=10.0)   # drain phase capped at 10s
@@ -147,6 +147,7 @@ All of them are emitted through the structured logger, so production aggregators
 ## Best practices
 
 * **Keep `@post_construct` cheap.** Anything that can fail and might need retry belongs in a separate "warm" step you can re-run, not in startup.
+* **Plain `def` hooks may block, but only briefly.** Sync hooks now run in a worker thread, which protects the loop, but long CPU-bound work still delays readiness or shutdown completion. Prefer `async def` for naturally async I/O and keep sync cleanup bounded.
 * **Use `on_shutdown` for things that aren't owned by a provider** — flushing a global metrics client, sending a "we're shutting down" event to a service registry, closing a side-channel connection.
 * **Use `@pre_destruct` for provider-owned resources** — connection pools, file handles, subprocesses. These mirror the `@post_construct` that opened them.
 * **Don't depend on order between `on_shutdown` callbacks and `@pre_destruct` hooks**, except that all callbacks run before any hooks. Within each phase, registration order (LIFO) and topology decide.

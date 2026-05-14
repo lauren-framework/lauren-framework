@@ -54,7 +54,7 @@ class UsersController:
 | `Query[T]` | `?key=value` | `list[str]` collects multi-value |
 | `Header[T]` | request header | case-insensitive |
 | `Cookie[T]` | cookie jar | |
-| `Json[T]` | JSON body | T must be `BaseModel`; 422 on validation error |
+| `Json[T]` | JSON body | Supports Pydantic models, `msgspec.Struct`, and Python dataclasses; 422 on validation error |
 | `Form[T]` | form-urlencoded or multipart | |
 | `Bytes` | raw body `bytes` | |
 | `Depends[T]` | DI container | resolves `T` from the container |
@@ -62,7 +62,7 @@ class UsersController:
 
 **Implicit promotion** — bare parameters (no extractor marker) are auto-promoted:
 - Name matches a `{segment}` → `Path[T]`
-- Annotation is a `BaseModel` → `Json[T]`
+- Annotation is a Pydantic model, `msgspec.Struct`, or dataclass → `Json[T]`
 - Annotation is `int/str/float/bool` → `Query[T]`
 
 See [extractors.md](extractors.md) for field descriptors, pipes, and upload files.
@@ -78,7 +78,25 @@ return Response.json(data, status=202)          # explicit Response
 return Response.redirect("/new-url", status=301)
 ```
 
-Pydantic models are serialized via `.model_dump()`. Dataclasses work too.
+Pydantic models, dataclasses, and `msgspec.Struct` values serialize out of the box.
+
+## Choosing the JSON encoder
+
+```python
+from lauren import use_encoder
+from lauren.serialization import PydanticEncoder
+
+@controller("/audit")
+@use_encoder(PydanticEncoder())
+class AuditController:
+    @get("/latest")
+    async def latest(self) -> AuditEvent:
+        return await self._svc.latest()
+```
+
+- App-wide: `LaurenFactory.create(..., json_encoder=...)`
+- Controller/route override: `@use_encoder(...)`
+- The active encoder also powers structured error responses and SSE payloads returned from HTTP handlers
 
 ## Sync handlers
 

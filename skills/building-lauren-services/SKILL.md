@@ -71,6 +71,9 @@ class IdGenerator: ...
 | `@pre_destruct` | On shutdown, reverse topological order | Both |
 
 Hooks are called in topological order (dependencies first for `@post_construct`, last for `@pre_destruct`).
+Plain `def` lifecycle hooks are offloaded to a worker thread, so blocking sync
+cleanup no longer freezes the event loop during startup or shutdown. Keep them
+bounded anyway — they still delay readiness and teardown completion.
 
 ## Injectable function (factory provider)
 

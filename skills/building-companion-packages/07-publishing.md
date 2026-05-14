@@ -16,16 +16,31 @@ Never set `version =` in `pyproject.toml` — let `setuptools-scm` handle it.
 ## Creating a release
 
 ```bash
-# 1. Update CHANGELOG.md — move [Unreleased] entries to [X.Y.Z] section
-# 2. Commit
+# 1. Review the full diff since the latest release tag
+git --no-pager log -p $(git describe --tags --abbrev=0)..HEAD
+
+# 2. Update docs and AI-ingestion files to match the actual changes
+#    - docs/
+#    - README.md
+#    - llms.txt / llms-full.txt
+#    - CLAUDE.md / AGENTS.md
+
+# 3. Update CHANGELOG.md — move [Unreleased] entries to [X.Y.Z] section
+#    Use Keep a Changelog headings (Added / Changed / Fixed / Removed).
+
+# 4. Commit
 git add CHANGELOG.md && git commit -m "chore: release vX.Y.Z"
 
-# 3. Tag
+# 5. Tag
 git tag vX.Y.Z
 git push origin main --tags
 
-# 4. GitHub Actions builds and publishes automatically
+# 6. GitHub Actions builds and publishes automatically
 ```
+
+Do not write the changelog from memory. The `git log -p` range above is the
+source of truth for both the release notes and any doc refresh you ship with the
+release.
 
 The `release.yml` workflow:
 1. Runs `nox -s llms_check` to verify public API docs are in sync

@@ -55,6 +55,11 @@ What `EventStream` does for you:
 * Frames each yielded item per the [HTML living standard](https://html.spec.whatwg.org/multipage/server-sent-events.html).
 * Optionally inserts keep-alive heartbeats so idle connections survive proxy timeouts.
 
+JSON values emitted by `EventStream` and `Response.sse(...)` use the active Lauren
+JSON encoder rather than a hardcoded stdlib fallback. That means app-wide
+`json_encoder=` configuration and route/controller `@use_encoder(...)` overrides
+apply to SSE payloads too.
+
 ## What you can yield from the producer
 
 The async iterable wrapped by `EventStream` accepts five shapes — **mix them freely**:
@@ -85,6 +90,30 @@ async def producer():
         data={"items": [1, 2, 3]},
     )
 ```
+
+## Choosing the JSON encoder for SSE
+
+If your SSE payloads are mostly Pydantic models, you can route them through
+`pydantic-core` directly:
+
+```python
+from lauren import controller, get, use_encoder
+from lauren.serialization import PydanticEncoder
+
+@controller("/train")
+@use_encoder(PydanticEncoder())
+class TrainController:
+    @get("/events")
+    async def events(self) -> EventStream:
+        async def producer():
+            yield {"event": "ready", "data": {"ok": True}}
+            yield ServerSentEvent(event="tick", data=Tick(seq=1, at=datetime.now()))
+        return EventStream(producer(), keep_alive=15.0)
+```
+
+Without `@use_encoder(...)`, the route falls back to the controller-level
+encoder, then the app-wide `LaurenFactory.create(..., json_encoder=...)`
+setting.
 
 ## The `ServerSentEvent` envelope
 

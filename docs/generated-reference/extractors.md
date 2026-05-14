@@ -175,7 +175,7 @@ class Depends
 ### `pipe`
 
 ```python
-def pipe(target: Any = None) -> Any
+def pipe(target: PipeDecoratorTarget | None = None) -> Callable[[PipeDecoratorTarget], PipeDecoratorTarget] | PipeDecoratorTarget
 ```
 
 Mark a function or class as a pipe.
@@ -232,13 +232,13 @@ marker::
 #### `Pipe.transform`
 
 ```python
-def transform(self, value: Any, ctx: PipeContext) -> Any
+def transform(self, value: object, ctx: PipeContext) -> object
 ```
 
 ### `PipeContext`
 
 ```python
-class PipeContext(request: Request, name: str, source: str, inner_type: Any, container: Any, request_cache: dict[type, Any] | None, owning_module: type | None, field_descriptor: 'FieldDescriptor | None')
+class PipeContext(request: Request, name: str, source: str, inner_type: object, container: ResolverProtocol | None, request_cache: RequestCache | None, owning_module: type | None, field_descriptor: 'FieldDescriptor | None')
 ```
 
 Context object passed to a pipe's transform function.
@@ -328,11 +328,11 @@ class State
 ### `FieldDescriptor`
 
 ```python
-class FieldDescriptor(default: Any = ..., alias: str | None = None, ge: float | None = None, le: float | None = None, gt: float | None = None, lt: float | None = None, min_length: int | None = None, max_length: int | None = None, pattern: str | None = None, description: str | None = None, example: Any = None)
+class FieldDescriptor(default: object = ..., alias: str | None = None, ge: float | None = None, le: float | None = None, gt: float | None = None, lt: float | None = None, min_length: int | None = None, max_length: int | None = None, pattern: str | None = None, description: str | None = None, example: object | None = None)
 ```
 
 #### `FieldDescriptor.validate`
 
 ```python
-def validate(self, name: str, value: Any) -> Any
+def validate(self, name: str, value: V) -> V
 ```

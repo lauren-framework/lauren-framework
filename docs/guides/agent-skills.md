@@ -168,6 +168,27 @@ npx skills add lauren-framework/lauren-framework --local
 | [`graceful-shutdown`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/graceful-shutdown) | Connection draining, `@pre_destruct` shutdown hooks |
 | [`docker-compose-setup`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/docker-compose-setup) | Multi-stage Dockerfile, docker-compose stack |
 
+## Keeping docs current after framework changes
+
+When a change lands in core framework code, agent-driven documentation updates
+should start from the git diff since the latest release tag:
+
+```bash
+git --no-pager log -p $(git describe --tags --abbrev=0)..HEAD
+```
+
+Use that range to:
+
+1. Update `CHANGELOG.md` under `[Unreleased]` using Keep a Changelog headings.
+2. Refresh the relevant hand-written docs under `docs/` so guides match the new runtime behaviour.
+3. Update `llms.txt`, `llms-full.txt`, `AGENTS.md`, and `CLAUDE.md` if the public surface or agent guidance changed.
+4. Run the strict validation steps before handing off:
+
+```bash
+uv run nox -s docs
+uv run nox -s llms_check
+```
+
 ## LLM context files
 
 For agents that ingest raw context rather than SKILL.md files:

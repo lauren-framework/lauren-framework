@@ -195,6 +195,12 @@ await ws.send_json({"event": "chat.recv", "text": "hi"})
 
 `send_json` handles Pydantic models, dataclasses, datetimes, UUIDs, and the rest of Lauren's permissive JSON encoder set.
 
+Unlike early releases, `send_json(...)` also respects the app-wide encoder you
+pass to `LaurenFactory.create(..., json_encoder=...)`. If the rest of your app
+uses `OrjsonEncoder`, `MsgspecEncoder`, or `PydanticEncoder`, WebSocket JSON
+frames now use the same encoder family instead of silently falling back to the
+stdlib path.
+
 ### Termination
 
 ```python

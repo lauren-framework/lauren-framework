@@ -242,7 +242,7 @@ Example::
 #### `Response.sse`
 
 ```python
-def sse(cls, iterable: AsyncIterable[str | dict[str, Any]], status: int = 200) -> 'Response'
+def sse(cls, iterable: AsyncIterable[str | dict[str, Any]], status: int = 200, encoder: Any = None) -> 'Response'
 ```
 
 #### `Response.with_status`

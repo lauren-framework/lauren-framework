@@ -49,6 +49,8 @@ ServerSentEvent(
 
 - `data=None` with `comment=...` → comment-only (heartbeat) frame.
 - Plain `str` or `dict` items yielded from the async generator are auto-promoted to `ServerSentEvent`.
+- JSON payloads use Lauren's active encoder, so app-level `json_encoder=` and
+  HTTP `@use_encoder(...)` overrides affect SSE framing too.
 
 ### EventStream options
 
@@ -61,6 +63,18 @@ EventStream(
 ```
 
 `keep_alive` prevents intermediary proxies from closing idle connections.
+
+If the stream mostly emits Pydantic models, route it through the Pydantic-native encoder:
+
+```python
+from lauren import use_encoder
+from lauren.serialization import PydanticEncoder
+
+@get("/stream")
+@use_encoder(PydanticEncoder())
+async def stream(self) -> EventStream:
+    ...
+```
 
 ### Typed streaming alternative
 
@@ -114,3 +128,7 @@ Register in a module just like an HTTP controller:
 class ChatModule:
     pass
 ```
+
+When you call `ws.send_json(...)`, the gateway uses the app-wide encoder from
+`LaurenFactory.create(..., json_encoder=...)` rather than silently falling back
+to the stdlib JSON path.

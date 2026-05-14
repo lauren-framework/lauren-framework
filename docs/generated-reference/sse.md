@@ -7,7 +7,7 @@ Server-Sent Events, typed streaming responses, and raw byte streams.
 ### `EventStream`
 
 ```python
-class EventStream(iterable: 'AsyncIterable[SSEItem] | Iterable[SSEItem]', status: int = 200, keep_alive: float | None = None, keep_alive_comment: str = DEFAULT_KEEPALIVE_COMMENT, extra_headers: 'Headers | Mapping[str, str] | Iterable[tuple[str, str]] | None' = None)
+class EventStream(iterable: 'AsyncIterable[SSEItem] | Iterable[SSEItem]', status: int = 200, keep_alive: float | None = None, keep_alive_comment: str = DEFAULT_KEEPALIVE_COMMENT, extra_headers: 'Headers | Mapping[str, str] | Iterable[tuple[str, str]] | None' = None, encoder: Any = None)
 ```
 
 A streaming HTTP response that frames events as Server-Sent Events.
@@ -93,7 +93,7 @@ comment-only and event-only frames from sprouting empty
 #### `ServerSentEvent.encode`
 
 ```python
-def encode(self) -> bytes
+def encode(self, encoder: Any = None) -> bytes
 ```
 
 Return the UTF-8 bytes of this event in the SSE wire format.
@@ -101,13 +101,13 @@ Return the UTF-8 bytes of this event in the SSE wire format.
 The encoded form ends in the spec-mandated double newline
 (``\n\n``) that flushes the event on the browser side.
 Multiline data values are split into multiple ``data:`` lines
-per spec; JSON-able non-string payloads are encoded once with
-lauren's permissive serializer.
+per spec; JSON-able non-string payloads are serialized via
+*encoder* (or the active encoder when *encoder* is ``None``).
 
 ### `format_sse_event`
 
 ```python
-def format_sse_event(data: Any = None, event: str | None = None, id: str | None = None, retry: int | None = None, comment: str | None = None) -> str
+def format_sse_event(data: Any = None, event: str | None = None, id: str | None = None, retry: int | None = None, comment: str | None = None, encoder: Any = None) -> str
 ```
 
 Format a single Server-Sent Event into its on-the-wire string form.

@@ -104,7 +104,7 @@ open.
 ### `WebSocket`
 
 ```python
-class WebSocket(scope: dict[str, Any], receive: Callable[[], Awaitable[dict[str, Any]]], send: Callable[[dict[str, Any]], Awaitable[None]], path_template: str, path_params: dict[str, str], app_state: Any = None)
+class WebSocket(scope: dict[str, Any], receive: Callable[[], Awaitable[dict[str, Any]]], send: Callable[[dict[str, Any]], Awaitable[None]], path_template: str, path_params: dict[str, str], app_state: Any = None, json_encoder: Any = None)
 ```
 
 A live WebSocket connection.

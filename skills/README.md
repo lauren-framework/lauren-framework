@@ -32,3 +32,25 @@
 - [`AGENTS.md`](../AGENTS.md) — by-task lookup, common errors, definition of done
 - [`CLAUDE.md`](../CLAUDE.md) — golden rules, conventions, pattern selection guide
 - [`lauren/llms-full.txt`](../lauren/llms-full.txt) — complete 25-section API reference
+
+## Updating Docs After Code Changes
+
+When a framework change lands, derive the documentation refresh from the git
+diff since the latest release tag instead of guessing from memory:
+
+```bash
+git --no-pager log -p $(git describe --tags --abbrev=0)..HEAD
+```
+
+Use that range to update:
+
+- `CHANGELOG.md` under `[Unreleased]`
+- the relevant pages under `docs/`
+- `llms.txt`, `llms-full.txt`, `AGENTS.md`, and `CLAUDE.md` when public or agent-facing behaviour changed
+
+Validate with:
+
+```bash
+uv run nox -s docs
+uv run nox -s llms_check
+```

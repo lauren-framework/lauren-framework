@@ -180,7 +180,46 @@ The encoder that backs `Response.json(...)` and auto-serialization handles, out 
 * dataclasses (recursively dumped)
 * `msgspec.Struct` instances (converted field-by-field)
 
-You can swap to faster encoders (`OrjsonEncoder`, `MsgspecEncoder`) by calling `Response.json(..., encoder=...)` or, more usefully, by configuring an app-level encoder.
+Lauren ships four encoder implementations:
+
+* `StdlibJSONEncoder` — the conservative default.
+* `OrjsonEncoder` — fastest general-purpose JSON when `orjson` is installed.
+* `MsgspecEncoder` — great for `msgspec.Struct` heavy workloads.
+* `PydanticEncoder` — routes Pydantic models and `TypeAdapter` dumps through `pydantic-core`'s Rust serializer.
+
+For whole-app behaviour, configure the encoder once at startup:
+
+```python
+from lauren import LaurenFactory
+from lauren.serialization import PydanticEncoder
+
+app = LaurenFactory.create(AppModule, json_encoder=PydanticEncoder())
+```
+
+That same encoder now flows through:
+
+* normal handler auto-serialization
+* `Response.json(...)`
+* `Response.sse(...)` dict payloads
+* `EventStream` JSON payload framing
+* structured HTTP error responses
+* `WebSocket.send_json(...)`
+
+For one controller or route, override the encoder locally with `@use_encoder(...)`:
+
+```python
+from lauren import controller, get, use_encoder
+from lauren.serialization import OrjsonEncoder
+
+@controller("/feeds")
+@use_encoder(OrjsonEncoder())
+class FeedController:
+    @get("/")
+    async def show(self) -> dict:
+        return {"fast": True}
+```
+
+Method-level `@use_encoder(...)` wins over controller-level configuration, which wins over the app-wide `json_encoder=` passed to `LaurenFactory.create(...)`.
 
 ## Streaming
 

@@ -126,6 +126,20 @@ async def h7(self):                return Response.html("<h1>hi</h1>")  # raw Re
 
 The default JSON encoder handles Pydantic models, enums, datetimes, UUIDs, `Decimal`, `pathlib.Path`, sets, dataclasses, and `msgspec.Struct` instances out of the box. `Response` subclasses also pass through unchanged, so you can add domain-specific response types without fighting the runtime.
 
+You can replace the app-wide encoder with `StdlibJSONEncoder`, `OrjsonEncoder`,
+`MsgspecEncoder`, or `PydanticEncoder`:
+
+```python
+from lauren.serialization import PydanticEncoder
+
+app = LaurenFactory.create(AppModule, json_encoder=PydanticEncoder())
+```
+
+That encoder is used consistently for normal JSON responses, structured error
+payloads, `Response.sse(...)`, `EventStream`, and `WebSocket.send_json(...)`.
+For one controller or route, use `@use_encoder(...)` to override the app
+default locally.
+
 ## 8. Strict decorator inheritance
 
 Subclasses of `@injectable` / `@controller` / `@module` / `@middleware()` classes are **not** automatically of the same role. You must opt in.

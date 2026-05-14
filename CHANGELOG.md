@@ -5,25 +5,14 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.0] - 2026-05-14
 
 ### Added
-
-- **`Response.file(path, …)` — async file streaming** — new `async classmethod`
-  that opens a file with `anyio.open_file` (non-blocking), auto-detects MIME
-  type via `mimetypes.guess_type`, streams in configurable chunks (default
-  64 KB), and sets `Content-Disposition: attachment` (or `inline` when
-  `inline=True`) with a configurable filename. Raises `FileNotFoundError` for
-  missing paths.
-
-- **`Response.xml(data, …)` — XML response factory** — convenience classmethod
-  that sets `Content-Type: application/xml`. Accepts `str` (UTF-8 encoded) or
-  `bytes`.
 
 - **`PydanticEncoder`** — fourth pluggable JSON encoder backed by
   `pydantic-core`'s Rust serializer. Calls `model.model_dump_json()` /
   `TypeAdapter.dump_json(items)` directly, skipping the intermediate Python
-  dict produced by `model_dump(mode="json")`. Honoures every Pydantic
+  dict produced by `model_dump(mode="json")`. Honours every Pydantic
   serialization rule (`@field_serializer`, `model_config`, `AliasGenerator`).
   Falls back to `StdlibJSONEncoder` transparently for non-Pydantic values.
 
@@ -79,6 +68,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- **`ExtractionMarker` class vars** — `source` and `reads_body` are now
+  annotated explicitly as `ClassVar[...]`, making the extractor marker contract
+  clearer to both static analysis and IDEs.
+
 - **`lauren/extractors.py` typing coverage** — substantially expanded static
   type information across the extractor pipeline without changing runtime
   behaviour. Added explicit type aliases and protocols for DI resolution,
@@ -95,15 +88,16 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Documentation
 
-- Added `docs/guides/file-responses.md` covering `Response.file()`,
-  `Response.xml()`, MIME detection, path traversal safety, and
-  inline-vs-attachment disposition.
-- Added `docs/guides/custom-responses.md` covering `Response` subclassing,
-  adding instance attributes, builder-method type preservation, streaming
-  bodies, and interceptor integration.
-- Refreshed the README, MkDocs pages, AI-agent guides, skills index, and
-  `llms*.txt` references so they reflect the current `v1.2.0` framework
-  surface, release workflow, and companion-package ecosystem.
+- Refreshed the docs and related AI-ingestion files around the extractor typing
+  work, including `README.md`, `AGENTS.md`, `CLAUDE.md`, `lauren/llms.txt`,
+  `lauren/llms-full.txt`, the guides index, the development docs, and the
+  skills index so they match the current post-`v1.2.0` framework surface.
+- Expanded the hand-written docs and skills for the post-`v1.2.0` encoder and
+  lifecycle changes: app-wide and route-level JSON encoder selection,
+  `PydanticEncoder`, SSE / WebSocket encoder propagation, sync lifecycle hooks
+  running in worker threads, and the maintainer workflow for deriving docs and
+  `CHANGELOG.md` updates from `git --no-pager log -p $(git describe --tags
+  --abbrev=0)..HEAD`.
 
 ## [1.2.0] - 2026-05-13
 
