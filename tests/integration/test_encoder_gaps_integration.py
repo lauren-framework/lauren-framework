@@ -124,8 +124,6 @@ class TestWebSocketSendJsonEncoder:
 
         app = LaurenFactory.create(M, json_encoder=enc)
 
-        received: list[str] = []
-
         async def run():
             async with WsTestClient(app).connect("/ws") as ws:
                 await ws.send_text("hello")

@@ -339,7 +339,9 @@ class PydanticEncoder:
 
         if isinstance(value, BaseModel):
             # Single model — model_dump_json() runs pydantic-core end-to-end.
-            result: bytes = value.model_dump_json() if compact else value.model_dump_json(indent=2).encode()
+            result: str | bytes = (
+                value.model_dump_json() if compact else value.model_dump_json(indent=2).encode()
+            )
             # model_dump_json() returns str in Pydantic v2 — ensure bytes.
             return result if isinstance(result, bytes) else result.encode("utf-8")
 
@@ -348,8 +350,8 @@ class PydanticEncoder:
             # serialisation pass rather than encoding each item separately.
             from pydantic import TypeAdapter  # noqa: PLC0415
 
-            adapter = TypeAdapter(list[type(value[0])])
-            result = adapter.dump_json(value) if compact else adapter.dump_json(value, indent=2)
+            adapter: TypeAdapter[list] = TypeAdapter(list[type(value[0])])  # type: ignore[misc]
+            result: str | bytes = adapter.dump_json(value) if compact else adapter.dump_json(value, indent=2)  # type:ignore[no-redef]
             return result if isinstance(result, bytes) else result.encode("utf-8")
 
         # Non-Pydantic value — delegate to the stdlib fallback so the encoder
