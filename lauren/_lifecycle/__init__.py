@@ -104,6 +104,17 @@ class LifecycleScheduler:
         """Invoke ``@pre_destruct`` hooks in reverse topological order.
 
         Returns a list of exceptions raised by hooks (best-effort shutdown).
+
+        Both sync and async hooks are supported:
+
+        * **Async hooks** are awaited through :func:`asyncio.wait_for` so
+          they are cancelled if they exceed *timeout* seconds.
+        * **Sync hooks** are run in a thread pool via
+          :func:`asyncio.to_thread` so they do **not** block the event loop
+          and also respect the *timeout* via :func:`asyncio.wait_for`.
+          Without this, a blocking sync hook (e.g. a DB ``close()`` call
+          that hangs) would stall the event loop indefinitely with no way to
+          cancel it.
         """
         errors: list[Exception] = []
         singletons = self._container.singletons()
@@ -116,17 +127,22 @@ class LifecycleScheduler:
                 continue
             try:
                 bound = getattr(instance, hook.__name__)
-                result = bound()
-                if inspect.isawaitable(result):
-                    try:
-                        await asyncio.wait_for(result, timeout=timeout)
-                    except asyncio.TimeoutError:
-                        err = DestructTimeoutError(
+                if inspect.iscoroutinefunction(bound):
+                    # Async hook — call to get the coroutine, then wait with timeout.
+                    coro = bound()
+                else:
+                    # Sync hook — run in a thread so the event loop stays live
+                    # and asyncio.wait_for can cancel if it takes too long.
+                    coro = asyncio.to_thread(bound)
+                try:
+                    await asyncio.wait_for(coro, timeout=timeout)
+                except asyncio.TimeoutError:
+                    errors.append(
+                        DestructTimeoutError(
                             f"pre_destruct on {provider.cls.__name__} timed out after {timeout}s",
                             detail={"class": provider.cls.__name__, "timeout": timeout},
                         )
-                        errors.append(err)
-                        continue
+                    )
             except Exception as e:
                 errors.append(
                     DestructError(

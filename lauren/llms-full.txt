@@ -220,7 +220,10 @@ class Db:
 ```
 
 - `@post_construct` — runs after DI construction, in topological order (deps first).
-- `@pre_destruct` — runs at shutdown in reverse-topological order, with a per-hook timeout. Failures are collected (shutdown is always best-effort) as `DestructError` / `DestructTimeoutError`.
+- `@pre_destruct` — runs at shutdown in reverse-topological order, with a per-hook timeout (default 10 s). Both sync and async hooks are supported:
+  - **Async hooks** are cancelled via `asyncio.wait_for` if they exceed the timeout.
+  - **Sync hooks** run in a thread pool via `asyncio.to_thread` — they never block the event loop and receive the same timeout protection as async hooks. A sync hook that never returns is cancelled at the timeout boundary.
+  Failures are collected (shutdown is always best-effort) as `DestructError` / `DestructTimeoutError`.
 
 ### Middleware & guard decorators
 

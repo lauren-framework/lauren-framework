@@ -10,7 +10,7 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 - **Dependency Injection** with `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes, Protocol binding, multi-bindings (`list[T]` injection), circular detection, scope-violation checks, and the four NestJS-style custom-provider recipes (`use_value`, `use_class`, `use_factory`, `use_existing`) plus `Token` and `Inject`.
 - **Extractor system** for typed request decomposition (`Path[int]`, `Query[str]`, `Header[str]`, `Cookie[str]`, `Json[Model]`, `Form[Model]`, `Bytes`, `State`, `Depends[T]`), model extraction for Pydantic / `msgspec.Struct` / Python `dataclass` types, plus user-defined extractors via an `ExtractionMarker.extract` instance method (legacy classmethod form still supported).
 - **Module system** with explicit imports/exports and circular-import detection (NestJS-style).
-- **Lifecycle hooks** (`@post_construct`, `@pre_destruct`) run in topological order with timeouts.
+- **Lifecycle hooks** (`@post_construct`, `@pre_destruct`) run in topological order with timeouts. Both sync and async hooks are supported; sync hooks run in a thread pool so they never block the event loop and are subject to the same timeout enforcement as async ones.
 - **First-class WebSockets** — `@ws_controller(path)`, `@on_connect`, `@on_message("event")`, `@on_disconnect`, `@on_error`, with typed Pydantic-validated frames, discriminated-union dispatch, and `BroadcastGroup` rooms.
 - **Server-Sent Events** — `EventStream`, `ServerSentEvent`, `last_event_id`. Per the HTML living standard. Optional keep-alive heartbeats.
 - **Typed streaming** — `StreamingResponse[T]` content-negotiates between SSE / NDJSON / JSON Lines from the `Accept` header, including non-Pydantic item types.
@@ -21,6 +21,7 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 - **OpenAPI 3.1** generation from Pydantic models; Swagger UI / ReDoc-ready schemas.
 - **Middleware (onion)**, **Guards**, and **Exception Handlers** — all attachable globally, per-controller, or per-route.
 - **Auto-serialization**: return dicts, Pydantic models, dataclasses, `msgspec.Struct` values, custom `Response` subclasses, or `(body, status)` tuples and lauren builds the Response for you.
+- **Pluggable JSON encoders** — `StdlibJSONEncoder` (default), `OrjsonEncoder`, `MsgspecEncoder`, `PydanticEncoder`. Set app-wide via `LaurenFactory.create(json_encoder=…)`; override per-controller or per-route with `@use_encoder(enc)`. The encoder is threaded through every output path: handler responses, error bodies, SSE events, and WebSocket `send_json`.
 - **Strict inheritance**: subclasses are controllers / injectables / WS gateways / exception handlers / middlewares only when explicitly re-decorated.
 - **Structured logging** with NestJS-style `ConsoleLogger` (coloured) and `JsonLogger` (production); all four built-in loggers are `@injectable(provides=(Logger,))` — pass one in `global_providers=[ConsoleLogger]` and any service can declare `log: Logger` to receive it.
 - **Graceful shutdown hooks** via `app.on_shutdown(fn)` plus `install_signal_handlers` for SIGTERM/SIGINT-driven drain.

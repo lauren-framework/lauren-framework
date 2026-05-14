@@ -339,6 +339,10 @@ deterministic).
   controller needs per-request construction, add
   `@injectable(scope=Scope.REQUEST)` *below* `@controller` (bottom-up
   application means `@injectable` runs first and wins).
+- ❌ Writing a blocking sync `@pre_destruct` hook without concern for the
+  event loop — sync hooks run in a thread pool via `asyncio.to_thread` so
+  they do not block, and they respect the same `timeout=` as async hooks.
+  A sync hook that never returns will be cancelled at the timeout boundary.
 - ❌ Extracting the current request from DI when you need `route_template`
   or handler metadata — use `ExecutionContext` injection instead. Any
   handler parameter typed as `ExecutionContext` (from `lauren.types`) is

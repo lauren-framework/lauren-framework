@@ -139,3 +139,141 @@ class TestLifecycleHooks:
         from lauren.exceptions import DestructError
 
         assert isinstance(errors[0], DestructError)
+
+    # ------------------------------------------------------------------
+    # Sync @pre_destruct hooks — should run in thread + respect timeout
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_sync_pre_destruct_runs(self):
+        """A sync @pre_destruct hook executes and its result is observed."""
+        called: list[bool] = []
+
+        @injectable()
+        class SyncSvc:
+            @pre_destruct
+            def stop(self):
+                called.append(True)
+
+        container = DIContainer()
+        container.register(SyncSvc)
+        container.compile()
+        sched = LifecycleScheduler(container)
+        sched.compute_order()
+        await sched.run_post_construct()
+        errors = await sched.run_pre_destruct()
+        assert errors == []
+        assert called == [True]
+
+    @pytest.mark.asyncio
+    async def test_sync_pre_destruct_timeout(self):
+        """A sync @pre_destruct hook that blocks is interrupted by the timeout.
+
+        Before the fix this test would block the event loop for the full
+        sleep duration; after the fix the sync hook runs in a thread and
+        asyncio.wait_for can cancel it.
+        """
+        import time
+
+        from lauren.exceptions import DestructTimeoutError
+
+        @injectable()
+        class BlockingSvc:
+            @pre_destruct
+            def stop(self):
+                time.sleep(0.5)  # intentionally blocking (shortened for test speed)
+
+        container = DIContainer()
+        container.register(BlockingSvc)
+        container.compile()
+        sched = LifecycleScheduler(container)
+        sched.compute_order()
+        await sched.run_post_construct()
+        # With the fix this completes in ~0.05 s; without it the test hangs for 5 s.
+        errors = await sched.run_pre_destruct(timeout=0.05)
+        assert len(errors) == 1
+        assert isinstance(errors[0], DestructTimeoutError)
+
+    @pytest.mark.asyncio
+    async def test_sync_pre_destruct_error_captured(self):
+        """A sync @pre_destruct hook that raises is captured, not re-raised."""
+        from lauren.exceptions import DestructError
+
+        @injectable()
+        class ErrSvc:
+            @pre_destruct
+            def stop(self):
+                raise ValueError("sync boom")
+
+        container = DIContainer()
+        container.register(ErrSvc)
+        container.compile()
+        sched = LifecycleScheduler(container)
+        sched.compute_order()
+        await sched.run_post_construct()
+        errors = await sched.run_pre_destruct()
+        assert len(errors) == 1
+        assert isinstance(errors[0], DestructError)
+
+    @pytest.mark.asyncio
+    async def test_sync_pre_destruct_does_not_block_event_loop(self):
+        """The event loop stays responsive while a sync hook runs in a thread."""
+        import time
+
+        ticks: list[float] = []
+
+        async def ticker():
+            for _ in range(3):
+                ticks.append(asyncio.get_event_loop().time())
+                await asyncio.sleep(0.02)
+
+        @injectable()
+        class SlowSync:
+            @pre_destruct
+            def stop(self):
+                time.sleep(0.1)  # 100ms blocking — should not stall the loop
+
+        container = DIContainer()
+        container.register(SlowSync)
+        container.compile()
+        sched = LifecycleScheduler(container)
+        sched.compute_order()
+        await sched.run_post_construct()
+
+        # Run ticker and pre_destruct concurrently.
+        await asyncio.gather(
+            sched.run_pre_destruct(timeout=1.0),
+            ticker(),
+        )
+        # If the event loop was blocked, the ticker could not tick.
+        assert len(ticks) == 3
+
+    @pytest.mark.asyncio
+    async def test_mixed_sync_async_pre_destruct_order(self):
+        """Both sync and async @pre_destruct hooks fire in reverse topo order."""
+        order: list[str] = []
+
+        @injectable()
+        class Base:
+            @pre_destruct
+            def stop(self):  # sync
+                order.append("Base")
+
+        @injectable()
+        class Top:
+            def __init__(self, b: Base): ...
+
+            @pre_destruct
+            async def stop(self):  # async
+                order.append("Top")
+
+        container = DIContainer()
+        container.register(Base)
+        container.register(Top)
+        container.compile()
+        sched = LifecycleScheduler(container)
+        sched.compute_order()
+        await sched.run_post_construct()
+        errors = await sched.run_pre_destruct()
+        assert errors == []
+        assert order == ["Top", "Base"]

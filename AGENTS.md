@@ -93,7 +93,7 @@ nox -s ver_dec -- --patch
 |                                   | `use_existing` / `Token` / `Inject`          |
 | `lauren/_routing/__init__.py`     | Radix-tree router                            |
 | `lauren/_modules/__init__.py`     | Module graph, imports/exports validation     |
-| `lauren/_lifecycle/__init__.py`   | post_construct / pre_destruct scheduler      |
+| `lauren/_lifecycle/__init__.py`   | post_construct / pre_destruct scheduler; sync hooks run in thread pool via asyncio.to_thread (timeout-protected, event-loop-safe) |
 | `lauren/_typing/`                 | ForwardRef / PEP 563 resolver                |
 | `lauren/_ws_runtime.py`           | WebSocket dispatch loop (private)            |
 | `lauren/decorators.py`            | User-facing decorators only                  |

@@ -7,6 +7,76 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **`Response.file(path, …)` — async file streaming** — new `async classmethod`
+  that opens a file with `anyio.open_file` (non-blocking), auto-detects MIME
+  type via `mimetypes.guess_type`, streams in configurable chunks (default
+  64 KB), and sets `Content-Disposition: attachment` (or `inline` when
+  `inline=True`) with a configurable filename. Raises `FileNotFoundError` for
+  missing paths.
+
+- **`Response.xml(data, …)` — XML response factory** — convenience classmethod
+  that sets `Content-Type: application/xml`. Accepts `str` (UTF-8 encoded) or
+  `bytes`.
+
+- **`PydanticEncoder`** — fourth pluggable JSON encoder backed by
+  `pydantic-core`'s Rust serializer. Calls `model.model_dump_json()` /
+  `TypeAdapter.dump_json(items)` directly, skipping the intermediate Python
+  dict produced by `model_dump(mode="json")`. Honoures every Pydantic
+  serialization rule (`@field_serializer`, `model_config`, `AliasGenerator`).
+  Falls back to `StdlibJSONEncoder` transparently for non-Pydantic values.
+
+- **`@use_encoder(encoder_instance)`** — per-route and per-controller encoder
+  override. Applies to handler return-value coercion, `EventStream` framing,
+  `Response.sse()` dict events, and error responses within the route. Method
+  level wins over controller level, which wins over the app-level encoder set
+  at `LaurenFactory.create` time. Validated at decoration time: must be called
+  with parentheses; passing a non-`JSONEncoder` instance raises
+  `DecoratorUsageError` immediately.
+
+### Fixed
+
+- **JSON encoder gaps — all four output paths now use the configured encoder.**
+  Previously, `StdlibJSONEncoder` was always used for:
+  - *HTTP error responses* — `_error_response()` now receives and passes
+    `encoder=` at every call site.
+  - *WebSocket `send_json()`* — `WebSocket.__init__` gains `json_encoder=`
+    parameter; the `_ws_runtime` passes `app._json_encoder`; `_encode_json()`
+    uses the encoder.
+  - *SSE events* — `_encode_data()`, `format_sse_event()`,
+    `ServerSentEvent.encode()`, and `_frame_event_stream()` each gain an
+    optional `encoder=` parameter. `EventStream` injects the app encoder via
+    a new `_reframe(encoder)` method called from `_coerce_to_response()`.
+  - *`Response.sse()` dict payloads* — the `_wrap()` generator now uses the
+    provided encoder or `get_active_encoder()` instead of raw `json.dumps`.
+
+- **`EventStream._clone()` dropped custom attributes** — builder methods such
+  as `with_header()` returned a new `EventStream` without `_source`,
+  `_keep_alive`, `_keep_alive_comment`, or `_encoder`, causing
+  `AttributeError` when `_reframe` was subsequently called. Fixed by
+  overriding `_clone()` in `EventStream` to copy these extra fields.
+
+- **`@pre_destruct` sync hooks blocked the event loop indefinitely** — sync
+  `@pre_destruct` methods ran inline on the event loop thread; a blocking
+  shutdown operation (DB disconnect, file flush, socket close) would freeze
+  the entire server with no way for the timeout to intervene. Sync hooks now
+  run in a thread pool via `asyncio.to_thread`, keeping the event loop
+  responsive and giving `asyncio.wait_for` a real cancellation point. Both
+  sync and async hooks now receive identical timeout protection.
+
+- **`Response` subclassing: `__slots__` removed** — `Response` declared
+  `__slots__` which prevented subclasses from adding instance attributes
+  without declaring their own `__slots__`. Removed to make subclassing
+  friction-free; the small per-instance memory trade-off is negligible for
+  short-lived response objects.
+
+- **`Response._clone()` preserved subclass type** — `_clone()` hardcoded
+  `Response.__new__(Response)`, silently downgrading any subclass instance to
+  plain `Response` after a `with_*` builder call. Changed to
+  `type(self).__new__(type(self))` so the concrete subclass type is preserved
+  through any chain of builder methods.
+
 ### Changed
 
 - **`lauren/extractors.py` typing coverage** — substantially expanded static
@@ -25,6 +95,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Documentation
 
+- Added `docs/guides/file-responses.md` covering `Response.file()`,
+  `Response.xml()`, MIME detection, path traversal safety, and
+  inline-vs-attachment disposition.
+- Added `docs/guides/custom-responses.md` covering `Response` subclassing,
+  adding instance attributes, builder-method type preservation, streaming
+  bodies, and interceptor integration.
 - Refreshed the README, MkDocs pages, AI-agent guides, skills index, and
   `llms*.txt` references so they reflect the current `v1.2.0` framework
   surface, release workflow, and companion-package ecosystem.
