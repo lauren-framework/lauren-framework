@@ -75,6 +75,7 @@ from ..streaming import (
     extract_streaming_item_type,
     negotiate_stream_format,
 )
+from ..sse import EventStream
 from ..logging import (
     Logger,
     LogLevel,
@@ -1116,10 +1117,10 @@ class LaurenApp:
                         entry, params = self._router.find(req.method, req.path)
                     except RouteNotFoundError as e:
                         captured_error = e
-                        return _error_response(e, error_format=self._error_format)
+                        return _error_response(e, error_format=self._error_format, encoder=self._json_encoder)
                     except MethodNotAllowedError as e:
                         captured_error = e
-                        resp = _error_response(e, error_format=self._error_format)
+                        resp = _error_response(e, error_format=self._error_format, encoder=self._json_encoder)
                         if e.allow:
                             resp = resp.with_header("allow", ", ".join(e.allow))
                         return resp
@@ -1325,7 +1326,9 @@ class LaurenApp:
                             captured_error = e
                             if handled is not None:
                                 return handled
-                            return _error_response(e, error_format=self._error_format)
+                            return _error_response(
+                                e, error_format=self._error_format, encoder=self._json_encoder
+                            )
                         except Exception as e:  # pragma: no cover - final safety net
                             # Try user handlers first — a non-HTTP exception
                             # like ValueError can be turned into a clean
@@ -1361,6 +1364,7 @@ class LaurenApp:
                                 status=500,
                                 code="internal_error",
                                 error_format=self._error_format,
+                                encoder=self._json_encoder,
                             )
                     finally:
                         # Finalize any request-scoped instances: run their
@@ -1533,6 +1537,7 @@ class LaurenApp:
                         status=500,
                         code="internal_error",
                         error_format=self._error_format,
+                        encoder=self._json_encoder,
                     ).with_header("connection", "close")
                     await _send_response(_fallback, send)
                 except Exception:
@@ -1692,6 +1697,8 @@ def _coerce_to_response(value: Any, *, encoder: JSONEncoder | None = None) -> Re
             return resp
 
     if isinstance(value, Response):
+        if encoder is not None and isinstance(value, EventStream):
+            value._reframe(encoder)
         return value
     if value is None:
         return Response.no_content()
@@ -1874,6 +1881,7 @@ def _error_response(
     status: int | None = None,
     code: str | None = None,
     error_format: str = "default",
+    encoder: JSONEncoder | None = None,
 ) -> Response:
     """Build an error :class:`Response` from a :class:`LaurenError`.
 
@@ -1922,13 +1930,14 @@ def _error_response(
             payload,
             status=final_status,
             headers=Headers([("content-type", "application/problem+json")]),
+            encoder=encoder,
         )
 
     # Default envelope — unchanged.
     payload = err.to_payload()
     if code:
         payload["error"]["code"] = code
-    return Response.json(payload, status=final_status)
+    return Response.json(payload, status=final_status, encoder=encoder)
 
 
 async def _send_response(

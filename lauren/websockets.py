@@ -411,10 +411,12 @@ class WebSocket:
         path_template: str,
         path_params: dict[str, str],
         app_state: Any = None,
+        json_encoder: Any = None,
     ) -> None:
         self._scope = scope
         self._receive = receive
         self._send = send
+        self._json_encoder = json_encoder
         self._state_code = self.STATE_CONNECTING
         self._path_template = path_template
         self._path_params = dict(path_params)
@@ -587,7 +589,7 @@ class WebSocket:
         coercion.
         """
         self._ensure_open("send_json")
-        payload = _encode_json(data)
+        payload = _encode_json(data, encoder=self._json_encoder)
         await self._send({"type": "websocket.send", "text": payload})
 
     # -- Termination ------------------------------------------------------
@@ -624,11 +626,15 @@ class WebSocket:
             )
 
 
-def _encode_json(data: Any) -> str:
-    """JSON-encode ``data`` with lauren's permissive default handler."""
-    from .types import _json_default
+def _encode_json(data: Any, encoder: Any = None) -> str:
+    """JSON-encode ``data`` using the configured encoder.
 
-    return _jsonlib.dumps(data, separators=(",", ":"), default=_json_default)
+    Falls back to the process-wide active encoder when *encoder* is ``None``.
+    """
+    from .serialization import get_active_encoder  # noqa: PLC0415
+
+    _enc = encoder or get_active_encoder()
+    return _enc.encode_compact(data).decode("utf-8")
 
 
 # ---------------------------------------------------------------------------

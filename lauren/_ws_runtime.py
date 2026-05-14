@@ -637,6 +637,7 @@ async def handle_websocket(
         path_template=entry.path_template,
         path_params=params,
         app_state=app._app_state,
+        json_encoder=app._json_encoder,
     )
 
     request_cache: dict[type, Any] = {}

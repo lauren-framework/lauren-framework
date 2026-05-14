@@ -988,8 +988,12 @@ class Response:
         iterable: AsyncIterable[str | dict[str, Any]],
         *,
         status: int = 200,
+        encoder: Any = None,
     ) -> "Response":
         async def _wrap() -> AsyncIterator[bytes]:
+            from .serialization import get_active_encoder  # noqa: PLC0415
+
+            _enc = encoder or get_active_encoder()
             async for event in iterable:
                 if isinstance(event, str):
                     data = f"data: {event}\n\n"
@@ -1001,7 +1005,7 @@ class Response:
                         parts.append(f"id: {event['id']}")
                     payload = event.get("data", "")
                     if not isinstance(payload, str):
-                        payload = jsonlib.dumps(payload, default=_json_default, separators=(",", ":"))
+                        payload = _enc.encode_compact(payload).decode("utf-8")
                     parts.append(f"data: {payload}")
                     data = "\n".join(parts) + "\n\n"
                 yield data.encode("utf-8")

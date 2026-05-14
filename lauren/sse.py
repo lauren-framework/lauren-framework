@@ -45,7 +45,6 @@ pick :class:`EventStream` when you want raw SSE control.
 from __future__ import annotations
 
 import asyncio
-import json as _jsonlib
 from dataclasses import dataclass
 from typing import (
     Any,
@@ -56,7 +55,7 @@ from typing import (
     Union,
 )
 
-from .types import Headers, Response, _json_default
+from .types import Headers, Response
 
 # ---------------------------------------------------------------------------
 # Public value type — ServerSentEvent
@@ -120,14 +119,14 @@ class ServerSentEvent:
             comment=mapping.get("comment"),
         )
 
-    def encode(self) -> bytes:
+    def encode(self, *, encoder: Any = None) -> bytes:
         """Return the UTF-8 bytes of this event in the SSE wire format.
 
         The encoded form ends in the spec-mandated double newline
         (``\\n\\n``) that flushes the event on the browser side.
         Multiline data values are split into multiple ``data:`` lines
-        per spec; JSON-able non-string payloads are encoded once with
-        lauren's permissive serializer.
+        per spec; JSON-able non-string payloads are serialized via
+        *encoder* (or the active encoder when *encoder* is ``None``).
         """
         return format_sse_event(
             data=self.data,
@@ -135,6 +134,7 @@ class ServerSentEvent:
             id=self.id,
             retry=self.retry,
             comment=self.comment,
+            encoder=encoder,
         ).encode("utf-8")
 
 
@@ -150,6 +150,7 @@ def format_sse_event(
     id: str | None = None,
     retry: int | None = None,
     comment: str | None = None,
+    encoder: Any = None,
 ) -> str:
     """Format a single Server-Sent Event into its on-the-wire string form.
 
@@ -195,7 +196,7 @@ def format_sse_event(
     # ``data=None`` means "omit the data field entirely" (used by
     # comment-only frames); a literal ``data=""`` still emits a valid
     # ``data: \n`` line. ``_encode_data`` handles the distinction.
-    encoded_data = _encode_data(data)
+    encoded_data = _encode_data(data, encoder=encoder)
     if encoded_data is not None:
         for line in encoded_data.split("\n"):
             parts.append(f"data: {line}")
@@ -207,16 +208,16 @@ def format_sse_event(
     return "\n".join(parts) + "\n\n"
 
 
-def _encode_data(data: Any) -> str | None:
+def _encode_data(data: Any, *, encoder: Any = None) -> str | None:
     """Return the string form of ``data`` for use in ``data:`` lines.
 
     * ``None`` returns ``None`` so the caller can omit the ``data:``
       field entirely — useful for comment-only events.
     * ``bytes`` / ``bytearray`` are decoded as UTF-8.
     * ``str`` passes through.
-    * Anything else is JSON-encoded with lauren's permissive default
-      handler so Pydantic models, dataclasses, datetimes, etc. work
-      without manual coercion.
+    * Anything else is JSON-encoded via the provided *encoder* (or the
+      process-wide active encoder when *encoder* is ``None``) so custom
+      backends (orjson, msgspec) are honoured for SSE payloads too.
     """
     if data is None:
         return None
@@ -229,7 +230,10 @@ def _encode_data(data: Any) -> str | None:
             data = data.model_dump(mode="json")
         except TypeError:
             pass
-    return _jsonlib.dumps(data, separators=(",", ":"), default=_json_default)
+    from .serialization import get_active_encoder  # noqa: PLC0415
+
+    _enc = encoder or get_active_encoder()
+    return _enc.encode_compact(data).decode("utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +296,7 @@ class EventStream(Response):
         keep_alive: float | None = None,
         keep_alive_comment: str = DEFAULT_KEEPALIVE_COMMENT,
         extra_headers: "Headers | Mapping[str, str] | Iterable[tuple[str, str]] | None" = None,
+        encoder: Any = None,
     ) -> None:
         if keep_alive is not None and keep_alive <= 0:
             raise ValueError(f"keep_alive must be positive when set, got {keep_alive!r}")
@@ -300,11 +305,13 @@ class EventStream(Response):
         self._source: AsyncIterable[Any] = async_iter
         self._keep_alive: float | None = keep_alive
         self._keep_alive_comment: str = keep_alive_comment
+        self._encoder: Any = encoder
 
         framed = _frame_event_stream(
             async_iter,
             keep_alive=keep_alive,
             keep_alive_comment=keep_alive_comment,
+            encoder=encoder,
         )
 
         headers = MutableSseHeaders(
@@ -333,6 +340,22 @@ class EventStream(Response):
             stream=framed,
         )
 
+    def _reframe(self, encoder: Any) -> None:
+        """Rebuild the stream with *encoder* before the response is sent.
+
+        Called by ``_coerce_to_response`` to inject the app's configured
+        encoder into an ``EventStream`` that was constructed by user handler
+        code (which has no access to the app-level encoder at that point).
+        Safe to call because the async generator hasn't been iterated yet.
+        """
+        self._stream = _frame_event_stream(
+            self._source,
+            keep_alive=self._keep_alive,
+            keep_alive_comment=self._keep_alive_comment,
+            encoder=encoder,
+        )
+        self._encoder = encoder
+
 
 class MutableSseHeaders(Headers):
     """Tiny mutable Headers subclass used for SSE response construction.
@@ -360,6 +383,7 @@ async def _frame_event_stream(
     *,
     keep_alive: float | None,
     keep_alive_comment: str,
+    encoder: Any = None,
 ) -> AsyncIterator[bytes]:
     """Yield SSE-formatted frame bytes from the source iterable.
 
@@ -395,7 +419,7 @@ async def _frame_event_stream(
         # Hot path — no keep-alive multiplexing.
         try:
             async for item in _aiter_events(iterator):
-                yield item.encode()
+                yield item.encode(encoder=encoder)
         finally:
             await _safe_aclose(iterator)
         return
@@ -435,7 +459,7 @@ async def _frame_event_stream(
                     pending = None  # consumed; nothing left to cancel
                     return
                 event = _coerce_to_event(raw)
-                yield event.encode()
+                yield event.encode(encoder=encoder)
                 # Schedule the next item read for the next race round.
                 pending = asyncio.ensure_future(iterator.__anext__())
             else:
