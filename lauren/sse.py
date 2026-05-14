@@ -340,6 +340,15 @@ class EventStream(Response):
             stream=framed,
         )
 
+    def _clone(self, **kwargs: Any) -> "EventStream":  # type: ignore[override]
+        """Override to copy EventStream-specific attributes alongside Response state."""
+        new = super()._clone(**kwargs)
+        new._source = self._source
+        new._keep_alive = self._keep_alive
+        new._keep_alive_comment = self._keep_alive_comment
+        new._encoder = self._encoder
+        return new
+
     def _reframe(self, encoder: Any) -> None:
         """Rebuild the stream with *encoder* before the response is sent.
 

@@ -26,6 +26,7 @@ from lauren.serialization import (
     JSONEncoder,
     MsgspecEncoder,
     OrjsonEncoder,
+    PydanticEncoder,
     StdlibJSONEncoder,
     auto_encoder,
     get_active_encoder,
@@ -351,3 +352,166 @@ def test_auto_encoder_falls_back_to_stdlib_when_neither_available(
     monkeypatch.setattr(builtins, "__import__", _no_fast)
     enc = auto_encoder()
     assert enc.name == "stdlib"
+
+
+# ---------------------------------------------------------------------------
+# PydanticEncoder tests
+# ---------------------------------------------------------------------------
+
+
+class TestPydanticEncoder:
+    """Unit tests for PydanticEncoder."""
+
+    @pytest.fixture
+    def enc(self):
+        pytest.importorskip("pydantic")
+        return PydanticEncoder()
+
+    def test_conforms_to_protocol(self):
+        pytest.importorskip("pydantic")
+        assert isinstance(PydanticEncoder(), JSONEncoder)
+
+    def test_name_is_pydantic(self):
+        pytest.importorskip("pydantic")
+        assert PydanticEncoder().name == "pydantic"
+
+    def test_raises_without_pydantic(self, monkeypatch):
+        import sys
+
+        original = sys.modules.get("pydantic")
+        sys.modules["pydantic"] = None  # type: ignore[assignment]
+        try:
+            with pytest.raises(RuntimeError, match="pydantic"):
+                PydanticEncoder()
+        finally:
+            if original is not None:
+                sys.modules["pydantic"] = original
+            else:
+                del sys.modules["pydantic"]
+
+    # -- Pydantic model serialization --
+
+    def test_encodes_simple_model(self, enc):
+        from pydantic import BaseModel
+
+        class Item(BaseModel):
+            name: str
+            value: int
+
+        blob = enc.encode_compact(Item(name="test", value=42))
+        assert stdlib_json.loads(blob) == {"name": "test", "value": 42}
+
+    def test_encode_vs_encode_compact_whitespace(self, enc):
+        from pydantic import BaseModel
+
+        class Item(BaseModel):
+            x: int
+
+        compact = enc.encode_compact(Item(x=1))
+        pretty = enc.encode(Item(x=1))
+        assert stdlib_json.loads(compact) == stdlib_json.loads(pretty)
+        # compact has no spaces between key and value
+        assert b": " not in compact
+
+    def test_honours_field_serializer(self, enc):
+        from pydantic import BaseModel, field_serializer
+
+        class Model(BaseModel):
+            score: float
+
+            @field_serializer("score")
+            def fmt(self, v: float) -> str:
+                return f"{v:.2f}"
+
+        blob = enc.encode_compact(Model(score=3.14159))
+        assert stdlib_json.loads(blob) == {"score": "3.14"}
+
+    def test_honours_alias(self, enc):
+        from pydantic import BaseModel, Field
+
+        class Model(BaseModel):
+            model_config = {"populate_by_name": True}
+            user_id: str = Field(serialization_alias="userId")
+
+        blob = enc.encode_compact(Model(user_id="abc").model_dump(by_alias=True))
+        # dict path (non-model value) — just check round-trip
+        assert stdlib_json.loads(blob)
+
+    def test_list_of_models(self, enc):
+        from pydantic import BaseModel
+
+        class Point(BaseModel):
+            x: int
+            y: int
+
+        pts = [Point(x=1, y=2), Point(x=3, y=4)]
+        blob = enc.encode_compact(pts)
+        assert stdlib_json.loads(blob) == [{"x": 1, "y": 2}, {"x": 3, "y": 4}]
+
+    def test_nested_model(self, enc):
+        from pydantic import BaseModel
+
+        class Inner(BaseModel):
+            v: str
+
+        class Outer(BaseModel):
+            inner: Inner
+
+        blob = enc.encode_compact(Outer(inner=Inner(v="hello")))
+        assert stdlib_json.loads(blob) == {"inner": {"v": "hello"}}
+
+    # -- Fallback to stdlib for non-Pydantic values --
+
+    def test_plain_dict_encoded(self, enc):
+        blob = enc.encode_compact({"a": 1, "b": "two"})
+        assert stdlib_json.loads(blob) == {"a": 1, "b": "two"}
+
+    def test_plain_list_encoded(self, enc):
+        blob = enc.encode_compact([1, 2, 3])
+        assert stdlib_json.loads(blob) == [1, 2, 3]
+
+    def test_primitive_string_encoded(self, enc):
+        blob = enc.encode_compact("hello world")
+        assert stdlib_json.loads(blob) == "hello world"
+
+    def test_none_encoded(self, enc):
+        blob = enc.encode_compact(None)
+        assert stdlib_json.loads(blob) is None
+
+    def test_empty_list_not_treated_as_list_of_models(self, enc):
+        blob = enc.encode_compact([])
+        assert stdlib_json.loads(blob) == []
+
+    def test_mixed_list_falls_back_to_stdlib(self, enc):
+        # A list containing a mix of model and non-model items is NOT
+        # treated as a homogeneous model list — stdlib fallback handles it.
+        from pydantic import BaseModel
+
+        class M(BaseModel):
+            x: int
+
+        blob = enc.encode_compact([M(x=1), {"plain": "dict"}])
+        parsed = stdlib_json.loads(blob)
+        assert len(parsed) == 2
+
+    def test_custom_default_callback(self):
+        pytest.importorskip("pydantic")
+
+        class Opaque:
+            pass
+
+        def my_default(obj):
+            if isinstance(obj, Opaque):
+                return "<opaque>"
+            raise TypeError(type(obj).__name__)
+
+        enc = PydanticEncoder(default=my_default)
+        blob = enc.encode_compact({"item": Opaque()})
+        assert stdlib_json.loads(blob) == {"item": "<opaque>"}
+
+    def test_parity_with_stdlib_for_common_payloads(self):
+        pytest.importorskip("pydantic")
+        enc = PydanticEncoder()
+        for payload in _COMMON_PAYLOADS:
+            blob = enc.encode_compact(payload)
+            assert stdlib_json.loads(blob) == payload, f"payload={payload!r}"

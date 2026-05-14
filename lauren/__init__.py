@@ -77,6 +77,7 @@ from .serialization import (
     JSONEncoder,
     MsgspecEncoder,
     OrjsonEncoder,
+    PydanticEncoder,
     StdlibJSONEncoder,
     auto_encoder,
 )
@@ -258,6 +259,7 @@ __all__ = [
     "StdlibJSONEncoder",
     "OrjsonEncoder",
     "MsgspecEncoder",
+    "PydanticEncoder",
     "auto_encoder",
     "serialization",
     "docs",

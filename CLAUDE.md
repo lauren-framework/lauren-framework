@@ -94,7 +94,7 @@ lauren/                      — framework package
 ├── exceptions.py            — error hierarchy (28 classes)
 ├── extractors.py            — Path/Query/Json/Depends + pipes + custom extractors
 ├── logging.py               — built-in NestJS-style logger
-├── serialization.py         — JSON encoders (stdlib, orjson, msgspec)
+├── serialization.py         — JSON encoders (stdlib, orjson, msgspec, pydantic)
 ├── background.py            — BackgroundTasks, TaskHandle (fire-and-forget after response)
 ├── signals.py               — POSIX signal integration + on_shutdown hooks
 ├── streaming.py             — StreamingResponse[T], Stream, StreamReader

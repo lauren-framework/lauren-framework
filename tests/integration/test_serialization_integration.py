@@ -318,3 +318,146 @@ def test_unicode_query_roundtrips_through_every_encoder(
     r = TestClient(app).get(f"/search/?q={quote(value)}")
     assert r.status_code == 200
     assert r.json() == {"query": value, "echoed": True}
+
+
+# ---------------------------------------------------------------------------
+# PydanticEncoder integration tests
+# ---------------------------------------------------------------------------
+
+
+from lauren.serialization import PydanticEncoder  # noqa: E402
+
+
+def _pydantic_client(handler_cls: type) -> "TestClient":
+    @module(controllers=[handler_cls])
+    class M:
+        pass
+
+    return TestClient(LaurenFactory.create(M, json_encoder=PydanticEncoder()))
+
+
+class TestPydanticEncoderIntegration:
+    """End-to-end: PydanticEncoder plugged into a real LaurenApp."""
+
+    def test_pydantic_model_handler_correct_body(self) -> None:
+        class Item(BaseModel):
+            id: int
+            name: str
+
+        @controller("/pi")
+        class C:
+            @get("/")
+            async def h(self) -> Item:
+                return Item(id=7, name="widget")
+
+        r = _pydantic_client(C).get("/pi/")
+        assert r.status_code == 200
+        assert r.json() == {"id": 7, "name": "widget"}
+
+    def test_content_type_is_application_json(self) -> None:
+        class Simple(BaseModel):
+            ok: bool
+
+        @controller("/pict")
+        class C:
+            @get("/")
+            async def h(self) -> Simple:
+                return Simple(ok=True)
+
+        r = _pydantic_client(C).get("/pict/")
+        assert (r.header("content-type") or "").startswith("application/json")
+
+    def test_honours_field_serializer(self) -> None:
+        from pydantic import field_serializer
+
+        class Model(BaseModel):
+            score: float
+
+            @field_serializer("score")
+            def fmt(self, v: float) -> str:
+                return f"{v:.2f}"
+
+        @controller("/pfs")
+        class C:
+            @get("/")
+            async def h(self) -> Model:
+                return Model(score=3.14159)
+
+        r = _pydantic_client(C).get("/pfs/")
+        assert r.json() == {"score": "3.14"}
+
+    def test_list_of_models(self) -> None:
+        class Point(BaseModel):
+            x: int
+            y: int
+
+        @controller("/plom")
+        class C:
+            @get("/")
+            async def h(self) -> list[Point]:
+                return [Point(x=1, y=2), Point(x=3, y=4)]
+
+        r = _pydantic_client(C).get("/plom/")
+        assert r.json() == [{"x": 1, "y": 2}, {"x": 3, "y": 4}]
+
+    def test_plain_dict_handler_still_works(self) -> None:
+        @controller("/pdict")
+        class C:
+            @get("/")
+            async def h(self) -> dict:
+                return {"key": "value", "num": 42}
+
+        r = _pydantic_client(C).get("/pdict/")
+        assert r.json() == {"key": "value", "num": 42}
+
+    def test_error_response_uses_pydantic_encoder(self) -> None:
+        from lauren.exceptions import ForbiddenError
+
+        @controller("/perr")
+        class C:
+            @get("/")
+            async def h(self) -> dict:
+                raise ForbiddenError("denied")
+
+        r = _pydantic_client(C).get("/perr/")
+        assert r.status_code == 403
+        body = r.json()
+        assert "error" in body
+
+    def test_nested_model(self) -> None:
+        class Inner(BaseModel):
+            v: str
+
+        class Outer(BaseModel):
+            inner: Inner
+            count: int
+
+        @controller("/pnest")
+        class C:
+            @get("/")
+            async def h(self) -> Outer:
+                return Outer(inner=Inner(v="hello"), count=3)
+
+        r = _pydantic_client(C).get("/pnest/")
+        assert r.json() == {"inner": {"v": "hello"}, "count": 3}
+
+    def test_parity_with_stdlib_encoder(self) -> None:
+        """PydanticEncoder and StdlibJSONEncoder produce semantically equal output."""
+
+        class Payload(BaseModel):
+            id: int
+            tags: list[str]
+
+        @controller("/pparity")
+        class C:
+            @get("/")
+            async def h(self) -> Payload:
+                return Payload(id=99, tags=["a", "b"])
+
+        @module(controllers=[C])
+        class M:
+            pass
+
+        stdlib_r = TestClient(LaurenFactory.create(M, json_encoder=StdlibJSONEncoder())).get("/pparity/")
+        pydantic_r = TestClient(LaurenFactory.create(M, json_encoder=PydanticEncoder())).get("/pparity/")
+        assert stdlib_r.json() == pydantic_r.json()

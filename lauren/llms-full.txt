@@ -1785,18 +1785,33 @@ class AdminController: ...
 Lauren auto-selects the fastest available encoder at startup via
 `auto_encoder()`.  The selection order is orjson > msgspec > stdlib.
 
-| Class | Dependency |
-|---|---|
-| `StdlibJSONEncoder` | Built-in `json` (always available) |
-| `OrjsonEncoder` | `orjson` C extension |
-| `MsgspecEncoder` | `msgspec` |
-| `JSONEncoder` | Abstract base — implement `encode(obj) -> bytes` |
+The encoder is threaded through the entire application — it is used for
+handler response coercion, error responses (`_error_response`), SSE events
+(`EventStream`, `Response.sse`), WebSocket `send_json`, and every streaming
+frame.  Pass it once at factory time and every output path honours it.
+
+| Class | Dependency | Best for |
+|---|---|---|
+| `StdlibJSONEncoder` | Built-in `json` (always available) | Default, zero deps |
+| `OrjsonEncoder` | `orjson` C extension | Fastest for dict/list payloads |
+| `MsgspecEncoder` | `msgspec` | Fastest when returning `msgspec.Struct` directly |
+| `PydanticEncoder` | `pydantic` (v2) | Pydantic-heavy APIs; honours all `@field_serializer` / `model_config` rules; skips the intermediate `model_dump()` dict |
+| `JSONEncoder` | — | Protocol — implement `encode(obj) -> bytes` and `encode_compact(obj) -> bytes` |
 
 ```python
-from lauren import auto_encoder, OrjsonEncoder, StdlibJSONEncoder
-enc = auto_encoder()          # picks best available
+from lauren import LaurenFactory, PydanticEncoder, auto_encoder
+# Wire at build time — every output path inherits this encoder:
+app = LaurenFactory.create(AppModule, json_encoder=PydanticEncoder())
+
+# Or auto-select best available (orjson > msgspec > stdlib):
+enc = auto_encoder()
 enc.encode({"hello": "world"})
 ```
+
+`PydanticEncoder` calls `model.model_dump_json()` / `TypeAdapter.dump_json(items)`
+directly so pydantic-core serialises model → bytes in one step, skipping the
+intermediate Python dict.  Non-Pydantic values (plain dicts, lists, primitives,
+`msgspec.Struct`, dataclasses) fall back to `StdlibJSONEncoder` transparently.
 
 ---
 
