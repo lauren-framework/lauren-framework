@@ -1041,6 +1041,8 @@ Lauren serializes the return value automatically.
 | Raise 404 in handler | `raise NotFoundError("...")` (subclass `HTTPError`) |
 | Add a guard to one route | `@use_guards(MyGuard)` on the method |
 | Add a guard to all routes on a controller | `@use_guards(MyGuard)` on the class |
+| Override JSON encoder for one route | `@use_encoder(OrjsonEncoder())` on the method |
+| Override JSON encoder for all routes on a controller | `@use_encoder(MsgspecEncoder())` on the class |
 | Read per-route metadata in a guard | `ctx.get_metadata("key", default)` |
 | Attach a singleton explicitly | `app.container.set_singleton(MyCls, instance)` |
 | Run post-construct hook | `@post_construct` on an `async def` method of an `@injectable` |
@@ -1812,6 +1814,43 @@ enc.encode({"hello": "world"})
 directly so pydantic-core serialises model → bytes in one step, skipping the
 intermediate Python dict.  Non-Pydantic values (plain dicts, lists, primitives,
 `msgspec.Struct`, dataclasses) fall back to `StdlibJSONEncoder` transparently.
+
+### Per-route / per-controller encoder override — `@use_encoder`
+
+Individual routes or whole controllers can override the app-level encoder:
+
+```python
+from lauren import use_encoder, OrjsonEncoder, PydanticEncoder, controller, get
+
+# Every route on this controller uses OrjsonEncoder:
+@use_encoder(OrjsonEncoder())
+@controller("/fast")
+class FastController:
+    @get("/")
+    async def h(self) -> dict: ...
+
+# Only this one route uses PydanticEncoder; others use the app encoder:
+@controller("/mixed")
+class MixedController:
+    @get("/models")
+    @use_encoder(PydanticEncoder())
+    async def models(self) -> list[MyModel]: ...
+
+    @get("/plain")
+    async def plain(self) -> dict: ...
+```
+
+Precedence: **method-level > controller-level > app-level**.
+
+The override applies to handler response coercion, EventStream framing, and
+error responses for that route.  Route-not-found (404) and unhandled
+outer-layer exceptions always use the app-level encoder because no compiled
+handler is in scope at those points.
+
+`@use_encoder` must always be called with parentheses — `@use_encoder(enc)`,
+never bare `@use_encoder`.  Passing a class instead of an instance
+(`@use_encoder(OrjsonEncoder)`) is rejected at decoration time with a clear
+error.
 
 ---
 

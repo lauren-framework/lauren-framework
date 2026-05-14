@@ -197,6 +197,7 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Inject a typed value into a handler parameter | Custom `Extractor` (`extractors.py`) |
 | Share state across a single request | `Scope.REQUEST` injectable |
 | Share state for the app lifetime | `Scope.SINGLETON` injectable |
+| Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
 
 See `docs/concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md` for detailed trade-offs.
 

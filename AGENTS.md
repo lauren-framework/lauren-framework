@@ -103,7 +103,7 @@ nox -s ver_dec -- --patch
 | `lauren/sse.py`                   | EventStream, ServerSentEvent, last_event_id  |
 | `lauren/websockets.py`            | @ws_controller, @on_message, BroadcastGroup  |
 | `lauren/socketio.py`              | Engine.IO/Socket.IO adapter (public)         |
-| `lauren/serialization.py`         | JSON encoders: `StdlibJSONEncoder`, `OrjsonEncoder`, `MsgspecEncoder`, `PydanticEncoder`; encoder is threaded app-wide through all output paths (handlers, error responses, SSE, WebSocket) |
+| `lauren/serialization.py`         | JSON encoders: `StdlibJSONEncoder`, `OrjsonEncoder`, `MsgspecEncoder`, `PydanticEncoder`; encoder threaded app-wide; `@use_encoder(enc)` overrides per-route or per-controller (method > controller > app) |
 | `lauren/logging.py`               | NestJS-style logger (built-in, separate from |
 |                                   | the optional `lauren-logging` companion)     |
 | `lauren/signals.py`               | POSIX signal integration                     |

@@ -39,6 +39,7 @@ from ..decorators import (
     EXCEPTION_HANDLER_META,
     ROUTE_META,
     SET_METADATA,
+    USE_ENCODER,
     USE_EXCEPTION_HANDLERS,
     USE_GUARDS,
     USE_INTERCEPTORS,
@@ -153,6 +154,10 @@ class CompiledHandler:
     #: Encodes controller-level (class-then-method) chains; global
     #: interceptors are prepended at dispatch time.
     interceptors: tuple[type, ...] = ()
+    #: Per-route JSON encoder set by ``@use_encoder(enc)``.  ``None``
+    #: means fall through to the app-level encoder (``LaurenApp._json_encoder``).
+    #: Method-level wins over controller-level; both win over app-level.
+    encoder: Any = None
 
 
 def _compile_handler_signature(
@@ -1011,7 +1016,7 @@ class LaurenApp:
                 # caller's outer ``except Exception`` safety net turns
                 # it into a 500. Logging is handled there too.
                 raise
-            return _coerce_to_response(result, encoder=self._json_encoder)
+            return _coerce_to_response(result, encoder=compiled.encoder or self._json_encoder)
         return None
 
     # -- Request logging --------------------------------------------------
@@ -1126,6 +1131,8 @@ class LaurenApp:
                         return resp
 
                     compiled = self._handlers[(entry.method, entry.path_template)]
+                    # Per-route encoder wins over the app-level encoder.
+                    effective_encoder = compiled.encoder or self._json_encoder
                     # Reuse the request's existing ``_path_params`` dict rather
                     # than replacing it: for pooled ``Request`` objects the dict
                     # was already cleared by ``Request.reset``, and for
@@ -1286,9 +1293,9 @@ class LaurenApp:
                                 result,
                                 item_type=compiled.streaming_item_type,
                                 request=req2,
-                                encoder=self._json_encoder,
+                                encoder=effective_encoder,
                             )
-                        return _coerce_to_response(result, encoder=self._json_encoder)
+                        return _coerce_to_response(result, encoder=effective_encoder)
 
                     # Per-route onion chain (global mw already wraps _route_and_run)
                     chain: CallNext = run_handler
@@ -1327,7 +1334,7 @@ class LaurenApp:
                             if handled is not None:
                                 return handled
                             return _error_response(
-                                e, error_format=self._error_format, encoder=self._json_encoder
+                                e, error_format=self._error_format, encoder=effective_encoder
                             )
                         except Exception as e:  # pragma: no cover - final safety net
                             # Try user handlers first — a non-HTTP exception
@@ -1364,7 +1371,7 @@ class LaurenApp:
                                 status=500,
                                 code="internal_error",
                                 error_format=self._error_format,
-                                encoder=self._json_encoder,
+                                encoder=effective_encoder,
                             )
                     finally:
                         # Finalize any request-scoped instances: run their
@@ -2262,6 +2269,9 @@ class LaurenFactory:
                 fn_interceptors = list(getattr(fn, USE_INTERCEPTORS, []))
                 fn_exc_handlers = list(getattr(fn, USE_EXCEPTION_HANDLERS, []))
                 fn_meta: dict[str, Any] = dict(getattr(fn, SET_METADATA, {}))
+                # Per-route encoder: method-level wins over controller-level.
+                fn_encoder = getattr(fn, USE_ENCODER, None)
+                ctrl_encoder = ctrl_cls.__dict__.get(USE_ENCODER)
                 for cls in fn_mw + fn_guards + fn_interceptors:
                     if cls not in {pp.cls for pp in container.all_providers()}:
                         _ensure_injectable(cls)
@@ -2325,6 +2335,8 @@ class LaurenFactory:
                         binding=binding,
                         is_coroutine=inspect.iscoroutinefunction(fn),
                         raw_descriptor=raw,
+                        # Method-level encoder wins over controller-level.
+                        encoder=fn_encoder or ctrl_encoder or None,
                     )
                     compiled_handlers[(entry.method, entry.path_template)] = compiled
                     _log.log(

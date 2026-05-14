@@ -71,6 +71,7 @@ PRE_DESTRUCT = "__lauren_pre_destruct__"
 OPENAPI_SECURITY_META = "__lauren_openapi_security__"
 INTERCEPTOR_META = "__lauren_interceptor__"
 USE_INTERCEPTORS = "__lauren_use_interceptors__"
+USE_ENCODER = "__lauren_use_encoder__"
 
 
 # ---------------------------------------------------------------------------
@@ -957,6 +958,77 @@ def set_metadata(key: str, value: Any) -> Callable[[_T], _T]:
     return decorator
 
 
+# ---------------------------------------------------------------------------
+# @use_encoder — per-controller / per-route encoder override
+# ---------------------------------------------------------------------------
+
+
+def use_encoder(encoder: Any) -> Callable[[_T], _T]:
+    """Override the JSON encoder for a controller class or a single route.
+
+    The encoder set here takes precedence over the app-level encoder
+    configured at :meth:`LaurenFactory.create` time.
+
+    Works on both:
+
+    * **controller classes** — every route on the class uses this encoder.
+    * **handler methods** — only that specific route uses this encoder;
+      method-level wins over controller-level.
+
+    The override applies to all JSON output for the matched route:
+    handler return-value coercion, :class:`~lauren.sse.EventStream`
+    reframing, and error responses that originate within the route
+    dispatch.
+
+    Usage::
+
+        from lauren import use_encoder, OrjsonEncoder, PydanticEncoder
+
+        # All routes on this controller use orjson:
+        @use_encoder(OrjsonEncoder())
+        @controller("/api/fast")
+        class FastController:
+            @get("/")
+            async def h(self) -> dict: ...
+
+        # Only this route uses PydanticEncoder:
+        @controller("/api/mixed")
+        class MixedController:
+            @get("/models")
+            @use_encoder(PydanticEncoder())
+            async def models(self) -> list[MyModel]: ...
+
+            @get("/simple")
+            async def simple(self) -> dict: ...  # uses app-level encoder
+
+    :param encoder: A :class:`~lauren.serialization.JSONEncoder` instance.
+    :raises DecoratorUsageError: When used without parentheses
+        (``@use_encoder`` instead of ``@use_encoder(enc)``) or when
+        ``encoder`` is not a :class:`~lauren.serialization.JSONEncoder`.
+    """
+    from .serialization import JSONEncoder  # noqa: PLC0415
+
+    _reject_bare_usage("use_encoder", encoder)
+    if not isinstance(encoder, JSONEncoder):
+        raise DecoratorUsageError(
+            f"@use_encoder requires a JSONEncoder instance; "
+            f"got {type(encoder).__name__!r}.  "
+            "Pass an encoder instance, e.g. @use_encoder(OrjsonEncoder()).",
+            detail={"received": type(encoder).__name__},
+        )
+
+    def decorator(target: _T) -> _T:
+        try:
+            # Store directly — not a list; later decoration overwrites earlier
+            # ones so method-level always wins when both levels are present.
+            setattr(target, USE_ENCODER, encoder)
+        except (AttributeError, TypeError) as exc:  # pragma: no cover
+            raise DecoratorUsageError(f"Cannot attach encoder to {target!r}") from exc
+        return target
+
+    return decorator
+
+
 __all__ = [
     "injectable",
     "module",
@@ -975,6 +1047,7 @@ __all__ = [
     "use_guards",
     "exception_handler",
     "use_exception_handlers",
+    "use_encoder",
     "set_metadata",
     "openapi_security",
     "ControllerMeta",
@@ -992,4 +1065,5 @@ __all__ = [
     "EXCEPTION_HANDLER_META",
     "SET_METADATA",
     "OPENAPI_SECURITY_META",
+    "USE_ENCODER",
 ]
