@@ -72,7 +72,16 @@ SUPPORTED_PYTHONS = ["3.11", "3.12", "3.13", "3.14"]
 
 # Default sessions when running ``nox`` with no -s argument: keep this
 # list short and fast — these gate every PR locally.
-nox.options.sessions = ["lint", "tests", "format", "build", "build_check", "llms_check", "prek"]
+# Run it again because the previous run would have fixed some of the errors
+nox.options.sessions = [
+    "lint",
+    "tests",
+    "format",
+    "build",
+    "build_check",
+    "llms_check",
+    "prek",
+]
 nox.options.reuse_existing_virtualenvs = True
 # `error_on_missing_interpreters = False` lets contributors run only the
 # Python versions they have installed locally; CI explicitly installs all.
