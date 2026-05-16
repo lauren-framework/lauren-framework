@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/lauren-framework/lauren-framework/refs/heads/main/assets/lauren-logo.png" width=40%></img>
+  <img src="https://raw.githubusercontent.com/lauren-framework/lauren-assets/refs/heads/main/framework/lauren-logo-only.png" width=40%></img>
 </p>
 <div align="center">
   <h1><i>lauren</i></h1>

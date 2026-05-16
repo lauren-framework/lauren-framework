@@ -8,6 +8,7 @@ copyright: Copyright &copy; 2026 Lauren Framework — Enterprise-grade Python AS
 
 theme:
   name: material
+  logo: assets/lauren-logo.png
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -46,7 +47,6 @@ theme:
     code: JetBrains Mono
   icon:
     repo: fontawesome/brands/github
-    logo: material/atom
 
 markdown_extensions:
   - admonition
