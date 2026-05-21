@@ -303,8 +303,6 @@ def _adjust_version(version: tuple[int, int, int], kind: str, *, delta: int) -> 
         major += delta
         if major < 0:
             raise ValueError("Cannot decrement major below 0.")
-        if delta > 0:
-            return major, 0, 0
         return major, 0, 0
     if kind == "minor":
         minor += delta
