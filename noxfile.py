@@ -187,8 +187,8 @@ def lint(session: nox.Session) -> None:
     Use ``nox -s lint -- --fix`` to auto-fix.
     """
     session.install("ruff>=0.6")
-    extra = session.posargs or []
-    session.run("ruff", "check", "--fix", "lauren", "tests", *extra)
+    extra = session.posargs or ["--fix"]
+    session.run("ruff", "check", *extra, "lauren", "tests")
 
 
 @nox.session(python=PRIMARY_PYTHON, reuse_venv=True)
