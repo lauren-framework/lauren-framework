@@ -88,12 +88,12 @@ nox -s ver_dec -- --patch
 | `lauren/_app.py`                  | `Lauren` high-level class                    |
 | `lauren/_asgi/__init__.py`        | ASGI adapter, the runtime scheduler          |
 | `lauren/_asgi/_openapi.py`        | OpenAPI 3.1 generator                        |
-| `lauren/_di/__init__.py`          | DI container, provider graph, cycles         |
+| `lauren/_di/__init__.py`          | DI container, provider graph, cycles; `_GeneratorContextWrapper` for generator provider lifecycle |
 | `lauren/_di/custom.py`            | `use_value` / `use_class` / `use_factory` /  |
 |                                   | `use_existing` / `Token` / `Inject`          |
 | `lauren/_routing/__init__.py`     | Radix-tree router                            |
 | `lauren/_modules/__init__.py`     | Module graph, imports/exports validation     |
-| `lauren/_lifecycle/__init__.py`   | post_construct / pre_destruct scheduler; sync hooks run in thread pool via asyncio.to_thread (timeout-protected, event-loop-safe) |
+| `lauren/_lifecycle/__init__.py`   | post_construct / pre_destruct scheduler; sync hooks run in thread pool via asyncio.to_thread (timeout-protected, event-loop-safe); second pass runs generator provider teardown (code after yield) for SINGLETON scope |
 | `lauren/_typing/`                 | ForwardRef / PEP 563 resolver                |
 | `lauren/_ws_runtime.py`           | WebSocket dispatch loop (private)            |
 | `lauren/decorators.py`            | User-facing decorators only                  |

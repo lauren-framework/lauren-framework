@@ -85,6 +85,64 @@ Register functions in `providers=[]` identically to classes:
 class AppModule: ...
 ```
 
+### A2b. Generator function providers (FastAPI-style lifecycle)
+
+When the `@injectable()`-decorated function is a **generator** or **async
+generator**, the container treats it as a lightweight context manager:
+
+* Code **before** `yield` runs at the start of the scope (setup).
+* The **yielded value** becomes the resolved dependency.
+* Code **after** `yield` runs when the scope ends (teardown).
+
+```python
+from lauren import injectable, Scope
+
+@injectable()                           # SINGLETON — setup once, teardown at shutdown
+def db_pool():
+    pool = create_pool(os.environ["DATABASE_URL"])
+    yield pool
+    pool.close()                        # runs when app shuts down
+
+@injectable(scope=Scope.REQUEST)        # REQUEST — setup + teardown per request
+def db_session(pool: Depends[db_pool]):
+    session = pool.acquire()
+    yield session
+    session.rollback(); session.release()
+```
+
+Use `async def` for async setup/teardown:
+
+```python
+@injectable(scope=Scope.REQUEST)
+async def async_session(pool: Depends[db_pool]):
+    session = await pool.acquire_async()
+    yield session
+    await session.aclose()
+```
+
+Use `try/finally` to guarantee teardown runs even when the handler raises:
+
+```python
+@injectable(scope=Scope.REQUEST)
+def safe_conn(pool: Depends[db_pool]):
+    conn = pool.get()
+    try:
+        yield conn
+    finally:
+        conn.release()      # always runs, even on 500 errors
+```
+
+**Scope rules:**
+
+| Scope | Setup | Teardown |
+|---|---|---|
+| `SINGLETON` | At first resolve (startup) | `app.shutdown()` / `LifecycleScheduler.run_pre_destruct()` |
+| `REQUEST` | Before handler runs | After response is sent (ASGI cleanup) |
+| `TRANSIENT` | ❌ Not allowed — raises `StartupError` at registration |
+
+> **Note:** `Scope.TRANSIENT` is rejected because transient instances are not
+> tracked and the container has no way to invoke teardown.
+
 ### A3. `use_value` — bind a token to a pre-built value
 
 ```python

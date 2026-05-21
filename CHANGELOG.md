@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Generator function providers** — `@injectable()`-decorated generator and
+  async generator functions now support a FastAPI-style lifecycle: code before
+  `yield` acts as `post_construct` (setup) and code after `yield` acts as
+  `pre_destruct` (teardown). The yielded value is the resolved dependency.
+  Teardown is invoked automatically when the scope ends:
+  - `SINGLETON` — at shutdown via `LifecycleScheduler.run_pre_destruct()`.
+  - `REQUEST` — after response is sent via existing ASGI/WS cleanup (`aclose()`
+    protocol).
+  - `TRANSIENT` — disallowed; raises `StartupError` at registration because
+    transient instances are not tracked for cleanup.
+  Both sync and async generators are supported. Use `try/finally` in the
+  generator for unconditional teardown even when a handler raises.
+
 ## [1.3.0] - 2026-05-14
 
 ### Added

@@ -82,6 +82,7 @@ from ..exceptions import (
     DuplicateBindingError,
     MissingProviderError,
     ProtocolAmbiguityError,
+    StartupError,
     UnresolvableParameterError,
 )
 from ..types import Scope
@@ -92,6 +93,41 @@ from .custom import (
 )
 
 INJECTABLE_META = "__lauren_injectable__"
+
+
+class _GeneratorContextWrapper:
+    """Wraps a one-shot generator dependency (FastAPI-style lifecycle).
+
+    Code before ``yield`` runs as setup (post_construct); code after runs as
+    teardown (pre_destruct). The wrapped ``value`` is what callers receive.
+    ``aclose()`` advances the generator past the ``yield`` to run teardown.
+    """
+
+    __slots__ = ("value", "_gen", "_is_async", "_closed")
+
+    def __init__(self, value: Any, gen: Any, *, is_async: bool) -> None:
+        self.value = value
+        self._gen = gen
+        self._is_async = is_async
+        self._closed = False
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._is_async:
+            try:
+                # Advance past the yield to run teardown code; expect StopAsyncIteration.
+                await self._gen.__anext__()
+            except StopAsyncIteration:
+                pass
+        else:
+            try:
+                # Advance the sync generator past the yield to run teardown code.
+                # next() raises StopIteration when the generator is exhausted (normal case).
+                next(self._gen)  # type: ignore[call-overload]
+            except StopIteration:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +227,10 @@ class Provider:
     #: function rather than a class. Affects lifecycle semantics (no
     #: ``@post_construct`` / ``@pre_destruct`` on a plain value).
     is_function_provider: bool = False
+    #: True when the factory is a generator or async generator function.
+    #: Code before ``yield`` runs as setup; code after runs as teardown.
+    #: Teardown is invoked via ``aclose()`` at end of scope lifetime.
+    is_generator_provider: bool = False
     #: Custom-provider kind: ``"value"`` / ``"class"`` / ``"factory"`` /
     #: ``"existing"`` for the four NestJS-style recipes, or ``None`` for
     #: the legacy ``@injectable``-decorated registration. Used by the
@@ -259,6 +299,13 @@ class DIContainer:
             if token in self._providers:
                 raise DuplicateBindingError(f"{_describe(target)} already registered")
             deps = _inspect_callable_deps(target, is_class_init=False)
+            _is_gen = inspect.isgeneratorfunction(target) or inspect.isasyncgenfunction(target)
+            if _is_gen and meta.scope == Scope.TRANSIENT:
+                raise StartupError(
+                    f"Generator function provider {_describe(target)!r} cannot use "
+                    "Scope.TRANSIENT — transient instances are not tracked for cleanup.",
+                    detail={"provider": _describe(target)},
+                )
             provider = Provider(
                 cls=token,  # type: ignore[arg-type]
                 scope=meta.scope,
@@ -271,6 +318,7 @@ class DIContainer:
                 factory=target,
                 field_deps=(),
                 is_function_provider=True,
+                is_generator_provider=_is_gen,
             )
             self._providers[token] = provider
             self._bind_token(token, provider)
@@ -1038,13 +1086,15 @@ class DIContainer:
 
         if provider.scope == Scope.SINGLETON:
             if _singleton_key in self._singletons:
-                return self._singletons[_singleton_key]
+                cached = self._singletons[_singleton_key]
+                return cached.value if isinstance(cached, _GeneratorContextWrapper) else cached
         elif provider.scope == Scope.REQUEST:
             if request_cache is None:
                 # Falls back to transient if no request context is active.
                 pass
             elif _singleton_key in request_cache:
-                return request_cache[_singleton_key]
+                cached = request_cache[_singleton_key]
+                return cached.value if isinstance(cached, _GeneratorContextWrapper) else cached
 
         # Build ``kwargs`` for the factory: function-provider parameters
         # and class-provider __init__ / __new__ parameters are resolved
@@ -1109,9 +1159,19 @@ class DIContainer:
                 result = factory(*positional)  # type: ignore[misc]
             else:
                 result = factory(**kwargs)  # type: ignore[misc]
-            if inspect.isawaitable(result):
-                result = await result
-            instance = result
+            if provider.is_generator_provider:
+                # Generator provider: advance to the yield point (setup),
+                # wrap so teardown runs when the scope ends via aclose().
+                if inspect.isasyncgen(result):
+                    yielded = await result.__anext__()
+                    instance = _GeneratorContextWrapper(yielded, result, is_async=True)
+                else:
+                    yielded = next(result)  # type: ignore[call-overload]
+                    instance = _GeneratorContextWrapper(yielded, result, is_async=False)
+            else:
+                if inspect.isawaitable(result):
+                    result = await result
+                instance = result
 
         if provider.scope == Scope.SINGLETON:
             self._singletons[_singleton_key] = instance
@@ -1127,9 +1187,10 @@ class DIContainer:
             Scope.REQUEST,
             Scope.TRANSIENT,
         ):
-            await _invoke_hook(instance, provider.post_construct)
+            resolved_instance = instance.value if isinstance(instance, _GeneratorContextWrapper) else instance
+            await _invoke_hook(resolved_instance, provider.post_construct)
 
-        return instance
+        return instance.value if isinstance(instance, _GeneratorContextWrapper) else instance
 
     # -- Lifecycle access --------------------------------------------------
 

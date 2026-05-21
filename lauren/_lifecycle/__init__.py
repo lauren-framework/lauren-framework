@@ -12,6 +12,7 @@ from ..exceptions import (
     DestructError,
     DestructTimeoutError,
 )
+from ..types import Scope
 
 
 @dataclass
@@ -150,6 +151,41 @@ class LifecycleScheduler:
                         detail={"class": provider.cls.__name__, "cause": str(e)},
                     )
                 )
+
+        # Second pass: run teardown (code after yield) for SINGLETON generator providers.
+        # The wrapper stored in the singletons cache exposes aclose() which advances
+        # the generator past its yield point. This mirrors how ASGI/WS cleanup handles
+        # REQUEST-scoped generator providers automatically via the same aclose() protocol.
+        for provider in reversed(self._order):
+            if not provider.is_generator_provider or provider.scope != Scope.SINGLETON:
+                continue
+            raw = singletons.get(provider.cls)
+            if raw is None:
+                continue
+            aclose_fn = getattr(raw, "aclose", None)
+            if not callable(aclose_fn):
+                continue
+            try:
+                coro = aclose_fn()
+                try:
+                    await asyncio.wait_for(coro, timeout=timeout)
+                except asyncio.TimeoutError:
+                    cls_name = getattr(provider.cls, "__name__", repr(provider.cls))
+                    errors.append(
+                        DestructTimeoutError(
+                            f"generator teardown on {cls_name!r} timed out after {timeout}s",
+                            detail={"class": cls_name, "timeout": timeout},
+                        )
+                    )
+            except Exception as e:
+                cls_name = getattr(provider.cls, "__name__", repr(provider.cls))
+                errors.append(
+                    DestructError(
+                        f"generator teardown on {cls_name!r} failed: {e}",
+                        detail={"class": cls_name, "cause": str(e)},
+                    )
+                )
+
         return errors
 
 

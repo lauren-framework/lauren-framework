@@ -348,6 +348,13 @@ deterministic).
   handler parameter typed as `ExecutionContext` (from `lauren.types`) is
   automatically provided by the dispatch engine at zero cost; no extractor
   marker is needed.
+- ❌ Using `Scope.TRANSIENT` with a generator function provider — transient
+  instances are not tracked by the container so teardown can never be
+  invoked. The container raises `StartupError` at registration time.
+- ❌ Expecting a generator provider's teardown to run if the generator yields
+  more than once — the convention is exactly one `yield`; the container only
+  advances past the first `yield` during setup and again once during teardown.
+  Multiple yields are not an error but only the first yielded value is used.
 
 ## 9. Testing Playbook
 

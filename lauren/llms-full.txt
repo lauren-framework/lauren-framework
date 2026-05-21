@@ -445,6 +445,46 @@ class NotifyController:
 
 The container recognises `list[T]` (and `typing.List[T]`) as a request for every visible provider of `T` registered with `multi=True`, in registration order. Visibility, request-scope caching, and scope narrowing all apply per element. Asking for `list[T]` when `T` is registered without `multi=True` raises `ProtocolAmbiguityError` at compile time — it forces the user to decide between scalar (`T`) and collection (`list[T]`) intent.
 
+### Generator function providers (FastAPI-style lifecycle)
+
+When an `@injectable()`-decorated function is a generator or async generator, the container treats it as a lightweight context manager:
+
+- Code **before** `yield` = setup (runs when the scope is first resolved).
+- The **yielded value** = the resolved dependency (what callers receive).
+- Code **after** `yield` = teardown (runs when the scope ends).
+
+```python
+@injectable()                           # SINGLETON — setup at startup, teardown at shutdown
+def db_pool():
+    pool = create_pool(DATABASE_URL)
+    yield pool
+    pool.close()
+
+@injectable(scope=Scope.REQUEST)        # REQUEST — per-request setup + teardown
+def db_session(pool: Depends[db_pool]):
+    session = pool.acquire()
+    try:
+        yield session
+    finally:
+        session.rollback(); session.release()
+
+@injectable(scope=Scope.REQUEST)
+async def async_client():               # async generator — awaitable setup/teardown
+    client = await httpx.AsyncClient().__aenter__()
+    yield client
+    await client.aclose()
+```
+
+**Teardown timing by scope:**
+
+| Scope | Teardown trigger |
+|---|---|
+| `SINGLETON` | `app.shutdown()` / `LifecycleScheduler.run_pre_destruct()` |
+| `REQUEST` | After ASGI response is sent (automatic via `aclose()` protocol) |
+| `TRANSIENT` | ❌ Raises `StartupError` — transient instances are not tracked |
+
+Use `try/finally` for guaranteed cleanup even when handlers raise 500 errors.
+
 ### Optional parameters with defaults
 
 If an `__init__` parameter has a default value, the DI container treats it as optional — the default is used when no provider is registered. This is what lets dataclass-backed configs work naturally:
