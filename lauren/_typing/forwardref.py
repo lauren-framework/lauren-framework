@@ -229,7 +229,12 @@ def _rebuild_generic(original: Any, origin: Any, new_args: tuple[Any, ...]) -> A
     if origin is typing.ClassVar:
         return typing.ClassVar[new_args[0]]  # type: ignore[valid-type]
     if origin is typing.Final:
-        return typing.Final[new_args[0]]  # type: ignore[valid-type]
+        final_arg = new_args[0]
+        if isinstance(final_arg, list):
+            final_arg = tuple(final_arg)
+        elif isinstance(final_arg, set):
+            final_arg = frozenset(final_arg)
+        return typing.Final[final_arg]  # type: ignore[valid-type]
 
     # ``Annotated[T, meta1, meta2, ...]`` — we always preserve the
     # metadata so extractor markers and pipes survive resolution.
