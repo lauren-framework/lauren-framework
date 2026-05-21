@@ -358,7 +358,7 @@ def build(session: nox.Session) -> None:
     session.install("build>=1.2")
     session.run("python", "-m", "build")
     if DIST_DIR.exists():
-        session.log("Built artefacts:")
+        session.log("Built artifacts:")
         for art in sorted(DIST_DIR.iterdir()):
             session.log(f"  {art.name}  ({art.stat().st_size} bytes)")
 
