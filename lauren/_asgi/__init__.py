@@ -1444,8 +1444,10 @@ class LaurenApp:
                         owning_module=None,
                     )
                     global_chain = _wrap_middleware(mw_instance, global_chain)
+                response: Response | None = None
                 try:
                     response = await global_chain(request)
+                    self._log_request(request, response, t0, handler=handler_qualname)
                 except Exception as err:
                     mw_name = getattr(mw_cls, "__name__", getattr(mw_cls, "__qualname__", "unknown"))
                     self._logger.error(
@@ -1455,9 +1457,8 @@ class LaurenApp:
                         path=request.path,
                         error=type(err).__name__,
                     )
-                self._log_request(request, response, t0, handler=handler_qualname)
                 final_response = response
-                return response
+                return response  # type: ignore[return-value]
         finally:
             # Fire RequestComplete on every exit path (success, handled
             # HTTPError, internal error, routing miss). Skipped only
