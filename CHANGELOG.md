@@ -260,6 +260,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - **`TestClient` / `WsTestClient`** — in-process ASGI test clients.
 
 [Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.4.1...HEAD
+[1.4.2]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.4.2
 [1.4.1]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.4.1
 [1.4.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.4.0
 [1.3.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.3.0
