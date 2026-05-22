@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-05-22
+
+### Fixed
+
+- **Non-callable custom descriptors now work as route handlers: Part 2** —
+  Preventive cyclic `__wrapped__` calls in `_unwrap_handler_descriptor`.
+
 ## [1.4.1] - 2026-05-22
 
 ### Fixed

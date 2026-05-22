@@ -593,17 +593,29 @@ def _unwrap_handler_descriptor(
         return None, "classmethod"
     if callable(raw):
         return raw, "instance"
-    # Non-callable custom descriptor: follow the __wrapped__ chain (set by
-    # functools.wraps / functools.update_wrapper) to find the innermost callable
-    # for signature and route-metadata inspection; dispatch still goes through
-    # __get__ at runtime.  The loop handles arbitrarily deep stacks of
-    # non-callable descriptors (e.g. two caching or retry wrappers in sequence).
-    if hasattr(raw, "__get__"):
-        _fn = getattr(raw, "__wrapped__", None)
-        while _fn is not None and not callable(_fn):
-            _fn = getattr(_fn, "__wrapped__", None)
-        if _fn is not None:
-            return _fn, "instance"
+    # Custom descriptors (e.g. caching descriptors) that carry __wrapped__
+    # from @wraps - treat the wrapped function as the handler for signature
+    # introspection, if dispatch time __get__ is called on the descriptor
+    # so the caching/wrapping layer runs transparently.
+    #
+    # Multiple non-callable descriptors may be stacked (e.g. @retry
+    # @async_cache @get(...)); we walk the wrapped chain until we
+    # reach a callable. Each intermediate descriptor's markers are
+    # merged onto the next so route/middleware metadata propagates
+    # through the entire stack regardless of where the user placed
+    # the @get decorator.
+    if not callable(raw) and hasattr(raw, "__wrapped__"):
+        current = raw
+        seen: set[int] = set()
+        while not callable(current) and hasattr(current, "__wrapped__"):
+            if id(current) in seen:
+                break  # defensive: cyclic __wrapped__ chain
+            seen.add(id(current))
+            nxt = current.__wrapped__
+            _merge_markers(current, nxt)
+            current = nxt
+        if callable(current):
+            return current, "instance"
     return None, "instance"
 
 

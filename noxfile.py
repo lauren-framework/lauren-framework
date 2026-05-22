@@ -340,6 +340,9 @@ def _log_version_suggestion(session: nox.Session, *, action: str, delta: int) ->
     session.log("")
     session.log("Then push it with:")
     session.log(f"  git push origin {next_tag}")
+    session.log("")
+    session.log("Together:")
+    session.log(f"  git tag -a {next_tag} -m 'Release {next_tag}' && git push origin {next_tag}")
 
 
 def _clean_build_artifacts() -> None:
