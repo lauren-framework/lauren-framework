@@ -227,7 +227,12 @@ def _rebuild_generic(original: Any, origin: Any, new_args: tuple[Any, ...]) -> A
     if origin is typing.Literal:
         return typing.Literal[new_args]  # type: ignore[valid-type]
     if origin is typing.ClassVar:
-        return typing.ClassVar[new_args[0]]  # type: ignore[valid-type]
+        classvar_arg = new_args[0]
+        if isinstance(classvar_arg, list):
+            classvar_arg = tuple(classvar_arg)
+        elif isinstance(classvar_arg, set):
+            classvar_arg = frozenset(classvar_arg)
+        return typing.ClassVar[classvar_arg]  # type: ignore[valid-type]
     if origin is typing.Final:
         final_arg = new_args[0]
         if isinstance(final_arg, list):
