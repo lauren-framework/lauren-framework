@@ -1444,8 +1444,17 @@ class LaurenApp:
                         owning_module=None,
                     )
                     global_chain = _wrap_middleware(mw_instance, global_chain)
-
-                response = await global_chain(request)
+                try:
+                    response = await global_chain(request)
+                except Exception as err:
+                    mw_name = getattr(mw_cls, "__name__", getattr(mw_cls, "__qualname__", "unknown"))
+                    self._logger.error(
+                        context="Request",
+                        message=f"Error in running global middleware = {mw_name}",
+                        method=request.method,
+                        path=request.path,
+                        error=type(err).__name__,
+                    )
                 self._log_request(request, response, t0, handler=handler_qualname)
                 final_response = response
                 return response
