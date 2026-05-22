@@ -217,3 +217,95 @@ class TestCustomDescriptor:
         instance, owner = dispatch_calls[0]
         assert isinstance(instance, Check2Controller)
         assert owner is Check2Controller
+
+
+# ---------------------------------------------------------------------------
+# Non-callable descriptor (no __call__, relies solely on __get__ + __wrapped__)
+# ---------------------------------------------------------------------------
+
+
+class _NonCallableDescriptor:
+    """Descriptor that does NOT define ``__call__``.
+
+    Mimics the ``AsyncCachedMethod`` pattern: ``functools.wraps`` copies
+    ``__wrapped__`` and the route-marker dict so Lauren can inspect the
+    original handler, while ``__get__`` returns the bound callable at
+    dispatch time.
+    """
+
+    def __init__(self, fn: Any) -> None:
+        self._fn = fn
+        functools.update_wrapper(self, fn)  # sets __wrapped__, copies __dict__
+
+    def __get__(self, obj: Any, objtype: type | None = None) -> Any:
+        if obj is None:
+            return self
+        return functools.partial(self._fn, obj)
+
+
+class TestNonCallableDescriptor:
+    """Non-callable descriptors with ``__get__`` + ``__wrapped__`` work as handlers.
+
+    Before this fix ``_unwrap_handler_descriptor`` returned ``(None, 'instance')``
+    for objects where ``callable(raw)`` was ``False``, silently dropping the route.
+    Now it falls through to the ``__get__`` + ``__wrapped__`` branch.
+    """
+
+    def test_non_callable_descriptor_route_registers_and_returns_200(self):
+        """Route wrapped in a non-callable descriptor is detected and dispatched."""
+
+        def _handler(self) -> dict:
+            return {"binding": "non-callable-descriptor"}
+
+        from lauren import get as get_decorator
+
+        _decorated = get_decorator("/ncd")(_handler)
+        descriptor = _NonCallableDescriptor(_decorated)
+
+        @controller("/ncd")
+        class NcdController:
+            pass
+
+        NcdController.ncd_handler = descriptor  # type: ignore[attr-defined]
+
+        @module(controllers=[NcdController])
+        class NcdModule:
+            pass
+
+        client = TestClient(LaurenFactory.create(NcdModule))
+        r = client.get("/ncd/ncd")
+        assert r.status_code == 200
+        assert r.json() == {"binding": "non-callable-descriptor"}
+
+    def test_non_callable_descriptor_get_called_at_dispatch(self):
+        """``__get__`` is invoked with the DI controller instance at dispatch."""
+        received: list[Any] = []
+
+        def _handler(self) -> dict:
+            return {"ok": True}
+
+        from lauren import get as get_decorator
+
+        _decorated = get_decorator("/ncd2")(_handler)
+
+        class _TrackingDescriptor(_NonCallableDescriptor):
+            def __get__(self, obj: Any, objtype: type | None = None) -> Any:
+                received.append(obj)
+                return super().__get__(obj, objtype)
+
+        descriptor = _TrackingDescriptor(_decorated)
+
+        @controller("/ncd2")
+        class Ncd2Controller:
+            pass
+
+        Ncd2Controller.ncd_handler = descriptor  # type: ignore[attr-defined]
+
+        @module(controllers=[Ncd2Controller])
+        class Ncd2Module:
+            pass
+
+        TestClient(LaurenFactory.create(Ncd2Module)).get("/ncd2/ncd2")
+        instance_calls = [x for x in received if x is not None]
+        assert len(instance_calls) >= 1
+        assert isinstance(instance_calls[0], Ncd2Controller)

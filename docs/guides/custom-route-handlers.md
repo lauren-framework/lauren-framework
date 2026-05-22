@@ -266,12 +266,17 @@ descriptor decides how the bound callable is produced.
 
 To be detected by Lauren's startup scanner the descriptor must be:
 
-1. **Callable** — implement `__call__` so that `callable(descriptor)`
-   returns `True`.
-2. **Properly wrapped** — carry the `__lauren_route__` marker (use
-   `functools.update_wrapper(self, fn)` in `__init__`).
-3. **Signature-transparent** — set `__wrapped__ = fn` so
-   `inspect.signature` follows the chain to the real parameter list.
+1. **Properly wrapped** — carry the `__lauren_route__` marker and set
+   `__wrapped__ = fn` by calling `functools.update_wrapper(self, fn)` in
+   `__init__`.  Lauren uses `__wrapped__` for signature inspection and
+   route-metadata lookup.
+2. **Provide a bound callable via `__get__`** — called at dispatch time with
+   the DI-built controller instance.
+
+`__call__` is **not required**.  If the descriptor is also callable, Lauren
+uses it as-is; if not, it falls through to the `__get__` + `__wrapped__` path
+automatically.  Descriptors that implement caching, retry logic, or other
+wrappers that intentionally omit `__call__` work without any extra ceremony.
 
 ```python
 import functools

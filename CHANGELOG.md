@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-05-22
+
+### Fixed
+
+- **Non-callable custom descriptors now work as route handlers** —
+  `_unwrap_handler_descriptor` previously required `callable(descriptor)` to be
+  `True`, silently dropping any descriptor that omitted `__call__` (e.g. a
+  caching or retry wrapper that only implements `__get__`).  The function now
+  falls through to a second check: if the object has both `__get__` and a
+  callable `__wrapped__` (set by `functools.update_wrapper` / `functools.wraps`),
+  it is accepted and `__wrapped__` is used for route-metadata and signature
+  inspection while `__get__` is still used for dispatch.  Descriptors that do
+  implement `__call__` are unaffected.
+
 ## [1.4.0] - 2026-05-21
 
 ### Added
@@ -237,7 +251,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   complete reference) shipped inside the wheel.
 - **`TestClient` / `WsTestClient`** — in-process ASGI test clients.
 
-[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.4.1
 [1.4.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.4.0
 [1.3.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.3.0
 [1.2.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.2.0

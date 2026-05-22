@@ -593,6 +593,11 @@ def _unwrap_handler_descriptor(
         return None, "classmethod"
     if callable(raw):
         return raw, "instance"
+    # Non-callable custom descriptor: use __wrapped__ (set by functools.wraps)
+    # for signature and route-metadata inspection; dispatch goes through __get__.
+    _wrapped = getattr(raw, "__wrapped__", None)
+    if hasattr(raw, "__get__") and callable(_wrapped):
+        return _wrapped, "instance"
     return None, "instance"
 
 

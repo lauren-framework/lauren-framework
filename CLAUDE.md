@@ -355,6 +355,11 @@ deterministic).
   more than once — the convention is exactly one `yield`; the container only
   advances past the first `yield` during setup and again once during teardown.
   Multiple yields are not an error but only the first yielded value is used.
+- ❌ Defining a custom route-handler descriptor without `__call__` and expecting
+  it to be auto-detected — as of v1.4.1 Lauren supports non-callable descriptors
+  that set `__wrapped__` via `functools.update_wrapper`. Prior versions required
+  `__call__` (so that `callable(descriptor)` returned `True`).  The only
+  requirement now is `__get__` + `__wrapped__`.
 
 ## 9. Testing Playbook
 
