@@ -187,8 +187,8 @@ def lint(session: nox.Session) -> None:
     Use ``nox -s lint -- --fix`` to auto-fix.
     """
     session.install("ruff>=0.6")
-    extra = session.posargs or []
-    session.run("ruff", "check", "--fix", "lauren", "tests", *extra)
+    extra = session.posargs or ["--fix"]
+    session.run("ruff", "check", *extra, "lauren", "tests")
 
 
 @nox.session(python=PRIMARY_PYTHON, reuse_venv=True)
@@ -303,8 +303,6 @@ def _adjust_version(version: tuple[int, int, int], kind: str, *, delta: int) -> 
         major += delta
         if major < 0:
             raise ValueError("Cannot decrement major below 0.")
-        if delta > 0:
-            return major, 0, 0
         return major, 0, 0
     if kind == "minor":
         minor += delta
@@ -361,7 +359,7 @@ def build(session: nox.Session) -> None:
     session.install("build>=1.2")
     session.run("python", "-m", "build")
     if DIST_DIR.exists():
-        session.log("Built artefacts:")
+        session.log("Built artifacts:")
         for art in sorted(DIST_DIR.iterdir()):
             session.log(f"  {art.name}  ({art.stat().st_size} bytes)")
 
