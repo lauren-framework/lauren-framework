@@ -1444,6 +1444,7 @@ class LaurenApp:
                         owning_module=None,
                     )
                     global_chain = _wrap_middleware(mw_instance, global_chain)
+                response: Response | None = None
                 try:
                     response = await global_chain(request)
                 except Exception as err:
@@ -1455,6 +1456,7 @@ class LaurenApp:
                         path=request.path,
                         error=type(err).__name__,
                     )
+                    response = Response(status=500, body={"error": "Internal Server Error"})
                 self._log_request(request, response, t0, handler=handler_qualname)
                 final_response = response
                 return response
