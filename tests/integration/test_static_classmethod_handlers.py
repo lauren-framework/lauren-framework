@@ -309,3 +309,30 @@ class TestNonCallableDescriptor:
         instance_calls = [x for x in received if x is not None]
         assert len(instance_calls) >= 1
         assert isinstance(instance_calls[0], Ncd2Controller)
+
+    def test_stacked_non_callable_descriptors_route_registers_and_returns_200(self):
+        """Two stacked non-callable descriptors both work — __wrapped__ chain is followed."""
+
+        def _handler(self) -> dict:
+            return {"binding": "stacked"}
+
+        from lauren import get as get_decorator
+
+        _decorated = get_decorator("/stacked")(_handler)
+        inner = _NonCallableDescriptor(_decorated)  # wraps original fn
+        outer = _NonCallableDescriptor(inner)  # wraps the inner descriptor
+
+        @controller("/stacked")
+        class StackedController:
+            pass
+
+        StackedController.stacked_handler = outer  # type: ignore[attr-defined]
+
+        @module(controllers=[StackedController])
+        class StackedModule:
+            pass
+
+        client = TestClient(LaurenFactory.create(StackedModule))
+        r = client.get("/stacked/stacked")
+        assert r.status_code == 200
+        assert r.json() == {"binding": "stacked"}

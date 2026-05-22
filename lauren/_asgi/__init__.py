@@ -593,11 +593,17 @@ def _unwrap_handler_descriptor(
         return None, "classmethod"
     if callable(raw):
         return raw, "instance"
-    # Non-callable custom descriptor: use __wrapped__ (set by functools.wraps)
-    # for signature and route-metadata inspection; dispatch goes through __get__.
-    _wrapped = getattr(raw, "__wrapped__", None)
-    if hasattr(raw, "__get__") and callable(_wrapped):
-        return _wrapped, "instance"
+    # Non-callable custom descriptor: follow the __wrapped__ chain (set by
+    # functools.wraps / functools.update_wrapper) to find the innermost callable
+    # for signature and route-metadata inspection; dispatch still goes through
+    # __get__ at runtime.  The loop handles arbitrarily deep stacks of
+    # non-callable descriptors (e.g. two caching or retry wrappers in sequence).
+    if hasattr(raw, "__get__"):
+        _fn = getattr(raw, "__wrapped__", None)
+        while _fn is not None and not callable(_fn):
+            _fn = getattr(_fn, "__wrapped__", None)
+        if _fn is not None:
+            return _fn, "instance"
     return None, "instance"
 
 

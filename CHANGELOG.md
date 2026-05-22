@@ -13,11 +13,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `_unwrap_handler_descriptor` previously required `callable(descriptor)` to be
   `True`, silently dropping any descriptor that omitted `__call__` (e.g. a
   caching or retry wrapper that only implements `__get__`).  The function now
-  falls through to a second check: if the object has both `__get__` and a
-  callable `__wrapped__` (set by `functools.update_wrapper` / `functools.wraps`),
-  it is accepted and `__wrapped__` is used for route-metadata and signature
-  inspection while `__get__` is still used for dispatch.  Descriptors that do
-  implement `__call__` are unaffected.
+  walks the full `__wrapped__` chain (set by `functools.update_wrapper` /
+  `functools.wraps`) until it finds the innermost callable; that callable is
+  used for route-metadata and signature inspection while `__get__` is still
+  used for dispatch.  This handles both a single non-callable descriptor and
+  arbitrarily deep stacks of them (e.g. `@cache_a` on top of `@cache_b` on top
+  of `@get`).  Descriptors that implement `__call__` are unaffected.
 
 ## [1.4.0] - 2026-05-21
 
