@@ -328,6 +328,7 @@ def _log_version_suggestion(session: nox.Session, *, action: str, delta: int) ->
         next_version = _adjust_version(current_version, kind, delta=delta)
     except ValueError as exc:
         session.error(str(exc))
+        return
     next_version_str = _render_version(next_version)
     next_tag = f"v{next_version_str}"
     session.log(f"Latest release tag: {current_tag}")
