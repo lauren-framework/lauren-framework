@@ -360,6 +360,12 @@ deterministic).
   that set `__wrapped__` via `functools.update_wrapper`. Prior versions required
   `__call__` (so that `callable(descriptor)` returned `True`).  The only
   requirement now is `__get__` + `__wrapped__`.
+- ❌ Expecting `call_handler.handle()` to return the raw handler value (dict,
+  Pydantic model, tuple, etc.) inside an interceptor — as of v1.4.2
+  `handle()` always returns a coerced `Response`.  Interceptors can safely call
+  `.status_code`, `.body`, `.headers`, `.with_header()`, etc. without any
+  `isinstance` check.  Code that did `if isinstance(result, dict): result["k"] = v`
+  must be updated to parse `result.body` and rebuild via `result.with_body(...)`.
 
 ## 9. Testing Playbook
 

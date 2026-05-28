@@ -7,6 +7,23 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [1.4.2] - 2026-05-22
 
+### Changed
+
+- **`CallHandler.handle()` now always returns a coerced `Response`** —
+  Previously interceptors received the raw handler return value (dict, Pydantic
+  model, tuple, `None`, etc.) and had to replicate the full `_coerce_to_response`
+  dispatch table to work robustly.  The innermost `CallHandler` now wraps a
+  coercing shim so every layer of the interceptor chain — including the outermost
+  interceptor — always receives a `Response` from `handle()`.  Interceptors can
+  safely call `.status_code`, `.body`, `.headers`, `.with_header()`, etc. without
+  any `isinstance` guard.
+
+  **Migration:** interceptors that checked `isinstance(result, dict)` or
+  `isinstance(result, Response)` before acting must be updated.  To modify JSON
+  body content: `json.loads(result.body)` → mutate → `result.with_body(...)`.
+  Interceptors that only pass the result through (`return await ch.handle()`) are
+  unaffected.
+
 ### Fixed
 
 - **Non-callable custom descriptors now work as route handlers: Part 2** —

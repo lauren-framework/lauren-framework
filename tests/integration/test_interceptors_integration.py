@@ -76,13 +76,16 @@ async def client_factory():
 class TestBasicInterception:
     @pytest.mark.asyncio
     async def test_result_enrichment(self, client_factory):
+        import json as _json
+
         @interceptor()
         class AddTimestamp:
             async def intercept(self, ctx: ExecutionContext, ch: CallHandler) -> Any:
                 result = await ch.handle()
-                if isinstance(result, dict):
-                    result["_ts"] = 42
-                return result
+                # result is always a Response — parse body, add field, re-encode
+                data = _json.loads(result.body)
+                data["_ts"] = 42
+                return result.with_body(_json.dumps(data).encode())
 
         @use_interceptors(AddTimestamp)
         @controller("/items")
@@ -245,19 +248,24 @@ class TestMultipleInterceptorOrder:
 
     @pytest.mark.asyncio
     async def test_result_passes_through_chain(self, client_factory):
+        import json as _json
+
         @interceptor()
         class Multiply:
             async def intercept(self, ctx, ch: CallHandler) -> Any:
                 result = await ch.handle()
-                result["n"] *= 10
-                return result
+                # result is always a Response — parse body, mutate, re-encode
+                data = _json.loads(result.body)
+                data["n"] *= 10
+                return result.with_body(_json.dumps(data).encode())
 
         @interceptor()
         class AddOne:
             async def intercept(self, ctx, ch: CallHandler) -> Any:
                 result = await ch.handle()
-                result["n"] += 1
-                return result
+                data = _json.loads(result.body)
+                data["n"] += 1
+                return result.with_body(_json.dumps(data).encode())
 
         # Multiply is outer, AddOne is inner.
         # Handler returns {"n": 5}.

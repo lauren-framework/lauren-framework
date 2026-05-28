@@ -233,11 +233,16 @@ class TestInterceptorExecution:
 
     @pytest.mark.asyncio
     async def test_interceptor_transforms_result(self):
+        """handle() returns a coerced Response; interceptor can inspect body or return new data."""
+        from lauren.types import Response
+
         @interceptor()
         class Wrapper:
             async def intercept(self, ctx, call_handler: CallHandler) -> Any:
                 result = await call_handler.handle()
-                return {"wrapped": True, "data": result}
+                # result is always a Response — add a header to demonstrate transform
+                assert isinstance(result, Response)
+                return result.with_header("x-wrapped", "yes")
 
         @use_interceptors(Wrapper)
         @controller("/c")
@@ -247,7 +252,9 @@ class TestInterceptorExecution:
                 return {"original": True}
 
         r = _app(C).get("/c/")
-        assert r.json() == {"wrapped": True, "data": {"original": True}}
+        assert r.status_code == 200
+        assert r.json() == {"original": True}
+        assert r.header("x-wrapped") == "yes"
 
     @pytest.mark.asyncio
     async def test_interceptor_short_circuits(self):

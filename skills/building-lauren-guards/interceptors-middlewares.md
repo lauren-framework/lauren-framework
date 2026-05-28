@@ -6,7 +6,7 @@ Interceptors run **after** guards and wrap the route handler. They receive `Exec
 
 ```python
 from lauren import interceptor
-from lauren.types import ExecutionContext, CallHandler
+from lauren.types import ExecutionContext, CallHandler, Response
 
 @interceptor()
 class TimingInterceptor:
@@ -14,14 +14,12 @@ class TimingInterceptor:
         self,
         ctx: ExecutionContext,
         call_handler: CallHandler,
-    ) -> Any:
+    ) -> Response:
         import time
         t0 = time.perf_counter()
-        result = await call_handler.handle()
+        result = await call_handler.handle()   # always Response
         elapsed = time.perf_counter() - t0
-        if isinstance(result, Response):
-            return result.with_header("x-elapsed-ms", f"{elapsed*1000:.1f}")
-        return result
+        return result.with_header("x-elapsed-ms", f"{elapsed*1000:.1f}")
 ```
 
 `@interceptor()` marks the class as `SINGLETON`. For DI deps:
@@ -61,12 +59,12 @@ app = LaurenFactory.create(AppModule, global_interceptors=[TimingInterceptor])
 
 ```python
 class CallHandler:
-    async def handle(self) -> Any:
+    async def handle(self) -> Response:
         """Advance to the next interceptor or to the route handler.
-        Returns the raw handler result (before response coercion)."""
+        Always returns a coerced Response — never a raw dict, tuple, or model."""
 ```
 
-The interceptor controls the flow — it can call `handle()` zero or more times, cache the result, catch exceptions, or replace the return value.
+`handle()` **always returns a `Response`**. The raw handler return value is coerced before interceptors see it, so interceptors can safely read `.status_code`, `.body`, `.headers`, and use `.with_header()` / `.with_status()` / `.with_body()` without any `isinstance` check.
 
 ---
 
@@ -112,7 +110,7 @@ app = LaurenFactory.create(AppModule, global_middlewares=[CorsMiddleware, Loggin
 |---|---|---|
 | Receives | `Request` | `ExecutionContext` (route info + metadata) |
 | Runs | Before routing (global) or at dispatch | After guards |
-| Return type | Must return `Response` | May return any handler-compatible value |
+| `handle()` / `call_next()` returns | `Response` | `Response` (always coerced) |
 | Onion position | Outermost | Inside guards, outside handler |
 
 ### Request / Response API in middleware

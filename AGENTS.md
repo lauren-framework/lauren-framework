@@ -264,3 +264,36 @@ Full index: [`skills/README.md`](skills/README.md)
 | `DuplicateRouteError` | Two handlers registered on the same method + path | Rename one route |
 | `UnresolvableProviderError` | Type not registered anywhere, or owning module not imported | Import the owning module in the consumer module |
 | `StartupError` (generic) | Missing required parameter in constructor injection | Add the type as a `@module` provider or import its module |
+
+## Interceptor `CallHandler.handle()` contract (v1.4.2+)
+
+`call_handler.handle()` inside an interceptor **always returns a `Response`** — the raw handler return value (dict, Pydantic model, tuple, etc.) is coerced before interceptors see it.
+
+```python
+# Correct — no isinstance guard needed:
+@interceptor()
+class TimingInterceptor:
+    async def intercept(self, ctx, ch: CallHandler) -> Response:
+        t0 = time.monotonic()
+        result = await ch.handle()          # Response, always
+        return result.with_header("x-ms", f"{(time.monotonic()-t0)*1000:.0f}")
+
+# Wrong — result is never a dict:
+@interceptor()
+class Bad:
+    async def intercept(self, ctx, ch):
+        result = await ch.handle()
+        if isinstance(result, dict):        # ← never True
+            result["key"] = "value"
+        return result
+```
+
+To modify JSON body content, parse and rebuild:
+
+```python
+import json
+result = await ch.handle()
+data = json.loads(result.body)
+data["key"] = "value"
+return result.with_body(json.dumps(data).encode())
+```

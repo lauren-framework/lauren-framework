@@ -1186,26 +1186,29 @@ class CallHandler:
     Call :meth:`handle` to advance to the next interceptor (or, for the
     innermost interceptor, to the actual route handler itself).
 
-    The return value of :meth:`handle` is the **raw handler result**
-    (dict, Pydantic model, ``Response``, etc.) before response coercion.
-    Interceptors may inspect and transform it freely::
+    The return value of :meth:`handle` is **always a** :class:`Response`
+    object — the raw handler result (dict, Pydantic model, tuple, etc.)
+    has already been coerced by the time interceptors see it.  This means
+    an interceptor can always safely read ``result.status_code``,
+    ``result.body``, ``result.headers``, etc. without type-guarding::
 
+        @interceptor()
         class TimingInterceptor:
             async def intercept(
                 self, ctx: ExecutionContext, call_handler: CallHandler
-            ) -> Any:
+            ) -> Response:
                 start = time.perf_counter()
-                result = await call_handler.handle()
+                result = await call_handler.handle()   # always Response
                 elapsed = time.perf_counter() - start
-                print(f"{ctx.route_template} took {elapsed:.3f}s")
-                return result
+                # Augment and return the coerced response directly.
+                return result.with_header("x-duration-ms", f"{elapsed * 1000:.1f}")
     """
 
     def __init__(self, fn: "Callable[[], Awaitable[Any]]") -> None:
         self._fn = fn
 
-    async def handle(self) -> "Any":
-        """Invoke the next stage in the pipeline and return its result."""
+    async def handle(self) -> "Response":
+        """Invoke the next stage in the pipeline and return a coerced :class:`Response`."""
         return await self._fn()
 
 

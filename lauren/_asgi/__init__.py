@@ -1294,7 +1294,30 @@ class LaurenApp:
 
                         # Build interceptor chain (innermost first, then wrap
                         # outward so the first declared interceptor is outermost).
-                        call_handler: CallHandler = CallHandler(_invoke_handler)
+                        #
+                        # The innermost CallHandler wraps a coercing shim so that
+                        # every layer of the chain — including the outermost
+                        # interceptor — receives a fully coerced ``Response`` from
+                        # ``call_handler.handle()``.  This removes the burden of
+                        # understanding the full coercion table from interceptor
+                        # authors: they always see a stable ``Response`` object
+                        # with ``.status_code``, ``.headers``, ``.body``, etc.
+                        _captured_streaming_item_type = compiled.streaming_item_type
+                        _captured_req2 = req2
+                        _captured_effective_encoder = effective_encoder
+
+                        async def _coerced_invoke() -> Response:
+                            raw = await _invoke_handler()
+                            if _captured_streaming_item_type is not None and not isinstance(raw, Response):
+                                return await _coerce_streaming_response(
+                                    raw,
+                                    item_type=_captured_streaming_item_type,
+                                    request=_captured_req2,
+                                    encoder=_captured_effective_encoder,
+                                )
+                            return _coerce_to_response(raw, encoder=_captured_effective_encoder)
+
+                        call_handler: CallHandler = CallHandler(_coerced_invoke)
                         for inter_cls in reversed(effective_interceptors):
                             inter_owning = owning_module if inter_cls in compiled.interceptors else None
                             inter_inst = await self._container.resolve(
@@ -1305,20 +1328,13 @@ class LaurenApp:
                             )
                             call_handler = _wrap_interceptor(inter_inst, ctx, call_handler)
 
+                        # result is a Response — already coerced inside _coerced_invoke.
                         result = await call_handler.handle()
-
-                        # StreamingResponse[T] path — the handler returns an async
-                        # iterable of ``T`` which we must frame according to the
-                        # request's Accept header. Falls back to the generic coercer
-                        # for every other return shape (feature 7).
-                        if compiled.streaming_item_type is not None and not isinstance(result, Response):
-                            return await _coerce_streaming_response(
-                                result,
-                                item_type=compiled.streaming_item_type,
-                                request=req2,
-                                encoder=effective_encoder,
-                            )
-                        return _coerce_to_response(result, encoder=effective_encoder)
+                        return (
+                            result
+                            if isinstance(result, Response)
+                            else _coerce_to_response(result, encoder=effective_encoder)
+                        )
 
                     # Per-route onion chain (global mw already wraps _route_and_run)
                     chain: CallNext = run_handler

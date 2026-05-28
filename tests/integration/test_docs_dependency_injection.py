@@ -1281,10 +1281,13 @@ class TestD4InterceptorInjection:
         @interceptor()
         class AddField:
             async def intercept(self, ctx: ExecutionContext, ch: CallHandler) -> Any:
+                import json as _json
+
                 result = await ch.handle()
-                if isinstance(result, dict):
-                    result["intercepted"] = True
-                return result
+                # handle() always returns a Response — parse body, add field, re-encode
+                data = _json.loads(result.body)
+                data["intercepted"] = True
+                return result.with_body(_json.dumps(data).encode())
 
         @use_interceptors(AddField)
         @controller("/d4plain")

@@ -7,14 +7,14 @@
 ```python
 from typing import Any
 from lauren import interceptor
-from lauren.types import CallHandler, ExecutionContext
+from lauren.types import CallHandler, ExecutionContext, Response
 
 @interceptor()
 class LoggingInterceptor:
-    async def intercept(self, ctx: ExecutionContext, call_handler: CallHandler) -> Any:
+    async def intercept(self, ctx: ExecutionContext, call_handler: CallHandler) -> Response:
         print(f"→ {ctx.handler_class.__name__}.{ctx.handler_func.__name__}")
-        result = await call_handler.handle()
-        print(f"← {ctx.route_template}")
+        result = await call_handler.handle()   # always returns Response
+        print(f"← {ctx.route_template} {result.status_code}")
         return result
 ```
 
@@ -22,8 +22,9 @@ The contract:
 
 * Receive an `ExecutionContext` and a `CallHandler`.
 * Call `await call_handler.handle()` to invoke the rest of the pipeline (inner interceptors → handler).
+* `handle()` **always returns a `Response`** — the raw handler return value (dict, Pydantic model, tuple, etc.) is coerced before interceptors see it.
 * Optionally transform, replace, or suppress the result.
-* Return the final result (any type the serialiser can handle, or a `Response`).
+* Return a `Response` (or any value the serialiser can handle — it will be coerced again).
 
 ## Attaching interceptors
 
@@ -97,19 +98,20 @@ A-pre → B-pre → C-pre → handler → C-post → B-post → A-post
 Interceptors can read metadata set with `@set_metadata`:
 
 ```python
+import json
 from lauren import set_metadata, use_interceptors, controller, get
-from lauren.types import CallHandler, ExecutionContext
+from lauren.types import CallHandler, ExecutionContext, Response
 
 @interceptor()
 class CacheInterceptor:
     _cache: dict = {}
 
-    async def intercept(self, ctx: ExecutionContext, ch: CallHandler) -> Any:
+    async def intercept(self, ctx: ExecutionContext, ch: CallHandler) -> Response:
         ttl = ctx.get_metadata("cache_ttl")
         key = ctx.route_template
         if ttl and key in self._cache:
             return self._cache[key]
-        result = await ch.handle()
+        result = await ch.handle()   # Response
         if ttl:
             self._cache[key] = result
         return result
@@ -159,30 +161,28 @@ class FallbackInterceptor:
 
 ## Response header injection
 
-To inject response headers from an interceptor, the handler must return a `Response` object. If the handler returns a dict (or Pydantic model), Lauren serialises it **after** the interceptor chain, so the interceptor only sees the raw Python value:
+`call_handler.handle()` always returns a coerced `Response`, so interceptors can read and modify headers, status, and body without any `isinstance` check:
 
 ```python
 from lauren.types import Response
 
 @interceptor()
 class TimingInterceptor:
-    async def intercept(self, ctx: ExecutionContext, ch: CallHandler) -> Any:
+    async def intercept(self, ctx: ExecutionContext, ch: CallHandler) -> Response:
         import time
         t0 = time.monotonic()
-        result = await ch.handle()
+        result = await ch.handle()          # always Response
         elapsed = time.monotonic() - t0
-        if isinstance(result, Response):
-            return result.with_header("x-duration-ms", str(int(elapsed * 1000)))
-        return result
+        return result.with_header("x-duration-ms", str(int(elapsed * 1000)))
 
-# For the header to be set, the handler must return a Response directly:
+# Works regardless of what the handler returns — dict, Pydantic model, tuple, etc.
 @controller("/c")
 class C:
     @use_interceptors(TimingInterceptor)
     @get("/slow")
-    async def slow(self) -> Any:
+    async def slow(self) -> dict:           # plain dict — still works
         import asyncio; await asyncio.sleep(0.1)
-        return Response.json({"ok": True})  # ← Response, not dict
+        return {"ok": True}
 ```
 
 ## Dependency injection
