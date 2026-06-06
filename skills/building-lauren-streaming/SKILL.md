@@ -132,3 +132,39 @@ class ChatModule:
 When you call `ws.send_json(...)`, the gateway uses the app-wide encoder from
 `LaurenFactory.create(..., json_encoder=...)` rather than silently falling back
 to the stdlib JSON path.
+
+## Socket.IO adapter
+
+`socketio_controller` / `on_socketio_event` let official Socket.IO v4+ clients
+talk to a lauren backend over WebSocket transport — no wire-level protocol work needed:
+
+```python
+from lauren import module
+from lauren.socketio import SocketIOConnection, on_socketio_event, socketio_controller
+
+@socketio_controller("/socket.io/")
+class ChatGateway:
+    @on_socketio_event("connect")
+    async def on_connect(self, conn: SocketIOConnection) -> None:
+        await conn.emit("welcome", {"sid": conn.sid})
+
+    @on_socketio_event("chat:message")
+    async def on_message(self, conn: SocketIOConnection, payload: dict) -> dict:
+        return {"echo": payload}  # ACK back to sender
+
+    @on_socketio_event("disconnect")
+    async def on_disconnect(self, conn: SocketIOConnection) -> None:
+        ...
+
+@module(controllers=[ChatGateway])
+class App:
+    pass
+
+app = LaurenFactory.create(App)
+```
+
+Key differences from raw `@ws_controller`:
+- `SocketIOConnection` provides `emit(event, data)`, `sid`, and `rooms`
+- `@on_socketio_event("connect")` fires after the Engine.IO handshake
+- Returning a dict from the handler sends a Socket.IO ACK to the sender
+- Compatible with the official `socket.io-client` JS/TS/Swift/Kotlin SDKs

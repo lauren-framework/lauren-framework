@@ -14,7 +14,7 @@ class CreateUser(BaseModel):
     email: str
 
 
-@controller("/users", tags=["users"])
+@controller("/users", tags=["users"], summary="User management", description="CRUD operations for users")
 class UserController:
     def __init__(self, repo: UserRepository, log: Logger) -> None:
         self.repo = repo
@@ -35,7 +35,7 @@ Explicit extractor markers (`Path[int]`, `Json[CreateUser]`) are always accepted
 What `@controller` does:
 
 1. Attaches a `ControllerMeta(prefix="/users", tags=["users"], ...)` payload to the class.
-2. **Auto-marks the class as `@injectable(scope=Scope.REQUEST)`** if it isn't already injectable. This is what lets controllers take request-scoped deps (e.g. a `DbSession`) in their constructor.
+2. **Auto-marks the class as `@injectable(scope=Scope.SINGLETON)`** if it isn't already injectable. This is what lets controllers take deps in their constructor.
 3. Registers no routes by itself — the route decorators (`@get`, `@post`, ...) on the methods do that. `@controller` only sets the prefix and groups them.
 
 ## What a controller does
@@ -100,7 +100,7 @@ class B: ...
 
 ## DI inside controllers
 
-Because `@controller` implies `@injectable(scope=Scope.REQUEST)`, the constructor can take **any** combination of `SINGLETON` or `REQUEST` deps:
+Because `@controller` implies `@injectable(scope=Scope.SINGLETON)`, the constructor can take **any** combination of `SINGLETON` or `REQUEST` deps:
 
 ```python
 @injectable(scope=Scope.SINGLETON)

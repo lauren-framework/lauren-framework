@@ -8,7 +8,7 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 
 - **Radix-tree router** with O(depth) lookup, static > param > wildcard priority, per-method dispatch with `Allow` header on 405.
 - **Dependency Injection** with `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes, Protocol binding, multi-bindings (`list[T]` injection), circular detection, scope-violation checks, and the four NestJS-style custom-provider recipes (`use_value`, `use_class`, `use_factory`, `use_existing`) plus `Token` and `Inject`.
-- **Extractor system** for typed request decomposition (`Path[int]`, `Query[str]`, `Header[str]`, `Cookie[str]`, `Json[Model]`, `Form[Model]`, `Bytes`, `State`, `Depends[T]`), model extraction for Pydantic / `msgspec.Struct` / Python `dataclass` types, plus user-defined extractors via an `ExtractionMarker.extract` instance method (legacy classmethod form still supported).
+- **Extractor system** for typed request decomposition (`Path[int]`, `Query[str]`, `Header[str]`, `Cookie[str]`, `Json[Model]`, `Form[Model]`, `Bytes`, `ByteStream`, `UploadFile`, `State`, `Depends[T]`), model extraction for Pydantic / `msgspec.Struct` / Python `dataclass` types, plus user-defined extractors via an `ExtractionMarker.extract` instance method (legacy classmethod form still supported).
 - **Module system** with explicit imports/exports and circular-import detection (NestJS-style).
 - **Lifecycle hooks** (`@post_construct`, `@pre_destruct`) run in topological order with timeouts. Both sync and async hooks are supported; sync hooks run in a thread pool so they never block the event loop and are subject to the same timeout enforcement as async ones.
 - **First-class WebSockets** — `@ws_controller(path)`, `@on_connect`, `@on_message("event")`, `@on_disconnect`, `@on_error`, with typed Pydantic-validated frames, discriminated-union dispatch, and `BroadcastGroup` rooms.
@@ -20,17 +20,30 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 - **Sync handler support**: plain `def` handlers are automatically offloaded to a thread pool via `anyio.to_thread.run_sync`; they never block the event loop. All extractors, return-type coercion, and binding styles (instance / classmethod / static) work identically for sync and async handlers.
 - **OpenAPI 3.1** generation from Pydantic models; Swagger UI / ReDoc-ready schemas.
 - **Middleware (onion)**, **Guards**, and **Exception Handlers** — all attachable globally, per-controller, or per-route.
+- **Interceptors** — `@interceptor()` wraps handler execution for timing, caching, or response transforms. `CallHandler.handle()` always returns a `Response`.
+- **Pipes** — `Pipe` and `pipe()` for parameter-level transforms and validation before handler execution.
 - **Auto-serialization**: return dicts, Pydantic models, dataclasses, `msgspec.Struct` values, custom `Response` subclasses, or `(body, status)` tuples and lauren builds the Response for you.
 - **Pluggable JSON encoders** — `StdlibJSONEncoder` (default), `OrjsonEncoder`, `MsgspecEncoder`, `PydanticEncoder`. Set app-wide via `LaurenFactory.create(json_encoder=…)`; override per-controller or per-route with `@use_encoder(enc)`. The encoder is threaded through every output path: handler responses, error bodies, SSE events, and WebSocket `send_json`.
 - **Strict inheritance**: subclasses are controllers / injectables / WS gateways / exception handlers / middlewares only when explicitly re-decorated.
 - **Structured logging** with NestJS-style `ConsoleLogger` (coloured) and `JsonLogger` (production); all four built-in loggers are `@injectable(provides=(Logger,))` — pass one in `global_providers=[ConsoleLogger]` and any service can declare `log: Logger` to receive it.
 - **Graceful shutdown hooks** via `app.on_shutdown(fn)` plus `install_signal_handlers` for SIGTERM/SIGINT-driven drain.
+- **Signals & lifecycle events** — `SignalBus` with `StartupBegin`, `StartupComplete`, `ShutdownBegin`, `RequestReceived`, `RequestComplete`, `BackgroundTaskStarted`, `BackgroundTaskComplete`, `BackgroundTaskFailed`.
+- **Sub-application mounting** — `app.mount("/prefix", sub_app)` for composing multiple Lauren or ASGI apps.
+- **Static file serving** — `StaticFilesModule.for_root("/assets", directory="./public")` as a feature module.
+- **Background tasks** — `BackgroundTasks` for fire-and-forget work after response, with `TaskHandle` for cancellation and result tracking.
 - **28-class error catalog** with stable `code` strings; consistent `{error: {code, message, detail}}` envelope.
+
+## LaurenFactory.create() parameters
+
+`LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None)`
+
+See [full reference](llms-full.txt) for complete parameter documentation.
 
 ## Companion packages
 
 - **lauren-middlewares** — CORS, rate limit, GZip, security headers, request id, trusted hosts, request log, HTTPS redirect, body size limit, timeout. Each as a factory function returning a `@middleware`-decorated class.
 - **lauren-logging** — Configurable logging module modelled after NestJS's `LoggerModule.forRoot`. Processor pipeline, contextvars binding, request-logging middleware, pluggable backends (stdlib, structlog, console, file, fan-out, queue, …).
+- **lauren-guards** — Authentication and authorization guards: `bearer_token`, `jwt_bearer`, `api_key`, `basic_auth`, `oauth2_introspection`, `session_cookie`, `require_authenticated`, `require_roles`, `require_scopes`, `csrf`, `ip_allowlist`.
 
 ## Documentation for LLMs
 
@@ -47,3 +60,7 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 - [Custom responses](#response): subclassing `Response`, file downloads, XML output.
 - [Guards & middleware](#guards-middleware): applying authorization at class or route level.
 - [Exception handlers](#exception-handlers): typed error → response mapping.
+- [Interceptors](#interceptors): timing, caching, response transforms via `CallHandler`.
+- [Pipes](#pipes): parameter-level transforms and validation.
+- [Sub-application mounting](#mounting): composing multiple ASGI apps.
+- [Background tasks](#background-tasks): fire-and-forget work after response.

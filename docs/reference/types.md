@@ -14,6 +14,28 @@ Core request/response types and state containers.
 
 ::: lauren.ClientInfo
 
+::: lauren.ServerInfo
+
+## Body types
+
+::: lauren.ByteStream
+
+::: lauren.UploadFile
+
+## Middleware / Guard / Interceptor types
+
+::: lauren.CallNext
+
+::: lauren.CallHandler
+
+::: lauren.MiddlewareProtocol
+
+::: lauren.GuardProtocol
+
+::: lauren.InterceptorProtocol
+
+::: lauren.ExecutionContext
+
 ## State
 
 ::: lauren.State

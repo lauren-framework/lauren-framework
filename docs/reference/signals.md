@@ -17,3 +17,11 @@ POSIX signal integration and application shutdown hooks.
 ::: lauren.RequestComplete
 
 ::: lauren.ShutdownBegin
+
+## Background task events
+
+::: lauren.BackgroundTaskStarted
+
+::: lauren.BackgroundTaskComplete
+
+::: lauren.BackgroundTaskFailed

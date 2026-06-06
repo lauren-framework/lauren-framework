@@ -56,7 +56,9 @@ class UsersController:
 | `Cookie[T]` | cookie jar | |
 | `Json[T]` | JSON body | Supports Pydantic models, `msgspec.Struct`, and Python dataclasses; 422 on validation error |
 | `Form[T]` | form-urlencoded or multipart | |
-| `Bytes` | raw body `bytes` | |
+| `Bytes` | raw body `bytes` | Buffers entire body |
+| `ByteStream` | streaming body chunks | Zero-copy async iterator — no intermediate `bytes` join |
+| `UploadFile` | multipart file upload | `.filename`, `.content_type`, `.content` (bytes); `list[UploadFile]` for multiple files |
 | `Depends[T]` | DI container | resolves `T` from the container |
 | `State` | `request.state` | reads per-request mutable state |
 

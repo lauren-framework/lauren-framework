@@ -128,3 +128,45 @@ return Response.json({"error": "forbidden"}, status=403)
 return Response.text("ok")
 return Response(body=b"...", status=200, headers=[("content-type", "text/plain")])
 ```
+
+---
+
+## Exception handlers
+
+Exception handlers catch typed exceptions and return structured responses. Resolution order: route → controller → global.
+
+```python
+from lauren import exception_handler, use_exception_handlers
+from lauren.types import Request, Response
+
+@exception_handler(NotFoundError, ConflictError)
+class DomainErrors:
+    def __init__(self, log: Logger) -> None:  # DI-injected
+        self.log = log
+
+    async def catch(self, exc: Exception, request: Request) -> Response:
+        return Response.json({"error": str(exc)}, status=400)
+
+@exception_handler(ValueError)
+async def handle_value_error(exc: ValueError, request: Request) -> Response:
+    return Response.json({"detail": str(exc)}, status=422)
+```
+
+### Attaching exception handlers
+
+```python
+# Controller-level
+@use_exception_handlers(DomainErrors)
+@controller("/api")
+class ApiController: ...
+
+# Method-level
+@get("/item")
+@use_exception_handlers(DomainErrors)
+async def get_item(self) -> dict: ...
+
+# Global
+app = LaurenFactory.create(AppModule, global_exception_handlers=[DomainErrors])
+```
+
+`None` entries are silently dropped for conditional handler selection.

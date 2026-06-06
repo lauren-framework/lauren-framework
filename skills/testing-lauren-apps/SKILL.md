@@ -89,7 +89,7 @@ async def test_create_user(aclient):
     assert resp.json()["name"] == "Alice"
 ```
 
-For WebSocket testing use `WsTestClient`. See [async-testing.md](async-testing.md) for lifecycle startup, streaming, and WebSocket patterns.
+For WebSocket testing use `WsTestClient` — see [async-testing.md](async-testing.md) for lifecycle startup, streaming, and WebSocket patterns.
 
 ## Isolating services with use_value
 

@@ -85,16 +85,16 @@ async def test_sse_body(client):
 
 ## Testing WebSockets
 
-Use `WsTestClient` — a separate client from `TestClient`:
+Use `WsTestClient` — an async-context-manager client separate from `TestClient`:
 
 ```python
 from lauren.testing import WsTestClient
 
-def test_chat(app):
+async def test_chat(app):
     client = WsTestClient(app)
-    with client.connect("/ws/room1") as ws:
-        ws.send_json({"event": "chat.send", "text": "hello"})
-        msg = ws.receive_json()
+    async with client.connect("/ws/room1") as ws:
+        await ws.send_json({"event": "chat.send", "text": "hello"})
+        msg = await ws.receive_json()
         assert msg["event"] == "chat.message"
         assert msg["text"] == "hello"
 ```
@@ -102,22 +102,24 @@ def test_chat(app):
 ### WsTestClient methods
 
 ```python
-with client.connect(
+async with client.connect(
     "/ws/path",
     headers={"Authorization": "Bearer ..."},
     subprotocols=["chat"],
     query_string="token=abc",
 ) as ws:
-    ws.send_text("raw text")
-    ws.send_bytes(b"\x00")
-    ws.send_json({"event": "ping"})
+    await ws.send_text("raw text")
+    await ws.send_bytes(b"\x00")
+    await ws.send_json({"event": "ping"})
 
-    text = ws.receive_text()
-    data = ws.receive_bytes()
-    obj  = ws.receive_json()
+    text = await ws.receive_text()
+    data = await ws.receive_bytes()
+    obj  = await ws.receive_json()
 
-    ws.close(code=1000)
+    await ws.close(code=1000)
 ```
+
+`WsTestClient` also exposes `close_code` and `accepted_subprotocol` attributes after the connection is established.
 
 ---
 

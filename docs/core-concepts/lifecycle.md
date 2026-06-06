@@ -57,7 +57,7 @@ This is what makes lifecycle ordering *correct*: a `Repo` whose `@post_construct
 
 ## Timeouts and best-effort teardown
 
-`@pre_destruct` hooks run with a per-hook timeout. If one hangs, Lauren logs a `DestructTimeoutError`, abandons that hook, and moves on to the next. **Teardown never aborts halfway through** — every other hook still runs. The same timeout protection now applies consistently to both `async def` and plain `def` hooks because sync work runs in a thread instead of inline on the loop.
+`@pre_destruct` hooks run with a configurable timeout (default 10 seconds). If one hangs, Lauren logs a `DestructTimeoutError`, abandons that hook, and moves on to the next. **Teardown never aborts halfway through** — every other hook still runs. The same timeout protection now applies consistently to both `async def` and plain `def` hooks because sync work runs in a thread instead of inline on the loop.
 
 ```python
 await app.shutdown(drain_timeout=10.0)   # drain phase capped at 10s

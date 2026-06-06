@@ -1,6 +1,6 @@
 # Custom Extractors
 
-> Extractors decompose a request into typed Python values. Lauren ships nine built-ins (`Path`, `Query`, `Header`, `Cookie`, `Json`, `Form`, `Bytes`, `State`, `Depends`); the rest is up to you. A **custom extractor** is any subclass of `ExtractionMarker` that implements an `extract` method. Use them as parameter annotations and you've created a typed, reusable, declarative way to pull domain data into your handlers.
+> Extractors decompose a request into typed Python values. Lauren ships eleven built-ins (`Path`, `Query`, `Header`, `Cookie`, `Json`, `Form`, `Bytes`, `ByteStream`, `UploadFile`, `State`, `Depends`); the rest is up to you. A **custom extractor** is any subclass of `ExtractionMarker` that implements an `extract` method. Use them as parameter annotations and you've created a typed, reusable, declarative way to pull domain data into your handlers.
 
 ## Why custom extractors?
 

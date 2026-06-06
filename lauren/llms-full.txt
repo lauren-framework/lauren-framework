@@ -89,7 +89,7 @@ app = LaurenFactory.create(AppModule)
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middleware=None, max_body_size=1048576, app_state=None)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None)`
 
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
@@ -103,6 +103,57 @@ Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven ph
 
 Failures in phases 1–6 raise a `StartupError` subclass immediately — the app never begins serving traffic with an invalid graph.
 
+**Full parameter reference:**
+
+| Parameter | Type | Default | Purpose |
+|---|---|---|---|
+| `root_module` | `type` | required | Root `@module` class |
+| `strict_lifecycle` | `bool` | `True` | Enforce strict lifecycle ordering |
+| `global_middlewares` | `Iterable[type]` | `None` | Middleware classes applied to every request (onion order) |
+| `global_guards` | `Iterable[type]` | `None` | Guard classes applied to every request |
+| `global_interceptors` | `Iterable[type]` | `None` | Interceptor classes applied to every handler |
+| `global_exception_handlers` | `Iterable[Any]` | `None` | Exception handler classes/functions for every request |
+| `global_providers` | `Iterable[Any]` | `None` | Extra providers added to the root module |
+| `max_body_size` | `int` | `1048576` | Maximum request body size in bytes (413 on exceed) |
+| `app_state` | `AppState` | `None` | Pre-populated app-level state |
+| `logger` | `Logger` | `None` | Logger instance; `NullLogger` if not provided |
+| `openapi_info` | `dict` | `None` | OpenAPI `info` block (`title`, `version`, `description`) |
+| `openapi_servers` | `list[dict]` | `None` | OpenAPI `servers` list |
+| `openapi_security_schemes` | `dict` | `None` | OpenAPI `components.securitySchemes` |
+| `openapi_url` | `str` | `None` | Path for OpenAPI JSON (e.g. `"/openapi.json"`) |
+| `docs_url` | `str` | `None` | Path for Swagger UI (e.g. `"/docs"`) |
+| `redoc_url` | `str` | `None` | Path for ReDoc (e.g. `"/redoc"`) |
+| `arena` | `RequestArena` | `None` | Custom arena for per-request object pooling |
+| `arena_capacity` | `int` | `None` | Override arena pool capacity |
+| `json_encoder` | `JSONEncoder` | `None` | Encoder for all JSON output (responses, errors, SSE, WS) |
+| `signals` | `SignalBus` | `None` | Shared signal bus for lifecycle events |
+| `error_format` | `str` | `"default"` | Error response format (`"default"` or `"rfc7807"`) |
+| `root_path` | `str` | `""` | ASGI root path for reverse proxy prefix stripping |
+| `mounts` | `dict[str, Any]` | `None` | Sub-applications mounted at path prefixes |
+
+### `Lauren` (imperative API)
+
+`Lauren` is a higher-level wrapper around `LaurenFactory` that provides an imperative, chainable API for building applications without the full NestJS-style module system:
+
+```python
+from lauren import Lauren
+
+app = Lauren()
+
+@app.get("/health")
+async def health() -> dict:
+    return {"status": "ok"}
+
+@app.post("/users")
+async def create_user(body: Json[CreateUser]) -> dict:
+    return body.model_dump(), 201
+
+# Build the ASGI app:
+asgi_app = app.build()
+```
+
+`Lauren` exposes the same `create()` parameters as `LaurenFactory` but through a builder pattern. It internally creates a root module from the registered routes and providers.
+
 ### `LaurenApp`
 
 Attributes & methods:
@@ -115,6 +166,24 @@ Attributes & methods:
 - `await app.startup()` — idempotent; invoked automatically by the ASGI lifespan protocol (uvicorn) or lazily on the first HTTP request. Call explicitly in tests that check `@post_construct` state.
 - `await app.shutdown(drain_timeout=10.0)` — runs `@pre_destruct` hooks, awaits in-flight requests.
 - `await app(scope, receive, send)` — standard ASGI callable (HTTP + lifespan).
+- `app.mount(path, app)` — mount a sub-ASGI application at a path prefix.
+
+### Mounting Sub-Applications
+
+```python
+sub_app = LaurenFactory.create(SubModule)
+app.mount("/api/v2", sub_app)
+```
+
+Mounts are sorted by longest prefix first. The ASGI `root_path` is propagated to the sub-application, and the request path is stripped by the prefix before dispatch. Multiple mounts can coexist:
+
+```python
+app.mount("/api/v1", v1_app)
+app.mount("/api/v2", v2_app)
+app.mount("/admin", admin_app)
+```
+
+Any ASGI callable (not just `LaurenApp`) can be mounted — this includes Starlette, FastAPI, or raw ASGI apps.
 
 ---
 
@@ -328,9 +397,12 @@ Extractors convert request data into typed Python values. Built-in:
 | `Cookie[T]` | cookie | no |
 | `Json[T]` | JSON body, Pydantic-validated | yes |
 | `Form[T]` | form-urlencoded body | yes |
-| `Bytes` | raw body bytes | yes |
+| `Bytes` | raw body bytes (buffered) | yes |
+| `ByteStream` | streaming body chunks (zero-copy) | yes |
+| `UploadFile` | multipart file upload | yes |
 | `State` | `request.state` | no |
 | `Depends[T]` | DI container | no |
+| `ExtractionMarker` | custom user-defined | varies |
 
 Handler parameters whose name matches a path variable are auto-promoted to `Path[...]`:
 
@@ -372,6 +444,41 @@ async def create(self, body: Json[CreatePost]) -> dict:
 ```
 
 Validation errors are raised as `ExtractorError` and mapped to HTTP 422.
+
+### Streaming body (zero-copy)
+
+`ByteStream` provides an async iterable of raw `bytes` chunks, avoiding
+buffering the entire body into memory:
+
+```python
+from lauren import ByteStream
+
+@post("/ingest")
+async def ingest(self, stream: ByteStream) -> dict:
+    total = 0
+    async for chunk in stream:
+        total += len(chunk)
+    return {"bytes_received": total}
+```
+
+The body is bounded by `max_body_size` (default 1 MB). Oversize bodies
+raise `RequestBodyTooLarge` (413).
+
+### File uploads
+
+`UploadFile` is the FastAPI-compatible multipart file upload extractor:
+
+```python
+from lauren import UploadFile
+
+@post("/upload")
+async def upload(self, file: UploadFile) -> dict:
+    content = await file.read()
+    return {"filename": file.filename, "size": len(content)}
+```
+
+`UploadFile` provides `.filename`, `.content_type`, `.file` (a
+`SpooledTemporaryFile`), and async `.read()` / `.write()` methods.
 
 ---
 
@@ -565,7 +672,7 @@ class RequestId:
 
 Registration paths (onion order, outermost first):
 
-1. Global — `LaurenFactory.create(AppModule, global_middleware=[RequestId, AuthMiddleware])`
+1. Global — `LaurenFactory.create(AppModule, global_middlewares=[RequestId, AuthMiddleware])`
 2. Controller — `@use_middlewares(...)` on the controller class
 3. Route — `@use_middlewares(...)` on a handler method
 
@@ -684,7 +791,10 @@ All exceptions live in `lauren.exceptions` and inherit from `LaurenError`.
 | `DIScopeViolationError` | Singleton depends on request-scoped |
 | `MiddlewareConfigError` | Middleware class missing `dispatch` |
 | `GuardConfigError` | Guard class missing `can_activate` |
+| `InterceptorConfigError` | Interceptor class missing `intercept` or wrong signature |
+| `ExceptionHandlerConfigError` | Exception handler misconfigured |
 | `OpenAPISchemaError` | OpenAPI generation failed |
+| `DecoratorUsageError` | Configurable decorator used bare (without `()`)
 
 **HTTP-mapped errors:**
 
@@ -1601,7 +1711,7 @@ from lauren_middlewares import (
 
 app = LaurenFactory.create(
     AppModule,
-    global_middleware=[
+    global_middlewares=[
         request_id(),
         security_headers(),
         cors(allow_origins=["https://app.example.com"]),

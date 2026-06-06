@@ -94,4 +94,51 @@ async def can_activate(self, ctx: ExecutionContext) -> bool:
     ...
 ```
 
+## Exception handlers — typed error mapping
+
+Exception handlers catch typed exceptions and return structured HTTP responses. They can be class-based (with DI) or function-based.
+
+### Class-form handler
+
+```python
+from lauren import exception_handler
+from lauren.types import Request, Response
+
+@exception_handler(NotFoundError, ConflictError)
+class DomainErrors:
+    def __init__(self, log: Logger) -> None:
+        self.log = log
+
+    async def catch(self, exc: Exception, request: Request) -> Response:
+        self.log.warn(f"domain error: {exc}")
+        return Response.json({"error": str(exc)}, status=400)
+```
+
+### Function-form handler
+
+```python
+@exception_handler(ValueError)
+async def handle_value_error(exc: ValueError, request: Request) -> Response:
+    return Response.json({"detail": str(exc)}, status=422)
+```
+
+### Attaching exception handlers
+
+```python
+# Controller-level
+@use_exception_handlers(DomainErrors)
+@controller("/api")
+class ApiController: ...
+
+# Method-level
+@get("/item")
+@use_exception_handlers(DomainErrors)
+async def get_item(self) -> dict: ...
+
+# Global
+app = LaurenFactory.create(AppModule, global_exception_handlers=[DomainErrors])
+```
+
+Resolution order: route → controller → global. First matching handler wins.
+
 See [interceptors-middlewares.md](interceptors-middlewares.md) for interceptors and middlewares.

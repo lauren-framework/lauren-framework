@@ -162,7 +162,8 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
    feature that genuinely needs it is used without it.
 
 8. **The 28-class error catalog is closed.** Adding a new error class
-   is a public-API change. New runtime conditions should subclass an
+   is a public-API change. There are 34 total exception classes
+   (including base classes); new runtime conditions should subclass an
    existing category (`StartupError`, `HTTPError`, `LifecycleError`)
    rather than creating a parallel hierarchy.
 
@@ -407,8 +408,13 @@ deterministic).
 - `lauren/background.py` — `BackgroundTasks`, `TaskHandle`, `_BG_TASKS_ATTR`.
 - `lauren/decorators.py` — every public decorator. The `_reject_bare_usage`
   pattern is the model for any new decorator.
-- `lauren/exceptions.py` — full 28-class error catalog. Pick the
-  closest existing class before adding a new one.
+- `lauren/exceptions.py` — full 34-class error hierarchy (28 user-facing
+   + base classes). Pick the closest existing class before adding a new one.
+- `lauren/signals.py` — `SignalBus`, lifecycle events, POSIX signal handlers.
+- `lauren/testing.py` — `TestClient`, `WsTestClient` for in-process testing.
+- `lauren/serialization.py` — JSON encoders: `StdlibJSONEncoder`,
+  `OrjsonEncoder`, `MsgspecEncoder`, `PydanticEncoder`.
+- `lauren/extractors.py` — typed extractors, pipes, `ExtractionMarker`.
 - `llms-full.txt` — machine-readable reference, the source of truth
   for what the public API is supposed to do.
 - `docs/` — long-form prose explanations and conceptual articles.
@@ -424,7 +430,7 @@ codemap find "on_connect" --type method
 ```
 
 When in doubt: grep the tests. They express the invariants more
-precisely than any English prose. Around **2120 tests** currently pass
+precisely than any English prose. Around **2967 tests** currently pass
 in ~15 seconds.
 
 ## 12. Injectable Logger Pattern

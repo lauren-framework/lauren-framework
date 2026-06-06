@@ -169,6 +169,32 @@ class AppModule: ...
 
 The full guide lives at [Custom Providers](../guides/custom-providers.md).
 
+## Generator providers (FastAPI-style lifecycle)
+
+`@injectable()` also supports generator functions for setup/teardown lifecycle:
+
+```python
+@injectable()
+def async_session(cfg: ConfigService) -> AsyncGenerator[AsyncSession, None]:
+    session = await asyncpg.create_pool(cfg.db_url)
+    try:
+        yield session
+    finally:
+        await session.close()
+
+@injectable()
+class UserRepo:
+    def __init__(self, session: Depends[async_session]) -> None:
+        self.session = session
+```
+
+Code before `yield` runs as setup (like `@post_construct`); code after `yield` runs as teardown (like `@pre_destruct`). The wrapped value is what callers receive.
+
+**Scope restrictions:**
+* `SINGLETON` scope: generator providers run teardown during shutdown (second pass of `@pre_destruct`).
+* `REQUEST` scope: generator providers run teardown automatically after each request via `aclose()`.
+* `TRANSIENT` scope: not supported — raises an error at registration time.
+
 ## Lifecycle hooks on injectables
 
 Any `@injectable` class can register lifecycle hooks:

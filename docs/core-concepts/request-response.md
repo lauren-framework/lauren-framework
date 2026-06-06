@@ -81,7 +81,7 @@ Lauren's `Response` is **immutable**. Every "modify" method returns a *new* inst
 ### Factories
 
 ```python
-Response.json(data, *, status=200, headers=None)
+Response.json(data, *, status=200, headers=None, encoder=None)
 Response.text(data, *, status=200, headers=None)
 Response.html(data, *, status=200, headers=None)
 Response.bytes(data, *, status=200, media_type="application/octet-stream", headers=None)
@@ -92,8 +92,8 @@ Response.no_content()
 Response.created(data=None, *, location=None)
 Response.accepted(data=None)
 Response.redirect(location, *, status=307)
-Response.stream(async_iterable, *, status=200, media_type=..., headers=None)
-Response.sse(async_iterable_of_events)
+Response.stream(async_iterable, *, status=200, media_type="application/octet-stream", headers=None)
+Response.sse(async_iterable, *, status=200, encoder=None)
 ```
 
 ### Builders (return new instances)

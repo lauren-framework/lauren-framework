@@ -1,6 +1,6 @@
 # Exception Catalog
 
-All 28 typed exception classes exported by the framework.
+All 34 typed exception classes exported by the framework.
 
 ## Base classes
 
