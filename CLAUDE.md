@@ -15,9 +15,11 @@ in editable mode first, so no separate `pip install` step is needed.
 
 ```bash
 # Tests
-nox -s tests                        # full suite (unit + integration)
+nox -s tests                        # full suite (unit + integration + e2e + property)
 nox -s tests_unit                   # unit only  (tests/unit/)
 nox -s tests_integration            # integration only  (tests/integration/)
+nox -s tests_e2e                    # end-to-end only  (tests/e2e/)
+nox -s tests_property               # Hypothesis property tests (tests/property/)
 nox -s coverage                     # tests + coverage report
 
 # Run a single test file / specific test without nox overhead
@@ -112,7 +114,10 @@ lauren/                      — framework package
 └── py.typed                 — PEP 561 marker
 tests/
 ├── unit/                    — isolated unit tests (no ASGI app)
-└── integration/             — full-stack tests via TestClient / WsTestClient
+├── integration/             — full-stack tests via TestClient / WsTestClient
+├── e2e/                     — end-to-end multi-backend tests (full stack, all validator paths)
+├── property/                — Hypothesis property tests for validation invariants
+└── conftest.py              — session-scoped _preload_lauren fixture + pytest markers
 docs/                        — MkDocs Material site (mkdocs.yml at repo root)
 ```
 
@@ -378,6 +383,13 @@ deterministic).
   Pure-Python, no event loop unless the module is async-only.
 - **Integration** (`tests/integration/`) — build a `@module`, call
   `LaurenFactory.create`, drive via `lauren.testing.TestClient`.
+- **E2E** (`tests/e2e/`) — full-stack multi-backend tests that exercise
+  all validator paths (pydantic, dataclass, TypedDict, discriminated unions)
+  in a single running app. Mirror integration structure but verify the
+  complete request/response cycle without mocking.
+- **Property** (`tests/property/`) — Hypothesis-driven tests for validation
+  invariants. Require `hypothesis>=6.0` (in `dev` extras). Skip automatically
+  when hypothesis is absent (`pytest.importorskip`).
 - **WebSocket** — use `lauren.testing.WsTestClient`; the session
   context-manager guarantees the server task is awaited so unhandled
   server-side exceptions surface cleanly into the test.
@@ -389,6 +401,11 @@ deterministic).
   inside `pytest.raises(SomeError)`, assert on `detail` keys too.
 - **Regression shape:** every bug fix gets a test in the same file as
   its nearest existing neighbour.
+- **Optional-dep tests** — tests that block pydantic/msgspec via
+  `sys.modules` manipulation MUST depend explicitly on the session-scoped
+  `_preload_lauren` fixture (or inherit it via `autouse=True`) so that
+  Lauren's `_PYDANTIC_AVAILABLE` flag is set correctly before any module
+  is first imported with an optional dep absent.
 
 → *See `skills/testing-lauren-apps/` for `TestClient` setup, async test patterns, and mock-provider recipes.*
 
@@ -434,8 +451,8 @@ codemap find "on_connect" --type method
 ```
 
 When in doubt: grep the tests. They express the invariants more
-precisely than any English prose. Around **2967 tests** currently pass
-in ~15 seconds.
+precisely than any English prose. Around **3020 tests** currently pass
+in ~20 seconds.
 
 ## 12. Injectable Logger Pattern
 

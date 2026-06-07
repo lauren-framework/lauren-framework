@@ -4,10 +4,19 @@
 
 Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 
+**Hard dependency:** `anyio>=4.0` only. Pydantic, msgspec, and all binary wheels are optional.
+
+```bash
+pip install lauren                  # anyio only
+pip install "lauren[pydantic]"      # + pydantic>=2.0
+pip install "lauren[msgspec]"       # + msgspec>=0.18
+pip install "lauren[full]"          # pydantic + msgspec
+```
+
 ## Core pillars
 
 - **Radix-tree router** with O(depth) lookup, static > param > wildcard priority, per-method dispatch with `Allow` header on 405.
-- **Dependency Injection** with `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes, Protocol binding, multi-bindings (`list[T]` injection), circular detection, scope-violation checks, and the four NestJS-style custom-provider recipes (`use_value`, `use_class`, `use_factory`, `use_existing`) plus `Token` and `Inject`.
+- **Dependency Injection** with `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes, Protocol binding, multi-bindings (`list[T]` injection), circular detection, scope-violation checks, the four NestJS-style custom-provider recipes (`use_value`, `use_class`, `use_factory`, `use_existing`) plus `Token` and `Inject`, and **generator function providers** (FastAPI-style lifecycle: code before `yield` = setup, yielded value = dependency, code after `yield` = teardown — scoped to `SINGLETON` or `REQUEST`).
 - **Extractor system** for typed request decomposition (`Path[int]`, `Query[str]`, `Header[str]`, `Cookie[str]`, `Json[Model]`, `Form[Model]`, `Bytes`, `ByteStream`, `UploadFile`, `State`, `Depends[T]`), model extraction for Pydantic / `msgspec.Struct` / Python `dataclass` / `TypedDict` types, **pydantic-free discriminated unions** via `Discriminated[A | B, "key"]`, plus user-defined extractors via an `ExtractionMarker.extract` instance method (legacy classmethod form still supported).
 - **Module system** with explicit imports/exports and circular-import detection (NestJS-style).
 - **Lifecycle hooks** (`@post_construct`, `@pre_destruct`) run in topological order with timeouts. Both sync and async hooks are supported; sync hooks run in a thread pool so they never block the event loop and are subject to the same timeout enforcement as async ones.
@@ -18,7 +27,7 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 - **Socket.IO compatibility** — Engine.IO v4 / Socket.IO v5 adapter with `@socketio_controller` and `@on_socketio_event`.
 - **ASGI runtime** with `LaurenFactory.create()` seven-phase startup, lifespan protocol, graceful drain.
 - **Sync handler support**: plain `def` handlers are automatically offloaded to a thread pool via `anyio.to_thread.run_sync`; they never block the event loop. All extractors, return-type coercion, and binding styles (instance / classmethod / static) work identically for sync and async handlers.
-- **OpenAPI 3.1** generation from Pydantic models, dataclasses, TypedDict, and `Discriminated` unions (`oneOf` + `discriminator.mapping`); Swagger UI / ReDoc-ready schemas.
+- **OpenAPI 3.1** generation from Pydantic models, dataclasses, TypedDict, `msgspec.Struct`, and `Discriminated` unions (`oneOf` + `discriminator.mapping`) — complete schemas without pydantic installed; Swagger UI / ReDoc-ready.
 - **Middleware (onion)**, **Guards**, and **Exception Handlers** — all attachable globally, per-controller, or per-route.
 - **Interceptors** — `@interceptor()` wraps handler execution for timing, caching, or response transforms. `CallHandler.handle()` always returns a `Response`.
 - **Pipes** — `Pipe` and `pipe()` for parameter-level transforms and validation before handler execution.
@@ -32,6 +41,7 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 - **Static file serving** — `StaticFilesModule.for_root("/assets", directory="./public")` as a feature module.
 - **Background tasks** — `BackgroundTasks` for fire-and-forget work after response, with `TaskHandle` for cancellation and result tracking.
 - **28-class error catalog** with stable `code` strings; consistent `{error: {code, message, detail}}` envelope.
+- **Pydantic-optional core** — `lauren/_validation.py` centralises all struct-type detection (`is_pydantic_model`, `is_msgspec_struct`, `is_dataclass`, `is_typeddict`) and the `validate_as(tp, data, *, field)` dispatcher. Every validation failure raises `ExtractorError`; callers never see library-specific exception types.
 
 ## LaurenFactory.create() parameters
 

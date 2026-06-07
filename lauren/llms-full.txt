@@ -889,6 +889,44 @@ assert r.json()["id"] == 42
 - All methods return a `TestResponse` with `status_code`, `headers` (list of tuples), `body` (bytes), `text` (str), `json()`, `header(name)`, `headers_all(name)`.
 - Works inside `asyncio.run(...)` tests — it auto-switches to a background thread when called from within a running event loop.
 
+### Test tiers
+
+| Directory | Purpose |
+|---|---|
+| `tests/unit/` | Import a module directly; no ASGI app, no event loop unless required |
+| `tests/integration/` | Build a `@module`, create an app via `LaurenFactory`, drive via `TestClient` |
+| `tests/e2e/` | Full-stack multi-backend tests exercising all validator paths in one app |
+| `tests/property/` | Hypothesis property tests for validation invariants; `pytest.importorskip("hypothesis")` skips when absent |
+
+### Blocking optional deps in tests
+
+When a test module needs to verify behaviour with pydantic absent, it must block pydantic in a **module-scoped** fixture and ensure Lauren's core modules are pre-imported first:
+
+```python
+# tests/conftest.py — session-scoped, autouse=True
+@pytest.fixture(scope="session", autouse=True)
+def _preload_lauren():
+    import lauren           # noqa: F401
+    import lauren.streaming # noqa: F401
+    import lauren.extractors # noqa: F401
+
+# tests/integration/test_no_pydantic.py
+@pytest.fixture(autouse=True, scope="module")
+def disable_pydantic():
+    original = {k: v for k, v in sys.modules.items() if "pydantic" in k}
+    for k in list(original.keys()):
+        del sys.modules[k]
+    sys.modules["pydantic"] = None          # type: ignore[assignment]
+    sys.modules["pydantic_core"] = None     # type: ignore[assignment]
+    yield
+    for k in list(sys.modules.keys()):
+        if "pydantic" in k:
+            del sys.modules[k]
+    sys.modules.update(original)
+```
+
+The `_preload_lauren` session fixture is critical: if any Lauren module is first imported while pydantic is blocked, the module-level `_PYDANTIC_AVAILABLE` flag is set to `False` permanently for that session — even after pydantic is restored. Pre-importing with all deps available prevents this contamination.
+
 ---
 
 ## Strict Decorator Inheritance
