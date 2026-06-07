@@ -35,6 +35,10 @@ from .._validation import (
     is_typeddict,
     json_schema_for,
 )
+from .._discriminated import (
+    is_native_discriminated_union,
+    openapi_schema_for_discriminated,
+)
 
 
 DEFAULT_INFO: dict[str, Any] = {"title": "lauren application", "version": "1.0.0"}
@@ -206,6 +210,8 @@ def _schema_for_extraction(ext: Extraction, components: dict[str, Any]) -> dict[
     inner = ext.inner_type
     # Feature 6 — discriminated unions surface as oneOf + discriminator
     # rather than a bare ``$ref``.
+    if is_native_discriminated_union(inner):
+        return openapi_schema_for_discriminated(inner, components["schemas"])
     if is_discriminated_union(inner):
         return _schema_for_discriminated_union(inner, components)
     if isinstance(inner, type) and (
@@ -289,7 +295,9 @@ def _build_responses(
         responses["200"] = {"description": "Success"}
     if rmeta.response_model is not None:
         # Feature 6 — response may be a discriminated union.
-        if is_discriminated_union(rmeta.response_model):
+        if is_native_discriminated_union(rmeta.response_model):
+            schema = openapi_schema_for_discriminated(rmeta.response_model, components["schemas"])
+        elif is_discriminated_union(rmeta.response_model):
             schema = _schema_for_discriminated_union(rmeta.response_model, components)
         elif isinstance(rmeta.response_model, type) and (
             is_pydantic_model(rmeta.response_model)
@@ -324,6 +332,8 @@ def _build_responses(
 
 def _resolve_item_schema(item_type: Any, components: dict[str, Any]) -> dict[str, Any]:
     """Schema fragment for a single streamed item (model / union / primitive)."""
+    if is_native_discriminated_union(item_type):
+        return openapi_schema_for_discriminated(item_type, components["schemas"])
     if is_discriminated_union(item_type):
         return _schema_for_discriminated_union(item_type, components)
     if isinstance(item_type, type) and (

@@ -431,6 +431,18 @@ def _build_adapter(target: Any) -> "_ValidationAdapter | None":
 
     adapter: _ValidationAdapter | None = None
 
+    # Path 0 — native Discriminated[A | B, key] (pydantic-free)
+    from ._discriminated import is_native_discriminated_union, validate_native_discriminated  # noqa: PLC0415
+
+    if is_native_discriminated_union(target):
+        _target = target
+        adapter = _ValidationAdapter(
+            validate_fn=lambda d: validate_native_discriminated(d, _target, "<stream>"),
+            dump_fn=lambda v, mode="json": _to_json_safe(v),
+        )
+        _ADAPTER_CACHE[key] = adapter
+        return adapter
+
     # Path 1 — pydantic (handles BaseModel + discriminated unions best)
     if _pydantic_available():
         try:
@@ -499,11 +511,28 @@ def _unwrap_annotated_union(target: Any) -> Any:
 
 
 def _is_native_discriminated_union(target: Any) -> bool:
-    """Stub for Phase 4 native Discriminated[A|B, 'key'] detection.
+    """Return True iff *target* was built by ``Discriminated[A | B, 'key']``."""
+    from ._discriminated import is_native_discriminated_union  # noqa: PLC0415
 
-    Always returns False until Phase 4 (``lauren/_discriminated.py``) is implemented.
-    """
-    return False
+    return is_native_discriminated_union(target)
+
+
+def _to_json_safe(v: Any) -> Any:
+    """Convert any supported struct instance to a JSON-serialisable value."""
+    import dataclasses  # noqa: PLC0415
+
+    if dataclasses.is_dataclass(v) and not isinstance(v, type):
+        return dataclasses.asdict(v)
+    if hasattr(v, "__struct_fields__"):
+        try:
+            import msgspec  # noqa: PLC0415
+
+            return msgspec.to_builtins(v)
+        except ImportError:
+            pass
+    if hasattr(v, "model_dump"):
+        return v.model_dump(mode="json")
+    return v
 
 
 def is_discriminated_union(target: Any) -> bool:
@@ -594,4 +623,5 @@ __all__ = [
     "discriminator_key",
     "discriminator_variants",
     "_build_adapter",
+    "_to_json_safe",
 ]

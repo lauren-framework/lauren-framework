@@ -106,8 +106,13 @@ core ideas:
 * **Implicit extractors** — Path params, query strings, and JSON bodies are
   auto-detected from type annotations. Write `id: int`, `q: str`,
   `body: MyModel` without boilerplate unless you need the explicit form.
-  `Query[T]` and `Json[T]` support Pydantic models, `msgspec.Struct`, and
-  Python `dataclass` types.
+  `Query[T]` and `Json[T]` support Pydantic models, `msgspec.Struct`,
+  Python `dataclass`, and `TypedDict` types.
+* **Pydantic-free discriminated unions** — `Discriminated[Cat | Dog, "kind"]`
+  routes tagged-union JSON bodies to the correct variant class using only
+  stdlib. Works with `@dataclass`, `TypedDict`, `msgspec.Struct`, and
+  `pydantic.BaseModel`. OpenAPI emits `oneOf` + `discriminator.mapping`
+  automatically.
 * **Three-scope DI** — `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes with
   Protocol bindings, multi-bindings (`list[T]`), and NestJS-style custom
   providers (`use_value` / `use_class` / `use_factory` / `use_existing`).
@@ -117,8 +122,9 @@ core ideas:
 * **Guards, Middleware & Interceptors** — All three attachment points. Guards
   run first (allow/deny); middleware wraps raw request/response bytes; interceptors
   wrap handler execution for timing, caching, and response transforms.
-* **WebSockets** — First-class `@ws_controller` gateways with typed Pydantic
-  frames, discriminated-union dispatch, and `BroadcastGroup` rooms.
+* **WebSockets** — First-class `@ws_controller` gateways with typed validated
+  frames, discriminated-union dispatch (`Discriminated[A | B, "key"]`), and
+  `BroadcastGroup` rooms.
 * **Server-Sent Events** — `EventStream` with keep-alive heartbeats and
   `Last-Event-ID` resumability for AI token-streaming patterns.
 * **Typed streaming** — `StreamingResponse[T]` auto-negotiates between SSE,
@@ -132,19 +138,26 @@ core ideas:
 * **Static files** — `StaticFilesModule.for_root("/assets", directory="./public")`
   with ETag caching, `Cache-Control`, and path-traversal protection.
 * **Socket.IO** — Engine.IO v4 / Socket.IO v5 adapter via `@socketio_controller`.
-* **OpenAPI 3.1** — Automatic schema generation from Pydantic models and
-  route decorators. Swagger UI and ReDoc served out of the box.
+* **OpenAPI 3.1** — Automatic schema generation from Pydantic models,
+  dataclasses, `TypedDict`, and `Discriminated` unions. Swagger UI and ReDoc
+  served out of the box.
 * **Lifecycle signals** — `SignalBus` with `StartupBegin`, `StartupComplete`,
   `ShutdownBegin`, `RequestReceived`, `RequestComplete`, and more.
-* **Standards-based** — Built on [ASGI](https://asgi.readthedocs.io/),
-  [Pydantic](https://docs.pydantic.dev/), and [anyio](https://anyio.readthedocs.io/).
+* **Standards-based** — Built on [ASGI](https://asgi.readthedocs.io/) and
+  [anyio](https://anyio.readthedocs.io/). Pydantic is optional (`pip install
+  "lauren[pydantic]"`).
 
 ## Requirements
 
 Python **3.11**, **3.12**, **3.13**, and **3.14** are supported. Hard dependencies:
 
-* [Pydantic](https://docs.pydantic.dev/) — request validation and response serialisation.
 * [anyio](https://anyio.readthedocs.io/) — async backend and thread-pool offload for sync handlers.
+
+Optional extras:
+
+* `pip install "lauren[pydantic]"` — adds `pydantic>=2.0` for Pydantic-backed validation and `PydanticEncoder`.
+* `pip install "lauren[msgspec]"` — adds `msgspec>=0.18` for struct-based serialisation.
+* `pip install "lauren[full]"` — installs both.
 
 ## Installation
 

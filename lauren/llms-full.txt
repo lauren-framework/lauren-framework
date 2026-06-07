@@ -40,14 +40,16 @@ common mistakes.
 ## Installation
 
 ```bash
-pip install lauren
-# For Pydantic-based extractors:
-pip install pydantic
+pip install lauren                  # core only (anyio required)
+pip install "lauren[pydantic]"      # adds pydantic>=2.0
+pip install "lauren[msgspec]"       # adds msgspec>=0.18
+pip install "lauren[full]"          # pydantic + msgspec
 ```
 
-Python 3.11+ required. `anyio>=4.0` is a required dependency (used to
-offload sync handlers to a thread pool). `py.typed` marker ships for
-full static-analysis support.
+Python 3.11+ required. `anyio>=4.0` is the only hard dependency (used
+to offload sync handlers to a thread pool). Pydantic and msgspec are
+optional — the framework validates request bodies with whichever library
+is installed. `py.typed` marker ships for full static-analysis support.
 
 ---
 
@@ -395,7 +397,8 @@ Extractors convert request data into typed Python values. Built-in:
 | `Query[T]` | query string | no |
 | `Header[T]` | request header | no |
 | `Cookie[T]` | cookie | no |
-| `Json[T]` | JSON body, Pydantic-validated | yes |
+| `Json[T]` | JSON body, validated | yes |
+| `Json[Discriminated[A \| B, "key"]]` | discriminated union body | yes |
 | `Form[T]` | form-urlencoded body | yes |
 | `Bytes` | raw body bytes (buffered) | yes |
 | `ByteStream` | streaming body chunks (zero-copy) | yes |
@@ -444,6 +447,42 @@ async def create(self, body: Json[CreatePost]) -> dict:
 ```
 
 Validation errors are raised as `ExtractorError` and mapped to HTTP 422.
+
+### Discriminated union body
+
+`Discriminated[A | B, "key"]` dispatches tagged-union JSON bodies to the
+correct variant class — no pydantic required. Works with `@dataclass`,
+`TypedDict`, `msgspec.Struct`, and `pydantic.BaseModel` variants:
+
+```python
+from dataclasses import dataclass
+from typing import Literal
+from lauren import Discriminated, Json, post
+
+@dataclass
+class Cat:
+    kind: Literal["cat"] = "cat"
+    name: str = ""
+
+@dataclass
+class Dog:
+    kind: Literal["dog"] = "dog"
+    name: str = ""
+
+Animal = Discriminated[Cat | Dog, "kind"]
+
+@post("/animals")
+async def create(body: Json[Animal]) -> dict:
+    return {"type": type(body).__name__, "name": body.name}
+```
+
+- **Missing discriminator field** → `422` with message `"missing discriminator field 'kind'"`
+- **Unknown tag value** → `422` with message `"unknown discriminator value 'fish'"`
+- **Non-dict payload** → `422` with message `"expected a JSON object"`
+- **OpenAPI output**: `oneOf` array + `discriminator.propertyName` + `discriminator.mapping`
+
+Auto-promotion: a bare `body: Animal` parameter (no `Json[…]`) is also
+recognized and auto-promoted to a JSON body extraction.
 
 ### Streaming body (zero-copy)
 
@@ -1518,29 +1557,37 @@ Properties: `path`, `path_template`, `path_params`, `headers`,
 
 ### Typed dispatch and discriminated unions
 
+Use `Discriminated[A | B, "key"]` for pydantic-free discriminated unions:
+
 ```python
-from typing import Annotated, Literal, Union
-from pydantic import BaseModel, Field
+from dataclasses import dataclass
+from typing import Literal
+from lauren import Discriminated, Json, WebSocket, on_message, ws_controller
 
-class ImageEvent(BaseModel):
-    kind: Literal["image"]
-    url: str
+@dataclass
+class ImageEvent:
+    kind: Literal["image"] = "image"
+    url: str = ""
 
-class TextEvent(BaseModel):
-    kind: Literal["text"]
-    content: str
+@dataclass
+class TextEvent:
+    kind: Literal["text"] = "text"
+    content: str = ""
 
-Event = Annotated[Union[ImageEvent, TextEvent], Field(discriminator="kind")]
+Event = Discriminated[ImageEvent | TextEvent, "kind"]
 
 @ws_controller("/feed")
 class FeedGateway:
     @on_message("post")
     async def post(self, ws: WebSocket, body: Json[Event]) -> None:
         if isinstance(body, ImageEvent):
-            ...
+            await ws.send_json({"type": "image", "url": body.url})
         else:
-            ...
+            await ws.send_json({"type": "text", "content": body.content})
 ```
+
+Works with `@dataclass`, `TypedDict`, `msgspec.Struct`, and `pydantic.BaseModel`.
+For pydantic, `Annotated[Union[A, B], Field(discriminator="kind")]` is also accepted.
 
 The wildcard event ``"*"`` matches any event without a specific
 handler; ``"__binary__"`` captures binary frames as ``bytes`` rather

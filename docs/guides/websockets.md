@@ -123,21 +123,28 @@ Wire format: every inbound frame is a JSON object with at least an `event` key. 
 
 ### Discriminated unions
 
-For heterogeneous payloads under the same event name, use a Pydantic discriminated union — the same primitive HTTP `Json[T]` extractors support:
+For heterogeneous payloads under the same event name, use `Discriminated[A | B, "key"]` — no pydantic required:
 
 ```python
-from typing import Annotated, Literal, Union
-from pydantic import BaseModel, Field
+from dataclasses import dataclass
+from typing import Literal
+from lauren import Discriminated, Json, on_message, ws_controller, WebSocket
 
-class ImageEvent(BaseModel):
-    kind: Literal["image"]
-    url: str
 
-class TextEvent(BaseModel):
-    kind: Literal["text"]
-    content: str
+@dataclass
+class ImageEvent:
+    kind: Literal["image"] = "image"
+    url: str = ""
 
-Event = Annotated[Union[ImageEvent, TextEvent], Field(discriminator="kind")]
+
+@dataclass
+class TextEvent:
+    kind: Literal["text"] = "text"
+    content: str = ""
+
+
+Event = Discriminated[ImageEvent | TextEvent, "kind"]
+
 
 @ws_controller("/feed")
 class FeedGateway:
@@ -148,6 +155,10 @@ class FeedGateway:
         else:
             ...
 ```
+
+Works equally with `TypedDict`, `msgspec.Struct`, and `pydantic.BaseModel` variants.
+For the pydantic path, `Annotated[Union[A, B], Field(discriminator="kind")]` is also
+accepted.
 
 ### The wildcard handler and binary frames
 

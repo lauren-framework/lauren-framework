@@ -69,6 +69,7 @@ from ..extractors import (
     parse_extractor_hint,
 )
 from .._validation import is_json_body_type as _is_json_body_type
+from .._discriminated import is_native_discriminated_union as _is_native_discriminated_union
 from ..streaming import (
     FORMAT_TO_MEDIA_TYPE,
     _build_adapter,
@@ -378,9 +379,9 @@ def _compile_handler_signature(
             # ``Query[MyModel]`` to pull model fields from the query string, or
             # ``Json[int]`` if a scalar should come from the body.
             # ---------------------------------------------------------------------------
-            if _is_json_body_type(ann):
-                # Pydantic BaseModel, msgspec.Struct, @dataclass, or TypedDict —
-                # auto-promote to JSON body extraction so callers don't need Json[T].
+            if _is_native_discriminated_union(ann) or _is_json_body_type(ann):
+                # Pydantic BaseModel, msgspec.Struct, @dataclass, TypedDict, or
+                # Discriminated[A|B, key] — auto-promote to JSON body extraction.
                 body_inner, _ = _peel_optional(ann)
                 extractions.append(
                     Extraction(

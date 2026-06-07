@@ -91,16 +91,20 @@ nox -s ver_dec -- --patch
 | `lauren/_di/__init__.py`          | DI container, provider graph, cycles; `_GeneratorContextWrapper` for generator provider lifecycle |
 | `lauren/_di/custom.py`            | `use_value` / `use_class` / `use_factory` /  |
 |                                   | `use_existing` / `Token` / `Inject`          |
+| `lauren/_discriminated.py`        | `Discriminated[A\|B,"key"]` — detection, validation, OpenAPI schema |
+| `lauren/_encoders/`               | Optional encoder backends (e.g. `pydantic.py`) |
 | `lauren/_routing/__init__.py`     | Radix-tree router                            |
 | `lauren/_modules/__init__.py`     | Module graph, imports/exports validation     |
 | `lauren/_lifecycle/__init__.py`   | post_construct / pre_destruct scheduler; sync hooks run in thread pool via asyncio.to_thread (timeout-protected, event-loop-safe); second pass runs generator provider teardown (code after yield) for SINGLETON scope |
 | `lauren/_typing/`                 | ForwardRef / PEP 563 resolver                |
+| `lauren/_validation.py`           | Provider-agnostic type detection + validation (pydantic, msgspec, dataclass, TypedDict) |
 | `lauren/_ws_runtime.py`           | WebSocket dispatch loop (private)            |
 | `lauren/decorators.py`            | User-facing decorators only                  |
 | `lauren/extractors.py`            | Typed extractors + pipes + custom extractors |
 | `lauren/exceptions.py`            | 28-class error hierarchy                     |
 | `lauren/streaming.py`             | StreamingResponse[T], Stream, StreamReader   |
 | `lauren/sse.py`                   | EventStream, ServerSentEvent, last_event_id  |
+| `lauren/types.py`                 | Request, Response, State, Headers, Scope, `Discriminated`, … |
 | `lauren/websockets.py`            | @ws_controller, @on_message, BroadcastGroup  |
 | `lauren/socketio.py`              | Engine.IO/Socket.IO adapter (public)         |
 | `lauren/serialization.py`         | JSON encoders: `StdlibJSONEncoder`, `OrjsonEncoder`, `MsgspecEncoder`, `PydanticEncoder`; encoder threaded app-wide; `@use_encoder(enc)` overrides per-route or per-controller (method > controller > app) |

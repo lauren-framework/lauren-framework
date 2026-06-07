@@ -928,6 +928,13 @@ def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
             if _is_discriminator_fieldinfo(extra):
                 preserved_metadata.append(extra)
                 continue
+            # Native _DiscriminatorMarker — keep so is_native_discriminated_union
+            # still fires after Json[Discriminated[...]] unwrapping.
+            from ._discriminated import _DiscriminatorMarker as _DM  # noqa: PLC0415
+
+            if isinstance(extra, _DM):
+                preserved_metadata.append(extra)
+                continue
         if source is not None:
             # Re-wrap the inner type so the preserved FieldInfo stays
             # attached to it. Without this step, ``Json[Annotated[Union[A,B],
@@ -1739,10 +1746,14 @@ async def _extract_upload_file(
 
 
 def _validate_json(data: object, target: object, field_name: str) -> object:
-    # Discriminated-union validation — delegated to a Pydantic ``TypeAdapter``
-    # so error messages point at the offending variant (feature 6).
-    from .streaming import is_discriminated_union, _build_adapter
+    from ._discriminated import is_native_discriminated_union, validate_native_discriminated  # noqa: PLC0415
+    from .streaming import is_discriminated_union, _build_adapter  # noqa: PLC0415
 
+    # Native Discriminated[A | B, key] — pydantic-free path
+    if is_native_discriminated_union(target):
+        return validate_native_discriminated(data, target, field_name)
+
+    # Pydantic Field(discriminator=...) — pydantic-only path
     if is_discriminated_union(target):
         adapter = _build_adapter(target)
         if adapter is not None:

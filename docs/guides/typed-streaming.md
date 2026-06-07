@@ -196,8 +196,46 @@ the client could send NDJSON and receive SSE.
 
 ## Discriminated unions
 
-`Stream[T]` and `StreamingResponse[T]` both support Pydantic discriminated unions as `T`.
-The same `TypeAdapter`-based validation that `Json[T]` uses runs in both directions:
+`Stream[T]` and `StreamingResponse[T]` support discriminated unions as `T` without
+requiring pydantic. Use `Discriminated[A | B, "key"]`:
+
+```python
+from dataclasses import dataclass
+from typing import AsyncIterator, Literal
+from lauren import Discriminated, Stream, StreamingResponse, post
+
+
+@dataclass
+class ImageEvent:
+    kind: Literal["image"] = "image"
+    url: str = ""
+
+
+@dataclass
+class TextEvent:
+    kind: Literal["text"] = "text"
+    content: str = ""
+
+
+Event = Discriminated[ImageEvent | TextEvent, "kind"]
+
+
+@post("/events")
+async def relay(
+    self, inbound: Stream[Event]
+) -> StreamingResponse[Event]:
+    async def produce() -> AsyncIterator[Event]:
+        async for ev in inbound:
+            yield ev      # round-trip, same discriminated union
+    return produce()
+```
+
+The OpenAPI document emits `oneOf` with `discriminator.mapping` for discriminated-union streams.
+
+### Pydantic discriminated unions
+
+If pydantic is installed, the classic `Annotated[Union[A, B], Field(discriminator="kind")]`
+syntax also works and routes through pydantic's `TypeAdapter`:
 
 ```python
 from typing import Annotated, Literal, Union
@@ -212,19 +250,9 @@ class TextEvent(BaseModel):
     content: str
 
 Event = Annotated[Union[ImageEvent, TextEvent], Field(discriminator="kind")]
-
-@post("/events")
-async def relay(
-    self, inbound: Stream[Event]
-) -> StreamingResponse[Event]:
-    async def produce() -> AsyncIterator[Event]:
-        async for ev in inbound:
-            yield ev      # round-trip, same discriminated union
-    return produce()
 ```
 
-The OpenAPI document emits `oneOf` with `discriminator.mapping` for discriminated-union
-streams.
+Both forms generate identical OpenAPI output.
 
 ---
 

@@ -8,17 +8,17 @@ Targets Python 3.11+. Zero runtime magic: what you declare is what you get.
 
 - **Radix-tree router** with O(depth) lookup, static > param > wildcard priority, per-method dispatch with `Allow` header on 405.
 - **Dependency Injection** with `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes, Protocol binding, multi-bindings (`list[T]` injection), circular detection, scope-violation checks, and the four NestJS-style custom-provider recipes (`use_value`, `use_class`, `use_factory`, `use_existing`) plus `Token` and `Inject`.
-- **Extractor system** for typed request decomposition (`Path[int]`, `Query[str]`, `Header[str]`, `Cookie[str]`, `Json[Model]`, `Form[Model]`, `Bytes`, `ByteStream`, `UploadFile`, `State`, `Depends[T]`), model extraction for Pydantic / `msgspec.Struct` / Python `dataclass` types, plus user-defined extractors via an `ExtractionMarker.extract` instance method (legacy classmethod form still supported).
+- **Extractor system** for typed request decomposition (`Path[int]`, `Query[str]`, `Header[str]`, `Cookie[str]`, `Json[Model]`, `Form[Model]`, `Bytes`, `ByteStream`, `UploadFile`, `State`, `Depends[T]`), model extraction for Pydantic / `msgspec.Struct` / Python `dataclass` / `TypedDict` types, **pydantic-free discriminated unions** via `Discriminated[A | B, "key"]`, plus user-defined extractors via an `ExtractionMarker.extract` instance method (legacy classmethod form still supported).
 - **Module system** with explicit imports/exports and circular-import detection (NestJS-style).
 - **Lifecycle hooks** (`@post_construct`, `@pre_destruct`) run in topological order with timeouts. Both sync and async hooks are supported; sync hooks run in a thread pool so they never block the event loop and are subject to the same timeout enforcement as async ones.
-- **First-class WebSockets** — `@ws_controller(path)`, `@on_connect`, `@on_message("event")`, `@on_disconnect`, `@on_error`, with typed Pydantic-validated frames, discriminated-union dispatch, and `BroadcastGroup` rooms.
+- **First-class WebSockets** — `@ws_controller(path)`, `@on_connect`, `@on_message("event")`, `@on_disconnect`, `@on_error`, with typed validated frames, discriminated-union dispatch (`Discriminated[A | B, "key"]`), and `BroadcastGroup` rooms.
 - **Server-Sent Events** — `EventStream`, `ServerSentEvent`, `last_event_id`. Per the HTML living standard. Optional keep-alive heartbeats.
 - **Typed streaming** — `StreamingResponse[T]` content-negotiates between SSE / NDJSON / JSON Lines from the `Accept` header, including non-Pydantic item types.
 - **Response shaping** — `Response.file(...)`, `Response.xml(...)`, immutable `with_*` builders, and custom `Response` subclasses that pass through dispatch unchanged while preserving their concrete type.
 - **Socket.IO compatibility** — Engine.IO v4 / Socket.IO v5 adapter with `@socketio_controller` and `@on_socketio_event`.
 - **ASGI runtime** with `LaurenFactory.create()` seven-phase startup, lifespan protocol, graceful drain.
 - **Sync handler support**: plain `def` handlers are automatically offloaded to a thread pool via `anyio.to_thread.run_sync`; they never block the event loop. All extractors, return-type coercion, and binding styles (instance / classmethod / static) work identically for sync and async handlers.
-- **OpenAPI 3.1** generation from Pydantic models; Swagger UI / ReDoc-ready schemas.
+- **OpenAPI 3.1** generation from Pydantic models, dataclasses, TypedDict, and `Discriminated` unions (`oneOf` + `discriminator.mapping`); Swagger UI / ReDoc-ready schemas.
 - **Middleware (onion)**, **Guards**, and **Exception Handlers** — all attachable globally, per-controller, or per-route.
 - **Interceptors** — `@interceptor()` wraps handler execution for timing, caching, or response transforms. `CallHandler.handle()` always returns a `Response`.
 - **Pipes** — `Pipe` and `pipe()` for parameter-level transforms and validation before handler execution.

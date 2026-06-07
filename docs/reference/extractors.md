@@ -10,7 +10,7 @@ Typed extractors for decomposing HTTP requests into strongly-typed Python values
 | `Query[T]` | Query string | Coerces query params to `T` |
 | `Header[T]` | Request header | Coerces header values to `T` |
 | `Cookie[T]` | Cookie header | Coerces cookie values to `T` |
-| `Json[T]` | Request body (JSON) | Parses JSON body into Pydantic model or struct |
+| `Json[T]` | Request body (JSON) | Parses JSON body into Pydantic model, struct, dataclass, TypedDict, or `Discriminated` union |
 | `Form[T]` | Request body (form) | Parses `application/x-www-form-urlencoded` |
 | `Bytes` | Request body | Buffers entire body as `bytes` |
 | `ByteStream` | Request body | Zero-copy async iterator over body chunks |
@@ -98,6 +98,40 @@ def path_is_string(value, ctx):
 async def get_item(self, id: Path[int] | PathField(ge=1) | path_is_string):
     ...
 ```
+
+## Discriminated unions
+
+::: lauren.Discriminated
+
+`Discriminated[A | B, "key"]` creates a pydantic-free tagged-union annotation. The
+framework reads the discriminator field from the JSON body, dispatches to the correct
+variant class, and validates the remaining fields. Missing or unknown discriminator
+values return `422`.
+
+```python
+from dataclasses import dataclass
+from typing import Literal
+from lauren import Discriminated, Json, post
+
+@dataclass
+class Cat:
+    kind: Literal["cat"] = "cat"
+    name: str = ""
+
+@dataclass
+class Dog:
+    kind: Literal["dog"] = "dog"
+    name: str = ""
+
+Animal = Discriminated[Cat | Dog, "kind"]
+
+@post("/animals")
+async def create(body: Json[Animal]) -> dict:
+    return {"type": type(body).__name__, "name": body.name}
+```
+
+Works with `@dataclass`, `TypedDict`, `msgspec.Struct`, and `pydantic.BaseModel`.
+OpenAPI emits `oneOf` + `discriminator.mapping` automatically.
 
 ## Lower-level API
 

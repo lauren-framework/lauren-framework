@@ -51,7 +51,7 @@ design north stars are:
   at startup; the request path is pure traversal.
 - **NestJS** — modules, controllers, DI with scopes, lifecycle hooks
   in topological order.
-- **FastAPI** — Pydantic-driven validation and automatic OpenAPI.
+- **FastAPI** — validation-driven (Pydantic, msgspec, dataclass, TypedDict) and automatic OpenAPI.
 
 The framework is intentionally **opinionated and small**. New features
 should be justified against the existing mental model before adding
@@ -84,10 +84,13 @@ lauren/                      — framework package
 ├── _arena/                  — per-request allocation arena (private)
 ├── _asgi/                   — ASGI adapter, OpenAPI, docs
 ├── _di/                     — dependency injection container + custom providers
+├── _discriminated.py        — Discriminated[A|B,"key"] runtime (detection, validation, OpenAPI)
+├── _encoders/               — optional encoder backends (pydantic)
 ├── _lifecycle/              — post_construct / pre_destruct machinery
 ├── _modules/                — module graph & visibility
 ├── _routing/                — radix-tree HTTP router
 ├── _typing/                 — ForwardRef / PEP 563 resolver (private)
+├── _validation.py           — provider-agnostic type detection & validation (pydantic, msgspec, dataclass, TypedDict)
 ├── _ws_runtime.py           — WebSocket dispatch engine
 ├── _socketio.py             — Engine.IO/Socket.IO adapter (private)
 ├── decorators.py            — user-facing @controller, @module, @get, …
@@ -101,7 +104,7 @@ lauren/                      — framework package
 ├── sse.py                   — EventStream, ServerSentEvent, last_event_id
 ├── socketio.py              — public Socket.IO controller surface
 ├── testing.py               — TestClient + WsTestClient (in-process ASGI)
-├── types.py                 — Request, Response, State, Headers, Scope, …
+├── types.py                 — Request, Response, State, Headers, Scope, Discriminated, …
 ├── websockets.py            — @ws_controller, @on_message, WebSocket, BroadcastGroup
 ├── docs.py                  — programmatic access to llms.txt / llms-full.txt
 ├── llms.txt                 — short overview (llmstxt.org)
@@ -248,9 +251,10 @@ WebSockets and SSE are first-class peers of HTTP, not bolt-ons.
   same strict-inheritance rule applies (subclasses must re-decorate the
   gateway class).
 - **Typed messages.** A `@on_message("chat.send")` handler that takes
-  `body: Json[ChatMessage]` runs through the same Pydantic validation
-  pipeline as HTTP `Json[T]` extractors — the validator is built once
-  at startup. Discriminated-union payloads work the same way.
+  `body: Json[ChatMessage]` runs through the same validation pipeline as
+  HTTP `Json[T]` extractors (pydantic, msgspec, dataclass, TypedDict) —
+  the validator is built once at startup. `Discriminated[A | B, "key"]`
+  payloads work the same way without requiring pydantic.
 - **Broadcast/rooms.** `BroadcastGroup` is a DI-injectable provider
   with `subscribe / unsubscribe / broadcast / unsubscribe_all`. The
   default in-process implementation is fine for single-worker dev;

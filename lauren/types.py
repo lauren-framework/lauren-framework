@@ -6,6 +6,7 @@ import enum
 import json as jsonlib
 from dataclasses import dataclass, field
 from typing import (
+    Annotated,
     Any,
     AsyncIterable,
     AsyncIterator,
@@ -14,6 +15,9 @@ from typing import (
     Mapping,
     Protocol,
     TypeVar,
+    Union,
+    get_args,
+    get_origin,
     runtime_checkable,
 )
 from urllib.parse import parse_qsl
@@ -1238,6 +1242,135 @@ class InterceptorProtocol(Protocol):
     async def intercept(self, context: ExecutionContext, call_handler: CallHandler) -> "Any": ...
 
 
+# ---------------------------------------------------------------------------
+# Discriminated — pydantic-free discriminated union type
+# ---------------------------------------------------------------------------
+
+
+class _DiscriminatedMeta(type):
+    """Metaclass enabling the ``Discriminated[Union[A, B], 'key']`` syntax."""
+
+    def __getitem__(cls, params: tuple) -> Any:  # type: ignore[override]
+        if not isinstance(params, tuple) or len(params) != 2:
+            raise TypeError("Discriminated requires exactly two arguments: Discriminated[Union[A, B], 'key']")
+        union_type, key = params
+        if not isinstance(key, str):
+            raise TypeError(f"Discriminated key must be a string, got {type(key).__name__}")
+        return _build_discriminated_annotation(union_type, key)
+
+
+def _build_discriminated_annotation(union_type: Any, key: str) -> Any:
+    """Construct Annotated[union_type, _DiscriminatorMarker(key, mapping)]."""
+    from ._discriminated import _DiscriminatorMarker  # noqa: PLC0415
+
+    variants: list[type] = []
+    origin = get_origin(union_type)
+    if origin is Union:
+        variants = [a for a in get_args(union_type) if a is not type(None)]
+    elif isinstance(union_type, type):
+        variants = [union_type]
+    else:
+        try:
+            import types as _types  # noqa: PLC0415
+
+            if isinstance(union_type, _types.UnionType):
+                variants = list(union_type.__args__)
+        except AttributeError:
+            pass
+
+    if not variants:
+        raise TypeError(
+            f"Discriminated[..., '{key}']: could not extract variants from {union_type!r}. "
+            "Use Union[A, B] or A | B syntax."
+        )
+
+    mapping: dict[str, type] = {}
+    for variant in variants:
+        tag = _extract_discriminator_tag(variant, key)
+        if tag is None:
+            raise TypeError(
+                f"Discriminated[..., '{key}']: variant {variant.__name__!r} has no "
+                f"Literal annotation or default value for field '{key}'. "
+                f"Add `{key}: Literal['<value>'] = '<value>'` to {variant.__name__}."
+            )
+        mapping[str(tag)] = variant
+
+    marker = _DiscriminatorMarker(key=key, mapping=mapping)
+    return Annotated[union_type, marker]
+
+
+def _extract_discriminator_tag(variant: type, key: str) -> str | None:
+    """Extract the discriminator tag value from a variant type.
+
+    Tries, in order:
+      1. msgspec.Struct tag_field/tag class config
+      2. Literal annotation: ``kind: Literal["cat"] = "cat"``
+      3. dataclass field default
+      4. Class attribute default
+    """
+    import typing as _typing  # noqa: PLC0415
+    import dataclasses as _dc  # noqa: PLC0415
+
+    # msgspec Struct with tag_field= / tag= class config
+    struct_config = getattr(variant, "__struct_config__", None)
+    if struct_config is not None:
+        tag_field = getattr(struct_config, "tag_field", None)
+        tag = getattr(struct_config, "tag", None)
+        if tag_field == key and tag is not None:
+            return str(tag)
+
+    try:
+        hints = _typing.get_type_hints(variant, include_extras=False)
+    except Exception:
+        hints = {}
+    ann = hints.get(key)
+    if ann is not None and get_origin(ann) is _typing.Literal:
+        args = get_args(ann)
+        if args:
+            return str(args[0])
+
+    if _dc.is_dataclass(variant):
+        for f in _dc.fields(variant):  # type: ignore[arg-type]
+            if f.name == key and f.default is not _dc.MISSING:
+                return str(f.default)
+
+    val = getattr(variant, key, None)
+    if val is not None and not callable(val):
+        return str(val)
+
+    return None
+
+
+class Discriminated(metaclass=_DiscriminatedMeta):
+    """Pydantic-free discriminated union type for use in route handler signatures.
+
+    Usage::
+
+        from lauren import Discriminated
+        from dataclasses import dataclass
+        from typing import Literal
+
+        @dataclass
+        class Cat:
+            kind: Literal["cat"] = "cat"
+            name: str = ""
+
+        @dataclass
+        class Dog:
+            kind: Literal["dog"] = "dog"
+            name: str = ""
+
+        @post("/animals")
+        async def create(body: Json[Discriminated[Cat | Dog, "kind"]]) -> dict:
+            match body:
+                case Cat(name=n): return {"animal": "cat", "name": n}
+                case Dog(name=n): return {"animal": "dog", "name": n}
+
+    Works equally well with ``msgspec.Struct``, ``TypedDict``, and
+    ``pydantic.BaseModel`` variants.
+    """
+
+
 __all__ = [
     "Scope",
     "Headers",
@@ -1254,4 +1387,5 @@ __all__ = [
     "ExecutionContext",
     "CallHandler",
     "InterceptorProtocol",
+    "Discriminated",
 ]

@@ -9,7 +9,7 @@ When a handler parameter has no extractor annotation (no `Path[…]`, `Query[…
 | Condition | Promoted to |
 |-----------|-------------|
 | Parameter name matches a `{segment}` in the URL template | `Path[T]` |
-| Annotation is a Pydantic `BaseModel` (or `Optional[Model]`) | `Json[T]` (request body) |
+| Annotation is a `Pydantic BaseModel`, `msgspec.Struct`, `@dataclass`, `TypedDict`, or `Discriminated[A\|B, "key"]` (or `Optional[...]`) | `Json[T]` (request body) |
 | Annotation is a scalar type (`int`, `str`, `float`, `bool`, `bytes`, `complex`) — or `Optional[scalar]` / `list[scalar]` / `tuple[scalar, ...]` | `Query[T]` (query string) |
 | Anything else | `UnresolvableParameterError` at startup |
 
@@ -114,9 +114,11 @@ $ curl "http://localhost:8000/filter?active=1"      # active=True
 $ curl "http://localhost:8000/filter?active=false"  # active=False
 ```
 
-## Pydantic models in detail
+## Structured body types
 
-Any annotation that is a `pydantic.BaseModel` subclass (or `Optional[Model]`) is auto-promoted to a JSON body parameter:
+Any annotation that is a `pydantic.BaseModel`, `msgspec.Struct`, `@dataclass`, `TypedDict`, or `Discriminated[A | B, "key"]` (or `Optional[...]`) is auto-promoted to a JSON body parameter. Pydantic is not required — the framework validates the body using whichever library the type belongs to.
+
+### Pydantic models
 
 ```python
 class Address(BaseModel):
@@ -296,7 +298,7 @@ async def update(
 |---|---|---|
 | Unannotated parameter (`def h(self, x):`) | No type to coerce to | Annotate explicitly: `x: str` |
 | `list[MyService]` | The element type is not a scalar — only `list[scalar]` (e.g. `list[int]`, `list[str]`) auto-promotes | Use `@injectable(multi=True)` + DI for multi-binding, or `Json[list[MyService]]` for a JSON array |
-| Custom class (non-Pydantic, non-struct, non-dataclass) | Ambiguous: DI token or body? | `@injectable` + auto-DI, or `Json[MyClass]`, or a custom extractor |
+| Custom class (non-Pydantic, non-struct, non-dataclass, non-TypedDict, non-Discriminated) | Ambiguous: DI token or body? | `@injectable` + auto-DI, or `Json[MyClass]`, or a custom extractor |
 | `Header[str]`, `Cookie[str]` | Can only come from headers/cookies | Always explicit |
 
 ## DI still runs first
@@ -331,8 +333,55 @@ class AppModule: ...
 | `item: Optional[CreateItem] = None` | JSON body, nullable |
 | `body: MyStruct` (msgspec.Struct) | JSON body |
 | `body: MyDC` (dataclass) | JSON body |
+| `body: MyTD` (TypedDict) | JSON body |
+| `body: Discriminated[A \| B, "key"]` | JSON body, discriminated union |
 | `f: Query[Filters]` (Pydantic, explicit) | Query fields from model |
 | `params: Query[PageParams]` (msgspec.Struct, explicit) | Query fields from struct |
 | `params: Query[PageParams]` (dataclass, explicit) | Query fields from dataclass |
 | `token: Header[str]` (explicit) | Header |
 | `s: MyService` (DI registered) | DI injection |
+
+## Discriminated unions
+
+`Discriminated[A | B, "key"]` is a pydantic-free tagged-union type. Declare it
+exactly like any other structured body — explicit or auto-promoted:
+
+```python
+from dataclasses import dataclass
+from typing import Literal
+from lauren import controller, post, Json, Discriminated
+
+
+@dataclass
+class Cat:
+    kind: Literal["cat"] = "cat"
+    name: str = ""
+
+
+@dataclass
+class Dog:
+    kind: Literal["dog"] = "dog"
+    name: str = ""
+
+
+Animal = Discriminated[Cat | Dog, "kind"]
+
+
+@controller("/animals")
+class AnimalController:
+    @post("/")
+    async def create(self, body: Animal) -> dict:   # auto-promoted, no Json[…] needed
+        return {"type": type(body).__name__, "name": body.name}
+
+    @post("/explicit")
+    async def create_explicit(self, body: Json[Animal]) -> dict:
+        return {"type": type(body).__name__, "name": body.name}
+```
+
+The framework reads the `kind` field from the request JSON, dispatches to the
+matching variant class, and validates the remaining fields. Missing or unknown
+discriminator values return `422`. OpenAPI emits `oneOf` + `discriminator.mapping`
+automatically.
+
+Works with `@dataclass`, `TypedDict`, `msgspec.Struct`, and `pydantic.BaseModel`
+variants. Pydantic does not need to be installed.
