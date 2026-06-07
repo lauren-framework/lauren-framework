@@ -150,16 +150,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Install with extras
         run: |
           if [ -z "${{ matrix.extras }}" ]; then
-            pip install -e ".[test]"
+            python -m pip install -e ".[test]"
           else
-            pip install -e ".[${{ matrix.extras }},test]"
+            python -m pip install -e ".[${{ matrix.extras }},test]"
           fi
       - name: Verify pydantic absent (bare only)
         if: matrix.extras == ''
