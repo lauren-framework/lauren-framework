@@ -62,14 +62,7 @@ from .websockets import (
     own_ws_controller_meta,
 )
 
-try:
-    import pydantic
-
-    _PYDANTIC_AVAILABLE = True
-    _BaseModel = pydantic.BaseModel
-except ImportError:  # pragma: no cover
-    _PYDANTIC_AVAILABLE = False
-    _BaseModel = None  # type: ignore[assignment,misc]
+from ._validation import is_pydantic_model as _is_pydantic_model  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -570,7 +563,7 @@ def _find_payload_adapter(
         if binary and ext.source in ("ws_binary", "bytes"):
             return ext.name, None  # no adapter — bytes are passed as-is
         if (not binary) and ext.source == "json":
-            adapter = _build_adapter(ext.inner_type) if _PYDANTIC_AVAILABLE else None
+            adapter = _build_adapter(ext.inner_type)
             return ext.name, adapter
     return None, None
 
@@ -859,14 +852,15 @@ async def _dispatch_text(
     if compiled.payload_adapter is not None:
         try:
             payload = compiled.payload_adapter.validate_python(payload if event != payload else frame)
-        except pydantic.ValidationError as e:  # type: ignore[union-attr]
+        except Exception as exc:
+            _errors = getattr(exc, "errors", None)
             raise WebSocketValidationError(
                 "validation error",
                 detail={
                     "event": event,
-                    "errors": e.errors(),
+                    "errors": _errors() if callable(_errors) else [str(exc)],
                 },
-            ) from e
+            ) from exc
     extra: dict[str, Any] = {}
     if compiled.payload_param is not None:
         extra[compiled.payload_param] = payload

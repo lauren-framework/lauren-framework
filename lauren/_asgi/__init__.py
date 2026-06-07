@@ -62,14 +62,13 @@ from ..extractors import (
     FieldDescriptor,
     Extraction,
     _ParamSpec,
-    _is_pydantic_model_type,
     _is_implicit_query_type,
-    _is_struct_type,
     _peel_optional,
     extract_parameter,
     is_pipe,
     parse_extractor_hint,
 )
+from .._validation import is_json_body_type as _is_json_body_type
 from ..streaming import (
     FORMAT_TO_MEDIA_TYPE,
     _build_adapter,
@@ -379,27 +378,9 @@ def _compile_handler_signature(
             # ``Query[MyModel]`` to pull model fields from the query string, or
             # ``Json[int]`` if a scalar should come from the body.
             # ---------------------------------------------------------------------------
-            if _is_pydantic_model_type(ann):
-                # Peel Optional[Model] so the extraction layer sees the plain
-                # model type (not Optional[Model]) when calling _validate_json.
-                body_inner, _ = _peel_optional(ann)
-                extractions.append(
-                    Extraction(
-                        name=name,
-                        source="json",
-                        inner_type=body_inner,
-                        field_descriptor=fd,
-                        default=default,
-                        has_default=has_default,
-                        reads_body=True,
-                        pipes=pipes,
-                    )
-                )
-                param_names.append(name)
-                continue
-            if _is_struct_type(ann):
-                # msgspec.Struct / dataclass — auto-promote to JSON body,
-                # mirroring the Pydantic model behaviour above.
+            if _is_json_body_type(ann):
+                # Pydantic BaseModel, msgspec.Struct, @dataclass, or TypedDict —
+                # auto-promote to JSON body extraction so callers don't need Json[T].
                 body_inner, _ = _peel_optional(ann)
                 extractions.append(
                     Extraction(

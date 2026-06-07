@@ -28,14 +28,13 @@ from ..streaming import (
 if TYPE_CHECKING:
     from . import LaurenApp
 
-try:
-    import pydantic
-
-    _PYDANTIC = True
-    _BaseModel = pydantic.BaseModel
-except ImportError:  # pragma: no cover
-    _PYDANTIC = False
-    _BaseModel = None  # type: ignore[assignment,misc]
+from .._validation import (
+    is_pydantic_model,
+    is_msgspec_struct,
+    is_dataclass,
+    is_typeddict,
+    json_schema_for,
+)
 
 
 DEFAULT_INFO: dict[str, Any] = {"title": "lauren application", "version": "1.0.0"}
@@ -119,17 +118,15 @@ def _apply_field_descriptor(schema: dict[str, Any], fd: FieldDescriptor) -> dict
 
 
 def _ensure_component(components: dict[str, Any], model: type) -> str:
-    """Register a Pydantic model in ``components`` and return its ``$ref``."""
+    """Register a structured-body model in ``components`` and return its ``$ref``."""
     name = model.__name__
     if name not in components["schemas"]:
         try:
-            schema = model.model_json_schema(  # type: ignore[attr-defined]
-                ref_template="#/components/schemas/{model}"
-            )
-        except Exception:
+            schema = json_schema_for(model)
+        except (TypeError, Exception):
             schema = {"type": "object"}
-        # Hoist Pydantic's ``$defs`` into top-level components so cross-model
-        # references resolve.
+        # Hoist ``$defs`` (pydantic) / ``definitions`` into top-level components
+        # so cross-model ``$ref`` entries resolve correctly.
         defs = schema.pop("$defs", None) or schema.pop("definitions", None)
         if defs:
             for dname, dschema in defs.items():
@@ -186,7 +183,7 @@ def _variant_tag_value(variant: type, key: str | None) -> Any:
     if key is None:
         return None
     try:
-        schema = variant.model_json_schema()  # type: ignore[attr-defined]
+        schema = json_schema_for(variant)
     except Exception:
         return None
     props = schema.get("properties") or {}
@@ -209,9 +206,11 @@ def _schema_for_extraction(ext: Extraction, components: dict[str, Any]) -> dict[
     inner = ext.inner_type
     # Feature 6 — discriminated unions surface as oneOf + discriminator
     # rather than a bare ``$ref``.
-    if _PYDANTIC and is_discriminated_union(inner):
+    if is_discriminated_union(inner):
         return _schema_for_discriminated_union(inner, components)
-    if _PYDANTIC and isinstance(inner, type) and _BaseModel is not None and issubclass(inner, _BaseModel):
+    if isinstance(inner, type) and (
+        is_pydantic_model(inner) or is_msgspec_struct(inner) or is_dataclass(inner) or is_typeddict(inner)
+    ):
         return {"$ref": _ensure_component(components, inner)}
     schema = _python_type_to_schema(inner)
     if ext.field_descriptor is not None:
@@ -288,13 +287,20 @@ def _build_responses(
         responses[str(code)] = dict(v) if isinstance(v, dict) else {"description": str(v)}
     if not responses:
         responses["200"] = {"description": "Success"}
-    if rmeta.response_model is not None and _PYDANTIC:
+    if rmeta.response_model is not None:
         # Feature 6 — response may be a discriminated union.
         if is_discriminated_union(rmeta.response_model):
             schema = _schema_for_discriminated_union(rmeta.response_model, components)
-        else:
+        elif isinstance(rmeta.response_model, type) and (
+            is_pydantic_model(rmeta.response_model)
+            or is_msgspec_struct(rmeta.response_model)
+            or is_dataclass(rmeta.response_model)
+            or is_typeddict(rmeta.response_model)
+        ):
             ref = _ensure_component(components, rmeta.response_model)
             schema = {"$ref": ref}
+        else:
+            schema = _python_type_to_schema(rmeta.response_model)
         ok = responses.setdefault("200", {"description": "Success"})
         ok.setdefault("content", {})
         # Feature 7 — StreamingResponse[T] declares its wire negotiation
@@ -305,7 +311,7 @@ def _build_responses(
                 ok["content"][media] = {"schema": item_schema}
         else:
             ok["content"]["application/json"] = {"schema": schema}
-    elif streaming_item_type is not None and _PYDANTIC:
+    elif streaming_item_type is not None:
         # Streaming-only route (no response_model declared) — still document
         # the three negotiable content types so clients know the contract.
         item_schema = _resolve_item_schema(streaming_item_type, components)
@@ -318,13 +324,13 @@ def _build_responses(
 
 def _resolve_item_schema(item_type: Any, components: dict[str, Any]) -> dict[str, Any]:
     """Schema fragment for a single streamed item (model / union / primitive)."""
-    if _PYDANTIC and is_discriminated_union(item_type):
+    if is_discriminated_union(item_type):
         return _schema_for_discriminated_union(item_type, components)
-    if (
-        _PYDANTIC
-        and isinstance(item_type, type)
-        and _BaseModel is not None
-        and issubclass(item_type, _BaseModel)
+    if isinstance(item_type, type) and (
+        is_pydantic_model(item_type)
+        or is_msgspec_struct(item_type)
+        or is_dataclass(item_type)
+        or is_typeddict(item_type)
     ):
         return {"$ref": _ensure_component(components, item_type)}
     return _python_type_to_schema(item_type)

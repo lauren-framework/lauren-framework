@@ -43,16 +43,19 @@ from typing import (
 from .exceptions import ExtractorError
 from .extractors import ExtractionMarker
 
+
+# Computed once at startup; kept as a patchable module-level flag for tests.
 try:
-    import pydantic
+    import pydantic as _pydantic_mod  # noqa: F401
 
     _PYDANTIC_AVAILABLE = True
-    _BaseModel = pydantic.BaseModel
-    _TypeAdapter = pydantic.TypeAdapter
-except ImportError:  # pragma: no cover
+except ImportError:
     _PYDANTIC_AVAILABLE = False
-    _BaseModel = None  # type: ignore[assignment,misc]
-    _TypeAdapter = None  # type: ignore[assignment,misc]
+
+
+def _pydantic_available() -> bool:
+    """Return whether pydantic is available (reads the module-level flag)."""
+    return _PYDANTIC_AVAILABLE
 
 
 T = TypeVar("T")
@@ -209,7 +212,7 @@ class StreamReader(Generic[T]):
         # Build a TypeAdapter eagerly so validation errors surface
         # immediately when the first chunk arrives (and so we don't pay the
         # construction cost per-chunk).
-        self._adapter = _build_adapter(inner_type) if _PYDANTIC_AVAILABLE else None
+        self._adapter = _build_adapter(inner_type)
 
     @property
     def format(self) -> str:
@@ -297,15 +300,16 @@ class StreamReader(Generic[T]):
             return data
         try:
             return self._adapter.validate_python(data)
-        except pydantic.ValidationError as e:  # type: ignore[union-attr]
+        except Exception as exc:
+            _errors = getattr(exc, "errors", None)
             raise ExtractorError(
                 "validation error in streaming body",
                 detail={
                     "field": self._field_name,
                     "format": self._format,
-                    "errors": e.errors(),
+                    "errors": _errors() if callable(_errors) else [str(exc)],
                 },
-            ) from e
+            ) from exc
 
 
 def _sse_extract_data(block: bytes) -> bytes:
@@ -390,36 +394,116 @@ def extract_streaming_item_type(annotation: Any) -> Any | None:
 # ---------------------------------------------------------------------------
 
 
-_ADAPTER_CACHE: dict[int, Any] = {}
+class _ValidationAdapter:
+    """Uniform interface over pydantic TypeAdapter, msgspec, or dataclass validation."""
+
+    __slots__ = ("_validate_fn", "_dump_fn")
+
+    def __init__(self, validate_fn: Any, dump_fn: Any) -> None:
+        self._validate_fn = validate_fn
+        self._dump_fn = dump_fn
+
+    def validate_python(self, data: Any) -> Any:
+        return self._validate_fn(data)
+
+    def dump_python(self, value: Any, *, mode: str = "json") -> Any:
+        return self._dump_fn(value, mode=mode)
 
 
-def _build_adapter(target: Any) -> Any:
-    """Return a cached :class:`pydantic.TypeAdapter` for ``target``, or
-    ``None`` when *target* is not a type Pydantic can introspect.
+_ADAPTER_CACHE: dict[int, "_ValidationAdapter | None"] = {}
 
-    Caching is keyed on ``id(target)`` because Pydantic type adapters are
-    immutable once built and constructing them is non-trivial for
-    discriminated unions (Pydantic walks every variant to assemble the tag
-    map). The cache is process-wide and never invalidated — safe because
-    application types are defined at import time and never change.
 
-    Returns ``None`` for non-Pydantic types such as ``msgspec.Struct``
-    subclasses so that callers can fall back to direct encoder serialization
-    without triggering a ``PydanticSchemaError``.
+def _build_adapter(target: Any) -> "_ValidationAdapter | None":
+    """Return a cached _ValidationAdapter for *target*, or None if unsupported.
+
+    Resolution order:
+      1. pydantic.TypeAdapter (handles BaseModel, discriminated unions, scalars)
+      2. msgspec.convert (handles Struct)
+      3. validate_as (handles @dataclass and TypedDict)
+      4. None (pass-through for scalars and unsupported types)
+
+    Caching is keyed on ``id(target)`` — application types are defined at
+    import time and never change, so the cache is safe to hold indefinitely.
     """
-    if not _PYDANTIC_AVAILABLE:
-        return None
     key = id(target)
-    # Use ``key in`` rather than ``.get()`` so that a cached ``None``
-    # (non-Pydantic type) is not retried on every call.
     if key in _ADAPTER_CACHE:
         return _ADAPTER_CACHE[key]
-    try:
-        adapter: Any = _TypeAdapter(target)
-    except Exception:  # PydanticSchemaError, PydanticUserError, TypeError, …
-        adapter = None
-    _ADAPTER_CACHE[key] = adapter
-    return adapter
+
+    adapter: _ValidationAdapter | None = None
+
+    # Path 1 — pydantic (handles BaseModel + discriminated unions best)
+    if _pydantic_available():
+        try:
+            import pydantic  # noqa: PLC0415
+
+            ta = pydantic.TypeAdapter(target)
+            adapter = _ValidationAdapter(
+                validate_fn=ta.validate_python,
+                dump_fn=lambda v, mode="json": ta.dump_python(v, mode=mode),
+            )
+            _ADAPTER_CACHE[key] = adapter
+            return adapter
+        except Exception:
+            pass
+
+    # Path 2 — msgspec.Struct
+    inner = _unwrap_annotated_union(target)
+    from ._validation import is_msgspec_struct  # noqa: PLC0415
+
+    if inner is not None and is_msgspec_struct(inner):
+        try:
+            import msgspec  # noqa: PLC0415
+
+            adapter = _ValidationAdapter(
+                validate_fn=lambda d, _t=inner: msgspec.convert(d, _t),
+                dump_fn=lambda v, mode="json": msgspec.to_builtins(v),
+            )
+            _ADAPTER_CACHE[key] = adapter
+            return adapter
+        except ImportError:
+            pass
+
+    # Path 3 — dataclass or TypedDict via validate_as
+    from ._validation import is_dataclass as _is_dc, is_typeddict, validate_as  # noqa: PLC0415
+    import dataclasses as _dc_mod  # noqa: PLC0415
+
+    if inner is not None and (_is_dc(inner) or is_typeddict(inner)):
+        _inner = inner
+
+        def _dc_dump(v: Any, mode: str = "json") -> Any:
+            return _dc_mod.asdict(v) if (_dc_mod.is_dataclass(v) and not isinstance(v, type)) else v
+
+        adapter = _ValidationAdapter(
+            validate_fn=lambda d, _t=_inner: validate_as(_t, d),
+            dump_fn=_dc_dump,
+        )
+        _ADAPTER_CACHE[key] = adapter
+        return adapter
+
+    _ADAPTER_CACHE[key] = None
+    return None
+
+
+def _unwrap_annotated_union(target: Any) -> Any:
+    """Strip Annotated[T, ...] and Optional[T] wrappers; return the inner type."""
+    import typing  # noqa: PLC0415
+
+    origin = get_origin(target)
+    if origin is typing.get_origin(typing.Annotated[int, 0]):
+        args = get_args(target)
+        return _unwrap_annotated_union(args[0]) if args else target
+    if origin is typing.Union:
+        non_none = [a for a in get_args(target) if a is not type(None)]
+        return non_none[0] if len(non_none) == 1 else target
+    return target
+
+
+def _is_native_discriminated_union(target: Any) -> bool:
+    """Stub for Phase 4 native Discriminated[A|B, 'key'] detection.
+
+    Always returns False until Phase 4 (``lauren/_discriminated.py``) is implemented.
+    """
+    return False
 
 
 def is_discriminated_union(target: Any) -> bool:
@@ -429,7 +513,7 @@ def is_discriminated_union(target: Any) -> bool:
     :class:`pydantic.TypeAdapter` rather than :meth:`BaseModel.model_validate`,
     and by the OpenAPI generator to emit ``oneOf`` + ``discriminator.mapping``.
     """
-    if not _PYDANTIC_AVAILABLE:
+    if not _pydantic_available():
         return False
     origin = get_origin(target)
     if origin is not Annotated and not hasattr(target, "__metadata__"):
@@ -506,6 +590,7 @@ __all__ = [
     "negotiate_stream_format",
     "extract_streaming_item_type",
     "is_discriminated_union",
+    "_is_native_discriminated_union",
     "discriminator_key",
     "discriminator_variants",
     "_build_adapter",

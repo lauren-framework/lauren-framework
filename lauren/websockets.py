@@ -64,14 +64,7 @@ from .exceptions import (
 )
 from .types import Headers, State
 
-try:
-    import pydantic
-
-    _PYDANTIC_AVAILABLE = True
-    _BaseModel = pydantic.BaseModel
-except ImportError:  # pragma: no cover
-    _PYDANTIC_AVAILABLE = False
-    _BaseModel = None  # type: ignore[assignment,misc]
+from ._validation import is_pydantic_model as _is_pydantic_model  # noqa: F401
 
 
 F = TypeVar("F", bound=Callable[..., Any])

@@ -64,17 +64,22 @@ from .types import ByteStream as RequestByteStream
 from .types import ExecutionContext, Request
 from .types import UploadFile as UploadedFile
 
+from ._validation import (
+    is_pydantic_model as _is_pydantic_model,
+    is_json_body_type,
+    validate_as as _validate_as,
+)
+
+# Backwards-compat shim — external plugins may read _PYDANTIC_AVAILABLE.
+_BaseModel: type[Any] | None = None
 try:
-    import pydantic
+    import pydantic as _pydantic_module  # noqa: F401
 
     _PYDANTIC_AVAILABLE = True
-    from pydantic import BaseModel
-
-    _BaseModel: type[BaseModel] | None = pydantic.BaseModel
+    _BaseModel = _pydantic_module.BaseModel
 except ImportError:  # pragma: no cover
     _PYDANTIC_AVAILABLE = False
-    pydantic = None  # type: ignore[assignment]
-    _BaseModel = None
+    _pydantic_module = None  # type: ignore[assignment]
 
 T = TypeVar("T")
 V = TypeVar("V")
@@ -968,10 +973,8 @@ def _is_pydantic_model_type(annotation: object) -> bool:
     bare model parameters to JSON body extraction.  Always returns ``False``
     when pydantic is not installed.
     """
-    if _BaseModel is None:
-        return False
     inner, _ = _peel_optional(annotation)
-    return isinstance(inner, type) and issubclass(inner, _BaseModel)
+    return isinstance(inner, type) and _is_pydantic_model(inner)
 
 
 def _is_msgspec_struct_type(annotation: object) -> bool:
@@ -1381,7 +1384,7 @@ async def _extract_raw(
                 and issubclass(peeled_inner, _BaseModel)
             ):
                 fields_dict: dict[str, object] = {}
-                for f_name, f_info in peeled_inner.model_fields.items():
+                for f_name, f_info in peeled_inner.model_fields.items():  # type: ignore[attr-defined]
                     f_alias = (
                         f_info.alias  # type: ignore[attr-defined]
                         if getattr(f_info, "alias", None)
@@ -1397,7 +1400,7 @@ async def _extract_raw(
                     if extraction.has_default:
                         return extraction.default
                     return None
-                return _validate_pydantic(fields_dict, peeled_inner, extraction.name)
+                return _validate_as(peeled_inner, fields_dict, field=extraction.name)
 
             if _is_struct_type(peeled_inner):
                 # msgspec.Struct / dataclass — collect individual query-string
@@ -1487,14 +1490,9 @@ async def _extract_raw(
 
         if source == "form":
             form_data = await request.form()
-            if (
-                _PYDANTIC_AVAILABLE
-                and _BaseModel is not None
-                and isinstance(inner, type)
-                and issubclass(inner, _BaseModel)
-            ):
+            if isinstance(inner, type) and _is_pydantic_model(inner):
                 flat = {k: v[0] if len(v) == 1 else v for k, v in form_data.items()}
-                return _validate_pydantic(flat, inner, extraction.name)
+                return _validate_as(inner, flat, field=extraction.name)
             return form_data
 
         if source == "bytes":
@@ -1745,47 +1743,32 @@ def _validate_json(data: object, target: object, field_name: str) -> object:
     # so error messages point at the offending variant (feature 6).
     from .streaming import is_discriminated_union, _build_adapter
 
-    if _PYDANTIC_AVAILABLE and is_discriminated_union(target):
+    if is_discriminated_union(target):
         adapter = _build_adapter(target)
-        try:
-            return adapter.validate_python(data)
-        except pydantic.ValidationError as e:
-            raise ExtractorError(
-                "validation error",
-                detail={"field": field_name, "errors": e.errors()},
-            ) from e
-    if (
-        _PYDANTIC_AVAILABLE
-        and _BaseModel is not None
-        and isinstance(target, type)
-        and issubclass(target, _BaseModel)
-    ):
-        return _validate_pydantic(data, target, field_name)
-    if _is_struct_type(target):
-        # msgspec.Struct / dataclass — JSON data is already a dict with proper
-        # Python types, so conversion is purely structural (no string coercion).
-        return _convert_struct(data, cast(type[Any], target), field_name)
-    if target is None:
-        return data
-    # primitive types
-    if isinstance(data, target) if isinstance(target, type) else False:
-        return data
-    origin = get_origin(target)
-    if origin in (list, tuple) and isinstance(data, list):
-        return data
-    if origin is dict and isinstance(data, dict):
-        return data
+        if adapter is not None:
+            return _invoke_adapter(adapter, data, field_name)
+
+    # Unified validation — handles pydantic, msgspec, dataclass, TypedDict.
+    if isinstance(target, type) and is_json_body_type(target):
+        return _validate_as(target, data, field=field_name)  # type: ignore[arg-type]
+
+    # Fallthrough: primitives, list, dict, etc.
     return data
 
 
-def _validate_pydantic(data: object, model: type[pydantic.BaseModel], field_name: str) -> pydantic.BaseModel:
+def _invoke_adapter(adapter: object, data: object, field_name: str) -> object:
+    """Call adapter.validate_python(), mapping any validation failure to ExtractorError."""
     try:
-        return model.model_validate(data)  # type: ignore[attr-defined]
-    except pydantic.ValidationError as e:
+        return adapter.validate_python(data)  # type: ignore[attr-defined]
+    except Exception as exc:
+        _errors = getattr(exc, "errors", None)
         raise ExtractorError(
             "validation error",
-            detail={"field": field_name, "errors": e.errors()},
-        ) from e
+            detail={
+                "field": field_name,
+                "errors": _errors() if callable(_errors) else [str(exc)],
+            },
+        ) from exc
 
 
 __all__ = [

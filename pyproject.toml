@@ -42,7 +42,6 @@ classifiers = [
 ]
 dependencies = [
     "anyio>=4.0",
-    "pydantic>=2.0",
 ]
 
 [project.urls]
@@ -53,6 +52,16 @@ Issues        = "https://github.com/lauren-framework/lauren-framework/issues"
 Changelog     = "https://github.com/lauren-framework/lauren-framework/releases"
 
 [project.optional-dependencies]
+pydantic = [
+    "pydantic>=2.0",
+]
+msgspec = [
+    "msgspec>=0.18",
+]
+full = [
+    "pydantic>=2.0",
+    "msgspec>=0.18",
+]
 dev = [
     "pytest",
     "pytest-asyncio",
