@@ -165,7 +165,7 @@ jobs:
         if: matrix.extras == ''
         run: python -c "import pydantic" 2>&1 | grep -q ModuleNotFoundError || true
       - name: Run tests
-        run: pytest tests/unit tests/integration tests/e2e -q -m "not benchmark and not slow"
+        run: python -m pytest tests/unit tests/integration tests/e2e -q -m "not benchmark and not slow"
         env:
           LAUREN_TEST_EXTRAS: ${{ matrix.extras }}
 
@@ -190,4 +190,4 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pip install "pydantic==${{ matrix.pydantic }}"
       - run: python -c "import pydantic; print('pydantic:', pydantic.VERSION)"
-      - run: pytest -q
+      - run: python -m pytest -q
