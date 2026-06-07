@@ -94,8 +94,9 @@ nox.options.stop_on_first_error = False
 # ---------------------------------------------------------------------------
 @nox.session(python=SUPPORTED_PYTHONS)
 def tests(session: nox.Session) -> None:
-    """Run the full test suite (unit + integration)."""
+    """Run the full test suite (unit + integration + e2e + property)."""
     session.run("uv", "sync", "--extra", "dev", "--active", external=True)
+    session.run("uv", "pip", "install", "hypothesis>=6.0", external=True, success_codes=[0, 1])
     args = session.posargs or ["-q", "--ignore-glob=tests/benchmarks/test*bench.py"]
     session.run("pytest", *args)
 
@@ -114,6 +115,23 @@ def tests_integration(session: nox.Session) -> None:
     session.run("uv", "sync", "--extra", "dev", "--active", external=True)
     args = session.posargs or ["-q"]
     session.run("pytest", str(TESTS_DIR / "integration"), *args)
+
+
+@nox.session(python=PRIMARY_PYTHON, name="tests_e2e")
+def tests_e2e(session: nox.Session) -> None:
+    """Run only end-to-end tests under tests/e2e/."""
+    session.run("uv", "sync", "--extra", "dev", "--active", external=True)
+    args = session.posargs or ["-q"]
+    session.run("pytest", str(TESTS_DIR / "e2e"), *args)
+
+
+@nox.session(python=PRIMARY_PYTHON, name="tests_property")
+def tests_property(session: nox.Session) -> None:
+    """Run property-based tests under tests/property/ (requires hypothesis)."""
+    session.run("uv", "sync", "--extra", "dev", "--active", external=True)
+    session.run("uv", "pip", "install", "hypothesis>=6.0", external=True)
+    args = session.posargs or ["-q"]
+    session.run("pytest", str(TESTS_DIR / "property"), *args)
 
 
 @nox.session(python=PRIMARY_PYTHON, name="tests_verbose")
@@ -589,6 +607,8 @@ def help_session(session: nox.Session) -> None:
                 "tests",
                 "tests_unit",
                 "tests_integration",
+                "tests_e2e",
+                "tests_property",
                 "tests_verbose",
                 "coverage",
                 "lint",
@@ -638,7 +658,9 @@ __all__ = [
     "release",
     "release_test",
     "tests",
+    "tests_e2e",
     "tests_integration",
+    "tests_property",
     "tests_unit",
     "tests_verbose",
     "typecheck",

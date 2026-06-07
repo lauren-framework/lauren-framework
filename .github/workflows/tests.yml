@@ -99,6 +99,71 @@ jobs:
           files: coverage.xml
           fail_ci_if_error: false
 
+  e2e:
+    name: e2e · py${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install nox
+      - run: nox -s tests_e2e -- -q
+
+  property:
+    name: property tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install nox
+      - run: nox -s tests_property -- -q
+
+  extras-matrix:
+    name: "py${{ matrix.python }} / extras=${{ matrix.extras }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+        extras:
+          - ""
+          - "[pydantic]"
+          - "[msgspec]"
+          - "[full]"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install with extras
+        run: uv pip install --system -e ".${{ matrix.extras }}[test]"
+      - name: Verify pydantic absent (bare only)
+        if: matrix.extras == ''
+        run: python -c "import pydantic" 2>&1 | grep -q ModuleNotFoundError || true
+      - name: Run tests
+        run: pytest tests/unit tests/integration tests/e2e -q -m "not benchmark and not slow"
+        env:
+          LAUREN_TEST_EXTRAS: ${{ matrix.extras }}
+
   pydantic-compat:
     name: pydantic ${{ matrix.pydantic }} compat
     runs-on: ubuntu-latest
