@@ -142,9 +142,9 @@ jobs:
         python: ["3.11", "3.12", "3.13"]
         extras:
           - ""
-          - "[pydantic]"
-          - "[msgspec]"
-          - "[full]"
+          - "pydantic"
+          - "msgspec"
+          - "full"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -155,7 +155,12 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Install with extras
-        run: uv pip install --system -e ".${{ matrix.extras }}[test]"
+        run: |
+          if [ -z "${{ matrix.extras }}" ]; then
+            uv pip install --system -e ".[test]"
+          else
+            uv pip install --system -e ".[${{ matrix.extras }},test]"
+          fi
       - name: Verify pydantic absent (bare only)
         if: matrix.extras == ''
         run: python -c "import pydantic" 2>&1 | grep -q ModuleNotFoundError || true
