@@ -15,9 +15,11 @@ in editable mode first, so no separate `pip install` step is needed.
 
 ```bash
 # Tests
-nox -s tests                        # full suite (unit + integration)
+nox -s tests                        # full suite (unit + integration + e2e + property)
 nox -s tests_unit                   # unit only  (tests/unit/)
 nox -s tests_integration            # integration only  (tests/integration/)
+nox -s tests_e2e                    # end-to-end only  (tests/e2e/)
+nox -s tests_property               # Hypothesis property tests (tests/property/)
 nox -s coverage                     # tests + coverage report
 
 # Run a single test file / specific test without nox overhead
@@ -51,7 +53,7 @@ design north stars are:
   at startup; the request path is pure traversal.
 - **NestJS** — modules, controllers, DI with scopes, lifecycle hooks
   in topological order.
-- **FastAPI** — Pydantic-driven validation and automatic OpenAPI.
+- **FastAPI** — validation-driven (Pydantic, msgspec, dataclass, TypedDict) and automatic OpenAPI.
 
 The framework is intentionally **opinionated and small**. New features
 should be justified against the existing mental model before adding
@@ -84,10 +86,13 @@ lauren/                      — framework package
 ├── _arena/                  — per-request allocation arena (private)
 ├── _asgi/                   — ASGI adapter, OpenAPI, docs
 ├── _di/                     — dependency injection container + custom providers
+├── _discriminated.py        — Discriminated[A|B,"key"] runtime (detection, validation, OpenAPI)
+├── _encoders/               — optional encoder backends (pydantic)
 ├── _lifecycle/              — post_construct / pre_destruct machinery
 ├── _modules/                — module graph & visibility
 ├── _routing/                — radix-tree HTTP router
 ├── _typing/                 — ForwardRef / PEP 563 resolver (private)
+├── _validation.py           — provider-agnostic type detection & validation (pydantic, msgspec, dataclass, TypedDict)
 ├── _ws_runtime.py           — WebSocket dispatch engine
 ├── _socketio.py             — Engine.IO/Socket.IO adapter (private)
 ├── decorators.py            — user-facing @controller, @module, @get, …
@@ -101,7 +106,7 @@ lauren/                      — framework package
 ├── sse.py                   — EventStream, ServerSentEvent, last_event_id
 ├── socketio.py              — public Socket.IO controller surface
 ├── testing.py               — TestClient + WsTestClient (in-process ASGI)
-├── types.py                 — Request, Response, State, Headers, Scope, …
+├── types.py                 — Request, Response, State, Headers, Scope, Discriminated, …
 ├── websockets.py            — @ws_controller, @on_message, WebSocket, BroadcastGroup
 ├── docs.py                  — programmatic access to llms.txt / llms-full.txt
 ├── llms.txt                 — short overview (llmstxt.org)
@@ -109,7 +114,10 @@ lauren/                      — framework package
 └── py.typed                 — PEP 561 marker
 tests/
 ├── unit/                    — isolated unit tests (no ASGI app)
-└── integration/             — full-stack tests via TestClient / WsTestClient
+├── integration/             — full-stack tests via TestClient / WsTestClient
+├── e2e/                     — end-to-end multi-backend tests (full stack, all validator paths)
+├── property/                — Hypothesis property tests for validation invariants
+└── conftest.py              — session-scoped _preload_lauren fixture + pytest markers
 docs/                        — MkDocs Material site (mkdocs.yml at repo root)
 ```
 
@@ -248,9 +256,10 @@ WebSockets and SSE are first-class peers of HTTP, not bolt-ons.
   same strict-inheritance rule applies (subclasses must re-decorate the
   gateway class).
 - **Typed messages.** A `@on_message("chat.send")` handler that takes
-  `body: Json[ChatMessage]` runs through the same Pydantic validation
-  pipeline as HTTP `Json[T]` extractors — the validator is built once
-  at startup. Discriminated-union payloads work the same way.
+  `body: Json[ChatMessage]` runs through the same validation pipeline as
+  HTTP `Json[T]` extractors (pydantic, msgspec, dataclass, TypedDict) —
+  the validator is built once at startup. `Discriminated[A | B, "key"]`
+  payloads work the same way without requiring pydantic.
 - **Broadcast/rooms.** `BroadcastGroup` is a DI-injectable provider
   with `subscribe / unsubscribe / broadcast / unsubscribe_all`. The
   default in-process implementation is fine for single-worker dev;
@@ -374,6 +383,13 @@ deterministic).
   Pure-Python, no event loop unless the module is async-only.
 - **Integration** (`tests/integration/`) — build a `@module`, call
   `LaurenFactory.create`, drive via `lauren.testing.TestClient`.
+- **E2E** (`tests/e2e/`) — full-stack multi-backend tests that exercise
+  all validator paths (pydantic, dataclass, TypedDict, discriminated unions)
+  in a single running app. Mirror integration structure but verify the
+  complete request/response cycle without mocking.
+- **Property** (`tests/property/`) — Hypothesis-driven tests for validation
+  invariants. Require `hypothesis>=6.0` (in `dev` extras). Skip automatically
+  when hypothesis is absent (`pytest.importorskip`).
 - **WebSocket** — use `lauren.testing.WsTestClient`; the session
   context-manager guarantees the server task is awaited so unhandled
   server-side exceptions surface cleanly into the test.
@@ -385,6 +401,11 @@ deterministic).
   inside `pytest.raises(SomeError)`, assert on `detail` keys too.
 - **Regression shape:** every bug fix gets a test in the same file as
   its nearest existing neighbour.
+- **Optional-dep tests** — tests that block pydantic/msgspec via
+  `sys.modules` manipulation MUST depend explicitly on the session-scoped
+  `_preload_lauren` fixture (or inherit it via `autouse=True`) so that
+  Lauren's `_PYDANTIC_AVAILABLE` flag is set correctly before any module
+  is first imported with an optional dep absent.
 
 → *See `skills/testing-lauren-apps/` for `TestClient` setup, async test patterns, and mock-provider recipes.*
 
@@ -430,8 +451,8 @@ codemap find "on_connect" --type method
 ```
 
 When in doubt: grep the tests. They express the invariants more
-precisely than any English prose. Around **2967 tests** currently pass
-in ~15 seconds.
+precisely than any English prose. Around **3020 tests** currently pass
+in ~20 seconds.
 
 ## 12. Injectable Logger Pattern
 

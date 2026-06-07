@@ -13,12 +13,14 @@ convention.
 ```bash
 pip install -e ".[dev]"
 
-# All tests (2967+ pass, ~30s on a modern laptop):
+# All tests (3020+ pass, ~20s on a modern laptop):
 pytest -q
 
 # Single layer:
 pytest tests/unit/ -q
 pytest tests/integration/ -q
+pytest tests/e2e/ -q
+pytest tests/property/ -q   # requires hypothesis (included in [dev])
 
 # Single file or pattern:
 pytest tests/unit/test_websockets_decorators.py -v
@@ -40,7 +42,7 @@ nox -s ver_dec -- --patch
 ## What Agents Should Always Do
 
 1. **Run the full test suite before and after every change.** The
-   suite runs in ~30s for 2967+ tests. A green `pytest -q` is the
+   suite runs in ~20s for 3020+ tests. A green `pytest -q` is the
    objective acceptance signal for every pull request.
 2. **Read `.CLAUDE.md` first.** It contains the design invariants. An
    agent proposal that violates those invariants should be rejected
@@ -91,16 +93,20 @@ nox -s ver_dec -- --patch
 | `lauren/_di/__init__.py`          | DI container, provider graph, cycles; `_GeneratorContextWrapper` for generator provider lifecycle |
 | `lauren/_di/custom.py`            | `use_value` / `use_class` / `use_factory` /  |
 |                                   | `use_existing` / `Token` / `Inject`          |
+| `lauren/_discriminated.py`        | `Discriminated[A\|B,"key"]` — detection, validation, OpenAPI schema |
+| `lauren/_encoders/`               | Optional encoder backends (e.g. `pydantic.py`) |
 | `lauren/_routing/__init__.py`     | Radix-tree router                            |
 | `lauren/_modules/__init__.py`     | Module graph, imports/exports validation     |
 | `lauren/_lifecycle/__init__.py`   | post_construct / pre_destruct scheduler; sync hooks run in thread pool via asyncio.to_thread (timeout-protected, event-loop-safe); second pass runs generator provider teardown (code after yield) for SINGLETON scope |
 | `lauren/_typing/`                 | ForwardRef / PEP 563 resolver                |
+| `lauren/_validation.py`           | Provider-agnostic type detection + validation (pydantic, msgspec, dataclass, TypedDict) |
 | `lauren/_ws_runtime.py`           | WebSocket dispatch loop (private)            |
 | `lauren/decorators.py`            | User-facing decorators only                  |
 | `lauren/extractors.py`            | Typed extractors + pipes + custom extractors |
 | `lauren/exceptions.py`            | 28-class error hierarchy                     |
 | `lauren/streaming.py`             | StreamingResponse[T], Stream, StreamReader   |
 | `lauren/sse.py`                   | EventStream, ServerSentEvent, last_event_id  |
+| `lauren/types.py`                 | Request, Response, State, Headers, Scope, `Discriminated`, … |
 | `lauren/websockets.py`            | @ws_controller, @on_message, BroadcastGroup  |
 | `lauren/socketio.py`              | Engine.IO/Socket.IO adapter (public)         |
 | `lauren/serialization.py`         | JSON encoders: `StdlibJSONEncoder`, `OrjsonEncoder`, `MsgspecEncoder`, `PydanticEncoder`; encoder threaded app-wide; `@use_encoder(enc)` overrides per-route or per-controller (method > controller > app) |
@@ -178,7 +184,7 @@ Agents should not silently ship RFC-sized patches; always split them.
 
 A change is ready for merge when:
 
-- [ ] `pytest -q` passes (2967+ tests).
+- [ ] `pytest -q` passes (3020+ tests).
 - [ ] New behaviour has at least one test in the matching layer.
 - [ ] Public API changes are reflected in `__all__`, `llms.txt`,
       and `llms-full.txt`.
@@ -198,7 +204,7 @@ path to "I understand what I'm doing":
 2. Skim `tests/integration/`. Each file is a real-world usage pattern
    for one feature. The shapes there are the shapes the framework
    actually supports.
-3. Run `pytest -q` once.    If it doesn't pass on a fresh clone (2967+
+3. Run `pytest -q` once. If it doesn't pass on a fresh clone (3020+
    tests), that's a bug to report before doing anything else.
 4. Read `.CLAUDE.md` rules 3 (strict inheritance) and 8 (28-class
    error catalog). They explain decisions that look strange until you
@@ -252,7 +258,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | WebSocket patterns | `docs/guides/websockets.md` |
 | SSE / streaming | `docs/guides/sse.md` |
 | Custom response subclasses and response factories | `docs/guides/custom-responses.md` / `docs/guides/file-responses.md` |
-| Testing playbook | `docs/guides/testing.md` |
+| Testing playbook | `skills/testing-lauren-apps/SKILL.md` |
 | Release / versioning process | `docs/development/release.md` / `docs/development/versioning.md` |
 
 ## Common Startup Errors

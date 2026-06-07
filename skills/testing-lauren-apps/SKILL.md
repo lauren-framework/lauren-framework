@@ -1,6 +1,6 @@
 ---
 name: testing-lauren-apps
-description: Tests Lauren apps with TestClient (sync) and httpx.AsyncClient (async). Covers conftest setup, env vars before imports, app startup, mock providers, and common assertion patterns. Use when writing unit or integration tests for a Lauren app.
+description: Tests Lauren apps with TestClient (sync) and httpx.AsyncClient (async). Covers conftest setup, env vars before imports, app startup, mock providers, common assertion patterns, e2e multi-backend testing, and Hypothesis property tests. Use when writing unit, integration, e2e, or property tests for a Lauren app.
 ---
 
 > Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
@@ -210,3 +210,141 @@ def test_failed_task_emits_signal():
     assert len(failures) == 1
     assert isinstance(failures[0].error, SomeExpectedError)
 ```
+
+## E2E multi-backend testing
+
+E2E tests (`tests/e2e/`) build a single app with routes for every validator backend and assert the full cycle:
+
+```python
+import dataclasses
+from typing import TypedDict, Literal
+from lauren import Lauren, Json, Discriminated
+from lauren.testing import TestClient
+
+@dataclasses.dataclass
+class DCItem:
+    name: str
+    value: int
+
+class TDWidget(TypedDict):
+    label: str
+    active: bool
+
+class EventA(TypedDict):
+    kind: Literal["a"]
+    x: int
+
+class EventB(TypedDict):
+    kind: Literal["b"]
+    y: str
+
+app = Lauren()
+
+@app.post("/dc")
+async def dc_endpoint(body: DCItem) -> dict:
+    return {"name": body.name, "value": body.value}
+
+@app.post("/td")
+async def td_endpoint(body: TDWidget) -> dict:
+    return dict(body)
+
+@app.post("/disc")
+async def disc_endpoint(body: Json[Discriminated[EventA | EventB, "kind"]]) -> dict:
+    return dict(body)
+
+client = TestClient(app.build())
+
+def test_dataclass_backend():
+    r = client.post("/dc", json={"name": "x", "value": 42})
+    assert r.status_code == 200
+
+def test_typeddict_backend():
+    r = client.post("/td", json={"label": "y", "active": True})
+    assert r.status_code == 200
+
+def test_discriminated_union():
+    r = client.post("/disc", json={"kind": "a", "x": 1})
+    assert r.status_code == 200
+    r = client.post("/disc", json={"kind": "c", "z": 0})
+    assert r.status_code == 422  # unknown discriminator
+```
+
+## Blocking optional dependencies
+
+When testing behaviour with pydantic absent, use a **module-scoped** fixture. The root `conftest.py` must pre-import Lauren before any test blocks optional deps — otherwise `_PYDANTIC_AVAILABLE` is permanently set to `False` for the whole session:
+
+```python
+# tests/conftest.py  (repo root — add this to every project)
+import pytest
+
+@pytest.fixture(scope="session", autouse=True)
+def _preload_lauren():
+    """Pre-import Lauren with all optional deps available."""
+    import lauren           # noqa: F401
+    import lauren.streaming # noqa: F401
+    import lauren.extractors # noqa: F401
+```
+
+```python
+# tests/integration/test_no_pydantic.py
+import sys
+import pytest
+
+@pytest.fixture(autouse=True, scope="module")
+def disable_pydantic():
+    original = {k: v for k, v in sys.modules.items() if "pydantic" in k}
+    for k in list(original.keys()):
+        del sys.modules[k]
+    sys.modules["pydantic"] = None          # type: ignore[assignment]
+    sys.modules["pydantic_core"] = None     # type: ignore[assignment]
+    yield
+    for k in list(sys.modules.keys()):
+        if "pydantic" in k:
+            del sys.modules[k]
+    sys.modules.update(original)
+
+@pytest.fixture(scope="module")
+def app(disable_pydantic):  # explicit dep guarantees ordering
+    from lauren import Lauren
+    app = Lauren()
+    # ... define routes using only dataclasses/TypedDict ...
+    return app.build()
+```
+
+## Hypothesis property tests
+
+Wrap validation invariants with `@given` for property-based testing. Use `pytest.importorskip` at module level so the file skips cleanly when hypothesis is absent:
+
+```python
+import dataclasses
+import pytest
+
+hypothesis = pytest.importorskip("hypothesis")
+from hypothesis import given, assume  # noqa: E402
+from hypothesis import strategies as st  # noqa: E402
+
+@dataclasses.dataclass
+class Item:
+    name: str
+    count: int
+
+class TestValidationProperties:
+    @given(
+        name=st.text(min_size=1, max_size=100),
+        count=st.integers(min_value=0, max_value=10_000),
+    )
+    def test_valid_data_always_succeeds(self, name: str, count: int):
+        from lauren._validation import validate_as
+        result = validate_as(Item, {"name": name, "count": count}, field="body")
+        assert isinstance(result, Item)
+
+    @given(payload=st.one_of(
+        st.integers(), st.text(), st.none(), st.lists(st.integers()),
+    ))
+    def test_non_dict_always_raises(self, payload):
+        from lauren._validation import validate_as
+        with pytest.raises(Exception):
+            validate_as(Item, payload, field="body")
+```
+
+Run with `nox -s tests_property` (installs hypothesis automatically).

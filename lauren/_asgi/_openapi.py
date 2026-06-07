@@ -14,7 +14,8 @@ controllers and routes) and supports caller-supplied ``info`` / ``servers`` /
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING, get_args, get_origin
+import inspect as _inspect
+from typing import Any, TYPE_CHECKING, get_args, get_origin, get_type_hints
 
 from ..decorators import OPENAPI_SECURITY_META, ControllerMeta, RouteMeta
 from ..extractors import FieldDescriptor, Extraction
@@ -28,17 +29,89 @@ from ..streaming import (
 if TYPE_CHECKING:
     from . import LaurenApp
 
-try:
-    import pydantic
-
-    _PYDANTIC = True
-    _BaseModel = pydantic.BaseModel
-except ImportError:  # pragma: no cover
-    _PYDANTIC = False
-    _BaseModel = None  # type: ignore[assignment,misc]
+from .._validation import (
+    is_pydantic_model,
+    is_msgspec_struct,
+    is_dataclass,
+    is_typeddict,
+    json_schema_for,
+)
+from .._discriminated import (
+    is_native_discriminated_union,
+    openapi_schema_for_discriminated,
+)
 
 
 DEFAULT_INFO: dict[str, Any] = {"title": "lauren application", "version": "1.0.0"}
+
+
+# ---------------------------------------------------------------------------
+# Component registry — cycle detection, $defs lifting, title/description
+# ---------------------------------------------------------------------------
+
+
+class _ComponentRegistry:
+    """Schema component registry with cycle detection and ``$defs`` lifting.
+
+    Drop-in replacement for the plain ``{"schemas": {}}`` dict used by earlier
+    phases. Implements ``__contains__`` / ``__getitem__`` / ``__setitem__`` /
+    ``setdefault`` so existing callers that treat it as a dict continue to work.
+    """
+
+    def __init__(self) -> None:
+        self._schemas: dict[str, dict[str, Any]] = {}
+        self._building: set[str] = set()
+
+    def ensure(self, model: type) -> str:
+        """Register *model* in the component registry and return its ``$ref`` path."""
+        name = model.__name__
+        if name in self._schemas:
+            return f"#/components/schemas/{name}"
+        if name in self._building:
+            # Recursive back-reference — return the forward ref; schema is filled in
+            # once the outer call to ensure() completes.
+            return f"#/components/schemas/{name}"
+        self._building.add(name)
+        try:
+            try:
+                raw: dict[str, Any] = json_schema_for(model)
+            except Exception:
+                raw = {"type": "object"}
+            self._lift_defs(raw)
+            raw.setdefault("title", model.__name__)
+            doc = getattr(model, "__doc__", None)
+            if doc and "description" not in raw:
+                first_line = doc.strip().split("\n")[0].strip()
+                if first_line:
+                    raw["description"] = first_line
+            self._schemas[name] = raw
+        finally:
+            self._building.discard(name)
+        return f"#/components/schemas/{name}"
+
+    def _lift_defs(self, schema: dict[str, Any]) -> None:
+        """Hoist pydantic ``$defs`` / ``definitions`` into top-level components."""
+        defs = schema.pop("$defs", None) or schema.pop("definitions", None)
+        if not defs:
+            return
+        for def_name, def_schema in defs.items():
+            self._lift_defs(def_schema)
+            self._schemas.setdefault(def_name, def_schema)
+
+    def as_dict(self) -> dict[str, Any]:
+        return dict(self._schemas)
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._schemas
+
+    def __getitem__(self, key: str) -> dict[str, Any]:
+        return self._schemas[key]
+
+    def __setitem__(self, key: str, value: dict[str, Any]) -> None:
+        self._schemas[key] = value
+
+    def setdefault(self, key: str, default: dict[str, Any]) -> dict[str, Any]:
+        return self._schemas.setdefault(key, default)
 
 
 # ---------------------------------------------------------------------------
@@ -49,44 +122,74 @@ DEFAULT_INFO: dict[str, Any] = {"title": "lauren application", "version": "1.0.0
 def _python_type_to_schema(tp: Any) -> dict[str, Any]:
     """Translate a Python type hint into a JSON Schema snippet.
 
-    Handles primitives, ``list[T]``, ``dict[str, T]``, ``Optional[T]``, enums
-    (via their value type), and Pydantic models (the caller is responsible
-    for registering the model in ``components`` and returning a ``$ref``).
+    Handles primitives (including datetime, UUID, Decimal), ``list[T]``,
+    ``dict[str, T]``, ``Optional[T]``, ``Literal[...]``, enums (via their value
+    type), and ``Union[A, B]``.  Structured model types (Pydantic, msgspec,
+    dataclass, TypedDict) are the caller's responsibility — register them in
+    ``components`` and return a ``$ref``.
     """
+    import datetime as _dt  # noqa: PLC0415
+    import decimal as _decimal  # noqa: PLC0415
+    import uuid as _uuid  # noqa: PLC0415
+    from typing import Literal, Union  # noqa: PLC0415
+
     if tp is int:
         return {"type": "integer"}
     if tp is float:
         return {"type": "number"}
     if tp is bool:
         return {"type": "boolean"}
-    if tp is str or tp is None or tp is type(None):
+    if tp is str:
         return {"type": "string"}
+    if tp is None or tp is type(None):
+        return {"type": "null"}
     if tp is bytes:
         return {"type": "string", "format": "binary"}
+    if tp is _dt.datetime:
+        return {"type": "string", "format": "date-time"}
+    if tp is _dt.date:
+        return {"type": "string", "format": "date"}
+    if tp is _dt.time:
+        return {"type": "string", "format": "time"}
+    if tp is _uuid.UUID:
+        return {"type": "string", "format": "uuid"}
+    if tp is _decimal.Decimal:
+        return {"type": "string", "format": "decimal"}
+
     origin = get_origin(tp)
+    args = get_args(tp)
+
+    # Literal["cat"] → {"const": "cat"} ; Literal["a","b"] → {"enum": [...]}
+    if origin is Literal:
+        vals = list(args)
+        return {"const": vals[0]} if len(vals) == 1 else {"enum": vals}
+
     if origin in (list, tuple):
-        args = get_args(tp)
         item_type = args[0] if args else str
         return {"type": "array", "items": _python_type_to_schema(item_type)}
     if origin is dict:
-        args = get_args(tp)
         value_t = args[1] if len(args) == 2 else str
-        return {
-            "type": "object",
-            "additionalProperties": _python_type_to_schema(value_t),
-        }
-    # Optional[T] / T | None / Union[...]
-    import types as _types
+        return {"type": "object", "additionalProperties": _python_type_to_schema(value_t)}
 
-    if origin is getattr(_types, "UnionType", None) or origin is type(int | str):
-        args = [a for a in get_args(tp) if a is not type(None)]  # type: ignore[assignment]
-        if len(args) == 1:
-            return _python_type_to_schema(args[0])
-        return {"oneOf": [_python_type_to_schema(a) for a in args]}
+    # Optional[T] / T | None / Union[A, B, ...]
+    import types as _types  # noqa: PLC0415
+
+    _union_origins: set[Any] = {Union}
+    _union_type = getattr(_types, "UnionType", None)
+    if _union_type is not None:
+        _union_origins.add(_union_type)
+    if origin in _union_origins:
+        non_none = [a for a in args if a is not type(None)]
+        nullable = type(None) in args
+        if len(non_none) == 1:
+            s = _python_type_to_schema(non_none[0])
+            return {**s, "nullable": True} if nullable else s
+        return {"oneOf": [_python_type_to_schema(a) for a in non_none]}
+
     try:
-        import enum
+        import enum as _enum  # noqa: PLC0415
 
-        if isinstance(tp, type) and issubclass(tp, enum.Enum):
+        if isinstance(tp, type) and issubclass(tp, _enum.Enum):
             values = [e.value for e in tp]
             base = type(values[0]) if values else str
             schema = _python_type_to_schema(base)
@@ -94,7 +197,7 @@ def _python_type_to_schema(tp: Any) -> dict[str, Any]:
             return schema
     except Exception:
         pass
-    return {}  # unknown -> permissive
+    return {}  # unknown → permissive
 
 
 def _apply_field_descriptor(schema: dict[str, Any], fd: FieldDescriptor) -> dict[str, Any]:
@@ -119,22 +222,22 @@ def _apply_field_descriptor(schema: dict[str, Any], fd: FieldDescriptor) -> dict
 
 
 def _ensure_component(components: dict[str, Any], model: type) -> str:
-    """Register a Pydantic model in ``components`` and return its ``$ref``."""
+    """Register a structured-body model in ``components`` and return its ``$ref``."""
+    schemas = components["schemas"]
+    if isinstance(schemas, _ComponentRegistry):
+        return schemas.ensure(model)
+    # Legacy plain-dict path (kept for call sites that bypass the registry).
     name = model.__name__
-    if name not in components["schemas"]:
+    if name not in schemas:
         try:
-            schema = model.model_json_schema(  # type: ignore[attr-defined]
-                ref_template="#/components/schemas/{model}"
-            )
-        except Exception:
+            schema = json_schema_for(model)
+        except (TypeError, Exception):
             schema = {"type": "object"}
-        # Hoist Pydantic's ``$defs`` into top-level components so cross-model
-        # references resolve.
         defs = schema.pop("$defs", None) or schema.pop("definitions", None)
         if defs:
             for dname, dschema in defs.items():
-                components["schemas"].setdefault(dname, dschema)
-        components["schemas"][name] = schema
+                schemas.setdefault(dname, dschema)
+        schemas[name] = schema
     return f"#/components/schemas/{name}"
 
 
@@ -186,7 +289,7 @@ def _variant_tag_value(variant: type, key: str | None) -> Any:
     if key is None:
         return None
     try:
-        schema = variant.model_json_schema()  # type: ignore[attr-defined]
+        schema = json_schema_for(variant)
     except Exception:
         return None
     props = schema.get("properties") or {}
@@ -207,12 +310,30 @@ def _schema_for_extraction(ext: Extraction, components: dict[str, Any]) -> dict[
     original wire type is the correct client contract.
     """
     inner = ext.inner_type
-    # Feature 6 — discriminated unions surface as oneOf + discriminator
-    # rather than a bare ``$ref``.
-    if _PYDANTIC and is_discriminated_union(inner):
+    # Discriminated unions surface as oneOf + discriminator rather than a bare $ref.
+    if is_native_discriminated_union(inner):
+        return openapi_schema_for_discriminated(inner, components["schemas"])
+    if is_discriminated_union(inner):
         return _schema_for_discriminated_union(inner, components)
-    if _PYDANTIC and isinstance(inner, type) and _BaseModel is not None and issubclass(inner, _BaseModel):
+    if isinstance(inner, type) and (
+        is_pydantic_model(inner) or is_msgspec_struct(inner) or is_dataclass(inner) or is_typeddict(inner)
+    ):
         return {"$ref": _ensure_component(components, inner)}
+    # list[Model] / tuple[Model, ...] → array of $ref
+    if get_origin(inner) in (list, tuple):
+        item_args = get_args(inner)
+        item_type = item_args[0] if item_args else None
+        if (
+            item_type is not None
+            and isinstance(item_type, type)
+            and (
+                is_pydantic_model(item_type)
+                or is_msgspec_struct(item_type)
+                or is_dataclass(item_type)
+                or is_typeddict(item_type)
+            )
+        ):
+            return {"type": "array", "items": {"$ref": _ensure_component(components, item_type)}}
     schema = _python_type_to_schema(inner)
     if ext.field_descriptor is not None:
         _apply_field_descriptor(schema, ext.field_descriptor)
@@ -282,32 +403,63 @@ def _build_responses(
     components: dict[str, Any],
     *,
     streaming_item_type: Any = None,
+    return_annotation: Any = None,
 ) -> dict[str, Any]:
     responses: dict[str, Any] = {}
     for code, v in (rmeta.responses or {}).items():
         responses[str(code)] = dict(v) if isinstance(v, dict) else {"description": str(v)}
     if not responses:
         responses["200"] = {"description": "Success"}
-    if rmeta.response_model is not None and _PYDANTIC:
-        # Feature 6 — response may be a discriminated union.
-        if is_discriminated_union(rmeta.response_model):
-            schema = _schema_for_discriminated_union(rmeta.response_model, components)
+
+    # Effective response type: explicit response_model wins; fall back to the
+    # handler's return annotation when no streaming is happening.
+    _skip = {type(None), None, _inspect.Parameter.empty}
+    effective_model = rmeta.response_model
+    if effective_model is None and streaming_item_type is None and return_annotation not in _skip:
+        effective_model = return_annotation
+
+    if effective_model is not None:
+        if is_native_discriminated_union(effective_model):
+            schema: dict[str, Any] = openapi_schema_for_discriminated(effective_model, components["schemas"])
+        elif is_discriminated_union(effective_model):
+            schema = _schema_for_discriminated_union(effective_model, components)
+        elif isinstance(effective_model, type) and (
+            is_pydantic_model(effective_model)
+            or is_msgspec_struct(effective_model)
+            or is_dataclass(effective_model)
+            or is_typeddict(effective_model)
+        ):
+            schema = {"$ref": _ensure_component(components, effective_model)}
+        elif get_origin(effective_model) in (list, tuple):
+            item_args = get_args(effective_model)
+            if (
+                item_args
+                and isinstance(item_args[0], type)
+                and (
+                    is_pydantic_model(item_args[0])
+                    or is_msgspec_struct(item_args[0])
+                    or is_dataclass(item_args[0])
+                    or is_typeddict(item_args[0])
+                )
+            ):
+                ref = _ensure_component(components, item_args[0])
+                schema = {"type": "array", "items": {"$ref": ref}}
+            else:
+                schema = _python_type_to_schema(effective_model)
         else:
-            ref = _ensure_component(components, rmeta.response_model)
-            schema = {"$ref": ref}
+            schema = _python_type_to_schema(effective_model)
+
         ok = responses.setdefault("200", {"description": "Success"})
         ok.setdefault("content", {})
-        # Feature 7 — StreamingResponse[T] declares its wire negotiation
-        # up front: clients can ask for any of the three media types.
+        # StreamingResponse[T] — declare all three negotiable content types.
         if streaming_item_type is not None:
             item_schema = _resolve_item_schema(streaming_item_type, components)
             for media in FORMAT_TO_MEDIA_TYPE.values():
                 ok["content"][media] = {"schema": item_schema}
         else:
             ok["content"]["application/json"] = {"schema": schema}
-    elif streaming_item_type is not None and _PYDANTIC:
-        # Streaming-only route (no response_model declared) — still document
-        # the three negotiable content types so clients know the contract.
+    elif streaming_item_type is not None:
+        # Streaming-only route (no response_model declared).
         item_schema = _resolve_item_schema(streaming_item_type, components)
         ok = responses.setdefault("200", {"description": "Success"})
         ok.setdefault("content", {})
@@ -318,13 +470,15 @@ def _build_responses(
 
 def _resolve_item_schema(item_type: Any, components: dict[str, Any]) -> dict[str, Any]:
     """Schema fragment for a single streamed item (model / union / primitive)."""
-    if _PYDANTIC and is_discriminated_union(item_type):
+    if is_native_discriminated_union(item_type):
+        return openapi_schema_for_discriminated(item_type, components["schemas"])
+    if is_discriminated_union(item_type):
         return _schema_for_discriminated_union(item_type, components)
-    if (
-        _PYDANTIC
-        and isinstance(item_type, type)
-        and _BaseModel is not None
-        and issubclass(item_type, _BaseModel)
+    if isinstance(item_type, type) and (
+        is_pydantic_model(item_type)
+        or is_msgspec_struct(item_type)
+        or is_dataclass(item_type)
+        or is_typeddict(item_type)
     ):
         return {"$ref": _ensure_component(components, item_type)}
     return _python_type_to_schema(item_type)
@@ -386,7 +540,8 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
     security_schemes = getattr(app, "_openapi_security_schemes", None)
 
     paths: dict[str, Any] = {}
-    components: dict[str, Any] = {"schemas": {}}
+    registry = _ComponentRegistry()
+    components: dict[str, Any] = {"schemas": registry}
     if security_schemes:
         components["securitySchemes"] = dict(security_schemes)
     tag_set: dict[str, dict[str, Any]] = {}
@@ -445,8 +600,24 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             op["parameters"] = params
         if request_body is not None:
             op["requestBody"] = request_body
+        # Extract return annotation from the handler function for response schema inference.
+        return_annotation: Any = None
+        if compiled is not None:
+            try:
+                hints = get_type_hints(compiled.handler_fn)
+                ret = hints.get("return", _inspect.Parameter.empty)
+                if ret is not _inspect.Parameter.empty:
+                    return_annotation = ret
+            except Exception:
+                pass
+
         streaming_item = getattr(compiled, "streaming_item_type", None) if compiled else None
-        op["responses"] = _build_responses(rmeta, components, streaming_item_type=streaming_item)
+        op["responses"] = _build_responses(
+            rmeta,
+            components,
+            streaming_item_type=streaming_item,
+            return_annotation=return_annotation,
+        )
         if streaming_item is not None:
             # Feature 7 — vendor extension telling OpenAPI tooling this
             # operation yields a structured, typed stream.
@@ -473,11 +644,14 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
 
         path_item[entry.method.lower()] = op
 
+    result_components: dict[str, Any] = {"schemas": registry.as_dict()}
+    if security_schemes:
+        result_components["securitySchemes"] = dict(security_schemes)
     doc: dict[str, Any] = {
         "openapi": "3.1.0",
         "info": dict(info),
         "paths": paths,
-        "components": components,
+        "components": result_components,
     }
     if servers:
         doc["servers"] = [dict(s) for s in servers]

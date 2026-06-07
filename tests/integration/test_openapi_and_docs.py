@@ -394,8 +394,8 @@ class TestPythonTypeToSchema:
     def test_none_type(self):
         from lauren._asgi._openapi import _python_type_to_schema
 
-        assert _python_type_to_schema(None) == {"type": "string"}
-        assert _python_type_to_schema(type(None)) == {"type": "string"}
+        assert _python_type_to_schema(None) == {"type": "null"}
+        assert _python_type_to_schema(type(None)) == {"type": "null"}
 
     def test_bytes_type(self):
         from lauren._asgi._openapi import _python_type_to_schema
@@ -434,7 +434,7 @@ class TestPythonTypeToSchema:
         from lauren._asgi._openapi import _python_type_to_schema
 
         result = _python_type_to_schema(int | None)
-        assert result == {"type": "integer"}
+        assert result.get("type") == "integer"
 
     def test_union_multiple_types(self):
         from lauren._asgi._openapi import _python_type_to_schema

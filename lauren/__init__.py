@@ -214,6 +214,7 @@ from .types import (
     CallHandler,
     CallNext,
     ClientInfo,
+    Discriminated,
     ExecutionContext,
     GuardProtocol,
     Headers,
@@ -310,6 +311,8 @@ __all__ = [
     "GuardProtocol",
     "InterceptorProtocol",
     "ExecutionContext",
+    # discriminated unions
+    "Discriminated",
     # extractors
     "Path",
     "Query",

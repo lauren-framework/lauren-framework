@@ -5,6 +5,136 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-06-07
+
+This release completes a seven-phase initiative to make pydantic an **optional**
+dependency of the framework rather than a hard requirement. `pip install lauren`
+no longer pulls in `pydantic`, `pydantic-core`, or any Rust-compiled binary.
+Users who want pydantic-backed validation install `pip install "lauren[pydantic]"`.
+
+### Phase 1 — Dependency declaration
+
+- **`pydantic>=2.0` moved from `dependencies` to `optional-dependencies`** in
+  `pyproject.toml`. `pip install lauren` now installs only `anyio`. Three extras
+  are provided:
+  - `pip install "lauren[pydantic]"` — adds `pydantic>=2.0`
+  - `pip install "lauren[msgspec]"` — adds `msgspec>=0.18`
+  - `pip install "lauren[full]"` — installs both
+
+### Phase 2 — Validation abstraction layer
+
+- **`lauren/_validation.py`** — new internal module providing the framework's
+  single, uniform interface for struct-type detection, validation dispatch, and
+  JSON Schema generation. Requires zero third-party imports at module load time;
+  all library imports are lazy inside function bodies.
+  - `is_pydantic_model(tp)`, `is_msgspec_struct(tp)`, `is_dataclass(tp)`,
+    `is_typeddict(tp)`, `is_json_body_type(tp)` — type-detection predicates
+  - `validate_as(tp, data, *, field)` — unified dispatcher; routes to the correct
+    backend (pydantic → `model_validate`, msgspec → `msgspec.convert`, dataclass →
+    field-by-field construction, TypedDict → key validation + dict passthrough)
+  - `json_schema_for(tp)` — delegates to `model_json_schema()` / `msgspec.json.schema()`
+    / stdlib dataclass/TypedDict schema builders as appropriate
+  - All validation failures raise `ExtractorError` with a `{"field": ..., "errors": [...]}` detail
+    dict — callers never see pydantic-specific exception types
+
+### Phase 3 — File-by-file pydantic call-site replacement
+
+Seven framework source files migrated from direct pydantic calls to
+`_validation.py`:
+
+- **`lauren/extractors.py`** — `_validate_json()` rewritten to call `validate_as()`;
+  direct pydantic `TypeAdapter` construction replaced; `_is_pydantic_model_type()`
+  delegates to `is_pydantic_model()`
+- **`lauren/streaming.py`** — `_build_adapter()` replaced with `_validation`-based
+  detection; stream item serialisation works for all four struct backends; the
+  `_PYDANTIC_AVAILABLE` flag is set at import time by probing `sys.modules`
+- **`lauren/serialization.py`** — `PydanticEncoder` now raises `RuntimeError` with
+  a clear install hint when pydantic is absent, rather than failing at module load;
+  `auto_encoder()` correctly falls back to `StdlibJSONEncoder` when neither orjson
+  nor msgspec is available
+- **`lauren/_asgi/__init__.py`** — request body coercion path uses `validate_as()`;
+  `_coerce_streaming_response` uses `encoder.encode_compact()` directly for
+  non-pydantic item types
+- **`lauren/_asgi/_openapi.py`** — schema generation for request/response models
+  delegates to `json_schema_for()`; pydantic `$defs` blocks are flattened into
+  `components/schemas` consistently regardless of backend
+- **`lauren/_ws_runtime.py`** — WebSocket frame validation uses `validate_as()`
+- **`lauren/websockets.py`** — `Json[T]` body extraction in `@on_message` handlers
+  uses the unified dispatcher
+
+### Phase 4 — Pydantic-free discriminated unions
+
+- **`Discriminated[A | B, "key"]`** — new public type (exported from `lauren`) that
+  routes tagged-union JSON bodies to the correct variant class using only stdlib.
+  No pydantic required. Supported variant types: `@dataclass`, `TypedDict`,
+  `msgspec.Struct`, and `pydantic.BaseModel`.
+  - **Missing discriminator field** → 422 `"missing discriminator field 'key'"`
+  - **Unknown tag value** → 422 `"unknown discriminator value '...'"` 
+  - **Non-dict payload** → 422 `"expected a JSON object"`
+  - Auto-promotion: bare `body: Animal` (no `Json[…]`) is recognised and promoted
+    to a JSON body parameter
+- **`lauren/_discriminated.py`** — internal module owning `_DiscriminatorMarker`,
+  `is_discriminated_union()`, the validation dispatcher, and the OpenAPI schema
+  builder for native discriminated unions
+- **OpenAPI output**: `oneOf` array + `discriminator.propertyName` +
+  `discriminator.mapping` — generated without pydantic for all variant types
+
+### Phase 5 — OpenAPI schema generation without pydantic
+
+- **`GET /openapi.json` now produces complete, valid OpenAPI 3.1 output** for
+  endpoints whose models are `@dataclass`, `TypedDict`, `msgspec.Struct`, or
+  `Discriminated[…]` — all without pydantic installed.
+- Nested model `$ref` deduplication handles both pydantic's embedded `$defs`
+  format and the flat-reference format produced by stdlib schema builders.
+- Recursive / self-referential dataclass schemas no longer cause infinite
+  recursion during spec build.
+- `openapi-spec-validator` added to the `test` extra; every OpenAPI test asserts
+  the spec is structurally valid.
+
+### Phase 6 — `msgspec` as the preferred pydantic alternative
+
+- **Full feature parity** for `msgspec.Struct` across all framework integration
+  points:
+  - Request body validation via `msgspec.convert()` with informative error messages
+  - Response serialisation via `msgspec.to_builtins()` and `msgspec.json.encode()`
+  - `StreamingResponse[T]` item serialisation for `Struct` item types
+  - `Stream[T]` / `StreamReader[T]` item validation via `msgspec.convert()`
+  - WebSocket payload validation (`@on_message` with `Json[MyStruct]`)
+  - OpenAPI schema generation via `msgspec.json.schema()` (requires msgspec>=0.18)
+- **`MsgspecEncoder`** — new `JSONEncoder` subclass backed by `msgspec.json.encode`.
+  Serialises any Python value; is selected by `auto_encoder()` when msgspec is
+  available and orjson is not.
+
+### Phase 7 — Test strategy
+
+- **Four new test tiers** with 50+ tests covering the validation dispatch layer
+  across all extras combinations:
+  - `tests/unit/test_pydantic_import_guard.py` — verifies every Lauren submodule
+    imports cleanly when pydantic and msgspec are absent; confirms `_PYDANTIC_AVAILABLE`
+    is `False` in that environment
+  - `tests/integration/test_pydantic_optional.py` — module-scoped integration
+    tests with pydantic explicitly blocked; covers dataclass endpoints,
+    discriminated-union routing, and OpenAPI generation without pydantic
+  - `tests/integration/test_pydantic_regression.py` — regression guard: pydantic
+    validation, 422 responses, and native discriminated-union dispatch must work
+    correctly when pydantic IS installed and after another test module has blocked it
+  - `tests/e2e/test_full_stack_e2e.py` — full-stack end-to-end tests driving all
+    validator backends (pydantic, dataclass, TypedDict, discriminated unions) in
+    one app via `TestClient`
+  - `tests/property/test_validation_properties.py` — Hypothesis property tests for
+    `validate_as` invariants; skipped gracefully when hypothesis is absent
+  - `tests/conftest.py` (repo root) — session-scoped `_preload_lauren` autouse
+    fixture that pre-imports Lauren's core modules before any test blocks optional
+    dependencies, preventing `_PYDANTIC_AVAILABLE` contamination across modules;
+    registers custom pytest markers (`pydantic`, `msgspec`, `dataclass`,
+    `typeddict`, `slow`)
+- **`hypothesis>=6.0`** added to the `dev` optional-dependency group
+- **`test` dependency group** in `pyproject.toml` for CI extras-matrix installs
+- **New nox sessions** — `tests_e2e` and `tests_property`; the `tests` session
+  now covers all four tiers
+- **CI jobs** — `e2e` (Python 3.11–3.14), `property`, and `extras-matrix`
+  (bare / pydantic / msgspec / full × Python 3.11–3.13)
+
 ## [1.4.2] - 2026-05-28
 
 ### Changed
@@ -276,7 +406,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   complete reference) shipped inside the wheel.
 - **`TestClient` / `WsTestClient`** — in-process ASGI test clients.
 
-[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.5.0
 [1.4.2]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.4.2
 [1.4.1]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.4.1
 [1.4.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.4.0

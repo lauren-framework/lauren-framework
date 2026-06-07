@@ -289,8 +289,11 @@ class TestBuildAdapterNoPydantic:
         from lauren import streaming
 
         monkeypatch.setattr(streaming, "_PYDANTIC_AVAILABLE", False)
+        # Clear cache so the monkeypatched flag takes effect (Phase 3 caches adapters).
+        streaming._ADAPTER_CACHE.clear()
         result = streaming._build_adapter(str)
         assert result is None
+        streaming._ADAPTER_CACHE.clear()  # restore for other tests
 
 
 class TestIsDiscriminatedUnionNoPydantic:

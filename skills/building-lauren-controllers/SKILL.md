@@ -54,7 +54,7 @@ class UsersController:
 | `Query[T]` | `?key=value` | `list[str]` collects multi-value |
 | `Header[T]` | request header | case-insensitive |
 | `Cookie[T]` | cookie jar | |
-| `Json[T]` | JSON body | Supports Pydantic models, `msgspec.Struct`, and Python dataclasses; 422 on validation error |
+| `Json[T]` | JSON body | Supports Pydantic models, `msgspec.Struct`, Python dataclasses, `TypedDict`, and `Discriminated[A\|B,"key"]`; 422 on validation error |
 | `Form[T]` | form-urlencoded or multipart | |
 | `Bytes` | raw body `bytes` | Buffers entire body |
 | `ByteStream` | streaming body chunks | Zero-copy async iterator — no intermediate `bytes` join |
@@ -64,7 +64,7 @@ class UsersController:
 
 **Implicit promotion** — bare parameters (no extractor marker) are auto-promoted:
 - Name matches a `{segment}` → `Path[T]`
-- Annotation is a Pydantic model, `msgspec.Struct`, or dataclass → `Json[T]`
+- Annotation is a Pydantic model, `msgspec.Struct`, dataclass, `TypedDict`, or `Discriminated[A|B,"key"]` → `Json[T]`
 - Annotation is `int/str/float/bool` → `Query[T]`
 
 See [extractors.md](extractors.md) for field descriptors, pipes, and upload files.

@@ -78,7 +78,7 @@ async def stream(self) -> EventStream:
 
 ### Typed streaming alternative
 
-For a single Pydantic schema, use `StreamingResponse[T]` (content-negotiated SSE / NDJSON):
+For a single typed schema (Pydantic, dataclass, `msgspec.Struct`, or `Discriminated[A|B,"key"]`), use `StreamingResponse[T]` (content-negotiated SSE / NDJSON):
 
 ```python
 from lauren.streaming import StreamingResponse

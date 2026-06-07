@@ -47,23 +47,32 @@ except ImportError:
 
 @pytest.mark.skipif(not HAS_MSGSPEC, reason="msgspec not installed")
 class TestBuildAdapterNonPydantic:
-    """_build_adapter returns None (not raises) for non-Pydantic types."""
+    """Phase 3: _build_adapter returns a _ValidationAdapter for msgspec Struct types."""
 
-    def test_msgspec_struct_returns_none(self) -> None:
+    def test_msgspec_struct_returns_adapter(self) -> None:
         class Greet(msgspec.Struct):
             message: str
 
-        # Must not raise PydanticSchemaError
+        # Phase 3: returns a _ValidationAdapter wrapping msgspec, not None
         result = _build_adapter(Greet)
-        assert result is None
+        assert result is not None
 
-    def test_msgspec_struct_cached_as_none(self) -> None:
+    def test_msgspec_struct_adapter_cached(self) -> None:
         class Greet2(msgspec.Struct):
             value: int
 
-        _build_adapter(Greet2)  # populate cache
-        result = _build_adapter(Greet2)  # hit cache
-        assert result is None
+        first = _build_adapter(Greet2)
+        second = _build_adapter(Greet2)  # hit cache
+        assert first is second  # same cached adapter
+
+    def test_msgspec_struct_adapter_validates(self) -> None:
+        class Greet3(msgspec.Struct):
+            message: str
+
+        adapter = _build_adapter(Greet3)
+        result = adapter.validate_python({"message": "hello"})
+        assert isinstance(result, Greet3)
+        assert result.message == "hello"
 
     def test_plain_pydantic_model_still_works(self) -> None:
         from pydantic import BaseModel

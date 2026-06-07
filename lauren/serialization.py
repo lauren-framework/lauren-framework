@@ -258,105 +258,10 @@ class MsgspecEncoder:
 
 
 # ---------------------------------------------------------------------------
-# Pydantic encoder — uses pydantic-core's Rust serializer directly.
+# Pydantic encoder — moved to lauren/_encoders/pydantic.py.
+# A lazy __getattr__ shim below preserves the import path:
+#   from lauren.serialization import PydanticEncoder  # still works
 # ---------------------------------------------------------------------------
-
-
-class PydanticEncoder:
-    """Encoder that uses Pydantic v2's Rust-backed ``pydantic-core`` serializer.
-
-    **Why this encoder exists**
-
-    The other encoders (stdlib, orjson, msgspec) receive a Python ``dict``
-    when the handler returns a Pydantic model — ``_coerce_to_response`` calls
-    ``model.model_dump(mode="json")`` first, producing an intermediate Python
-    dict, which the encoder then converts to bytes.  ``PydanticEncoder``
-    eliminates that intermediate allocation: it calls
-    ``model.model_dump_json()`` (or ``TypeAdapter.dump_json`` for lists)
-    directly so ``pydantic-core`` serializes model → bytes in one step.
-
-    **What this encoder does better**
-
-    * Respects every Pydantic serialization rule — ``@field_serializer``,
-      ``@model_serializer``, ``model_config['json_encoders']``,
-      ``AliasGenerator``, ``serialize_as_any`` — because the Pydantic
-      machinery runs end-to-end, not just for the first step.
-    * Skips the intermediate ``dict`` allocation for model instances, saving
-      both memory and CPU for response-heavy endpoints.
-
-    **What this encoder does NOT change**
-
-    For non-Pydantic values (plain ``dict``, ``list``, ``str``, ``int``,
-    ``float``, ``bool``, ``None``, dataclasses, ``msgspec.Struct``, …) it
-    falls back to :class:`StdlibJSONEncoder` so mixed endpoints keep working
-    without any changes to handler code.
-
-    **Usage**::
-
-        app = LaurenFactory.create(AppModule, json_encoder=PydanticEncoder())
-
-    :raises RuntimeError: If Pydantic v2 is not installed.
-    """
-
-    name = "pydantic"
-
-    __slots__ = ("_fallback",)
-
-    def __init__(self, default: Any = None) -> None:
-        try:
-            import pydantic  # noqa: F401
-        except ImportError as exc:
-            raise RuntimeError(
-                "PydanticEncoder requires the 'pydantic' package (v2); "
-                "install it with `pip install pydantic`."
-            ) from exc
-        self._fallback = StdlibJSONEncoder(default=default)
-
-    def encode(self, value: Any) -> bytes:
-        """Serialize ``value`` to pretty-printed JSON bytes.
-
-        Uses ``model.model_dump_json(indent=2)`` for Pydantic models so the
-        pretty form is consistent with Pydantic conventions.  Non-Pydantic
-        values delegate to the stdlib fallback.
-        """
-        return self._encode(value, compact=False)
-
-    def encode_compact(self, value: Any) -> bytes:
-        """Serialize ``value`` to compact JSON bytes (no whitespace).
-
-        Uses ``model.model_dump_json()`` for Pydantic models — pydantic-core
-        always emits compact output when no ``indent`` is given.  Non-Pydantic
-        values delegate to the stdlib fallback's compact path.
-        """
-        return self._encode(value, compact=True)
-
-    # ------------------------------------------------------------------
-    # Internal dispatch
-    # ------------------------------------------------------------------
-
-    def _encode(self, value: Any, *, compact: bool) -> bytes:
-        from pydantic import BaseModel  # noqa: PLC0415
-
-        if isinstance(value, BaseModel):
-            # Single model — model_dump_json() runs pydantic-core end-to-end.
-            result: str | bytes = (
-                value.model_dump_json() if compact else value.model_dump_json(indent=2).encode()
-            )
-            # model_dump_json() returns str in Pydantic v2 — ensure bytes.
-            return result if isinstance(result, bytes) else result.encode("utf-8")
-
-        if isinstance(value, list) and value and all(isinstance(item, BaseModel) for item in value):
-            # Homogeneous list of models — use TypeAdapter for a single
-            # serialisation pass rather than encoding each item separately.
-            from pydantic import TypeAdapter  # noqa: PLC0415
-
-            adapter: TypeAdapter[list] = TypeAdapter(list[type(value[0])])  # type: ignore[misc]
-            result: str | bytes = adapter.dump_json(value) if compact else adapter.dump_json(value, indent=2)  # type:ignore[no-redef]
-            return result if isinstance(result, bytes) else result.encode("utf-8")
-
-        # Non-Pydantic value — delegate to the stdlib fallback so the encoder
-        # handles dict, list[non-model], primitives, dataclasses, Structs, etc.
-        return self._fallback.encode_compact(value) if compact else self._fallback.encode(value)
 
 
 # ---------------------------------------------------------------------------
@@ -419,12 +324,22 @@ def set_active_encoder(encoder: JSONEncoder | None) -> JSONEncoder:
     return previous
 
 
+def __getattr__(name: str) -> Any:
+    """Lazy import shim so ``from lauren.serialization import PydanticEncoder`` still works."""
+    if name == "PydanticEncoder":
+        from lauren._encoders.pydantic import PydanticEncoder  # noqa: PLC0415
+
+        return PydanticEncoder
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# PydanticEncoder is provided lazily via __getattr__ above.
 __all__ = [
     "JSONEncoder",
     "StdlibJSONEncoder",
     "OrjsonEncoder",
     "MsgspecEncoder",
-    "PydanticEncoder",
+    "PydanticEncoder",  # noqa: F822 — provided lazily via __getattr__
     "auto_encoder",
     "get_active_encoder",
     "set_active_encoder",

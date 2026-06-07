@@ -22,7 +22,7 @@ from lauren.types import Path, Query, Header, Cookie, Json, Form, Bytes, Depends
 | `Query[T]` | `?key=value` | `Query[list[str]]` collects multi-value |
 | `Header[T]` | request header | key lookup is case-insensitive |
 | `Cookie[T]` | cookie | by name |
-| `Json[T]` | JSON request body | T must be Pydantic `BaseModel`; 422 on failure |
+| `Json[T]` | JSON request body | T may be Pydantic `BaseModel`, `msgspec.Struct`, dataclass, `TypedDict`, or `Discriminated[A\|B,"key"]`; 422 on failure |
 | `Form[T]` | `application/x-www-form-urlencoded` or `multipart/form-data` | T must be `BaseModel` |
 | `Bytes` | raw body `bytes` | no T argument |
 | `State` | `request.state` | reads per-request mutable state set by middleware |
@@ -167,7 +167,7 @@ When a parameter has **no** extractor marker, Lauren auto-promotes it:
 | Condition | Promoted to |
 |---|---|
 | Parameter name matches `{segment}` in URL | `Path[T]` |
-| Annotation is a `BaseModel` | `Json[T]` |
+| Annotation is a `BaseModel`, `msgspec.Struct`, dataclass, `TypedDict`, or `Discriminated[A\|B,"key"]` | `Json[T]` |
 | Annotation is `int`, `str`, `float`, `bool`, `bytes`, `complex` | `Query[T]` |
 | Annotation is `list[scalar]` | `Query[list[T]]` |
 | Annotation is `Optional[Model]` | `Json[Model \| None]`, body optional |
@@ -186,7 +186,7 @@ async def find(
 @post("/")
 async def create(
     self,
-    body: CreateUserDto,   # → Json[CreateUserDto] (BaseModel)
+    body: CreateUserDto,   # → Json[CreateUserDto] (BaseModel / dataclass / TypedDict)
 ) -> UserDto: ...
 ```
 

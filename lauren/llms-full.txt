@@ -40,14 +40,16 @@ common mistakes.
 ## Installation
 
 ```bash
-pip install lauren
-# For Pydantic-based extractors:
-pip install pydantic
+pip install lauren                  # core only (anyio required)
+pip install "lauren[pydantic]"      # adds pydantic>=2.0
+pip install "lauren[msgspec]"       # adds msgspec>=0.18
+pip install "lauren[full]"          # pydantic + msgspec
 ```
 
-Python 3.11+ required. `anyio>=4.0` is a required dependency (used to
-offload sync handlers to a thread pool). `py.typed` marker ships for
-full static-analysis support.
+Python 3.11+ required. `anyio>=4.0` is the only hard dependency (used
+to offload sync handlers to a thread pool). Pydantic and msgspec are
+optional — the framework validates request bodies with whichever library
+is installed. `py.typed` marker ships for full static-analysis support.
 
 ---
 
@@ -395,7 +397,8 @@ Extractors convert request data into typed Python values. Built-in:
 | `Query[T]` | query string | no |
 | `Header[T]` | request header | no |
 | `Cookie[T]` | cookie | no |
-| `Json[T]` | JSON body, Pydantic-validated | yes |
+| `Json[T]` | JSON body, validated | yes |
+| `Json[Discriminated[A \| B, "key"]]` | discriminated union body | yes |
 | `Form[T]` | form-urlencoded body | yes |
 | `Bytes` | raw body bytes (buffered) | yes |
 | `ByteStream` | streaming body chunks (zero-copy) | yes |
@@ -444,6 +447,42 @@ async def create(self, body: Json[CreatePost]) -> dict:
 ```
 
 Validation errors are raised as `ExtractorError` and mapped to HTTP 422.
+
+### Discriminated union body
+
+`Discriminated[A | B, "key"]` dispatches tagged-union JSON bodies to the
+correct variant class — no pydantic required. Works with `@dataclass`,
+`TypedDict`, `msgspec.Struct`, and `pydantic.BaseModel` variants:
+
+```python
+from dataclasses import dataclass
+from typing import Literal
+from lauren import Discriminated, Json, post
+
+@dataclass
+class Cat:
+    kind: Literal["cat"] = "cat"
+    name: str = ""
+
+@dataclass
+class Dog:
+    kind: Literal["dog"] = "dog"
+    name: str = ""
+
+Animal = Discriminated[Cat | Dog, "kind"]
+
+@post("/animals")
+async def create(body: Json[Animal]) -> dict:
+    return {"type": type(body).__name__, "name": body.name}
+```
+
+- **Missing discriminator field** → `422` with message `"missing discriminator field 'kind'"`
+- **Unknown tag value** → `422` with message `"unknown discriminator value 'fish'"`
+- **Non-dict payload** → `422` with message `"expected a JSON object"`
+- **OpenAPI output**: `oneOf` array + `discriminator.propertyName` + `discriminator.mapping`
+
+Auto-promotion: a bare `body: Animal` parameter (no `Json[…]`) is also
+recognized and auto-promoted to a JSON body extraction.
 
 ### Streaming body (zero-copy)
 
@@ -849,6 +888,44 @@ assert r.json()["id"] == 42
 - `request(method, url, *, headers=None, json=None, content=None, params=None, cookies=None)`
 - All methods return a `TestResponse` with `status_code`, `headers` (list of tuples), `body` (bytes), `text` (str), `json()`, `header(name)`, `headers_all(name)`.
 - Works inside `asyncio.run(...)` tests — it auto-switches to a background thread when called from within a running event loop.
+
+### Test tiers
+
+| Directory | Purpose |
+|---|---|
+| `tests/unit/` | Import a module directly; no ASGI app, no event loop unless required |
+| `tests/integration/` | Build a `@module`, create an app via `LaurenFactory`, drive via `TestClient` |
+| `tests/e2e/` | Full-stack multi-backend tests exercising all validator paths in one app |
+| `tests/property/` | Hypothesis property tests for validation invariants; `pytest.importorskip("hypothesis")` skips when absent |
+
+### Blocking optional deps in tests
+
+When a test module needs to verify behaviour with pydantic absent, it must block pydantic in a **module-scoped** fixture and ensure Lauren's core modules are pre-imported first:
+
+```python
+# tests/conftest.py — session-scoped, autouse=True
+@pytest.fixture(scope="session", autouse=True)
+def _preload_lauren():
+    import lauren           # noqa: F401
+    import lauren.streaming # noqa: F401
+    import lauren.extractors # noqa: F401
+
+# tests/integration/test_no_pydantic.py
+@pytest.fixture(autouse=True, scope="module")
+def disable_pydantic():
+    original = {k: v for k, v in sys.modules.items() if "pydantic" in k}
+    for k in list(original.keys()):
+        del sys.modules[k]
+    sys.modules["pydantic"] = None          # type: ignore[assignment]
+    sys.modules["pydantic_core"] = None     # type: ignore[assignment]
+    yield
+    for k in list(sys.modules.keys()):
+        if "pydantic" in k:
+            del sys.modules[k]
+    sys.modules.update(original)
+```
+
+The `_preload_lauren` session fixture is critical: if any Lauren module is first imported while pydantic is blocked, the module-level `_PYDANTIC_AVAILABLE` flag is set to `False` permanently for that session — even after pydantic is restored. Pre-importing with all deps available prevents this contamination.
 
 ---
 
@@ -1518,29 +1595,37 @@ Properties: `path`, `path_template`, `path_params`, `headers`,
 
 ### Typed dispatch and discriminated unions
 
+Use `Discriminated[A | B, "key"]` for pydantic-free discriminated unions:
+
 ```python
-from typing import Annotated, Literal, Union
-from pydantic import BaseModel, Field
+from dataclasses import dataclass
+from typing import Literal
+from lauren import Discriminated, Json, WebSocket, on_message, ws_controller
 
-class ImageEvent(BaseModel):
-    kind: Literal["image"]
-    url: str
+@dataclass
+class ImageEvent:
+    kind: Literal["image"] = "image"
+    url: str = ""
 
-class TextEvent(BaseModel):
-    kind: Literal["text"]
-    content: str
+@dataclass
+class TextEvent:
+    kind: Literal["text"] = "text"
+    content: str = ""
 
-Event = Annotated[Union[ImageEvent, TextEvent], Field(discriminator="kind")]
+Event = Discriminated[ImageEvent | TextEvent, "kind"]
 
 @ws_controller("/feed")
 class FeedGateway:
     @on_message("post")
     async def post(self, ws: WebSocket, body: Json[Event]) -> None:
         if isinstance(body, ImageEvent):
-            ...
+            await ws.send_json({"type": "image", "url": body.url})
         else:
-            ...
+            await ws.send_json({"type": "text", "content": body.content})
 ```
+
+Works with `@dataclass`, `TypedDict`, `msgspec.Struct`, and `pydantic.BaseModel`.
+For pydantic, `Annotated[Union[A, B], Field(discriminator="kind")]` is also accepted.
 
 The wildcard event ``"*"`` matches any event without a specific
 handler; ``"__binary__"`` captures binary frames as ``bytes`` rather
