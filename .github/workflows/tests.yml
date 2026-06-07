@@ -153,9 +153,9 @@ jobs:
       - name: Install with extras
         run: |
           if [ -z "${{ matrix.extras }}" ]; then
-            python -m pip install -e ".[test]"
+            python -m pip install -e ".[test,dev]"
           else
-            python -m pip install -e ".[${{ matrix.extras }},test]"
+            python -m pip install -e ".[${{ matrix.extras }},test,dev]"
           fi
       - name: Verify pydantic absent (bare only)
         if: matrix.extras == ''
