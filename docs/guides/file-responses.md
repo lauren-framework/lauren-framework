@@ -77,7 +77,7 @@ import pathlib
 
 BASE = pathlib.Path("/var/user-files").resolve()
 
-@get("/download/{name:str}")
+@get("/download/{name}")
 async def serve(self, name: str) -> Response:
     resolved = (BASE / name).resolve()
     if not str(resolved).startswith(str(BASE)):
