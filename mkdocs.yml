@@ -164,6 +164,7 @@ nav:
     - Proxy & Static Files: guides/proxy-and-static-files.md
     - Background Tasks: guides/background-tasks.md
     - DI with Data Model Types: guides/di-model-types.md
+    - Logging in Production: guides/logging.md
     - Agent Skills: guides/agent-skills.md
   - Concepts:
     - Extractors vs Dependencies vs Guards vs Middlewares: concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md
