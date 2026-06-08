@@ -451,8 +451,8 @@ codemap find "on_connect" --type method
 ```
 
 When in doubt: grep the tests. They express the invariants more
-precisely than any English prose. Around **3020 tests** currently pass
-in ~20 seconds.
+precisely than any English prose. Around **3176 tests** currently pass
+in ~60 seconds.
 
 ## 12. Injectable Logger Pattern
 
