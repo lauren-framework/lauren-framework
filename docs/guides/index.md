@@ -124,4 +124,9 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Using `@dataclass`, Pydantic `BaseModel`, SQLAlchemy `DeclarativeBase`, and `SQLModel` with the DI container.
 
+-   :material-text-box-outline: [__Logging in Production__](logging.md)
+
+    ---
+    `ConsoleLogger` for development, `JsonLogger` for production, `InMemoryLogger` for tests. Log levels, env-var config, DI injection patterns, and coexistence with Python's `logging` module.
+
 </div>
