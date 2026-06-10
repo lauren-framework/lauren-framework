@@ -91,7 +91,7 @@ app = LaurenFactory.create(AppModule)
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None)`
 
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
@@ -112,8 +112,10 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `root_module` | `type` | required | Root `@module` class |
 | `strict_lifecycle` | `bool` | `True` | Enforce strict lifecycle ordering |
 | `global_middlewares` | `Iterable[type]` | `None` | Middleware classes applied to every request (onion order) |
-| `global_guards` | `Iterable[type]` | `None` | Guard classes applied to every request |
-| `global_interceptors` | `Iterable[type]` | `None` | Interceptor classes applied to every handler |
+| `global_guards` | `Iterable[type]` | `None` | Guard classes applied to every HTTP request |
+| `global_interceptors` | `Iterable[type]` | `None` | Interceptor classes applied to every HTTP handler |
+| `global_ws_guards` | `Iterable[type]` | `None` | Guard classes applied before every WebSocket `@on_connect` |
+| `global_ws_interceptors` | `Iterable[type]` | `None` | Interceptor classes wrapping every WebSocket `@on_connect` |
 | `global_exception_handlers` | `Iterable[Any]` | `None` | Exception handler classes/functions for every request |
 | `global_providers` | `Iterable[Any]` | `None` | Extra providers added to the root module |
 | `max_body_size` | `int` | `1048576` | Maximum request body size in bytes (413 on exceed) |
@@ -1529,7 +1531,12 @@ whose declared types match (`isinstance(exc, declared)`) wins.
 
 ## WebSockets
 
-First-class WebSocket controllers with typed message dispatch.
+First-class WebSocket controllers with typed message dispatch. `@use_guards`
+and `@use_interceptors` work natively on `@ws_controller` classes — guards run
+before `@on_connect` with a `WsConnectionContext` that duck-types with
+`ExecutionContext` so the same guard class serves both HTTP and WebSocket.
+See the **Reflect** section below for `WsConnectionContext`, `WsUpgradeRequest`,
+and the `apply_guards` / `apply_interceptors` helpers.
 
 ### Gateway anatomy
 

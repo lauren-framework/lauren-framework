@@ -100,7 +100,8 @@ nox -s ver_dec -- --patch
 | `lauren/_lifecycle/__init__.py`   | post_construct / pre_destruct scheduler; sync hooks run in thread pool via asyncio.to_thread (timeout-protected, event-loop-safe); second pass runs generator provider teardown (code after yield) for SINGLETON scope |
 | `lauren/_typing/`                 | ForwardRef / PEP 563 resolver                |
 | `lauren/_validation.py`           | Provider-agnostic type detection + validation (pydantic, msgspec, dataclass, TypedDict) |
-| `lauren/_ws_runtime.py`           | WebSocket dispatch loop (private)            |
+| `lauren/_ws_runtime.py`           | WebSocket dispatch loop + `WsConnectionContext` / `WsUpgradeRequest` |
+| `lauren/reflect/`                 | Public sub-package: WS guard/interceptor readers + composers |
 | `lauren/decorators.py`            | User-facing decorators only                  |
 | `lauren/extractors.py`            | Typed extractors + pipes + custom extractors |
 | `lauren/exceptions.py`            | 28-class error hierarchy                     |
@@ -256,6 +257,8 @@ Full index: [`skills/README.md`](skills/README.md)
 | Guard vs middleware vs interceptor | `docs/concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md` |
 | Strict inheritance rules (why subclasses must re-decorate) | `docs/core-concepts/inheritance.md` |
 | WebSocket patterns | `docs/guides/websockets.md` |
+| Guards on WebSocket gateways | `docs/guides/custom-guards.md` §WebSocket gateways |
+| Reflect module (WsConnectionContext, readers) | `docs/reference/reflect.md` |
 | SSE / streaming | `docs/guides/sse.md` |
 | Custom response subclasses and response factories | `docs/guides/custom-responses.md` / `docs/guides/file-responses.md` |
 | Testing playbook | `skills/testing-lauren-apps/SKILL.md` |

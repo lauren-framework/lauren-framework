@@ -177,6 +177,7 @@ nav:
     - Decorators: reference/decorators.md
     - Extractors: reference/extractors.md
     - WebSockets: reference/websockets.md
+    - Reflect: reference/reflect.md
     - SSE & Streaming: reference/sse.md
     - Dependency Injection: reference/di.md
     - Exception Catalog: reference/exceptions.md

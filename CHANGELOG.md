@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — `lauren.reflect`: native guard & interceptor support for WebSocket gateways
+
+Prior to this release, `@use_guards` and `@use_interceptors` had no effect on
+`@ws_controller` classes. Applying them required a manual guard loop inside
+`@on_connect`, and extension packages (e.g. `lauren-mcp`) had to ship their own
+workaround middleware. This release closes that gap by teaching the WS runtime
+to read and execute these decorators natively.
+
+#### New module: `lauren.reflect`
+
+- **`lauren/_ws_runtime.py`** — defines `WsConnectionContext` and
+  `WsUpgradeRequest` as frozen dataclasses alongside the other WS runtime types.
+  These are the context objects passed to guards and interceptors at connection
+  time, duck-typed against `ExecutionContext` / `Request` so the same guard class
+  works on both HTTP routes and WebSocket gateways without modification.
+- **`lauren/reflect/__init__.py`** — new public sub-package with four public
+  readers and the two context types re-exported from `_ws_runtime`:
+  - `WsConnectionContext` — context object for WS guards/interceptors
+  - `WsUpgradeRequest` — read-only view of the HTTP upgrade request
+  - `reflect_guards(cls)` — reads `__lauren_use_guards__` from `cls.__dict__` only
+  - `reflect_interceptors(cls)` — reads `__lauren_use_interceptors__`
+  - `reflect_middlewares(cls)` — reads `__lauren_use_middlewares__`
+  - `reflect_all(cls)` → `ReflectedMeta(guards, interceptors, middlewares)` NamedTuple
+- **`lauren/reflect/_reader.py`** — own-class-only metadata readers (no inheritance)
+- **`lauren/reflect/_composer.py`** — `apply_guards(...)` and
+  `apply_interceptors(...)` helpers; used internally by the WS runtime and
+  available for extension packages that build custom transports
+
+#### Changes to existing modules
+
+- **`lauren/_ws_runtime.py`** — `compile_gateways()` now populates
+  `CompiledGateway.guards`, `.interceptors`, `.middlewares` via `reflect_guards`
+  etc.; `handle_websocket()` runs guard checks and wraps `@on_connect` in the
+  interceptor chain *before* accepting the connection — any rejection happens with
+  close code 1008, before the MCP/WS handshake begins
+- **`lauren/_asgi/__init__.py`** — `LaurenFactory.create()` and `LaurenApp`
+  accept two new keyword arguments: `global_ws_guards` and
+  `global_ws_interceptors`, which prepend to the effective chain for every
+  gateway in the application
+
+#### Breaking changes
+
+None. The metadata attributes (`__lauren_use_guards__` etc.) set by
+`@use_guards` / `@use_interceptors` on `@ws_controller` classes were previously
+ignored at connection time; they are now executed. Code that relied on these
+decorators silently doing nothing on WS gateways must be reviewed.
+
+---
+
 ## [1.5.0] - 2026-06-07
 
 This release completes a seven-phase initiative to make pydantic an **optional**
