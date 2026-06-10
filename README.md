@@ -122,9 +122,21 @@ core ideas:
 * **Guards, Middleware & Interceptors** — All three attachment points. Guards
   run first (allow/deny); middleware wraps raw request/response bytes; interceptors
   wrap handler execution for timing, caching, and response transforms.
+  `@use_guards` and `@use_interceptors` work on both HTTP `@controller` and
+  WebSocket `@ws_controller` classes natively.
+* **`@propagate_metadata`** — Copy `@use_guards`, `@use_interceptors`,
+  `@use_middlewares`, `@use_encoder`, and `@set_metadata` annotations from a
+  source class or function to a target — the `functools.wraps` equivalent for
+  Lauren's decorator metadata.
+* **`lauren.reflect`** — Full metadata introspection API: static readers
+  (`reflect_controller`, `reflect_routes`, `reflect_guards`, …), app-level
+  readers (`get_all_routes`, `get_all_ws_gateways`, `get_route_metadata`), and
+  rich result types (`ReflectedRoute`, `ReflectedController`, …). All readers
+  honour the own-class rule — no metadata inheritance.
 * **WebSockets** — First-class `@ws_controller` gateways with typed validated
-  frames, discriminated-union dispatch (`Discriminated[A | B, "key"]`), and
-  `BroadcastGroup` rooms.
+  frames, discriminated-union dispatch (`Discriminated[A | B, "key"]`),
+  `BroadcastGroup` rooms, and native guard/interceptor enforcement via
+  `WsConnectionContext`.
 * **Server-Sent Events** — `EventStream` with keep-alive heartbeats and
   `Last-Event-ID` resumability for AI token-streaming patterns.
 * **Typed streaming** — `StreamingResponse[T]` auto-negotiates between SSE,

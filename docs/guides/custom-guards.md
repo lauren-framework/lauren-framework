@@ -357,3 +357,5 @@ See [Reference → Reflect](../reference/reflect.md) for the full API.
 * [Custom Middleware](custom-middleware.md) — for cross-cutting concerns that aren't yes/no decisions.
 * [Custom Extractors](custom-extractors.md) — for typed request parsing.
 * [Custom Exception Handlers](custom-exception-handlers.md) — for translating guard-raised errors into responses.
+* [Propagate Metadata](propagate-metadata.md) — share a common guard set across multiple controllers without repeating `@use_guards`.
+* [Reference → Reflect](../reference/reflect.md) — read guard metadata back via `reflect_guards`, `get_controller_metadata`, etc.

@@ -1,6 +1,6 @@
 ---
 name: building-lauren-controllers
-description: Writes Lauren controllers with route handlers, typed extractors, and auto-serialization. Covers @controller, @get/@post/@put/@patch/@delete, Path/Query/Header/Cookie/Json/Form/Bytes extractors, field descriptors, pipes, and all return-type patterns. Use when adding routes, extractors, or HTTP handlers to a Lauren app.
+description: Writes Lauren controllers with route handlers, typed extractors, and auto-serialization. Covers @controller, @get/@post/@put/@patch/@delete, Path/Query/Header/Cookie/Json/Form/Bytes extractors, field descriptors, pipes, all return-type patterns, propagate_metadata, and reflect_routes/get_all_routes. Use when adding routes, extractors, or HTTP handlers to a Lauren app.
 ---
 
 > Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
@@ -128,3 +128,39 @@ async def find_one(self, id: Path[int]) -> UserDto:
 ```
 
 See `lauren.exceptions` for the full 28-class catalog.
+
+---
+
+## Enumerating routes at runtime
+
+After startup, `get_all_routes(app)` returns every compiled HTTP route:
+
+```python
+from lauren.reflect import get_all_routes, get_route_metadata
+
+for route in get_all_routes(app):
+    print(route.method, route.full_path, route.handler.__name__)
+
+route = get_route_metadata(app, "GET", "/users/{id}")
+if route:
+    print(route.guards, route.tags)
+```
+
+To enumerate routes on a controller class *before* startup:
+
+```python
+from lauren.reflect import reflect_routes, get_controller_metadata
+
+for r in reflect_routes(UserController):
+    print(r.method, r.full_path)   # GET /users/{id}
+
+meta = get_controller_metadata(UserController)
+if meta:
+    print(meta.guards, meta.routes)
+```
+
+## Sharing metadata across controllers
+
+`@propagate_metadata(source)` copies all `@use_*` annotations from a source
+class or function to the decorated target (see
+`skills/building-lauren-guards/SKILL.md` for full details).
