@@ -348,3 +348,32 @@ class TestValidationProperties:
 ```
 
 Run with `nox -s tests_property` (installs hypothesis automatically).
+
+---
+
+## Testing with `lauren.reflect`
+
+Use the reflect API to assert on controller/gateway structure without making
+HTTP requests:
+
+```python
+from lauren.reflect import (
+    reflect_guards, reflect_routes, get_controller_metadata,
+    get_all_routes, get_all_ws_gateways,
+)
+
+# Static (no app needed) — verify decorator metadata
+def test_admin_controller_has_auth_guard():
+    assert AuthGuard in reflect_guards(AdminController)
+
+def test_user_routes_include_delete():
+    methods = {r.method for r in reflect_routes(UserController)}
+    assert "DELETE" in methods
+
+# Runtime (requires started app) — verify compiled dispatch table
+def test_all_routes_have_guards(app):
+    TestClient(app)  # trigger startup
+    for route in get_all_routes(app):
+        if "/admin" in route.full_path:
+            assert route.guards, f"Admin route {route.full_path} has no guards"
+```
