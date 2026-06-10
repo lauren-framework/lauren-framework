@@ -812,6 +812,152 @@ def use_exception_handlers(
 
 
 # ---------------------------------------------------------------------------
+# @propagate_metadata — copy Lauren decorator metadata between objects
+# ---------------------------------------------------------------------------
+
+
+def propagate_metadata(
+    source: Any,
+    *,
+    guards: bool = True,
+    interceptors: bool = True,
+    middlewares: bool = True,
+    exception_handlers: bool = True,
+    encoder: bool = True,
+    user_metadata: bool = True,
+) -> Callable[[_T], _T]:
+    """Copy Lauren decorator metadata from *source* to the decorated target.
+
+    Like :func:`functools.wraps` but for Lauren's ``@use_guards``,
+    ``@use_interceptors``, ``@use_middlewares``, ``@use_exception_handlers``,
+    ``@use_encoder``, and ``@set_metadata`` annotations rather than standard
+    Python dunder attributes.
+
+    For **list-based** metadata (guards, interceptors, middlewares, exception
+    handlers), the source entries are **prepended** before the target's own
+    existing entries so that propagated behaviour runs as the outermost layer:
+
+    .. code-block:: python
+
+        # source declares GuardA; target already has GuardB from @use_guards.
+        # After propagation the effective order is [GuardA, GuardB].
+
+        @propagate_metadata(source)     # applied last — GuardA prepended
+        @use_guards(GuardB)             # applied first — GuardB in dict
+        @controller("/x")
+        class Target: ...
+
+    For **encoder** metadata, the source encoder is copied only when the target
+    has no encoder of its own (target's explicit ``@use_encoder`` wins).
+
+    For **user metadata** (``@set_metadata`` key/value pairs), the source dict
+    is merged in and the target's existing keys take precedence.
+
+    Use ``guards=False``, ``interceptors=False``, etc. to suppress individual
+    categories::
+
+        @propagate_metadata(BaseController, interceptors=False)
+        @controller("/derived")
+        class DerivedController: ...
+
+    *source* may be any class or callable decorated with Lauren's ``@use_*``
+    family.  It does not need to be a ``@controller`` — plain classes and
+    functions work as sources.
+
+    :param source: The class or callable whose metadata is copied.
+    :param guards: Propagate ``@use_guards`` entries.
+    :param interceptors: Propagate ``@use_interceptors`` entries.
+    :param middlewares: Propagate ``@use_middlewares`` entries.
+    :param exception_handlers: Propagate ``@use_exception_handlers`` entries.
+    :param encoder: Propagate ``@use_encoder`` (only when target has none).
+    :param user_metadata: Propagate ``@set_metadata`` key/value pairs (target
+        keys win on conflict).
+    """
+
+    def _read(obj: Any, attr: str) -> list[Any]:
+        if isinstance(obj, type):
+            return list(obj.__dict__.get(attr, []))
+        return list(getattr(obj, attr, []))
+
+    def decorator(target: _T) -> _T:
+        # ---- list-based attrs: prepend source entries ----
+        if guards:
+            src = _read(source, USE_GUARDS)
+            if src:
+                if isinstance(target, type):
+                    existing = list(target.__dict__.get(USE_GUARDS, []))
+                else:
+                    existing = list(getattr(target, USE_GUARDS, []))
+                setattr(target, USE_GUARDS, src + existing)
+
+        if interceptors:
+            src = _read(source, USE_INTERCEPTORS)
+            if src:
+                if isinstance(target, type):
+                    existing = list(target.__dict__.get(USE_INTERCEPTORS, []))
+                else:
+                    existing = list(getattr(target, USE_INTERCEPTORS, []))
+                setattr(target, USE_INTERCEPTORS, src + existing)
+
+        if middlewares:
+            src = _read(source, USE_MIDDLEWARES)
+            if src:
+                if isinstance(target, type):
+                    existing = list(target.__dict__.get(USE_MIDDLEWARES, []))
+                else:
+                    existing = list(getattr(target, USE_MIDDLEWARES, []))
+                setattr(target, USE_MIDDLEWARES, src + existing)
+
+        if exception_handlers:
+            src = _read(source, USE_EXCEPTION_HANDLERS)
+            if src:
+                if isinstance(target, type):
+                    existing = list(target.__dict__.get(USE_EXCEPTION_HANDLERS, []))
+                else:
+                    existing = list(getattr(target, USE_EXCEPTION_HANDLERS, []))
+                setattr(target, USE_EXCEPTION_HANDLERS, src + existing)
+
+        # ---- encoder: copy only if target has none ----
+        if encoder:
+            src_enc = (
+                source.__dict__.get(USE_ENCODER)
+                if isinstance(source, type)
+                else getattr(source, USE_ENCODER, None)
+            )
+            if src_enc is not None:
+                target_has = (
+                    target.__dict__.get(USE_ENCODER)  # type: ignore[union-attr]
+                    if isinstance(target, type)
+                    else getattr(target, USE_ENCODER, None)
+                )
+                if target_has is None:
+                    try:
+                        setattr(target, USE_ENCODER, src_enc)
+                    except (AttributeError, TypeError):  # pragma: no cover
+                        pass
+
+        # ---- user metadata dict: merge, target keys win ----
+        if user_metadata:
+            src_meta: dict[str, Any] = (
+                dict(source.__dict__.get(SET_METADATA, {}))
+                if isinstance(source, type)
+                else dict(getattr(source, SET_METADATA, {}))
+            )
+            if src_meta:
+                if isinstance(target, type):
+                    existing_meta = dict(target.__dict__.get(SET_METADATA, {}))
+                else:
+                    existing_meta = dict(getattr(target, SET_METADATA, {}))
+                # source provides defaults; existing target values win
+                merged = {**src_meta, **existing_meta}
+                setattr(target, SET_METADATA, merged)
+
+        return target
+
+    return decorator
+
+
+# ---------------------------------------------------------------------------
 # @openapi_security
 # ---------------------------------------------------------------------------
 
@@ -1049,6 +1195,7 @@ __all__ = [
     "use_exception_handlers",
     "use_encoder",
     "set_metadata",
+    "propagate_metadata",
     "openapi_security",
     "ControllerMeta",
     "ModuleMeta",

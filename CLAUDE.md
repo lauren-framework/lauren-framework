@@ -95,10 +95,13 @@ lauren/                      — framework package
 ├── _validation.py           — provider-agnostic type detection & validation (pydantic, msgspec, dataclass, TypedDict)
 ├── _ws_runtime.py           — WebSocket dispatch engine + WsConnectionContext / WsUpgradeRequest
 ├── _socketio.py             — Engine.IO/Socket.IO adapter (private)
-├── reflect/                 — public sub-package: WS guard/interceptor readers + composers
-│   ├── __init__.py          — re-exports WsConnectionContext, WsUpgradeRequest, reflect_guards, …
-│   ├── _reader.py           — own-class metadata readers (no inheritance)
-│   └── _composer.py        — apply_guards / apply_interceptors helpers
+├── reflect/                 — public sub-package: full metadata introspection API
+│   ├── __init__.py          — re-exports all public symbols
+│   ├── _reader.py           — static class readers (own-class rule, no inheritance)
+│   ├── _app_reader.py       — app-level readers (get_all_routes, get_all_ws_gateways, …)
+│   ├── _types.py            — frozen result dataclasses (ReflectedRoute, ReflectedController, …)
+│   ├── _context.py          — WsConnectionContext / WsUpgradeRequest re-export
+│   └── _composer.py         — apply_guards / apply_interceptors helpers
 ├── decorators.py            — user-facing @controller, @module, @get, …
 ├── exceptions.py            — error hierarchy (28 classes)
 ├── extractors.py            — Path/Query/Json/Depends + pipes + custom extractors
@@ -211,6 +214,10 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Share state across a single request | `Scope.REQUEST` injectable |
 | Share state for the app lifetime | `Scope.SINGLETON` injectable |
 | Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
+| Copy Lauren metadata (guards, interceptors, …) to another class/fn | `@propagate_metadata(source)` |
+| Read all routes declared on a controller | `reflect_routes(cls)` → `tuple[ReflectedRoute, ...]` |
+| Query the compiled route table of a running app | `get_all_routes(app)`, `get_route_metadata(app, method, path)` |
+| Read any `@use_*` metadata from a class without `__dict__` access | `reflect_guards`, `reflect_interceptors`, `reflect_exception_handlers`, … |
 
 See `docs/concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md` for detailed trade-offs.
 
@@ -437,7 +444,8 @@ deterministic).
   / `use_existing` recipes, `Token`, `Inject`.
 - `lauren/_ws_runtime.py` — `WsConnectionContext`, `WsUpgradeRequest`, `CompiledGateway`, `handle_websocket`.
 - `lauren/websockets.py` — gateway runtime + `BroadcastGroup`.
-- `lauren/reflect/` — `apply_guards`, `apply_interceptors`, `reflect_guards`, metadata readers.
+- `lauren/reflect/` — full metadata introspection API: `reflect_routes`, `reflect_controller`, `get_all_routes`, `get_controller_metadata`, `propagate_metadata` targets this module's readers.
+- `lauren/decorators.py` — `propagate_metadata` (copies `@use_*` metadata between objects).
 - `lauren/sse.py` — `EventStream`, `ServerSentEvent`, framing.
 - `lauren/streaming.py` — `StreamingResponse[T]`, `Stream`,
   `StreamReader`, content-negotiation logic.

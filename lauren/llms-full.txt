@@ -2027,6 +2027,47 @@ class AdminController: ...
 
 ---
 
+## `@propagate_metadata` — copy Lauren decorator metadata between objects
+
+Like `functools.wraps` but for Lauren's `@use_*` decorators.  Copies guard,
+interceptor, middleware, exception-handler, encoder, and user-metadata
+annotations from a *source* to the decorated target.
+
+```python
+from lauren import propagate_metadata, use_guards, controller, get
+
+# Copy all @use_* metadata from source to target class
+@propagate_metadata(SourceClass)
+@controller("/derived")
+class DerivedController: ...
+
+# Copy from a function (e.g. when building decorator wrappers)
+@propagate_metadata(original_fn)
+@get("/wrapped")
+async def wrapper(*a, **kw): return await original_fn(*a, **kw)
+
+# Selective — only propagate guards and user metadata
+@propagate_metadata(Source, interceptors=False, middlewares=False, encoder=False)
+@controller("/x")
+class X: ...
+```
+
+**Ordering for list-based metadata** (guards, interceptors, middlewares,
+exception handlers): source entries are **prepended** before the target's
+own entries, so propagated behaviour runs as the outermost layer.
+
+**Encoder**: source encoder is copied only when the target has no encoder of
+its own (target's explicit `@use_encoder` wins).
+
+**User metadata** (`@set_metadata` key/value pairs): source dict is merged in;
+target's existing keys take precedence on conflict.
+
+Parameters: `source` (required), `guards=True`, `interceptors=True`,
+`middlewares=True`, `exception_handlers=True`, `encoder=True`,
+`user_metadata=True`.
+
+---
+
 ## JSON Serialisation
 
 Lauren auto-selects the fastest available encoder at startup via
@@ -2203,85 +2244,149 @@ line = format_sse_event(data="hello", event="ping", id="1")
 
 ---
 
-## Reflect — WebSocket Guard/Interceptor Support
+## Reflect — Metadata Introspection API
 
-`lauren.reflect` provides the context objects and metadata readers that
-allow `@use_guards` and `@use_interceptors` to work natively on
-`@ws_controller` and `@mcp_server` classes, mirroring what they already
-do on HTTP `@controller` classes.
+`lauren.reflect` provides typed readers for every piece of decorator-attached
+metadata in a Lauren application: controller and module declarations, HTTP routes,
+WS gateway hooks, guard/interceptor/middleware chains, user metadata, and the
+compiled runtime dispatch table.  All readers return `None` / empty tuple for
+undecorated objects and use `cls.__dict__` only (own-class rule — no inheritance).
 
-### `WsUpgradeRequest`
+### WebSocket context types
 
-Read-only view of the HTTP upgrade request that opened a WebSocket
-connection.  Guards and interceptors receive this via `ctx.request`,
-duck-typing with the HTTP `Request` object so the same guard can protect
-both HTTP routes and WebSocket gateways:
+#### `WsUpgradeRequest`
+
+Read-only view of the HTTP upgrade request that opened a WebSocket connection.
+Guards receive this via `ctx.request`, duck-typing with the HTTP `Request` object:
 
 ```python
-from lauren import WsConnectionContext
-
 class ApiKeyGuard:
-    async def can_activate(self, ctx: WsConnectionContext) -> bool:
+    async def can_activate(self, ctx) -> bool:
         return ctx.request.headers.get("x-api-key") == "secret"
 ```
 
 Fields: `headers`, `path`, `path_params`, `query_string`, `client`,
 `method` (always `"GET"`).
 
-### `WsConnectionContext`
+#### `WsConnectionContext`
 
-Context object passed to guards and interceptors at WebSocket connection
-time.  Mirrors `ExecutionContext` so the same guard class works for both
-HTTP and WebSocket:
+Context object passed to guards and interceptors at WebSocket connection time.
+Mirrors `ExecutionContext` so the same guard class works for HTTP and WS:
 
 ```python
-from lauren import use_guards, ws_controller, WsConnectionContext
-
 @use_guards(ApiKeyGuard)
 @ws_controller("/private")
-class PrivateGateway:
-    ...
+class PrivateGateway: ...
 ```
 
 Fields: `request` (`WsUpgradeRequest`), `connection` (live `WebSocket`),
-`handler_class`, `handler_func` (always `None` for connection-level
-checks), `route_template`, `metadata`.
-
+`handler_class`, `handler_func`, `route_template`, `metadata`.
 Method: `get_metadata(key, default=None)`.
 
-### `reflect_guards`, `reflect_interceptors`, `reflect_middlewares`
+### Cross-cutting concern readers
 
-Read cross-cutting metadata from a class's **own** `__dict__` (no
-inheritance — matches Lauren's own-class rule):
+All read from `cls.__dict__` only.
+
+| Function | Returns |
+|---|---|
+| `reflect_guards(cls)` | `tuple[type, ...]` — guard classes via `@use_guards` |
+| `reflect_interceptors(cls)` | `tuple[type, ...]` — interceptor classes via `@use_interceptors` |
+| `reflect_middlewares(cls)` | `tuple[type, ...]` — middleware classes via `@use_middlewares` |
+| `reflect_exception_handlers(cls_or_fn)` | `tuple[Any, ...]` — exception handlers via `@use_exception_handlers` |
+| `reflect_all(cls)` | `ReflectedMeta(guards, interceptors, middlewares)` |
+
+### Static class readers
+
+All return `None` (or empty tuple) for undecorated objects.
+
+| Function | Returns |
+|---|---|
+| `reflect_controller(cls)` | `ControllerMeta \| None` |
+| `reflect_module(cls)` | `ModuleMeta \| None` |
+| `reflect_injectable(cls)` | `InjectableMeta \| None` |
+| `reflect_ws_controller(cls)` | `WsControllerMeta \| None` |
+| `reflect_routes(cls)` | `tuple[ReflectedRoute, ...]` — all `@get`/`@post`/… on the class |
+| `reflect_ws_messages(cls)` | `tuple[ReflectedWsMessage, ...]` — all `@on_message` declarations |
+
+`reflect_routes` folds the controller prefix into `ReflectedRoute.full_path`:
 
 ```python
-from lauren import reflect_guards, reflect_interceptors, reflect_middlewares
+@controller("/users")
+class UserController:
+    @get("/{id}")
+    async def get_user(self): ...
 
-guards = reflect_guards(MyController)         # tuple[type, ...]
-interceptors = reflect_interceptors(MyController)
-middlewares = reflect_middlewares(MyController)
+routes = reflect_routes(UserController)
+routes[0].full_path   # "/users/{id}"
+routes[0].method      # "GET"
 ```
 
-### `reflect_all`
+### Structured class getters
 
-Convenience wrapper that returns a `ReflectedMeta` named-tuple with all
-three collections at once:
+Return `None` when the class is not the expected type.
+
+| Function | Returns |
+|---|---|
+| `get_controller_metadata(cls)` | `ReflectedController \| None` |
+| `get_module_metadata(cls)` | `ReflectedModule \| None` |
+
+`ReflectedController` bundles `meta` (`ControllerMeta`), `guards`, `interceptors`,
+`middlewares`, `exception_handlers`, and `routes`.
+
+`ReflectedModule` bundles `meta` (`ModuleMeta`) — read `meta.controllers`,
+`meta.providers`, `meta.imports`, `meta.exports` from there.
+
+### User metadata and encoder
 
 ```python
-from lauren.reflect import reflect_all
+reflect_user_metadata(obj, key=None, default=None)
+# → full dict when key is None, single value otherwise
 
-meta = reflect_all(MyController)
-# meta.guards, meta.interceptors, meta.middlewares
+reflect_encoder(cls_or_fn)   # → JSONEncoder instance or None
 ```
 
-### `reflect` (module)
+### App-level readers (require started app)
 
-The `lauren.reflect` sub-package exports all of the above and is also
-importable directly:
+These return empty tuple / `None` before `LaurenFactory.create()` has run startup.
+
+```python
+from lauren.reflect import get_all_routes, get_all_ws_gateways, get_route_metadata
+
+app = LaurenFactory.create(AppModule)
+TestClient(app)   # triggers startup
+
+for r in get_all_routes(app):
+    print(r.method, r.full_path, r.handler.__name__)
+
+for gw in get_all_ws_gateways(app):
+    print(gw.path_template, gw.guards)
+
+route = get_route_metadata(app, "GET", "/users/{id}")  # ReflectedRoute | None
+```
+
+| Function | Returns |
+|---|---|
+| `get_all_routes(app)` | `tuple[ReflectedRoute, ...]` |
+| `get_all_ws_gateways(app)` | `tuple[ReflectedWsGateway, ...]` |
+| `get_route_metadata(app, method, path)` | `ReflectedRoute \| None` |
+
+### Result types
+
+| Type | Key fields |
+|---|---|
+| `ReflectedRoute` | `method`, `path`, `full_path`, `summary`, `response_model`, `tags`, `deprecated`, `handler` |
+| `ReflectedWsMessage` | `event`, `payload_model`, `summary`, `handler` |
+| `ReflectedController` | `cls`, `meta`, `guards`, `interceptors`, `middlewares`, `exception_handlers`, `routes` |
+| `ReflectedModule` | `cls`, `meta` |
+| `ReflectedWsGateway` | `cls`, `path_template`, `meta`, `guards`, `interceptors`, `middlewares`, `messages`, `owning_module` |
+
+### `reflect` module
+
+All symbols are importable from `lauren.reflect` or directly from `lauren`:
 
 ```python
 import lauren.reflect as reflect
-ctx: reflect.WsConnectionContext = ...
+from lauren import reflect_routes, get_all_routes, ReflectedRoute
 ```
 
 ---

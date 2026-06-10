@@ -5,6 +5,85 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — `lauren.reflect` full metadata introspection API
+
+The `lauren.reflect` module was expanded from a narrow WS cross-cutting helper
+into a comprehensive read-only metadata introspection API covering every
+decorator in the framework.
+
+#### Phase 1 — Static class readers
+
+New functions in `lauren.reflect` (all read from `cls.__dict__` only, own-class
+rule, return `None` / empty tuple for undecorated objects):
+
+- `reflect_controller(cls)` → `ControllerMeta | None`
+- `reflect_module(cls)` → `ModuleMeta | None`
+- `reflect_injectable(cls)` → `InjectableMeta | None`
+- `reflect_ws_controller(cls)` → `WsControllerMeta | None`
+- `reflect_routes(cls)` → `tuple[ReflectedRoute, ...]` — folds controller prefix into `full_path`
+- `reflect_ws_messages(cls)` → `tuple[ReflectedWsMessage, ...]`
+- `reflect_exception_handlers(cls_or_fn)` → `tuple[Any, ...]` — reads `@use_exception_handlers`
+- `get_controller_metadata(cls)` → `ReflectedController | None`
+- `get_module_metadata(cls)` → `ReflectedModule | None`
+- `reflect_user_metadata(obj, key=None, default=None)` — reads `@set_metadata` dict
+- `reflect_encoder(cls_or_fn)` → encoder instance or `None`
+
+#### Phase 2 — App-level readers
+
+New `lauren.reflect._app_reader` module (no `_asgi` import at load time; uses
+duck-typed `getattr` access; returns empty tuple / `None` before startup):
+
+- `get_all_routes(app)` → `tuple[ReflectedRoute, ...]`
+- `get_all_ws_gateways(app)` → `tuple[ReflectedWsGateway, ...]`
+- `get_route_metadata(app, method, path)` → `ReflectedRoute | None`
+
+#### New result types
+
+New frozen dataclasses in `lauren.reflect._types` (all re-exported from
+`lauren.reflect` and `lauren`):
+
+- `ReflectedRoute` — `method`, `path`, `full_path`, `summary`, `response_model`, `tags`, `deprecated`, `handler`
+- `ReflectedWsMessage` — `event`, `payload_model`, `summary`, `handler`
+- `ReflectedController` — `cls`, `meta`, `guards`, `interceptors`, `middlewares`, `exception_handlers`, `routes`
+- `ReflectedModule` — `cls`, `meta`
+- `ReflectedWsGateway` — `cls`, `path_template`, `meta`, `guards`, `interceptors`, `middlewares`, `messages`, `owning_module`
+
+---
+
+### Added — `@propagate_metadata`
+
+New decorator in `lauren.decorators` and re-exported from `lauren`:
+
+```python
+@propagate_metadata(
+    source,
+    *,
+    guards=True,
+    interceptors=True,
+    middlewares=True,
+    exception_handlers=True,
+    encoder=True,
+    user_metadata=True,
+)
+```
+
+Copies Lauren's `@use_*` decorator metadata from `source` to the decorated
+target — the `functools.wraps` equivalent for Lauren annotations.
+
+- **List-based metadata** (guards, interceptors, middlewares, exception
+  handlers): source entries are prepended before the target's own entries so
+  that propagated behaviour runs as the outermost layer.
+- **Encoder**: source encoder is copied only when the target has no
+  encoder of its own.
+- **User metadata** (`@set_metadata` key/value pairs): source dict is merged
+  in; target's existing keys take precedence on conflict.
+- `source` may be any class or callable decorated with Lauren's `@use_*`
+  family.
+
+---
+
 ## [1.6.0] - 2026-06-10
 
 ### Added — `lauren.reflect`: native guard & interceptor support for WebSocket gateways

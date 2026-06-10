@@ -104,6 +104,7 @@ from .decorators import (
     use_guards,
     use_interceptors,
     use_middlewares,
+    propagate_metadata,
     OpenAPISecurityMeta,
 )
 from .exceptions import (
@@ -210,12 +211,38 @@ from .websockets import (
 )
 from . import reflect  # noqa: F401
 from .reflect import (
+    # context types
     WsConnectionContext,
     WsUpgradeRequest,
+    # cross-cutting readers
     reflect_guards,
     reflect_interceptors,
     reflect_middlewares,
     reflect_all,
+    ReflectedMeta,
+    # static class readers
+    reflect_controller,
+    reflect_module,
+    reflect_injectable,
+    reflect_ws_controller,
+    reflect_routes,
+    reflect_ws_messages,
+    reflect_exception_handlers,
+    get_controller_metadata,
+    get_module_metadata,
+    # user metadata + encoder
+    reflect_user_metadata,
+    reflect_encoder,
+    # app-level readers
+    get_all_routes,
+    get_all_ws_gateways,
+    get_route_metadata,
+    # result types
+    ReflectedRoute,
+    ReflectedWsMessage,
+    ReflectedController,
+    ReflectedModule,
+    ReflectedWsGateway,
 )
 from ._staticfiles import StaticFilesModule
 from .types import (
@@ -300,6 +327,7 @@ __all__ = [
     "exception_handler",
     "use_exception_handlers",
     "set_metadata",
+    "propagate_metadata",
     "openapi_security",
     "OpenAPISecurityMeta",
     # static files
@@ -369,13 +397,38 @@ __all__ = [
     "on_message",
     "on_error",
     "WebSocket",
-    # reflect
+    # reflect — context types
     "WsConnectionContext",
     "WsUpgradeRequest",
+    # reflect — cross-cutting readers
     "reflect_guards",
     "reflect_interceptors",
     "reflect_middlewares",
     "reflect_all",
+    "ReflectedMeta",
+    # reflect — static class readers
+    "reflect_controller",
+    "reflect_module",
+    "reflect_injectable",
+    "reflect_ws_controller",
+    "reflect_routes",
+    "reflect_ws_messages",
+    "reflect_exception_handlers",
+    "get_controller_metadata",
+    "get_module_metadata",
+    # reflect — user metadata + encoder
+    "reflect_user_metadata",
+    "reflect_encoder",
+    # reflect — app-level readers
+    "get_all_routes",
+    "get_all_ws_gateways",
+    "get_route_metadata",
+    # reflect — result types
+    "ReflectedRoute",
+    "ReflectedWsMessage",
+    "ReflectedController",
+    "ReflectedModule",
+    "ReflectedWsGateway",
     "BroadcastGroup",
     "WebSocketError",
     "WebSocketDisconnect",
