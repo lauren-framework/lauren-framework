@@ -64,6 +64,81 @@ from .websockets import (
 
 from ._validation import is_pydantic_model as _is_pydantic_model  # noqa: F401
 
+# NOTE: reflect._reader and reflect._composer are imported lazily (inside
+# compile_gateways / handle_websocket) to avoid a circular import:
+#   _ws_runtime → reflect._reader → reflect/__init__.py → reflect._context
+#                                                        → _ws_runtime  ← cycle
+# WsConnectionContext and WsUpgradeRequest are defined HERE (below) so that
+# reflect._context can import them from this module without triggering the cycle.
+
+
+# ---------------------------------------------------------------------------
+# WebSocket connection context — passed to guards and interceptors.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class WsUpgradeRequest:
+    """Read-only view of the HTTP upgrade request that opened a WS connection.
+
+    Mirrors the fields that guards most commonly access so that the same
+    guard class works on both ``@controller`` (HTTP) and ``@ws_controller``
+    (WebSocket) via duck-typing::
+
+        async def can_activate(self, ctx) -> bool:
+            return ctx.request.headers.get("x-api-key") == "valid"
+
+    WS upgrades have no body, so ``body()``, ``text()``, ``json()``, and
+    ``stream()`` are intentionally absent.
+    """
+
+    headers: Any  # lauren.types.Headers — case-insensitive
+    path: str
+    path_params: dict[str, str]
+    query_string: str = ""
+    client: Any | None = None  # lauren.types.ClientInfo | None
+    method: str = "GET"  # WS upgrades are always GET requests
+
+
+@dataclass(frozen=True, slots=True)
+class WsConnectionContext:
+    """Context object passed to guards and interceptors during a WS connection.
+
+    Mirrors :class:`~lauren.types.ExecutionContext` so that the same guard
+    works on both ``@controller`` (HTTP) and ``@ws_controller`` (WebSocket)::
+
+        # Works for HTTP (ctx is ExecutionContext) and WS (ctx is WsConnectionContext).
+        async def can_activate(self, ctx) -> bool:
+            return ctx.request.headers.get("x-api-key") == "valid"
+
+    The ``connection`` field gives guards direct access to the live
+    :class:`WebSocket` object.  Guards that call ``await ctx.connection.close(code)``
+    before returning ``False`` send a custom close reason; Lauren will *not*
+    send a second close frame.
+    """
+
+    request: WsUpgradeRequest
+    """Read-only upgrade request data (headers, path, etc.)."""
+
+    connection: Any
+    """The live :class:`WebSocket` object for this connection."""
+
+    handler_class: type | None = None
+    """The ``@ws_controller`` class handling this connection."""
+
+    handler_func: Any | None = None
+    """Always ``None`` during the connection-level check; present for
+    protocol symmetry with :class:`~lauren.types.ExecutionContext`."""
+
+    route_template: str | None = None
+    """Matched path template, e.g. ``"/chat/{room_id}"``."""
+
+    metadata: dict[str, Any] = field(default_factory=dict)
+    """Key→value pairs from ``@set_metadata`` decorators on the gateway."""
+
+    def get_metadata(self, key: str, default: Any = None) -> Any:
+        return self.metadata.get(key, default)
+
 
 # ---------------------------------------------------------------------------
 # Compiled dispatch records. Produced once at startup; consulted at every
@@ -129,6 +204,15 @@ class CompiledGateway:
     #: so every binding style, including custom descriptors, works
     #: transparently without an explicit ``if/elif`` branch.
     raw_descriptors: dict[Any, Any] = field(default_factory=dict)
+    #: Guard classes declared via ``@use_guards`` on the gateway class.
+    #: Checked before ``@on_connect`` fires; rejection closes with 1008.
+    guards: tuple[type, ...] = ()
+    #: Interceptor classes declared via ``@use_interceptors`` on the class.
+    #: Wrap the ``@on_connect`` lifecycle (before accept + after connect).
+    interceptors: tuple[type, ...] = ()
+    #: Middleware classes declared via ``@use_middlewares`` on the class.
+    #: Stored for introspection / future WS middleware support.
+    middlewares: tuple[type, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +241,12 @@ def compile_gateways(
     ``module_graph.iter_controllers()`` inherits the ``@ws_controller``
     marker without re-declaring it explicitly on the subclass.
     """
+    from .reflect._reader import (  # noqa: PLC0415
+        reflect_guards,
+        reflect_interceptors,
+        reflect_middlewares,
+    )
+
     gateways: dict[str, CompiledGateway] = {}
     for cls in _iter_ws_controllers(module_graph):
         ctrl_meta = own_ws_controller_meta(cls)
@@ -274,6 +364,11 @@ def compile_gateways(
             message_metas=tuple(all_metas),
             bindings=dict(hooks.get("bindings", {})),
             raw_descriptors=dict(hooks.get("raw_descriptors", {})),
+            # Cross-cutting concern metadata — read from cls.__dict__ only
+            # (own-class rule: no inheritance of guard/interceptor metadata).
+            guards=reflect_guards(cls),
+            interceptors=reflect_interceptors(cls),
+            middlewares=reflect_middlewares(cls),
         )
         gateways[entry.path_template] = compiled
     return gateways
@@ -583,6 +678,9 @@ async def handle_websocket(
     scope: dict[str, Any],
     receive: Callable[[], Awaitable[dict[str, Any]]],
     send: Callable[[dict[str, Any]], Awaitable[None]],
+    *,
+    global_ws_guards: list[type] | None = None,
+    global_ws_interceptors: list[type] | None = None,
 ) -> None:
     """ASGI-side WebSocket dispatch entry point.
 
@@ -687,15 +785,75 @@ async def handle_websocket(
             result = await result
         return result
 
-    # ---- Handshake + @on_connect ----
+    # ---- Guards + @on_connect (+ interceptors) ----
+    #
+    # Effective chains: global guards run FIRST (same as HTTP), then
+    # class-level guards.  Interceptors follow the same outermost-first
+    # ordering used by the HTTP interceptor chain.
+    #
+    # Lazy imports here to avoid circular dependency at module load time:
+    #   _ws_runtime → reflect._reader → reflect/__init__.py → reflect._context
+    #               → _ws_runtime  [cycle!]
+    from .reflect._composer import apply_guards, apply_interceptors  # noqa: PLC0415
+
+    _effective_guards: tuple[type, ...] = tuple(global_ws_guards or ()) + gateway.guards
+    _effective_interceptors: tuple[type, ...] = tuple(global_ws_interceptors or ()) + gateway.interceptors
+
+    # Build a WsConnectionContext from the upgrade-request data so that
+    # guards and interceptors receive the same duck-typed interface as
+    # ExecutionContext.request (headers, path, method, …).
+    _ws_ctx = WsConnectionContext(
+        request=WsUpgradeRequest(
+            headers=ws.headers,
+            path=ws.path,
+            path_params=dict(ws.path_params),
+            query_string=scope.get("query_string", b"").decode("latin-1"),
+            client=scope.get("client"),
+        ),
+        connection=ws,
+        handler_class=gateway.controller_cls,
+        route_template=gateway.path_template,
+    )
+
+    # Resolve the framework_values map for DI lookups within guards/interceptors.
+    _fv: dict[type, Any] = {WebSocket: ws, type(ws): ws}
 
     try:
-        await _run_hook(gateway.on_connect, gateway.on_connect_extractions)
-        # If the user didn't accept the connection themselves, do it
-        # for them now. Mirrors FastAPI's implicit-accept convention,
-        # which removes a line of boilerplate from every gateway.
-        if ws.connection_state == ws.STATE_CONNECTING:
-            await ws.accept()
+        # --- Guard check (before accepting the connection) ---
+        if _effective_guards:
+            _allowed = await apply_guards(
+                _effective_guards,
+                _ws_ctx,
+                container=container,
+                request_cache=request_cache,
+                framework_values=_fv,
+                owning_module=owning_module,
+            )
+            if not _allowed:
+                await send({"type": "websocket.close", "code": 1008})
+                await _finalize_scope(container, request_cache)
+                return
+
+        # --- @on_connect (optionally wrapped by interceptors) ---
+        async def _run_connect() -> Any:
+            """Run @on_connect + auto-accept; innermost of the interceptor chain."""
+            await _run_hook(gateway.on_connect, gateway.on_connect_extractions)
+            if ws.connection_state == ws.STATE_CONNECTING:
+                await ws.accept()
+
+        if _effective_interceptors:
+            await apply_interceptors(
+                _effective_interceptors,
+                _run_connect,
+                _ws_ctx,
+                container=container,
+                request_cache=request_cache,
+                framework_values=_fv,
+                owning_module=owning_module,
+            )
+        else:
+            await _run_connect()
+
     except WebSocketError as exc:
         # Only send a close frame if the gateway hook didn't already close the
         # connection itself (e.g. ``await ws.close(...)`` followed by raising

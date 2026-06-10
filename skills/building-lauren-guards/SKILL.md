@@ -142,3 +142,69 @@ app = LaurenFactory.create(AppModule, global_exception_handlers=[DomainErrors])
 Resolution order: route → controller → global. First matching handler wins.
 
 See [interceptors-middlewares.md](interceptors-middlewares.md) for interceptors and middlewares.
+
+---
+
+## Guards on WebSocket gateways
+
+`@use_guards` works on `@ws_controller` classes. Guards run before `@on_connect`,
+before the WebSocket handshake is accepted.
+
+```python
+from lauren import (
+    injectable, Scope, use_guards,
+    ws_controller, on_connect, WebSocket,
+    WsConnectionContext,
+)
+
+@injectable(scope=Scope.SINGLETON)
+class WsAuthGuard:
+    async def can_activate(self, ctx: WsConnectionContext) -> bool:
+        # ctx.request mirrors HTTP Request: .headers, .path, .path_params, .method
+        # ctx.connection  — the live WebSocket
+        # ctx.handler_class, ctx.route_template, ctx.get_metadata(key)
+        token = ctx.request.headers.get("x-token", "")
+        return token == "valid"
+
+@use_guards(WsAuthGuard)
+@ws_controller("/protected")
+class ProtectedGateway:
+    @on_connect
+    async def on_open(self, ws: WebSocket) -> None:
+        # Only called when all guards returned True.
+        await ws.send_json({"event": "connected"})
+```
+
+A **rejected** connection gets close code `1008` (policy violation). The guard
+runs before `ws.accept()` — the client never completes the handshake.
+
+### Sharing one guard across HTTP and WebSocket
+
+`WsConnectionContext.request` duck-types with the HTTP `Request` object on the
+fields guards most commonly read (headers, path, path_params, method). A guard
+that only touches those fields works unchanged on both transport types:
+
+```python
+@injectable(scope=Scope.SINGLETON)
+class ApiKeyGuard:
+    async def can_activate(self, ctx) -> bool:
+        # Works for @controller (ctx is ExecutionContext)
+        # AND @ws_controller (ctx is WsConnectionContext) — same code.
+        return ctx.request.headers.get("x-api-key") == "secret"
+```
+
+### Global WebSocket guards
+
+```python
+app = LaurenFactory.create(AppModule, global_ws_guards=[WsAuthGuard])
+# global guards run first, then class-level guards
+```
+
+### Reading guard metadata from a gateway class
+
+```python
+from lauren.reflect import reflect_guards, reflect_all
+
+guards = reflect_guards(MyGateway)        # tuple[type, ...] — own __dict__ only
+meta = reflect_all(MyGateway)             # ReflectedMeta(guards, interceptors, middlewares)
+```

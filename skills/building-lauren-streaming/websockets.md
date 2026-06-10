@@ -153,4 +153,38 @@ from lauren.websockets import BroadcastGroup
 )
 class ChatModule:
     pass
+
+---
+
+## Guards & interceptors on WebSocket gateways
+
+`@use_guards` and `@use_interceptors` work natively on `@ws_controller` classes.
+Guards run *before* `@on_connect` and *before* the connection is accepted.
+
+```python
+from lauren import injectable, Scope, use_guards, WsConnectionContext
+
+@injectable(scope=Scope.SINGLETON)
+class WsTokenGuard:
+    async def can_activate(self, ctx: WsConnectionContext) -> bool:
+        # ctx.request.headers, ctx.request.path, ctx.request.path_params
+        # ctx.connection  — the live WebSocket object
+        return ctx.request.headers.get("x-token") == "valid"
+
+@use_guards(WsTokenGuard)
+@ws_controller("/secure-ws")
+class SecureGateway:
+    @on_connect
+    async def on_open(self, ws: WebSocket) -> None:
+        await ws.send_json({"event": "welcome"})  # only reached if guard passes
+```
+
+`WsConnectionContext.request` duck-types with the HTTP `Request` object —
+the same guard class works for both `@controller` and `@ws_controller`.
+
+Apply a guard to every gateway in the app:
+
+```python
+app = LaurenFactory.create(AppModule, global_ws_guards=[WsTokenGuard])
+```
 ```

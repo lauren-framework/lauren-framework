@@ -251,6 +251,91 @@ def test_admin_required():
 
 For unit tests of complex guards, build an `ExecutionContext` manually or mock the request.
 
+## Guards on WebSocket gateways
+
+`@use_guards` works identically on `@ws_controller` classes. The framework runs
+the guard chain *before* the `@on_connect` hook and *before* the connection is
+accepted — a rejected client receives WebSocket close code `1008` (policy
+violation) without the handshake ever completing.
+
+```python
+from lauren import (
+    injectable, Scope, use_guards,
+    ws_controller, on_connect, WebSocket,
+    WsConnectionContext,
+)
+
+@injectable(scope=Scope.SINGLETON)
+class WsApiKeyGuard:
+    async def can_activate(self, ctx: WsConnectionContext) -> bool:
+        # ctx.request mirrors the HTTP upgrade request (headers, path, …)
+        return ctx.request.headers.get("x-api-key") == "secret"
+
+@use_guards(WsApiKeyGuard)
+@ws_controller("/live")
+class LiveGateway:
+    @on_connect
+    async def connected(self, ws: WebSocket) -> None:
+        # only reached when WsApiKeyGuard.can_activate returned True
+        await ws.send_json({"event": "welcome"})
+```
+
+### `WsConnectionContext` vs `ExecutionContext`
+
+Guards receive a `WsConnectionContext` instead of an `ExecutionContext`. The two
+types are **duck-compatible** on the fields guards most commonly read:
+
+| Field | HTTP (`ExecutionContext`) | WebSocket (`WsConnectionContext`) |
+|---|---|---|
+| `ctx.request.headers` | ✓ | ✓ |
+| `ctx.request.path` | ✓ | ✓ |
+| `ctx.request.path_params` | ✓ | ✓ |
+| `ctx.request.method` | ✓ | always `"GET"` |
+| `ctx.handler_class` | ✓ | ✓ |
+| `ctx.route_template` | ✓ | ✓ |
+| `ctx.get_metadata(key)` | ✓ | ✓ |
+| `ctx.connection` | — | ✓ (the live `WebSocket`) |
+
+A guard that only reads `ctx.request.headers` works unchanged on both HTTP
+controllers and WebSocket gateways:
+
+```python
+@injectable(scope=Scope.SINGLETON)
+class ApiKeyGuard:
+    async def can_activate(self, ctx) -> bool:
+        # Same guard, works for @controller AND @ws_controller
+        return ctx.request.headers.get("x-api-key") == "secret"
+```
+
+### Global WebSocket guards
+
+Pass `global_ws_guards` to `LaurenFactory.create()` to apply guards to every
+WebSocket gateway in the application:
+
+```python
+app = LaurenFactory.create(
+    AppModule,
+    global_ws_guards=[WsApiKeyGuard],
+)
+```
+
+Global guards run **before** class-level guards, matching the ordering for HTTP
+global guards.
+
+### Reading WS guard metadata at runtime
+
+`lauren.reflect` exposes helpers for extension packages that need to inspect a
+gateway's guard/interceptor metadata programmatically:
+
+```python
+from lauren.reflect import reflect_guards, reflect_interceptors
+
+guards = reflect_guards(MyGateway)       # tuple[type, ...] — own __dict__ only
+interceptors = reflect_interceptors(MyGateway)
+```
+
+See [Reference → Reflect](../reference/reflect.md) for the full API.
+
 ## Best practices
 
 * **One guard, one concern.** A guard that does authentication AND authorization AND rate-limiting is hard to compose. Split it.

@@ -664,6 +664,44 @@ There are three idiomatic ways to reject a connection inside `@on_connect`:
 
 All three patterns produce the same client-visible close code. Mixing `close()` with `raise WebSocketDisconnect` in the same handler is safe because Lauren tracks connection state internally and never sends a duplicate close frame to the ASGI transport.
 
+## Guards & Interceptors
+
+`@use_guards` and `@use_interceptors` attach to `@ws_controller` classes exactly
+as they do to HTTP `@controller` classes. The WS runtime runs the guard chain
+*before* accepting the connection — rejected clients never complete the handshake.
+
+```python
+from lauren import (
+    injectable, Scope, use_guards, use_interceptors,
+    ws_controller, on_connect, WebSocket, WsConnectionContext,
+)
+
+@injectable(scope=Scope.SINGLETON)
+class TokenGuard:
+    async def can_activate(self, ctx: WsConnectionContext) -> bool:
+        return ctx.request.headers.get("x-token") == "valid"
+
+@use_guards(TokenGuard)
+@ws_controller("/secure")
+class SecureGateway:
+    @on_connect
+    async def on_open(self, ws: WebSocket) -> None:
+        await ws.send_json({"event": "welcome"})
+```
+
+Guards receive a [`WsConnectionContext`](../reference/reflect.md) which
+duck-types with `ExecutionContext` — the same guard class works for both HTTP and
+WebSocket without modification.
+
+Apply guards across every gateway in the application with `global_ws_guards`:
+
+```python
+app = LaurenFactory.create(AppModule, global_ws_guards=[TokenGuard])
+```
+
+See [Custom Guards → WebSocket gateways](custom-guards.md#guards-on-websocket-gateways)
+for the full pattern including interceptors, metadata access, and testing.
+
 ## Best practices
 
 * **Accept explicitly when authorising.** Calling `await ws.accept()` is the contract that signals "the handshake succeeded". Calling `close()` *before* `accept()` rejects the connection with the `4xxx` code you choose. Skip both, and the framework will accept by default — convenient for trivial gateways but error-prone for anything authenticated.
@@ -677,5 +715,5 @@ All three patterns produce the same client-visible close code. Mixing `close()` 
 * [Server-Sent Events](server-sent-events.md) — for one-way push when you don't need bidirectional traffic.
 * [Signals & Lifecycle Events](signals.md) — `SignalBus` and the `ContextVar` routing pattern shown in the real-world example above.
 * [Class Inheritance Rules](../core-concepts/inheritance.md) — why subclassing a `@ws_controller` doesn't auto-mount.
-* [Custom Guards](custom-guards.md) — for HTTP-style authorisation; on WebSockets the equivalent is an `@on_connect` check that closes with a 4xxx code.
+* [Custom Guards](custom-guards.md) — `@use_guards` works natively on `@ws_controller` classes; guards run before `@on_connect` with a `WsConnectionContext` that duck-types with `ExecutionContext`. The manual `@on_connect` close pattern is still available for inline one-off checks.
 * [Reference → Error Catalog](../reference/errors.md) — all 28 framework error classes.

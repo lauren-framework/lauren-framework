@@ -93,8 +93,12 @@ lauren/                      — framework package
 ├── _routing/                — radix-tree HTTP router
 ├── _typing/                 — ForwardRef / PEP 563 resolver (private)
 ├── _validation.py           — provider-agnostic type detection & validation (pydantic, msgspec, dataclass, TypedDict)
-├── _ws_runtime.py           — WebSocket dispatch engine
+├── _ws_runtime.py           — WebSocket dispatch engine + WsConnectionContext / WsUpgradeRequest
 ├── _socketio.py             — Engine.IO/Socket.IO adapter (private)
+├── reflect/                 — public sub-package: WS guard/interceptor readers + composers
+│   ├── __init__.py          — re-exports WsConnectionContext, WsUpgradeRequest, reflect_guards, …
+│   ├── _reader.py           — own-class metadata readers (no inheritance)
+│   └── _composer.py        — apply_guards / apply_interceptors helpers
 ├── decorators.py            — user-facing @controller, @module, @get, …
 ├── exceptions.py            — error hierarchy (28 classes)
 ├── extractors.py            — Path/Query/Json/Depends + pipes + custom extractors
@@ -255,6 +259,15 @@ WebSockets and SSE are first-class peers of HTTP, not bolt-ons.
   `@on_disconnect`, `@on_error`) attach metadata to the *method*; the
   same strict-inheritance rule applies (subclasses must re-decorate the
   gateway class).
+- **`@use_guards` and `@use_interceptors` work natively on
+  `@ws_controller` classes.** The WS runtime reads the metadata at
+  connection time, resolves guards from DI, and calls
+  `can_activate(WsConnectionContext)` before `@on_connect` runs. The
+  same guard class works on both HTTP and WS — `WsConnectionContext` and
+  `WsUpgradeRequest` duck-type with `ExecutionContext` and `Request`. See
+  `lauren/reflect/` for the helpers used internally and available to
+  extension packages (`apply_guards`, `apply_interceptors`,
+  `reflect_guards`, `reflect_interceptors`, `reflect_middlewares`).
 - **Typed messages.** A `@on_message("chat.send")` handler that takes
   `body: Json[ChatMessage]` runs through the same validation pipeline as
   HTTP `Json[T]` extractors (pydantic, msgspec, dataclass, TypedDict) —
@@ -413,7 +426,7 @@ deterministic).
 
 `<scope>: <imperative sentence under 72 chars>`. Scopes: `di`, `asgi`,
 `routing`, `ws`, `sse`, `streaming`, `background`, `typing`,
-`extractors`, `exceptions`, `tests`, `docs`, `meta`. Example:
+`extractors`, `exceptions`, `reflect`, `tests`, `docs`, `meta`. Example:
 `typing: resolve ForwardRef annotations via _typing sub-package`.
 
 ## 11. Where to Look First
@@ -422,7 +435,9 @@ deterministic).
 - `lauren/_di/__init__.py` — provider graph & cycle detection.
 - `lauren/_di/custom.py` — `use_value` / `use_class` / `use_factory`
   / `use_existing` recipes, `Token`, `Inject`.
+- `lauren/_ws_runtime.py` — `WsConnectionContext`, `WsUpgradeRequest`, `CompiledGateway`, `handle_websocket`.
 - `lauren/websockets.py` — gateway runtime + `BroadcastGroup`.
+- `lauren/reflect/` — `apply_guards`, `apply_interceptors`, `reflect_guards`, metadata readers.
 - `lauren/sse.py` — `EventStream`, `ServerSentEvent`, framing.
 - `lauren/streaming.py` — `StreamingResponse[T]`, `Stream`,
   `StreamReader`, content-negotiation logic.
