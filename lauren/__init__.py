@@ -208,6 +208,15 @@ from .websockets import (
     on_message,
     ws_controller,
 )
+from . import reflect  # noqa: F401
+from .reflect import (
+    WsConnectionContext,
+    WsUpgradeRequest,
+    reflect_guards,
+    reflect_interceptors,
+    reflect_middlewares,
+    reflect_all,
+)
 from ._staticfiles import StaticFilesModule
 from .types import (
     AppState,
@@ -360,6 +369,13 @@ __all__ = [
     "on_message",
     "on_error",
     "WebSocket",
+    # reflect
+    "WsConnectionContext",
+    "WsUpgradeRequest",
+    "reflect_guards",
+    "reflect_interceptors",
+    "reflect_middlewares",
+    "reflect_all",
     "BroadcastGroup",
     "WebSocketError",
     "WebSocketDisconnect",

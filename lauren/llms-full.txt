@@ -2196,6 +2196,89 @@ line = format_sse_event(data="hello", event="ping", id="1")
 
 ---
 
+## Reflect — WebSocket Guard/Interceptor Support
+
+`lauren.reflect` provides the context objects and metadata readers that
+allow `@use_guards` and `@use_interceptors` to work natively on
+`@ws_controller` and `@mcp_server` classes, mirroring what they already
+do on HTTP `@controller` classes.
+
+### `WsUpgradeRequest`
+
+Read-only view of the HTTP upgrade request that opened a WebSocket
+connection.  Guards and interceptors receive this via `ctx.request`,
+duck-typing with the HTTP `Request` object so the same guard can protect
+both HTTP routes and WebSocket gateways:
+
+```python
+from lauren import WsConnectionContext
+
+class ApiKeyGuard:
+    async def can_activate(self, ctx: WsConnectionContext) -> bool:
+        return ctx.request.headers.get("x-api-key") == "secret"
+```
+
+Fields: `headers`, `path`, `path_params`, `query_string`, `client`,
+`method` (always `"GET"`).
+
+### `WsConnectionContext`
+
+Context object passed to guards and interceptors at WebSocket connection
+time.  Mirrors `ExecutionContext` so the same guard class works for both
+HTTP and WebSocket:
+
+```python
+from lauren import use_guards, ws_controller, WsConnectionContext
+
+@use_guards(ApiKeyGuard)
+@ws_controller("/private")
+class PrivateGateway:
+    ...
+```
+
+Fields: `request` (`WsUpgradeRequest`), `connection` (live `WebSocket`),
+`handler_class`, `handler_func` (always `None` for connection-level
+checks), `route_template`, `metadata`.
+
+Method: `get_metadata(key, default=None)`.
+
+### `reflect_guards`, `reflect_interceptors`, `reflect_middlewares`
+
+Read cross-cutting metadata from a class's **own** `__dict__` (no
+inheritance — matches Lauren's own-class rule):
+
+```python
+from lauren import reflect_guards, reflect_interceptors, reflect_middlewares
+
+guards = reflect_guards(MyController)         # tuple[type, ...]
+interceptors = reflect_interceptors(MyController)
+middlewares = reflect_middlewares(MyController)
+```
+
+### `reflect_all`
+
+Convenience wrapper that returns a `ReflectedMeta` named-tuple with all
+three collections at once:
+
+```python
+from lauren.reflect import reflect_all
+
+meta = reflect_all(MyController)
+# meta.guards, meta.interceptors, meta.middlewares
+```
+
+### `reflect` (module)
+
+The `lauren.reflect` sub-package exports all of the above and is also
+importable directly:
+
+```python
+import lauren.reflect as reflect
+ctx: reflect.WsConnectionContext = ...
+```
+
+---
+
 ## AI Documentation Access
 
 `docs` is a module that exposes the bundled `llms.txt` and

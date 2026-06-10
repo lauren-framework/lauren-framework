@@ -646,6 +646,8 @@ class LaurenApp:
         global_exception_handlers: list[Any] | None = None,
         global_interceptors: list[type] | None = None,
         global_providers: list[Any] | None = None,
+        global_ws_guards: list[type] | None = None,
+        global_ws_interceptors: list[type] | None = None,
     ) -> None:
         self._router = router
         self._container = container
@@ -657,6 +659,8 @@ class LaurenApp:
         self._global_exception_handlers = list(global_exception_handlers or [])
         self._global_interceptors: list[type] = list(global_interceptors or [])
         self._global_providers: list[Any] = list(global_providers or [])
+        self._global_ws_guards: list[type] = list(global_ws_guards or [])
+        self._global_ws_interceptors: list[type] = list(global_ws_interceptors or [])
         self._app_state = app_state
         self._strict_lifecycle = strict_lifecycle
         self._max_body_size = max_body_size
@@ -1631,6 +1635,8 @@ class LaurenApp:
                 scope,
                 receive,
                 send,
+                global_ws_guards=self._global_ws_guards or None,
+                global_ws_interceptors=self._global_ws_interceptors or None,
             )
         except asyncio.CancelledError:
             raise  # server shutdown — let Uvicorn handle it
@@ -2042,6 +2048,8 @@ class LaurenFactory:
         global_interceptors: Iterable[type] | None = None,
         global_exception_handlers: Iterable[Any] | None = None,
         global_providers: Iterable[Any] | None = None,
+        global_ws_guards: Iterable[type] | None = None,
+        global_ws_interceptors: Iterable[type] | None = None,
         max_body_size: int = 1_048_576,
         app_state: AppState | None = None,
         logger: Logger | None = None,
@@ -2086,6 +2094,8 @@ class LaurenFactory:
         effective_global_interceptors = list(global_interceptors or [])
         effective_global_exception_handlers = list(global_exception_handlers or [])
         effective_global_providers: list[Any] = list(global_providers or [])
+        effective_global_ws_guards: list[type] = list(global_ws_guards or [])
+        effective_global_ws_interceptors: list[type] = list(global_ws_interceptors or [])
         overall_t0 = time.perf_counter()
         _log.log(
             f"Starting application (root={root_module.__name__})",
@@ -2463,6 +2473,8 @@ class LaurenFactory:
             arena=final_arena,
             signals=signals,
             error_format=error_format,
+            global_ws_guards=effective_global_ws_guards or None,
+            global_ws_interceptors=effective_global_ws_interceptors or None,
         )
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via
