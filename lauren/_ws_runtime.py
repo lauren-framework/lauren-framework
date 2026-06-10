@@ -213,6 +213,10 @@ class CompiledGateway:
     #: Middleware classes declared via ``@use_middlewares`` on the class.
     #: Stored for introspection / future WS middleware support.
     middlewares: tuple[type, ...] = ()
+    #: Free-form metadata from ``@set_metadata`` on the gateway class.
+    #: Passed to :class:`WsConnectionContext` so guards can read it via
+    #: ``ctx.get_metadata(key, default)``.
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +249,7 @@ def compile_gateways(
         reflect_guards,
         reflect_interceptors,
         reflect_middlewares,
+        reflect_user_metadata,
     )
 
     gateways: dict[str, CompiledGateway] = {}
@@ -369,6 +374,7 @@ def compile_gateways(
             guards=reflect_guards(cls),
             interceptors=reflect_interceptors(cls),
             middlewares=reflect_middlewares(cls),
+            metadata=reflect_user_metadata(cls),
         )
         gateways[entry.path_template] = compiled
     return gateways
@@ -813,6 +819,7 @@ async def handle_websocket(
         connection=ws,
         handler_class=gateway.controller_cls,
         route_template=gateway.path_template,
+        metadata=dict(gateway.metadata),
     )
 
     # Resolve the framework_values map for DI lookups within guards/interceptors.
