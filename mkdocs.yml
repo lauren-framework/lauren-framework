@@ -153,6 +153,7 @@ nav:
     - Custom Guards: guides/custom-guards.md
     - Custom Middleware: guides/custom-middleware.md
     - Interceptors: guides/interceptors.md
+    - Propagate Metadata: guides/propagate-metadata.md
     - Custom Exception Handlers: guides/custom-exception-handlers.md
     - WebSockets: guides/websockets.md
     - Server-Sent Events: guides/server-sent-events.md

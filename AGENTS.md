@@ -101,7 +101,10 @@ nox -s ver_dec -- --patch
 | `lauren/_typing/`                 | ForwardRef / PEP 563 resolver                |
 | `lauren/_validation.py`           | Provider-agnostic type detection + validation (pydantic, msgspec, dataclass, TypedDict) |
 | `lauren/_ws_runtime.py`           | WebSocket dispatch loop + `WsConnectionContext` / `WsUpgradeRequest` |
-| `lauren/reflect/`                 | Public sub-package: WS guard/interceptor readers + composers |
+| `lauren/reflect/`                 | Full metadata introspection API — static readers, app readers, result types, WS composers |
+| `lauren/reflect/_reader.py`       | Static readers: `reflect_controller`, `reflect_routes`, `reflect_exception_handlers`, … |
+| `lauren/reflect/_app_reader.py`   | App readers: `get_all_routes`, `get_all_ws_gateways`, `get_route_metadata` |
+| `lauren/reflect/_types.py`        | Frozen result types: `ReflectedRoute`, `ReflectedController`, `ReflectedWsGateway`, … |
 | `lauren/decorators.py`            | User-facing decorators only                  |
 | `lauren/extractors.py`            | Typed extractors + pipes + custom extractors |
 | `lauren/exceptions.py`            | 28-class error hierarchy                     |
@@ -258,7 +261,9 @@ Full index: [`skills/README.md`](skills/README.md)
 | Strict inheritance rules (why subclasses must re-decorate) | `docs/core-concepts/inheritance.md` |
 | WebSocket patterns | `docs/guides/websockets.md` |
 | Guards on WebSocket gateways | `docs/guides/custom-guards.md` §WebSocket gateways |
-| Reflect module (WsConnectionContext, readers) | `docs/reference/reflect.md` |
+| Reflect module — full introspection API | `docs/reference/reflect.md` |
+| Copying decorator metadata between objects | `@propagate_metadata` in `lauren.decorators`; `docs/guides/propagate-metadata.md` |
+| Enumerating all HTTP routes / WS gateways at runtime | `get_all_routes`, `get_all_ws_gateways` in `lauren.reflect` |
 | SSE / streaming | `docs/guides/sse.md` |
 | Custom response subclasses and response factories | `docs/guides/custom-responses.md` / `docs/guides/file-responses.md` |
 | Testing playbook | `skills/testing-lauren-apps/SKILL.md` |

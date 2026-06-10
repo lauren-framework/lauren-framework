@@ -1,6 +1,6 @@
 ---
 name: building-lauren-guards
-description: Writes Lauren guards, interceptors, and middlewares. Covers @guard, can_activate, ExecutionContext, @interceptor, intercept/CallHandler, @middleware() (parentheses required), dispatch/call_next, use_guards, use_interceptors, use_middlewares, and set_metadata. Use when protecting routes, transforming responses, or adding cross-cutting logic to a Lauren app.
+description: Writes Lauren guards, interceptors, and middlewares. Covers @guard, can_activate, ExecutionContext, @interceptor, intercept/CallHandler, @middleware() (parentheses required), dispatch/call_next, use_guards, use_interceptors, use_middlewares, set_metadata, propagate_metadata, and WebSocket guards via WsConnectionContext. Use when protecting routes, transforming responses, or adding cross-cutting logic to a Lauren app.
 ---
 
 > Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
@@ -142,6 +142,51 @@ app = LaurenFactory.create(AppModule, global_exception_handlers=[DomainErrors])
 Resolution order: route → controller → global. First matching handler wins.
 
 See [interceptors-middlewares.md](interceptors-middlewares.md) for interceptors and middlewares.
+
+---
+
+## `@propagate_metadata` — copy Lauren metadata between objects
+
+Copies `@use_guards`, `@use_interceptors`, `@use_middlewares`,
+`@use_exception_handlers`, `@use_encoder`, and `@set_metadata` from a *source*
+to the decorated target. Like `functools.wraps` for Lauren annotations.
+
+```python
+from lauren import propagate_metadata, use_guards, controller
+
+@use_guards(ApiKeyGuard)
+class _AuthMixin:
+    pass
+
+# Both controllers behave as if @use_guards(ApiKeyGuard) was applied directly.
+@propagate_metadata(_AuthMixin)
+@controller("/users")
+class UserController: ...
+
+@propagate_metadata(_AuthMixin)
+@controller("/orders")
+class OrderController: ...
+```
+
+List entries (guards, interceptors, middlewares, exception_handlers) are
+**prepended** — source entries run as the outermost layer.
+
+Selective propagation via keyword args:
+
+```python
+@propagate_metadata(Source, interceptors=False, encoder=False)
+@controller("/partial")
+class Partial: ...
+```
+
+Reading propagated metadata back:
+
+```python
+from lauren.reflect import reflect_guards, reflect_user_metadata
+
+reflect_guards(UserController)            # (ApiKeyGuard,)
+reflect_user_metadata(UserController)     # merged @set_metadata dict
+```
 
 ---
 
