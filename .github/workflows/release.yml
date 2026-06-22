@@ -25,7 +25,7 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history required by setuptools-scm to compute the version
           # from the nearest git tag.
