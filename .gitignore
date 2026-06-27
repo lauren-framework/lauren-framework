@@ -57,3 +57,6 @@ env/
 .codemap
 
 site/
+
+# Product requirement docs (local planning scratch, not shipped)
+prds/

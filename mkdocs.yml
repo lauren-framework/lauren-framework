@@ -164,6 +164,7 @@ nav:
     - OpenAPI Security from Guards: guides/openapi-security.md
     - Proxy & Static Files: guides/proxy-and-static-files.md
     - Background Tasks: guides/background-tasks.md
+    - Sessions: guides/sessions.md
     - DI with Data Model Types: guides/di-model-types.md
     - Logging in Production: guides/logging.md
     - Agent Skills: guides/agent-skills.md
@@ -184,6 +185,7 @@ nav:
     - Exception Catalog: reference/exceptions.md
     - Types: reference/types.md
     - Background Tasks: reference/background.md
+    - Sessions: reference/sessions.md
     - Signals: reference/signals.md
     - Testing: reference/testing.md
     - Cheat Sheet: reference/cheat-sheet.md

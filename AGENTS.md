@@ -107,7 +107,9 @@ nox -s ver_dec -- --patch
 | `lauren/reflect/_types.py`        | Frozen result types: `ReflectedRoute`, `ReflectedController`, `ReflectedWsGateway`, … |
 | `lauren/decorators.py`            | User-facing decorators only                  |
 | `lauren/extractors.py`            | Typed extractors + pipes + custom extractors |
-| `lauren/exceptions.py`            | 28-class error hierarchy                     |
+| `lauren/exceptions.py`            | 29-class error hierarchy                     |
+| `lauren/sessions.py`              | Public session surface (`Session`, `SessionConfig`, stores) |
+| `lauren/_sessions/`               | Session engine, stores, HMAC signing, serializer, config |
 | `lauren/streaming.py`             | StreamingResponse[T], Stream, StreamReader   |
 | `lauren/sse.py`                   | EventStream, ServerSentEvent, last_event_id  |
 | `lauren/types.py`                 | Request, Response, State, Headers, Scope, `Discriminated`, … |
@@ -169,6 +171,9 @@ small on purpose; cross-cutting concerns live next door.
   - Cross-cutting: `csrf` (double-submit-cookie), `ip_allowlist`.
   - Password utilities: `BcryptHasher`, `Argon2Hasher`, `generate_token`.
   - Session utilities: `InMemorySessionStore`, `sign_cookie`, `verify_cookie`.
+    Note: core now ships first-class sessions (`lauren.sessions`); the
+    `session_cookie` guard remains an authentication layer and may, in a
+    follow-up, build on core's `SessionStore` Protocol and signing.
 
 ## How to Propose Large Changes
 
@@ -228,6 +233,7 @@ Welcome aboard.
 | Serve static files | `lauren/_staticfiles.py` | `skills/building-lauren-apps/` §Static files |
 | Write unit or integration tests | `tests/integration/test_di.py` | `skills/testing-lauren-apps/` |
 | Add a background task | `lauren/background.py` | `skills/building-lauren-background-tasks/` |
+| Add session state | `lauren/sessions.py` | `skills/building-lauren-sessions/` |
 | Debug a startup error | `lauren/exceptions.py` | **Common Errors** section below |
 | Port from FastAPI | `llms-full.txt` §Guards | `skills/migrating-from-fastapi/` |
 | Add CORS / auth guards / logging | `AGENTS.md` §Companion Packages | `skills/using-companion-packages/` |
@@ -243,6 +249,7 @@ Welcome aboard.
 | Guards, interceptors, middleware | `skills/building-lauren-guards/` |
 | SSE, WebSocket gateways, `StreamingResponse` | `skills/building-lauren-streaming/` |
 | `BackgroundTasks`, `TaskHandle` | `skills/building-lauren-background-tasks/` |
+| Sessions: signed cookies, `Session` injection, pluggable store | `skills/building-lauren-sessions/` |
 | `TestClient`, async tests, mock providers | `skills/testing-lauren-apps/` |
 | FastAPI → lauren side-by-side equivalents | `skills/migrating-from-fastapi/` |
 | CORS, auth guards, structured logging | `skills/using-companion-packages/` |
@@ -265,6 +272,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | Copying decorator metadata between objects | `@propagate_metadata` in `lauren.decorators`; `docs/guides/propagate-metadata.md` |
 | Enumerating all HTTP routes / WS gateways at runtime | `get_all_routes`, `get_all_ws_gateways` in `lauren.reflect` |
 | SSE / streaming | `docs/guides/sse.md` |
+| Session management | `docs/guides/sessions.md` |
 | Custom response subclasses and response factories | `docs/guides/custom-responses.md` / `docs/guides/file-responses.md` |
 | Testing playbook | `skills/testing-lauren-apps/SKILL.md` |
 | Release / versioning process | `docs/development/release.md` / `docs/development/versioning.md` |
@@ -279,6 +287,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | `DecoratorUsageError` | `@middleware` / `@injectable` used bare without `()` | Change to `@middleware()` / `@injectable()` |
 | `DuplicateRouteError` | Two handlers registered on the same method + path | Rename one route |
 | `UnresolvableProviderError` | Type not registered anywhere, or owning module not imported | Import the owning module in the consumer module |
+| `SessionConfigError` | Sessions misconfigured, or `Session` injected with sessions disabled | Pass `sessions=SessionConfig(...)` / fix the unsafe cookie config |
 | `StartupError` (generic) | Missing required parameter in constructor injection | Add the type as a `@module` provider or import its module |
 
 ## Interceptor `CallHandler.handle()` contract (v1.4.2+)

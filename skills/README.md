@@ -14,6 +14,7 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 | [building-lauren-guards](building-lauren-guards/) | Guards (`can_activate`), interceptors (`CallHandler`), middleware (`dispatch`/`call_next`), `@exception_handler`, `@use_guards`/`@use_interceptors`/`@use_middlewares`/`@use_exception_handlers` |
 | [building-lauren-streaming](building-lauren-streaming/) | SSE (`EventStream`, `ServerSentEvent`), WebSocket gateways (`@ws_controller`), `StreamingResponse[T]`, Socket.IO adapter |
 | [building-lauren-background-tasks](building-lauren-background-tasks/) | `BackgroundTasks`, `TaskHandle`, fire-and-forget patterns |
+| [building-lauren-sessions](building-lauren-sessions/) | `sessions=SessionConfig(...)`, `session: Session` injection, `SessionStore` backends, signed cookies, `regenerate_id()`/`invalidate()` |
 | [testing-lauren-apps](testing-lauren-apps/) | `TestClient`, `WsTestClient`, async tests, mock providers, startup-failure assertions |
 | [migrating-from-fastapi](migrating-from-fastapi/) | Side-by-side FastAPI → lauren equivalents (routing, DI, middleware, errors) |
 | [using-companion-packages](using-companion-packages/) | CORS, auth guards (`jwt_bearer`, `api_key`), structured logging with `lauren-logging` |
@@ -29,6 +30,7 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 | `CircularDependencyError` | [building-lauren-services](building-lauren-services/) §Custom providers |
 | `UnresolvableProviderError` | [building-lauren-apps](building-lauren-apps/) §Module imports |
 | `DecoratorUsageError` | [building-lauren-guards](building-lauren-guards/) §Guards |
+| `SessionConfigError` | [building-lauren-sessions](building-lauren-sessions/) §Configuration |
 
 ## See also
 

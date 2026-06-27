@@ -109,6 +109,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Fire-and-forget work after the response is sent. `BackgroundTasks` extractor, `TaskHandle`, sync/async callables, `BackgroundTaskFailed` signals, graceful-shutdown drain participation.
 
+-   :material-cookie: [__Sessions__](sessions.md)
+
+    ---
+    Signed-cookie sessions: `sessions=SessionConfig(...)`, `session: Session` injection, pluggable `SessionStore` (in-memory, stateless cookie, Redis), secure-by-default cookies, `regenerate_id()` / `invalidate()`, and startup-validated config.
+
 -   :material-sync: [__Sync vs Async Handlers__](sync-handlers.md)
 
     ---

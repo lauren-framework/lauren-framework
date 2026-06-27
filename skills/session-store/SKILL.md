@@ -7,6 +7,12 @@ description: Implements an in-memory session store with cookie-based session IDs
 
 # Session Store Setup
 
+> **Note:** Lauren now ships **first-class sessions** in core — prefer
+> `sessions=SessionConfig(...)` with `session: Session` injection (signed
+> cookies, pluggable `SessionStore`, secure defaults, startup validation). See
+> [`building-lauren-sessions`](../building-lauren-sessions/SKILL.md). This page
+> documents the older hand-rolled middleware pattern for reference.
+
 ## Overview
 
 Sessions are stored server-side in a singleton dict. A `@middleware()` class

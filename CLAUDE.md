@@ -176,11 +176,13 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
    `import pydantic` with a try/except and expose a clear error when a
    feature that genuinely needs it is used without it.
 
-8. **The 28-class error catalog is closed.** Adding a new error class
-   is a public-API change. There are 34 total exception classes
+8. **The 29-class error catalog is closed.** Adding a new error class
+   is a public-API change. There are 35 total exception classes
    (including base classes); new runtime conditions should subclass an
    existing category (`StartupError`, `HTTPError`, `LifecycleError`)
-   rather than creating a parallel hierarchy.
+   rather than creating a parallel hierarchy. (`SessionConfigError`, a
+   `StartupError`, was the most recent addition, joining the
+   `*ConfigError` family for the sessions feature.)
 
 → *See `skills/building-lauren-apps/` for the complete `LaurenFactory` bootstrap pattern and module wiring.*
 
@@ -213,6 +215,7 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Inject a typed value into a handler parameter | Custom `Extractor` (`extractors.py`) |
 | Share state across a single request | `Scope.REQUEST` injectable |
 | Share state for the app lifetime | `Scope.SINGLETON` injectable |
+| Persist state across requests for one client | Sessions (`sessions=SessionConfig(...)`; inject `session: Session`) |
 | Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
 | Copy Lauren metadata (guards, interceptors, …) to another class/fn | `@propagate_metadata(source)` |
 | Read all routes declared on a controller | `reflect_routes(cls)` → `tuple[ReflectedRoute, ...]` |
@@ -362,7 +365,21 @@ deterministic).
 - ❌ Passing `Scope.REQUEST` DI instances as `BackgroundTasks.add_task`
   args/kwargs — request-scoped instances are torn down after the handler
   returns, before tasks run. Capture plain values (IDs, strings) or
-  `Scope.SINGLETON` instances instead.
+  `Scope.SINGLETON` instances instead. The same applies to a `Session`:
+  capture `session.as_dict()` or specific values, never the live object.
+- ❌ Injecting `session: Session` (or reading `request.state.session`)
+  without `sessions=SessionConfig(...)` on the factory — raises
+  `SessionConfigError` at startup, not at runtime.
+- ❌ Storing confidential data in `SignedCookieSessionStore` — the cookie
+  is *signed* (tamper-proof) but *not* encrypted; the client can read it.
+  Use a server-side store for anything sensitive.
+- ❌ Forgetting `session.regenerate_id()` at login / privilege change —
+  leaves the app open to session fixation. Call it whenever the session's
+  trust level changes.
+- ❌ Expecting `session.invalidate()` to revoke a `SignedCookieSessionStore`
+  session server-side — it can't (the store is stateless); logout relies on
+  the browser honouring the `Max-Age=0` cookie. Use a server-side store when
+  you need true server-side revocation.
 - ❌ Expecting `@post_construct` / `@pre_destruct` to fire per-request
   on a controller — `@controller` defaults to `Scope.SINGLETON` (NestJS
   behaviour), so lifecycle hooks fire once at startup/shutdown. If a
@@ -450,9 +467,13 @@ deterministic).
 - `lauren/streaming.py` — `StreamingResponse[T]`, `Stream`,
   `StreamReader`, content-negotiation logic.
 - `lauren/background.py` — `BackgroundTasks`, `TaskHandle`, `_BG_TASKS_ATTR`.
+- `lauren/sessions.py` / `lauren/_sessions/` — `Session`, `SessionConfig`,
+  `SessionStore`, `InMemorySessionStore`, `SignedCookieSessionStore`, the
+  signing/serialiser, and the `_SessionEngine` the factory installs. Native
+  `session: Session` injection lives in `_asgi` (`source="session"`).
 - `lauren/decorators.py` — every public decorator. The `_reject_bare_usage`
   pattern is the model for any new decorator.
-- `lauren/exceptions.py` — full 34-class error hierarchy (28 user-facing
+- `lauren/exceptions.py` — full 35-class error hierarchy (29 user-facing
    + base classes). Pick the closest existing class before adding a new one.
 - `lauren/signals.py` — `SignalBus`, lifecycle events, POSIX signal handlers.
 - `lauren/testing.py` — `TestClient`, `WsTestClient` for in-process testing.
