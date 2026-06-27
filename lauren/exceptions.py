@@ -134,6 +134,29 @@ class ExceptionHandlerConfigError(StartupError):
     code = "exception_handler_config"
 
 
+class SessionConfigError(StartupError):
+    """A :class:`~lauren.SessionConfig` was invalid, or a ``Session`` was
+    injected into a handler in an app that did not enable sessions.
+
+    Raised at startup (inside ``LaurenFactory.create``) when:
+
+    * ``same_site="none"`` is combined with ``secure=False`` (browsers
+      reject such cookies);
+    * a ``__Host-`` / ``__Secure-`` cookie-name prefix is used without the
+      matching ``secure`` / ``path`` / ``domain`` constraints;
+    * the chosen store requires a signing secret but none was supplied;
+    * ``max_age`` / ``idle_timeout`` is non-positive;
+    * a handler declares a ``session: Session`` parameter but
+      ``sessions=SessionConfig(...)`` was never passed to the factory.
+
+    Joins the existing ``*ConfigError`` family (``MiddlewareConfigError``,
+    ``GuardConfigError``, ``InterceptorConfigError``,
+    ``ExceptionHandlerConfigError``).
+    """
+
+    code = "session_config"
+
+
 class OpenAPISchemaError(StartupError):
     code = "openapi_schema"
 
@@ -257,6 +280,7 @@ __all__ = [
     "MiddlewareConfigError",
     "GuardConfigError",
     "ExceptionHandlerConfigError",
+    "SessionConfigError",
     "OpenAPISchemaError",
     "ExtractorError",
     "ExtractorFieldError",

@@ -33,7 +33,8 @@ common mistakes.
 22. [Server-Sent Events](#server-sent-events-eventstream)
 23. [Typed Streaming](#typed-streaming)
 24. [Socket.IO Compatibility](#socketio-compatibility)
-25. [Companion Packages](#companion-packages)
+25. [Sessions](#sessions)
+26. [Companion Packages](#companion-packages)
 
 ---
 
@@ -91,7 +92,7 @@ app = LaurenFactory.create(AppModule)
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None)`
 
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
@@ -134,6 +135,7 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `error_format` | `str` | `"default"` | Error response format (`"default"` or `"rfc7807"`) |
 | `root_path` | `str` | `""` | ASGI root path for reverse proxy prefix stripping |
 | `mounts` | `dict[str, Any]` | `None` | Sub-applications mounted at path prefixes |
+| `sessions` | `SessionConfig` | `None` | Enable signed-cookie sessions (see [Sessions](#sessions)) |
 
 ### `Lauren` (imperative API)
 
@@ -834,6 +836,7 @@ All exceptions live in `lauren.exceptions` and inherit from `LaurenError`.
 | `GuardConfigError` | Guard class missing `can_activate` |
 | `InterceptorConfigError` | Interceptor class missing `intercept` or wrong signature |
 | `ExceptionHandlerConfigError` | Exception handler misconfigured |
+| `SessionConfigError` | Invalid `SessionConfig`, or `Session` injected with sessions disabled |
 | `OpenAPISchemaError` | OpenAPI generation failed |
 | `DecoratorUsageError` | Configurable decorator used bare (without `()`)
 
@@ -1763,6 +1766,124 @@ Negotiation rules:
 
 The `Stream` extractor and `StreamReader[T]` consumer give the same
 typed-iteration story for *receiving* a stream from the client.
+
+---
+
+## Sessions
+
+First-class, signed-cookie session management. Enable it with one factory
+kwarg; misconfiguration fails at startup, never at runtime.
+
+### `SessionConfig(*, secret=None, store=None, cookie_name="lauren_session", max_age=1209600, idle_timeout=None, rolling=False, path="/", domain=None, secure=True, http_only=True, same_site="lax", serializer=None, autoload=True)`
+
+The single declaration point — passed as `LaurenFactory.create(..., sessions=SessionConfig(...))`
+(also a `Lauren(sessions=...)` constructor kwarg). Secure by default: the
+cookie is HMAC-signed (`secret` is required), `HttpOnly` and `Secure` are
+on, and `SameSite=Lax`.
+
+```python
+from lauren import LaurenFactory, SessionConfig, InMemorySessionStore
+
+app = LaurenFactory.create(
+    AppModule,
+    sessions=SessionConfig(
+        secret="a-long-random-secret",     # str | bytes | list[...] (rotation)
+        store=InMemorySessionStore(),       # default if omitted
+        max_age=1_209_600,                  # 14 days
+        same_site="lax",                    # "lax" | "strict" | "none"
+        rolling=False,                      # slide the cookie window on each access
+    ),
+)
+```
+
+- `secret` accepts a list for **rotation**: the first signs, all verify.
+- `same_site="none"` requires `secure=True`; a `__Host-`/`__Secure-`
+  `cookie_name` is validated against `secure`/`path`/`domain`; `max_age` /
+  `idle_timeout` must be positive — each rejected with `SessionConfigError`.
+
+**Rule:** the signing secret is mandatory (the cookie is always signed).
+Keep it out of source control and rotate by prepending a new value.
+
+### `Session` (a mutable, dict-like, per-request handle)
+
+Injected into any handler that declares a `session: Session` parameter, at
+zero per-request reflection cost (the same mechanism as `ExecutionContext`).
+`request.state.session` is the non-injected equivalent.
+
+```python
+from lauren import Session, controller, get, post
+
+@controller("/account")
+class AccountController:
+    @get("/visits")
+    async def visits(self, session: Session) -> dict:
+        session["visits"] = session.get("visits", 0) + 1   # marks modified
+        return {"visits": session["visits"]}
+
+    @post("/login")
+    async def login(self, session: Session) -> dict:
+        session.regenerate_id()        # session-fixation defence at login
+        session["user_id"] = "u-42"
+        return {"ok": True}
+
+    @post("/logout")
+    async def logout(self, session: Session) -> dict:
+        session.invalidate()           # drop server row + expire cookie
+        return {"ok": True}
+```
+
+- `MutableMapping[str, Any]` — `session[k]`, `get`, `setdefault`, `pop`,
+  `update`, `clear`, `in`, `len`, plus `as_dict()`.
+- Identity flags: `id`, `is_new`, `is_modified`, `is_invalidated`.
+- **Dirty-tracked persistence:** the session is written back and the cookie
+  re-sent only when new-with-content, modified, regenerated, invalidated, or
+  (under `rolling`) refreshed — a pure read touches neither store nor cookie.
+- `regenerate_id()` rotates the id (deletes the old server row, re-issues the
+  cookie); `invalidate()` clears the session and expires the cookie.
+
+**Rule:** a handler that injects `Session` in an app without
+`sessions=SessionConfig(...)` raises `SessionConfigError` at startup.
+
+### `SessionStore` (Protocol) + built-in backends
+
+```python
+class SessionStore(Protocol):
+    requires_secret: ClassVar[bool]
+    client_side: ClassVar[bool]
+    async def load(self, session_id: str) -> dict | None: ...
+    async def save(self, session_id: str, data: dict, *, max_age: int | None) -> None: ...
+    async def delete(self, session_id: str) -> None: ...
+    def new_id(self) -> str: ...
+```
+
+- `InMemorySessionStore` — process-local dict under an `asyncio.Lock`, lazy
+  TTL expiry. Dev / single-worker only.
+- `SignedCookieSessionStore(*, max_bytes=4096)` — stateless: the whole
+  (signed) payload rides in the cookie, no server row. Signed ≠ encrypted —
+  never put confidential data here; an over-size payload raises `ValueError`.
+- Production multi-worker: implement the Protocol over Redis/DB as an
+  `@injectable(SINGLETON)` store (open in `@post_construct`, close in
+  `@pre_destruct`) and pass it via `SessionConfig(store=...)`. The store is
+  also registered as a global provider, so services may inject
+  `store: SessionStore` directly.
+
+### `SessionSerializer` (Protocol)
+
+`dumps(dict) -> bytes` / `loads(bytes) -> dict`; the default is compact
+JSON (`JSONSessionSerializer`). Override via `SessionConfig(serializer=...)`
+for the cookie store when a denser format is needed.
+
+### `SessionConfigError`
+
+`StartupError` subclass (the 29th error class), raised by
+`LaurenFactory.create` for any invalid session policy — joins the
+`*ConfigError` family.
+
+> **Relationship to `lauren-guards`:** core `lauren.Session` is the
+> general-purpose session-state mechanism. `lauren-guards.session_cookie`
+> is an authentication *guard* that verifies a session and populates
+> `request.state.user`; the two compose. Don't confuse `lauren.Session`
+> (mutable request handle) with `lauren_guards.Session` (frozen auth row).
 
 ---
 

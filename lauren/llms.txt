@@ -40,6 +40,7 @@ pip install "lauren[full]"          # pydantic + msgspec
 - **Graceful shutdown hooks** via `app.on_shutdown(fn)` plus `install_signal_handlers` for SIGTERM/SIGINT-driven drain.
 - **Signals & lifecycle events** — `SignalBus` with `StartupBegin`, `StartupComplete`, `ShutdownBegin`, `RequestReceived`, `RequestComplete`, `BackgroundTaskStarted`, `BackgroundTaskComplete`, `BackgroundTaskFailed`.
 - **Sub-application mounting** — `app.mount("/prefix", sub_app)` for composing multiple Lauren or ASGI apps.
+- **Sessions** — first-class signed-cookie sessions via `LaurenFactory.create(..., sessions=SessionConfig(...))`. A mutable `session: Session` is injected into handlers at zero per-request reflection cost; pluggable async `SessionStore` (`InMemorySessionStore`, stateless `SignedCookieSessionStore`, or a Redis impl). HMAC-signed, `HttpOnly`/`Secure`/`SameSite=Lax` by default, with `regenerate_id()` (fixation defence) and `invalidate()` (logout). Unsafe configs are rejected at startup.
 - **Static file serving** — `StaticFilesModule.for_root("/assets", directory="./public")` as a feature module.
 - **Background tasks** — `BackgroundTasks` for fire-and-forget work after response, with `TaskHandle` for cancellation and result tracking.
 - **28-class error catalog** with stable `code` strings; consistent `{error: {code, message, detail}}` envelope.
@@ -47,7 +48,7 @@ pip install "lauren[full]"          # pydantic + msgspec
 
 ## LaurenFactory.create() parameters
 
-`LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None)`
+`LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None)`
 
 See [full reference](llms-full.txt) for complete parameter documentation.
 
@@ -76,3 +77,4 @@ See [full reference](llms-full.txt) for complete parameter documentation.
 - [Pipes](#pipes): parameter-level transforms and validation.
 - [Sub-application mounting](#mounting): composing multiple ASGI apps.
 - [Background tasks](#background-tasks): fire-and-forget work after response.
+- [Sessions](#sessions): signed-cookie sessions with `session: Session` injection and a pluggable store.

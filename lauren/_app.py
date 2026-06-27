@@ -77,6 +77,7 @@ class Lauren:
         global_interceptors: list[type] | None = None,
         global_exception_handlers: list[Any] | None = None,
         global_providers: list[Any] | None = None,
+        sessions: Any | None = None,
     ) -> None:
         self._title = title
         self._version = version
@@ -100,6 +101,7 @@ class Lauren:
         self._interceptors: list[type] = list(global_interceptors or [])
         self._exception_filters: list[Any] = list(global_exception_handlers or [])
         self._global_providers: list[Any] = list(global_providers or [])
+        self._sessions = sessions
         self._startup_handlers: list[Callable[[], Any]] = []
         self._shutdown_handlers: list[Callable[[], Any]] = []
 
@@ -390,6 +392,7 @@ class Lauren:
             openapi_url=self._openapi_url,
             docs_url=self._docs_url,
             redoc_url=self._redoc_url,
+            sessions=self._sessions,
         )
         # --- Run user-provided startup hooks now that DI is live ---------
         for hook in self._startup_handlers:

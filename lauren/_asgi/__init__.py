@@ -95,6 +95,11 @@ from ..types import (
     Scope as DScope,
     ServerInfo,
 )
+from .._sessions import (
+    Session as _SessionType,
+    SessionConfig,
+    configure_sessions,
+)
 
 logger = logging.getLogger("lauren")
 
@@ -300,6 +305,25 @@ def _compile_handler_signature(
                     Extraction(
                         name=name,
                         source="background_tasks",
+                        inner_type=ann,
+                        field_descriptor=fd,
+                        default=default,
+                        has_default=has_default,
+                        pipes=pipes,
+                    )
+                )
+                param_names.append(name)
+                continue
+            # Session injection — short-circuited at dispatch time from the
+            # value the session engine put on ``request.state.session``.
+            # Emitted unconditionally; ``LaurenFactory.create`` validates that
+            # ``sessions=SessionConfig(...)`` was supplied when any handler asks
+            # for one, so the request path can read it without a guard.
+            if ann is _SessionType or (isinstance(ann, type) and issubclass(ann, _SessionType)):
+                extractions.append(
+                    Extraction(
+                        name=name,
+                        source="session",
                         inner_type=ann,
                         field_descriptor=fd,
                         default=default,
@@ -1238,6 +1262,12 @@ class LaurenApp:
                                         _bg = _BackgroundTasks()
                                         req2.state._lauren_bg_tasks = _bg
                                     kwargs_dict[ext.name] = _bg
+                                elif ext.source == "session":
+                                    # The session engine (installed by the factory
+                                    # when sessions= is set) populated this before
+                                    # routing; startup validation guarantees it is
+                                    # present whenever a handler injects Session.
+                                    kwargs_dict[ext.name] = req2.state.session
                                 else:
                                     kwargs_dict[ext.name] = await extract_parameter(
                                         req2,
@@ -2066,6 +2096,7 @@ class LaurenFactory:
         error_format: str = "default",
         root_path: str = "",
         mounts: dict[str, Any] | None = None,
+        sessions: SessionConfig | None = None,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -2154,6 +2185,15 @@ class LaurenFactory:
                     ctrl_class,
                     owning_module=graph.module_for_controller(ctrl_class),
                 )
+        # Sessions (optional). Validate the config, build + register the
+        # session engine and store, then install the engine as the
+        # OUTERMOST global middleware so it loads the session before any
+        # user middleware/guard runs and writes the Set-Cookie last on the
+        # response. ``configure_sessions`` raises ``SessionConfigError`` on
+        # any unsafe config — at startup, never at runtime.
+        if sessions is not None:
+            session_engine_cls = configure_sessions(sessions, container)
+            effective_global_middlewares.insert(0, session_engine_cls)
         # Global middleware lives outside any module — it is registered
         # without an owning module so it is universally visible.
         for mw in effective_global_middlewares:
@@ -2405,6 +2445,28 @@ class LaurenFactory:
             # Ensure _DocsController is resolvable as a global singleton.
             if _DocsController not in {p.cls for p in container.all_providers()}:
                 container.register(_DocsController)
+
+        # Inverse session misconfiguration: a handler injects ``Session``
+        # but ``sessions=`` was never supplied. Fail loudly at startup —
+        # the request path assumes the engine populated the session.
+        if sessions is None:
+            from ..exceptions import SessionConfigError
+
+            for (method, path_t), ch in compiled_handlers.items():
+                for ext in ch.extractions:
+                    if ext.source == "session":
+                        handler_name = f"{ch.controller_cls.__name__}.{ch.handler_fn.__name__}"
+                        raise SessionConfigError(
+                            f"handler {handler_name} ({method} {path_t}) injects a "
+                            "`Session` parameter but sessions are not enabled; pass "
+                            "sessions=SessionConfig(...) to LaurenFactory.create",
+                            detail={
+                                "handler": handler_name,
+                                "method": method,
+                                "path": path_t,
+                                "reason": "sessions_disabled",
+                            },
+                        )
 
         # ---- Phase 5b: WebSocket gateway compilation ----
         # The WS compiler walks the same module graph, picks every

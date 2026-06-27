@@ -138,6 +138,7 @@ from .exceptions import (
     RequestBodyTooLarge,
     RouteNotFoundError,
     RouterConflictError,
+    SessionConfigError,
     StartupError,
     StateTypeError,
     UnauthorizedError,
@@ -245,6 +246,14 @@ from .reflect import (
     ReflectedWsGateway,
 )
 from ._staticfiles import StaticFilesModule
+from .sessions import (
+    InMemorySessionStore,
+    Session,
+    SessionConfig,
+    SessionSerializer,
+    SessionStore,
+    SignedCookieSessionStore,
+)
 from .types import (
     AppState,
     CallHandler,
@@ -332,6 +341,13 @@ __all__ = [
     "OpenAPISecurityMeta",
     # static files
     "StaticFilesModule",
+    # sessions
+    "Session",
+    "SessionConfig",
+    "SessionStore",
+    "InMemorySessionStore",
+    "SignedCookieSessionStore",
+    "SessionSerializer",
     # types
     "Scope",
     "State",
@@ -459,6 +475,7 @@ __all__ = [
     "GuardConfigError",
     "InterceptorConfigError",
     "ExceptionHandlerConfigError",
+    "SessionConfigError",
     "OpenAPISchemaError",
     "ExtractorError",
     "ExtractorFieldError",

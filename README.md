@@ -147,6 +147,13 @@ core ideas:
 * **Background tasks** — `BackgroundTasks` extractor fires work after the
   response is sent. `TaskHandle` exposes cancel/await. Signals notify on
   start, complete, and failure.
+* **Sessions** — first-class signed-cookie sessions via
+  `LaurenFactory.create(..., sessions=SessionConfig(...))`. A mutable
+  `session: Session` is injected into handlers at zero per-request cost; the
+  pluggable async `SessionStore` ships with an in-memory backend and a
+  stateless `SignedCookieSessionStore`. HMAC-signed, `HttpOnly`/`Secure`/
+  `SameSite=Lax` by default, with `regenerate_id()` and `invalidate()`.
+  Unsafe configuration is rejected at startup.
 * **Static files** — `StaticFilesModule.for_root("/assets", directory="./public")`
   with ETag caching, `Cache-Control`, and path-traversal protection.
 * **Socket.IO** — Engine.IO v4 / Socket.IO v5 adapter via `@socketio_controller`.
@@ -337,6 +344,44 @@ Or mount any ASGI sub-app:
 app = LaurenFactory.create(AppModule)
 app.mount("/static", StaticFiles(directory="static"))
 ```
+
+## Sessions
+
+```python
+from lauren import LaurenFactory, SessionConfig, Session, controller, get, post, module
+
+@controller("/account")
+class AccountController:
+    @get("/visits")
+    async def visits(self, session: Session) -> dict:
+        session["visits"] = session.get("visits", 0) + 1
+        return {"visits": session["visits"]}
+
+    @post("/login")
+    async def login(self, session: Session) -> dict:
+        session.regenerate_id()        # session-fixation defence
+        session["user_id"] = "u-42"
+        return {"ok": True}
+
+    @post("/logout")
+    async def logout(self, session: Session) -> dict:
+        session.invalidate()
+        return {"ok": True}
+
+@module(controllers=[AccountController])
+class AppModule:
+    pass
+
+app = LaurenFactory.create(
+    AppModule,
+    sessions=SessionConfig(secret="a-long-random-secret"),
+)
+```
+
+The cookie is HMAC-signed and secure by default (`HttpOnly`, `Secure`,
+`SameSite=Lax`). Swap `InMemorySessionStore` for the stateless
+`SignedCookieSessionStore` or a Redis-backed `SessionStore` in production.
+Unsafe configuration fails inside `LaurenFactory.create`, not at runtime.
 
 ## Performance
 

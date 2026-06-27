@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-06-27
+
+### Added — First-class session management
+
+- **Sessions** — `LaurenFactory.create(..., sessions=SessionConfig(...))`
+  (and the `Lauren(sessions=...)` constructor kwarg) enables signed-cookie
+  sessions with a pluggable, async `SessionStore`. Handlers receive a
+  mutable, dict-like `session: Session` at zero per-request reflection cost
+  (mirroring `ExecutionContext` injection); `request.state.session` is the
+  non-injected equivalent for middleware/guards/interceptors.
+- **Stores** — `InMemorySessionStore` (dev / single-worker) and the
+  stateless `SignedCookieSessionStore` (the whole payload rides in the
+  signed cookie); a Redis-backed store is a documented recipe. Backends are
+  DI singletons, so connection setup/teardown rides the existing
+  `@post_construct` / `@pre_destruct` machinery. The resolved store is
+  registered as a global provider, so services may inject `SessionStore`.
+- **`Session` object** — `MutableMapping[str, Any]` with dirty tracking, so
+  a session is written back and the cookie re-issued only when
+  new-with-content, modified, regenerated, invalidated, or (under
+  `rolling`) refreshed. `regenerate_id()` is the session-fixation defence at
+  login; `invalidate()` is logout. `SessionSerializer` (default compact
+  JSON) is pluggable.
+- **Security** — HMAC-SHA256 signed cookies (constant-time verify, multi-key
+  rotation), `HttpOnly` / `Secure` / `SameSite=Lax` defaults, absolute
+  `max_age` plus optional `idle_timeout` / `rolling` expiry, and
+  `__Host-` / `__Secure-` prefix validation. Unsafe or contradictory configs
+  (`SameSite=None` without `Secure`, missing secret, prefix misuse,
+  non-positive lifetimes, or a `Session` injected with sessions disabled)
+  are rejected inside `LaurenFactory.create` — at startup, never at runtime.
+- New public symbols: `Session`, `SessionConfig`, `SessionStore`,
+  `InMemorySessionStore`, `SignedCookieSessionStore`, `SessionSerializer`.
+
+### Changed
+
+- Error catalog grows to 29 user-facing classes with `SessionConfigError`
+  (a `StartupError` subclass), joining the existing `*ConfigError` family.
+
 ## [1.7.0] - 2026-06-10
 
 ### Added — `lauren.reflect` full metadata introspection API
