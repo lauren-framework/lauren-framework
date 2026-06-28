@@ -58,26 +58,28 @@ class Signer:
             raise ValueError("Signer requires at least one secret")
         self._secrets = secrets
 
-    def _mac(self, value: str, key: bytes) -> str:
-        return hmac.new(key, value.encode("utf-8"), sha256).hexdigest()
+    def _mac(self, value: str, key: bytes) -> bytes:
+        # ``surrogatepass`` keeps signing total for any ``str`` (lone
+        # surrogates included); the hexdigest itself is always ASCII bytes.
+        return hmac.new(key, value.encode("utf-8", "surrogatepass"), sha256).hexdigest().encode("ascii")
 
     def sign(self, value: str) -> str:
         """Return ``"<value>.<hexsig>"`` keyed on the newest secret."""
-        return f"{value}{_SEP}{self._mac(value, self._secrets[0])}"
+        return f"{value}{_SEP}{self._mac(value, self._secrets[0]).decode('ascii')}"
 
     def unsign(self, token: str) -> str | None:
         """Return the original value if any secret validates the signature.
 
         Returns ``None`` on a missing separator or a bad signature. The
-        comparison is constant-time to avoid leaking the signature byte by
-        byte.
+        comparison is constant-time (over bytes, so adversarial non-ASCII
+        input never raises) to avoid leaking the signature byte by byte.
         """
         parts = token.rsplit(_SEP, 1)
         if len(parts) != 2:
             return None
         value, sig = parts
+        sig_bytes = sig.encode("utf-8", "surrogatepass")
         for key in self._secrets:
-            expected = self._mac(value, key)
-            if hmac.compare_digest(sig, expected):
+            if hmac.compare_digest(sig_bytes, self._mac(value, key)):
                 return value
         return None

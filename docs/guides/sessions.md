@@ -60,6 +60,8 @@ to `LaurenFactory.create` (or the `Lauren(sessions=...)` constructor).
 | `http_only` | `bool` | `True` | `HttpOnly` attribute (no JS access). |
 | `same_site` | `str` | `"lax"` | `"lax"`, `"strict"`, or `"none"`. |
 | `serializer` | `SessionSerializer` | JSON | Payload codec for the cookie store. |
+| `revocation_store` | `RevocationStore \| None` | `None` | Opt in to [revocation](#revocation) (deny-list + per-user cutoff). |
+| `user_id_key` | `str` | `"user_id"` | Session key holding the user id, for per-user revocation. |
 
 Validation runs at startup and raises [`SessionConfigError`](#what-fails-at-startup):
 
@@ -223,9 +225,70 @@ async def logout(self, session: Session) -> dict:
 
 !!! note "Cookie-store revocation"
     `invalidate()` truly revokes a **server-side** session (the row is deleted).
-    A `SignedCookieSessionStore` session cannot be revoked server-side — logout
-    relies on the browser honouring the `Max-Age=0` instruction. Use a
-    server-side store when you need hard revocation.
+    A bare `SignedCookieSessionStore` session cannot be revoked server-side —
+    logout there relies on the browser honouring `Max-Age=0`, so a replayed
+    cookie still validates until it expires. To make the cookie store revocable,
+    add a [`revocation_store`](#revocation).
+
+---
+
+## Revocation
+
+Stateless cookie sessions have a well-known limitation: there is no server-side
+record, so a logged-out (or stolen) cookie can be replayed until it expires —
+exactly like a JWT. Opt in to a `RevocationStore` to fix this. It stays **off by
+default**, so the cookie store remains truly stateless unless you ask for
+revocation; when enabled, only *revoked* tokens/users are stored, each
+self-pruning at the cookie's natural expiry.
+
+```python
+from lauren import LaurenFactory, SessionConfig, SignedCookieSessionStore, InMemoryRevocationStore
+
+app = LaurenFactory.create(
+    AppModule,
+    sessions=SessionConfig(
+        secret="…",
+        store=SignedCookieSessionStore(),
+        revocation_store=InMemoryRevocationStore(),   # opt in
+        max_age=3600,                                 # finite lifetime required
+    ),
+)
+```
+
+Two mechanisms come on together:
+
+**Per-session deny-list (automatic).** `session.invalidate()` (logout) and
+`session.regenerate_id()` (login) record the prior cookie's token id; a replayed
+cookie carrying it is rejected on load. This is the cookie store's equivalent of
+deleting a server-side row — logout now truly revokes.
+
+**Per-user "log out everywhere" (you call it).** Inject the store and stamp a
+cutoff for the user; any session minted before it is rejected — across every
+device, and for server-side stores too. Ideal for "log out all devices" and
+force-logout-on-password-change:
+
+```python
+from lauren import RevocationStore
+
+@post("/logout-everywhere")
+async def logout_everywhere(self, session: Session, revocation: RevocationStore) -> dict:
+    await revocation.revoke_user(session["user_id"])   # revokes all OTHER sessions
+    session.regenerate_id()                            # keep THIS device logged in
+    return {"ok": True}
+```
+
+The default `InMemoryRevocationStore` is dev/single-worker (TTL-pruned). For
+multi-worker production implement the `RevocationStore` Protocol over Redis (a
+shared blocklist is the whole point). Revocation requires a finite `max_age` (or
+`idle_timeout`) so entries can self-prune — `SessionConfigError` at startup
+otherwise.
+
+!!! note "Cost"
+    Revocation trades a little of the cookie store's statelessness for true
+    logout: each authenticated request does one small deny-list / cutoff lookup.
+    That is still far cheaper than a full session store — active sessions read
+    their data from the cookie, and server state stays bounded to "revoked within
+    the last `max_age`."
 
 ---
 

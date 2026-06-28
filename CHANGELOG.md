@@ -34,8 +34,17 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   (`SameSite=None` without `Secure`, missing secret, prefix misuse,
   non-positive lifetimes, or a `Session` injected with sessions disabled)
   are rejected inside `LaurenFactory.create` — at startup, never at runtime.
+- **Revocation (opt-in)** — pass `SessionConfig(revocation_store=...)` to make
+  even the stateless `SignedCookieSessionStore` revocable. `invalidate()` /
+  `regenerate_id()` deny-list the prior cookie token (a replayed cookie is
+  rejected), and an injectable `RevocationStore.revoke_user(user_id)` provides
+  "log out everywhere" / force-logout-on-password-change across the cookie store
+  and server-side stores alike. `InMemoryRevocationStore` is the dev default;
+  revocation stays off (and the cookie store truly stateless) unless enabled, and
+  requires a finite `max_age`.
 - New public symbols: `Session`, `SessionConfig`, `SessionStore`,
-  `InMemorySessionStore`, `SignedCookieSessionStore`, `SessionSerializer`.
+  `InMemorySessionStore`, `SignedCookieSessionStore`, `SessionSerializer`,
+  `RevocationStore`, `InMemoryRevocationStore`.
 
 ### Changed
 

@@ -247,7 +247,9 @@ from .reflect import (
 )
 from ._staticfiles import StaticFilesModule
 from .sessions import (
+    InMemoryRevocationStore,
     InMemorySessionStore,
+    RevocationStore,
     Session,
     SessionConfig,
     SessionSerializer,
@@ -348,6 +350,8 @@ __all__ = [
     "InMemorySessionStore",
     "SignedCookieSessionStore",
     "SessionSerializer",
+    "RevocationStore",
+    "InMemoryRevocationStore",
     # types
     "Scope",
     "State",

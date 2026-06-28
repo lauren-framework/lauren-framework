@@ -23,6 +23,12 @@ the pluggable store Protocol, and the built-in backends.
 
 ::: lauren.SessionSerializer
 
+## Revocation
+
+::: lauren.RevocationStore
+
+::: lauren.InMemoryRevocationStore
+
 ## Errors
 
 ::: lauren.SessionConfigError
