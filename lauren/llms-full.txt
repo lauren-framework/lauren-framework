@@ -1774,7 +1774,7 @@ typed-iteration story for *receiving* a stream from the client.
 First-class, signed-cookie session management. Enable it with one factory
 kwarg; misconfiguration fails at startup, never at runtime.
 
-### `SessionConfig(*, secret=None, store=None, cookie_name="lauren_session", max_age=1209600, idle_timeout=None, rolling=False, path="/", domain=None, secure=True, http_only=True, same_site="lax", serializer=None, autoload=True)`
+### `SessionConfig(*, secret=None, store=None, cookie_name="lauren_session", max_age=1209600, idle_timeout=None, rolling=False, path="/", domain=None, secure=True, http_only=True, same_site="lax", serializer=None, autoload=True, revocation_store=None, user_id_key="user_id")`
 
 The single declaration point — passed as `LaurenFactory.create(..., sessions=SessionConfig(...))`
 (also a `Lauren(sessions=...)` constructor kwarg). Secure by default: the
@@ -1872,6 +1872,54 @@ class SessionStore(Protocol):
 `dumps(dict) -> bytes` / `loads(bytes) -> dict`; the default is compact
 JSON (`JSONSessionSerializer`). Override via `SessionConfig(serializer=...)`
 for the cookie store when a denser format is needed.
+
+### `RevocationStore` (Protocol) + `InMemoryRevocationStore` — making cookie sessions revocable
+
+A stateless `SignedCookieSessionStore` cookie can be replayed until it
+expires (same as a JWT). Pass an optional `RevocationStore` to make it
+revocable; it stays off by default so the cookie store remains truly
+stateless unless you opt in.
+
+```python
+from lauren import SessionConfig, SignedCookieSessionStore, InMemoryRevocationStore
+
+app = LaurenFactory.create(
+    AppModule,
+    sessions=SessionConfig(
+        secret="…",
+        store=SignedCookieSessionStore(),
+        revocation_store=InMemoryRevocationStore(),   # opt in
+        user_id_key="user_id",                        # session key holding the user id
+        max_age=3600,                                 # finite lifetime required
+    ),
+)
+```
+
+```python
+class RevocationStore(Protocol):
+    async def revoke_token(self, token_id: str, *, ttl: int | None = None) -> None: ...
+    async def is_token_revoked(self, token_id: str) -> bool: ...
+    async def revoke_user(self, user_id: str, *, cutoff: float | None = None, ttl: int | None = None) -> None: ...
+    async def user_cutoff(self, user_id: str) -> float | None: ...
+```
+
+Two mechanisms, both automatic once enabled:
+
+- **Per-session deny-list** — `session.invalidate()` (logout) and
+  `session.regenerate_id()` (login) deny-list the prior cookie's token id,
+  so a replayed cookie is rejected. The cookie store's equivalent of
+  deleting a server-side row.
+- **Per-user cutoff** — inject `revocation: RevocationStore` and call
+  `await revocation.revoke_user(user_id)` for "log out everywhere" /
+  force-logout-on-password-change. Any session minted before the cutoff is
+  rejected (works for the cookie store *and* server-side stores).
+
+`InMemoryRevocationStore` is the dev default (TTL-pruned). The store is
+registered as a global provider, so handlers can inject it directly.
+
+**Rule:** revocation requires a finite `max_age` (or `idle_timeout`) so
+deny-list entries can self-prune — `SessionConfigError` at startup
+otherwise.
 
 ### `SessionConfigError`
 

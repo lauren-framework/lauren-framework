@@ -376,10 +376,13 @@ deterministic).
 - ❌ Forgetting `session.regenerate_id()` at login / privilege change —
   leaves the app open to session fixation. Call it whenever the session's
   trust level changes.
-- ❌ Expecting `session.invalidate()` to revoke a `SignedCookieSessionStore`
+- ❌ Expecting `session.invalidate()` to revoke a *bare* `SignedCookieSessionStore`
   session server-side — it can't (the store is stateless); logout relies on
-  the browser honouring the `Max-Age=0` cookie. Use a server-side store when
-  you need true server-side revocation.
+  the browser honouring the `Max-Age=0` cookie. To make the cookie store
+  revocable, pass `SessionConfig(revocation_store=InMemoryRevocationStore())`:
+  `invalidate()`/`regenerate_id()` then deny-list the cookie's token, and
+  `RevocationStore.revoke_user(user_id)` does "log out everywhere". Revocation
+  needs a finite `max_age` (else `SessionConfigError` at startup).
 - ❌ Expecting `@post_construct` / `@pre_destruct` to fire per-request
   on a controller — `@controller` defaults to `Scope.SINGLETON` (NestJS
   behaviour), so lifecycle hooks fire once at startup/shutdown. If a

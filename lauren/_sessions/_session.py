@@ -30,7 +30,15 @@ class Session(MutableMapping[str, Any]):
     server row and expires the cookie (logout).
     """
 
-    __slots__ = ("_data", "_id", "_is_new", "_modified", "_invalidated", "_new_id_factory")
+    __slots__ = (
+        "_data",
+        "_id",
+        "_is_new",
+        "_modified",
+        "_invalidated",
+        "_regenerated",
+        "_new_id_factory",
+    )
 
     def __init__(
         self,
@@ -45,6 +53,9 @@ class Session(MutableMapping[str, Any]):
         self._is_new = is_new
         self._modified = False
         self._invalidated = False
+        #: Set by ``regenerate_id()`` so the engine can revoke the prior
+        #: cookie token (deny-list) when revocation is enabled.
+        self._regenerated = False
         self._new_id_factory = new_id_factory or (lambda: "")
 
     # -- identity ------------------------------------------------------
@@ -144,6 +155,7 @@ class Session(MutableMapping[str, Any]):
         self._id = self._new_id_factory()
         self._is_new = False
         self._modified = True
+        self._regenerated = True
 
     def invalidate(self) -> None:
         """Drop the session: clears the data, deletes the server-side row

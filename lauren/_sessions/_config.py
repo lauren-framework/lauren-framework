@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 from ..exceptions import SessionConfigError
+from ._revocation import RevocationStore
 from ._serializer import JSONSessionSerializer, SessionSerializer
 from ._signing import Signer, normalize_secrets
 from ._store import InMemorySessionStore, SessionStore
@@ -46,6 +47,14 @@ class SessionConfig:
     same_site: str = "lax"
     serializer: SessionSerializer | None = None
     autoload: bool = True
+    #: Opt-in revocation index. When set, every cookie carries a token id
+    #: and an issued-at stamp; ``invalidate()`` deny-lists the token and
+    #: ``RevocationStore.revoke_user(...)`` enables "log out everywhere".
+    #: Leaving this ``None`` keeps the cookie store truly stateless.
+    revocation_store: RevocationStore | None = None
+    #: Session key holding the authenticated user id, consulted for the
+    #: per-user revocation cutoff. Only used when ``revocation_store`` is set.
+    user_id_key: str = "user_id"
 
 
 @dataclass(slots=True)
@@ -67,6 +76,8 @@ class ResolvedSessionConfig:
     autoload: bool
     client_side: bool
     max_cookie_bytes: int
+    revocation: RevocationStore | None
+    user_id_key: str
     raw: SessionConfig = field(repr=False, default=None)  # type: ignore[assignment]
 
 
@@ -148,6 +159,16 @@ def resolve_session_config(config: SessionConfig) -> ResolvedSessionConfig:
     client_side = bool(getattr(store, "client_side", False))
     max_cookie_bytes = int(getattr(store, "max_bytes", 4096))
 
+    # --- revocation --------------------------------------------------
+    if config.revocation_store is not None:
+        if config.max_age is None and config.idle_timeout is None:
+            raise _fail(
+                "revocation requires a finite lifetime so deny-list entries can "
+                "self-prune; set max_age or idle_timeout on SessionConfig",
+            )
+        if not config.user_id_key:
+            raise _fail("user_id_key must be a non-empty string when revocation is enabled")
+
     return ResolvedSessionConfig(
         store=store,
         signer=signer,
@@ -164,5 +185,7 @@ def resolve_session_config(config: SessionConfig) -> ResolvedSessionConfig:
         autoload=config.autoload,
         client_side=client_side,
         max_cookie_bytes=max_cookie_bytes,
+        revocation=config.revocation_store,
+        user_id_key=config.user_id_key,
         raw=config,
     )

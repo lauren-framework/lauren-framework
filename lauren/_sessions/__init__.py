@@ -19,6 +19,7 @@ from typing import Any
 
 from ._config import ResolvedSessionConfig, SessionConfig, resolve_session_config
 from ._engine import _SessionEngine
+from ._revocation import InMemoryRevocationStore, RevocationStore
 from ._serializer import JSONSessionSerializer, SessionSerializer
 from ._session import Session
 from ._store import InMemorySessionStore, SessionStore, SignedCookieSessionStore
@@ -31,6 +32,8 @@ __all__ = [
     "SignedCookieSessionStore",
     "SessionSerializer",
     "JSONSessionSerializer",
+    "RevocationStore",
+    "InMemoryRevocationStore",
     # internal wiring (not part of the public lauren surface)
     "configure_sessions",
     "resolve_session_config",
@@ -59,4 +62,10 @@ def configure_sessions(config: SessionConfig, container: Any) -> type:
     container.register_custom(use_value(provide=_SessionEngine, value=engine), owning_module=None)
     if SessionStore not in existing:
         container.register_custom(use_value(provide=SessionStore, value=resolved.store), owning_module=None)
+    # Expose the revocation store for injection so an app can offer a
+    # "log out everywhere" endpoint (revoke_user) or inspect the deny-list.
+    if resolved.revocation is not None and RevocationStore not in existing:
+        container.register_custom(
+            use_value(provide=RevocationStore, value=resolved.revocation), owning_module=None
+        )
     return _SessionEngine

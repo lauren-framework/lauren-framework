@@ -56,8 +56,10 @@ from __future__ import annotations
 
 from .exceptions import SessionConfigError
 from ._sessions import (
+    InMemoryRevocationStore,
     InMemorySessionStore,
     JSONSessionSerializer,
+    RevocationStore,
     Session,
     SessionConfig,
     SessionSerializer,
@@ -73,5 +75,7 @@ __all__ = [
     "SignedCookieSessionStore",
     "SessionSerializer",
     "JSONSessionSerializer",
+    "RevocationStore",
+    "InMemoryRevocationStore",
     "SessionConfigError",
 ]
