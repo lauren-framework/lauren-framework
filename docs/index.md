@@ -87,6 +87,11 @@ async def main():
     ---
     Install Lauren, run your first app, and tour its prominent features.
 
+-   :material-flag-checkered: [__Tutorial: Build Hero HQ__](tutorial/index.md)
+
+    ---
+    The guided, build-one-app path — from `pip install` to a validated, injected, multi-module API. With heroes.
+
 -   :material-cube-outline: [__Core Concepts__](core-concepts/index.md)
 
     ---

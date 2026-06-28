@@ -177,4 +177,4 @@ In a few dozen lines:
 * Auto-generated OpenAPI 3.1;
 * In-process tests with no real network involved.
 
-Next up: read [Why Lauren?](why-lauren.md) for the design philosophy, or jump to [Prominent Features](features.md) for a guided tour.
+Next up: read [Why Lauren?](why-lauren.md) for the design philosophy, jump to [Prominent Features](features.md) for a guided tour — or, if you'd rather **learn by building one app end to end**, start the [Hero HQ tutorial](../tutorial/index.md).

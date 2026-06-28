@@ -262,6 +262,7 @@ Full index: [`skills/README.md`](skills/README.md)
 
 | Concept | Most relevant file |
 |---|---|
+| First app, guided & step-by-step | `docs/tutorial/` (companion app: `docs/tutorial/hero_hq/`) |
 | Dependency injection deep-dive | `docs/guides/dependency-injection.md` |
 | Custom extractor plugin API | `docs/guides/custom-extractors.md` |
 | Guard vs middleware vs interceptor | `docs/concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md` |

@@ -64,7 +64,12 @@ markdown_extensions:
       line_spans: __span
       pygments_lang_class: true
   - pymdownx.inlinehilite
-  - pymdownx.snippets
+  # Single-source tutorial code from the real, tested companion app
+  # (docs/tutorial/hero_hq/). `check_paths` fails the build on a bad include.
+  - pymdownx.snippets:
+      base_path:
+        - .
+      check_paths: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -107,6 +112,12 @@ plugins:
               - "!^_"      # hide private names by default
               - "!^__"     # hide dunder names
 
+# The Tutorial ships a real, tested companion app (docs/tutorial/hero_hq/).
+# It is source, not pages — keep its .py files out of the published site while
+# still letting `pymdownx.snippets` / readers reference them from the repo.
+exclude_docs: |
+  tutorial/hero_hq/
+
 # Reload the dev server when source files change (mkdocs serve).
 watch:
   - lauren/
@@ -130,6 +141,18 @@ nav:
     - Quickstart: getting-started/quickstart.md
     - Why Lauren?: getting-started/why-lauren.md
     - Prominent Features: getting-started/features.md
+  - Tutorial:
+    - tutorial/index.md
+    - "1. Recruit Your First Hero": tutorial/01-first-hero.md
+    - "2. The Hero Dossier": tutorial/02-hero-dossier.md
+    - "3. The HQ Roster": tutorial/03-the-roster.md
+    - "4. Assembling Teams": tutorial/04-assembling-teams.md
+    - "5. The Bouncer at the Door": tutorial/05-the-bouncer.md
+    - "6. Who Are You, Really?": tutorial/06-who-are-you.md
+    - "7. Mission Control, Live": tutorial/07-mission-control.md
+    - "8. Trial by Fire": tutorial/08-trial-by-fire.md
+    - "9. Into Production": tutorial/09-into-production.md
+    - "What's Next": tutorial/whats-next.md
   - Core Concepts:
     - core-concepts/index.md
     - Modules: core-concepts/modules.md
