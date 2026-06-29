@@ -152,6 +152,18 @@ async def handle_value_error(exc: ValueError, request: Request) -> Response:
     return Response.json({"detail": str(exc)}, status=422)
 ```
 
+One handler can cover several types. Pass them in one call —
+`@exception_handler(UnauthorizedError, ForbiddenError)` — or **stack** the
+decorator; stacking accumulates (it does not overwrite), so these are
+equivalent:
+
+```python
+@exception_handler(UnauthorizedError)
+@exception_handler(ForbiddenError)
+def to_login(exc, request):
+    return Response.redirect("/auth/login", status=303)
+```
+
 ### Attaching exception handlers
 
 ```python

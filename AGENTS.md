@@ -133,6 +133,9 @@ nox -s ver_dec -- --patch
 - Decorators attach metadata with name `__lauren_<thing>__` and return
   the decoratee unchanged. Bare usage is rejected with
   `DecoratorUsageError`.
+- Stacking metadata decorators **accumulates**, never overwrites — verb
+  decorators, every `@use_*`, and `@exception_handler` (its exception
+  types) all merge when stacked.
 - Errors inherit from `LaurenError` and ship a `detail` dict with
   machine-parseable keys (`target`, `param`, `token`, ...).
 - HTTP-mapped errors render as

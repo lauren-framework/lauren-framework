@@ -38,6 +38,7 @@ from lauren import (
 from lauren.exceptions import (
     ExceptionHandlerConfigError,
     ForbiddenError,
+    UnauthorizedError,
 )
 from lauren.testing import TestClient
 
@@ -585,3 +586,144 @@ class TestOrderingWithinScope:
         client = TestClient(LaurenFactory.create(OrderModule))
         r = client.get("/order/only-broad")
         assert r.json() == {"who": "fallback"}
+
+
+# ---------------------------------------------------------------------------
+# Stacked @exception_handler — accumulation (regression for the 1.7.0 bug
+# where stacking silently kept only the outermost decorator's types)
+# ---------------------------------------------------------------------------
+
+
+class TestStackedExceptionHandlers:
+    def test_stacked_function_handler_catches_every_type_globally(self):
+        # The reporter's exact pattern: one redirect handler for two types.
+        @exception_handler(UnauthorizedError)
+        @exception_handler(ForbiddenError)
+        def to_login(exc, request):
+            return Response.redirect("/auth/login", status=303)
+
+        @controller("/x")
+        class C:
+            @get("/unauth")
+            async def unauth(self) -> dict:
+                raise UnauthorizedError("nope")
+
+            @get("/forbidden")
+            async def forbidden(self) -> dict:
+                raise ForbiddenError("nope")
+
+            @get("/ok")
+            async def ok(self) -> dict:
+                return {"ok": True}
+
+        @module(controllers=[C])
+        class M:
+            pass
+
+        client = TestClient(LaurenFactory.create(M, global_exception_handlers=[to_login]))
+        for path in ("/x/unauth", "/x/forbidden"):
+            r = client.get(path)
+            assert r.status_code == 303, (path, r.status_code)
+            assert r.header("location") == "/auth/login"
+        assert client.get("/x/ok").json() == {"ok": True}
+
+    def test_stacked_class_handler_at_controller_scope(self):
+        @exception_handler(UnauthorizedError)
+        @exception_handler(ForbiddenError)
+        class AuthRedirect:
+            async def catch(self, exc, request):
+                return Response.redirect("/login", status=303)
+
+        @use_exception_handlers(AuthRedirect)
+        @controller("/c")
+        class C:
+            @get("/u")
+            async def u(self) -> dict:
+                raise UnauthorizedError("x")
+
+            @get("/f")
+            async def f(self) -> dict:
+                raise ForbiddenError("x")
+
+        @module(controllers=[C])
+        class M:
+            pass
+
+        client = TestClient(LaurenFactory.create(M))
+        assert client.get("/c/u").status_code == 303
+        assert client.get("/c/f").status_code == 303
+
+    def test_stacked_handler_at_route_scope(self):
+        @exception_handler(UnauthorizedError)
+        @exception_handler(ForbiddenError)
+        def redir(exc, request):
+            return Response.redirect("/login", status=303)
+
+        @controller("/r")
+        class C:
+            @get("/u")
+            @use_exception_handlers(redir)
+            async def u(self) -> dict:
+                raise UnauthorizedError("x")
+
+            @get("/f")
+            @use_exception_handlers(redir)
+            async def f(self) -> dict:
+                raise ForbiddenError("x")
+
+        @module(controllers=[C])
+        class M:
+            pass
+
+        client = TestClient(LaurenFactory.create(M))
+        assert client.get("/r/u").status_code == 303
+        assert client.get("/r/f").status_code == 303
+
+    def test_mixed_stacking_and_multiarg_catches_union(self):
+        # Stacking composes with the multi-arg form: this handler covers
+        # UnauthorizedError, ForbiddenError, and TenantError.
+        @exception_handler(UnauthorizedError, ForbiddenError)
+        @exception_handler(TenantError)
+        def catch_all(exc, request):
+            return Response.json({"caught": type(exc).__name__}, status=418)
+
+        @controller("/m")
+        class C:
+            @get("/u")
+            async def u(self) -> dict:
+                raise UnauthorizedError("x")
+
+            @get("/t")
+            async def t(self) -> dict:
+                raise TenantError("x")
+
+        @module(controllers=[C])
+        class M:
+            pass
+
+        client = TestClient(LaurenFactory.create(M, global_exception_handlers=[catch_all]))
+        assert client.get("/m/u").json() == {"caught": "UnauthorizedError"}
+        assert client.get("/m/t").json() == {"caught": "TenantError"}
+
+    def test_unmatched_exception_still_falls_through(self):
+        # Accumulation must not over-catch: an unrelated exception still
+        # falls through to the framework's default error pipeline.
+        @exception_handler(UnauthorizedError)
+        @exception_handler(ForbiddenError)
+        def to_login(exc, request):
+            return Response.redirect("/login", status=303)
+
+        @controller("/z")
+        class C:
+            @get("/boom")
+            async def boom(self) -> dict:
+                raise ValueError("unrelated")
+
+        @module(controllers=[C])
+        class M:
+            pass
+
+        client = TestClient(LaurenFactory.create(M, global_exception_handlers=[to_login]))
+        r = client.get("/z/boom")
+        assert r.status_code == 500
+        assert r.header("location") is None
