@@ -256,6 +256,14 @@ See `docs/concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md` for d
   `decorators.py` as a model.
 - Never combine decoration with execution — the decorated object must
   be the same object after decoration.
+- **Stacking accumulates, never overwrites.** Every metadata decorator in
+  the framework is stackable and *additive* — `@get`/`@post` append to
+  `ROUTE_META`, `@use_guards`/`@use_interceptors`/`@use_middlewares`/
+  `@use_exception_handlers` append to their lists, `@set_metadata` merges,
+  and `@exception_handler` accumulates its exception types (reading the
+  target's **own** `__dict__` so the strict-inheritance rule holds). A new
+  decorator that stores a single value must merge with any value already on
+  the target rather than clobbering it.
 
 ## 7. WebSocket and SSE Conventions
 

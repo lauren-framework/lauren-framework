@@ -50,6 +50,22 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - Error catalog grows to 29 user-facing classes with `SessionConfigError`
   (a `StartupError` subclass), joining the existing `*ConfigError` family.
+- **Stacked `@exception_handler` now accumulates** exception types instead of
+  silently keeping only the outermost decorator's. `@exception_handler(A)`
+  over `@exception_handler(B)` registers a handler for both `A` and `B`
+  (de-duplicated, top-first), exactly like the single-call
+  `@exception_handler(A, B)` form — aligning it with every other metadata
+  decorator (route verbs, `@use_*`), which already accumulate when stacked.
+  This is a behaviour change from the prior overwrite semantics (which
+  dropped the inner types with no error).
+
+### Fixed
+
+- `@exception_handler` decorators stacked on one handler no longer silently
+  discard all but the top one — the previous behaviour meant a handler
+  written for, e.g., both `UnauthorizedError` and `ForbiddenError` only ever
+  caught one of them. Reading the target's own metadata preserves the strict
+  inheritance rule for class-form handlers. (Reported against 1.7.0.)
 
 ## [1.7.0] - 2026-06-10
 

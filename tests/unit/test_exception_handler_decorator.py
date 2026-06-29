@@ -67,10 +67,20 @@ class TestExceptionHandlerIsMetadataOnly:
         assert isinstance(meta, ExceptionHandlerMeta)
         assert meta.exceptions == (MyError, OtherError)
 
-    def test_repeat_decoration_overwrites_metadata(self):
-        # Re-decorating with a different exception tuple replaces the
-        # marker. (We don't merge tuples — that would be confusing when
-        # a user explicitly re-declares the handler's scope.)
+    def test_stacking_accumulates_exception_types_on_a_function(self):
+        # Stacking is sugar for @exception_handler(MyError, OtherError):
+        # both types are registered, top decorator first.
+        @exception_handler(MyError)
+        @exception_handler(OtherError)
+        def fn(exc, request):
+            return None
+
+        meta = getattr(fn, EXCEPTION_HANDLER_META)
+        assert meta.exceptions == (MyError, OtherError)
+
+    def test_stacking_accumulates_on_a_class_and_preserves_injectable(self):
+        from lauren.decorators import INJECTABLE_META
+
         @exception_handler(MyError)
         @exception_handler(OtherError)
         class H:
@@ -78,8 +88,53 @@ class TestExceptionHandlerIsMetadataOnly:
                 return None
 
         meta = getattr(H, EXCEPTION_HANDLER_META)
-        # The outer (last-applied) decorator wins.
-        assert meta.exceptions == (MyError,)
+        assert meta.exceptions == (MyError, OtherError)
+        # The class form is still auto-injectable (the 2nd application is a no-op).
+        assert INJECTABLE_META in H.__dict__
+        assert hasattr(H, "catch")
+
+    def test_stacking_dedupes_overlapping_types_preserving_order(self):
+        class A(Exception): ...
+
+        class B(Exception): ...
+
+        class C(Exception): ...
+
+        @exception_handler(A, B)
+        @exception_handler(B, C)
+        def fn(exc, request):
+            return None
+
+        # B appears once; order is top-to-bottom of first appearance.
+        assert getattr(fn, EXCEPTION_HANDLER_META).exceptions == (A, B, C)
+
+    def test_single_decorator_forms_are_unchanged(self):
+        @exception_handler(MyError)
+        def one(exc, request):
+            return None
+
+        @exception_handler(MyError, OtherError)
+        def many(exc, request):
+            return None
+
+        assert getattr(one, EXCEPTION_HANDLER_META).exceptions == (MyError,)
+        assert getattr(many, EXCEPTION_HANDLER_META).exceptions == (MyError, OtherError)
+
+    def test_subclass_redecoration_does_not_absorb_parent_types(self):
+        # Own-__dict__ read: a re-decorated subclass keeps only the types it
+        # declares, never merging an inherited base's scope (strict inheritance).
+        @exception_handler(MyError)
+        class Parent:
+            async def catch(self, exc, request):
+                return None
+
+        @exception_handler(OtherError)
+        class Child(Parent):
+            async def catch(self, exc, request):
+                return None
+
+        assert Parent.__dict__[EXCEPTION_HANDLER_META].exceptions == (MyError,)
+        assert Child.__dict__[EXCEPTION_HANDLER_META].exceptions == (OtherError,)
 
 
 # ---------------------------------------------------------------------------

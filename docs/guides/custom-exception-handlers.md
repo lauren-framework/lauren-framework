@@ -45,6 +45,27 @@ async def handle_value_error(exc: ValueError, request: Request) -> Response:
 
 Function-form handlers are invoked directly with `(exc, request)` and **do not** participate in DI. If you need to inject services, switch to the class form.
 
+## Declaring multiple exception types
+
+A single handler can cover several exception types. Pass them all in one call:
+
+```python
+@exception_handler(UnauthorizedError, ForbiddenError)
+def to_login(exc, request):
+    return Response.redirect("/auth/login", status=303)
+```
+
+…or **stack** the decorator — the two forms are equivalent, and stacking accumulates (it does not overwrite):
+
+```python
+@exception_handler(UnauthorizedError)
+@exception_handler(ForbiddenError)
+def to_login(exc, request):
+    return Response.redirect("/auth/login", status=303)
+```
+
+Both register the handler for `UnauthorizedError` **and** `ForbiddenError`. Stacking is handy when the types come from different imports or you want one per line for readability; duplicate types are de-duplicated. (Like every metadata decorator in Lauren — route verbs, `@use_*` — stacking accumulates.)
+
 ## Three places to register
 
 ```python

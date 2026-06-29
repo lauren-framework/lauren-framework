@@ -742,8 +742,29 @@ def exception_handler(
             raise ExceptionHandlerConfigError(
                 f"@exception_handler must wrap a class or function; got {target!r}",
             )
+        # Accumulate across stacked @exception_handler decorators rather than
+        # overwriting — stacking is sugar for @exception_handler(A, B, ...), and
+        # the dispatcher matches via ``isinstance(exc, meta.exceptions)`` over the
+        # whole tuple, so a stacked form is semantically identical to the
+        # multi-arg form. This also aligns @exception_handler with every other
+        # metadata decorator in lauren (route verbs, @use_* — all accumulate).
+        #
+        # Read the target's OWN metadata only (never an inherited base's, so the
+        # strict-inheritance rule is preserved for class-form handlers — see
+        # CLAUDE.md §3). The top decorator applies last; list its types first so
+        # the merged tuple reads top-to-bottom in source order. Dedup, preserving
+        # order, so re-declaring a type does not produce a redundant tuple.
+        existing = target.__dict__.get(EXCEPTION_HANDLER_META)
+        if isinstance(existing, ExceptionHandlerMeta):
+            merged: list[type[BaseException]] = list(captured)
+            for exc_type in existing.exceptions:
+                if exc_type not in merged:
+                    merged.append(exc_type)
+            payload: tuple[type[BaseException], ...] = tuple(merged)
+        else:
+            payload = captured
         try:
-            setattr(target, EXCEPTION_HANDLER_META, ExceptionHandlerMeta(captured))
+            setattr(target, EXCEPTION_HANDLER_META, ExceptionHandlerMeta(payload))
         except (AttributeError, TypeError):  # pragma: no cover
             raise ExceptionHandlerConfigError(f"Cannot attach exception-handler metadata to {target!r}")
         return target

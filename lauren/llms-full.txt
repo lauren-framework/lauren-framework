@@ -1525,6 +1525,14 @@ whose declared types match (`isinstance(exc, declared)`) wins.
 * `@exception_handler` MUST be invoked with at least one exception
   type. Bare `@exception_handler` and empty `@exception_handler()` are
   both rejected with `ExceptionHandlerConfigError`.
+* A handler can declare multiple types: `@exception_handler(A, B)`, or
+  equivalently by **stacking** the decorator (stacking *accumulates*
+  the types, it does not overwrite — duplicates are de-duplicated):
+  ```python
+  @exception_handler(UnauthorizedError)
+  @exception_handler(ForbiddenError)
+  def to_login(exc, request): ...   # catches both
+  ```
 * Subclasses of `@exception_handler` classes are NOT auto-handlers —
   re-decorate to opt in (`MetadataInheritanceError`).
 * Handlers should *return* responses, never raise. A raise inside
