@@ -81,6 +81,16 @@ nox -s ver_dec -- --patch
 - Never auto-inherit decoration on subclasses. The framework's strict
   inheritance rule is one of its load-bearing invariants. Subclasses
   must explicitly re-decorate to opt in.
+- Never `.clear()` a per-request container that an accessor hands out by
+  reference — `Request.path_params` *is* the live `self._path_params`, so
+  clearing it in place mutates a dict a middleware or background task may
+  still hold from an earlier request. Assign a fresh container in `reset()`
+  (`self._path_params = {}`), as it already does for `State`. The router
+  populating the dict `reset()` just allocated is the one sanctioned
+  in-place reuse. It is safe because that dict is guaranteed fresh and
+  unshared with any earlier request, and it is load-bearing: a global
+  middleware snapshot taken before routing depends on the params appearing
+  in that same object.
 
 ## File-by-File Ownership
 
