@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed — Pooled `Request` no longer leaks attributes across requests
+
+- `Request.reset()` now clears the instance's **entire** `__dict__` before
+  re-populating its canonical fields, so **no attribute survives from one
+  request to the next** on a pooled instance. Previously only a hand-maintained
+  deny-list (`("__lauren_upload_cache__",)`) was cleared, so any attribute a
+  middleware, handler, or extension set on `request` (e.g.
+  `request.tenant_id = ...`) could be observed by an **unrelated** request
+  served by the same pooled object — a silent cross-request data leak. This is
+  a correctness fix: the whole attribute channel is now closed, with no
+  per-contributor maintenance.
+- As part of the same change, `reset()` assigns a **fresh** `path_params` dict
+  instead of clearing the existing one in place, so a reference retained from a
+  previous request (`req.path_params`) is no longer mutated on reuse.
+- No public API change; `Request` remains non-slotted, so attaching attributes
+  is still permitted — they are simply cleared on reuse.
+- Docs (`docs/core-concepts/request-response.md`, `llms-full.txt`, `CLAUDE.md`)
+  now state the pooling contract: don't retain a `Request`, use `request.state`
+  for request-scoped data.
+
 ## [1.8.0] - 2026-06-27
 
 ### Added — First-class session management

@@ -2384,6 +2384,11 @@ this decorator.
 single request.  Both are internal infrastructure exposed for advanced
 ASGI adapter customisation; typical application code never touches them.
 
+The `Request`-instance pool reuses objects via `Request.reset`, which clears
+the instance's entire `__dict__` before re-populating the canonical fields —
+so no attribute from a previous request (canonical or user-attached) can leak
+onto the next. This is a correctness invariant, not hygiene.
+
 ---
 
 ## Errors: Decorator & Interceptor
@@ -2576,5 +2581,8 @@ from lauren import reflect_routes, get_all_routes, ReflectedRoute
 ```python
 import lauren.docs as ld
 overview = ld.llms_txt()        # short overview (~2 KB)
+reference = ld.llms_full_txt()  # full reference (~25 KB)
+```
+        # short overview (~2 KB)
 reference = ld.llms_full_txt()  # full reference (~25 KB)
 ```
