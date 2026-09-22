@@ -174,6 +174,14 @@ jobs:
         # Pin a few representative Pydantic 2.x minor versions to catch
         # upstream API drift (lauren depends on pydantic>=2.0).
         pydantic: ["2.0.3", "2.5.3", "2.8.2", "2.11.7"]
+        include:
+          # sqlmodel, pulled in transitively by the `dev` extra, imports
+          # `pydantic.Discriminator`, which only exists from pydantic 2.3.
+          # On 2.0.3 that module cannot even be collected, and a collection
+          # error aborts the entire run. Skip just that file so the rest of
+          # lauren is still exercised against the older pin.
+          - pydantic: "2.0.3"
+            pytest_args: "--ignore=tests/unit/test_di_model_types.py"
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
@@ -186,4 +194,4 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pip install "pydantic==${{ matrix.pydantic }}"
       - run: python -c "import pydantic; print('pydantic:', pydantic.VERSION)"
-      - run: python -m pytest -q
+      - run: python -m pytest -q ${{ matrix.pytest_args }}

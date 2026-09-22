@@ -254,6 +254,12 @@ class Request:
     The request owns its ASGI scope and the ``receive`` callable required to
     consume the body. State, route metadata, and app state are attached by the
     runtime before the handler executes.
+
+    Instances are **pooled and reused** by :class:`lauren._arena.RequestArena`:
+    ``reset()`` clears the instance's entire ``__dict__`` between requests, so
+    an attribute set here (e.g. ``request.tenant_id = ...``) is visible only for
+    the lifetime of the current request and must never be relied upon to
+    persist. Copy anything you need to keep.
     """
 
     def __init__(
@@ -320,15 +326,37 @@ class Request:
         so the previous request's data cannot leak across the pool.
         The route-metadata slots (``_matched_route`` etc.) are wiped
         too — the dispatcher re-populates them after routing.
+
+        ``Request`` is deliberately **not** slotted, so *all* state —
+        the canonical fields below and anything user code, middleware,
+        or an extension attached — lives in ``self.__dict__``. ``reset``
+        therefore clears the whole ``__dict__`` before re-populating the
+        canonical fields, which guarantees no attribute from the previous
+        request survives onto this one. This is a correctness invariant,
+        not hygiene: a leaked attribute would be observable on an
+        unrelated request served by the same pooled instance.
         """
+        # Clear *every* attribute before re-populating — canonical fields
+        # and anything user code, middleware, or an extension attached
+        # (e.g. ``request.tenant_id``, or the multipart parse cache the
+        # UploadFile extractor stashes) alike. Because the class is not
+        # slotted this is a single O(n) clear on a tiny dict, and it
+        # removes the need to keep a hand-maintained deny-list of
+        # "attributes that must not leak" in sync with every contributor
+        # that stashes state on the request.
+        self.__dict__.clear()
+
         self._method = method.upper()
         self._path = path
         self._raw_query_string = raw_query_string
         self._headers = headers
-        # ``path_params`` is (re-)populated by the router. Clear the
-        # existing dict rather than allocating a new one so the arena
-        # keeps one fewer allocation per request on the hot path.
-        self._path_params.clear()
+        # ``path_params`` is (re-)populated by the router. Assign a
+        # *fresh* dict rather than clearing the existing one: the previous
+        # request's code may still hold a reference to the very dict
+        # ``path_params`` returned, and clearing it in place would mutate
+        # what that code sees. (Same reasoning as the fresh ``State()``
+        # below.)
+        self._path_params = {}
         self._query_params = None
         self._client = client
         self._server = server
@@ -346,17 +374,6 @@ class Request:
         self._handler_func = None
         self._route_template = None
         self._cookies = None
-        # Clear any per-request caches other subsystems stash on the
-        # request. Currently this covers the multipart parse cache
-        # (set by the UploadFile extractor); future subsystems that
-        # cache state on the request should clear it here too so
-        # pooled Request reuse never leaks cross-request data.
-        for attr in ("__lauren_upload_cache__",):
-            if hasattr(self, attr):
-                try:
-                    delattr(self, attr)
-                except AttributeError:  # pragma: no cover - defensive
-                    pass
 
     # -- Core properties ---------------------------------------------------
 

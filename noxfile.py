@@ -560,7 +560,9 @@ def prek(session: nox.Session) -> None:
         nox -s prek -- run ruff --files lauren/_di/__init__.py
     """
     # `prek` is a Rust binary distributed as a Python wheel on PyPI.
-    session.install("prek>=0.3")
+    # Pinned: keep in sync with .github/workflows/lint.yml and the install
+    # hint at the top of .pre-commit-config.yaml.
+    session.install("prek==0.5.3")
     args = session.posargs or ["run", "--all-files", "--show-diff-on-failure"]
     session.run("prek", *args)
 

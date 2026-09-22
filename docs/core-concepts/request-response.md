@@ -26,6 +26,34 @@ You'll usually take a more specific extractor (`Path`, `Query`, `Json`, ...) ins
 | `state` | per-request `State` (read/write) |
 | `app_state` | sealed `AppState` (read-only) |
 
+### Request lifetime — don't store it
+
+`Request` instances are **pooled and reused** by the framework's arena. When a
+request finishes the object goes back into the pool, and its entire internal
+state — *including any attribute you attached* — is cleared before the next
+request reuses it:
+
+```python
+@middleware()
+class Tenancy:
+    async def dispatch(self, request, call_next):
+        request.tenant_id = "acme"   # visible for THIS request only
+        return await call_next(request)
+```
+
+Consequences:
+
+- **Never retain a `Request`** (or anything it returns *by reference* —
+  `path_params`, `query_params`, `cookies`, `state`) beyond the current
+  request. Copy what you need: `dict(request.path_params)`.
+- **Never rely on an attached attribute persisting** to another request. It is
+  cleared on reuse — and relying on it is a cross-request data-leak bug.
+- Use `request.state` for request-scoped hand-off between middleware, guards,
+  and handlers; it is a fresh `State` per request.
+
+To outlive the request, use `AppState`, a `Scope.SINGLETON` service, or a
+background task that captures plain values (not the request).
+
 ### Body methods (async)
 
 ```python
