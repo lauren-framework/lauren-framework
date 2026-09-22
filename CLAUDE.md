@@ -337,6 +337,11 @@ deterministic).
 
 ## 8. Common Pitfalls
 
+- ❌ Persisting state on the `Request` object. `Request` instances are pooled
+  and reused; `Request.reset()` clears the instance's entire `__dict__`
+  between requests, so any attribute set on `request` (or read from a previous
+  request) is unreliable. Use `request.state` for request-scoped hand-off and
+  copy anything you retain (`dict(request.path_params)`).
 - ❌ Calling `get_type_hints` directly — use `_typing.resolve_type_hints`.
   `_safe_type_hints` in `_asgi/__init__.py` has a three-tier fallback:
   `resolve_type_hints` → retry with frame locals → `inspect.get_annotations(eval_str=True)`.

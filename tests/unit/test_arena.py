@@ -309,3 +309,36 @@ def test_capacity_property_is_readonly() -> None:
     assert arena.capacity == 17
     with pytest.raises(AttributeError):
         arena.capacity = 99  # type: ignore[misc]
+
+
+def test_pooled_request_does_not_leak_arbitrary_attributes() -> None:
+    """A user/extension attribute must not survive a pool round-trip.
+
+    ``reset`` clears the whole ``__dict__``, so *any* attribute set on a
+    leased request — not just the ones the framework knows about — is gone
+    from the next lease of the same object.
+    """
+    arena = _fresh_arena()
+    req = arena.acquire_request(Request, **_request_kwargs("/a"))
+    setattr(req, "tenant_id", "acme")
+    setattr(req, "_extension_cache", {"x": 1})
+    arena.release_request(req)
+
+    req2 = arena.acquire_request(Request, **_request_kwargs("/b"))
+    assert id(req2) == id(req)  # same pooled object, re-initialised
+    assert not hasattr(req2, "tenant_id")
+    assert not hasattr(req2, "_extension_cache")
+    assert req2.path == "/b"
+
+
+def test_capacity_zero_never_reuses_request() -> None:
+    """With pooling disabled a fresh instance is built — nothing to leak."""
+    arena = _fresh_arena(capacity=0)
+    req = arena.acquire_request(Request, **_request_kwargs("/a"))
+    setattr(req, "tenant_id", "acme")
+    arena.release_request(req)
+    assert arena.pooled_requests() == 0
+
+    req2 = arena.acquire_request(Request, **_request_kwargs("/b"))
+    assert req2 is not req
+    assert not hasattr(req2, "tenant_id")
