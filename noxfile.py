@@ -146,9 +146,21 @@ def tests_verbose(session: nox.Session) -> None:
 def coverage(session: nox.Session) -> None:
     """Run tests under coverage and print a terminal summary.
 
-    Excludes ``tests/benchmarks/`` by default — those tests have wall-clock
-    timing assertions that fail under coverage instrumentation overhead.
-    Override by passing your own paths after ``--``::
+    The default surface is ``tests/unit`` + ``tests/integration`` — the fast,
+    stable subset the figure is quoted against. Two directories sit outside it
+    on purpose: ``tests/property`` redraws its Hypothesis examples on every run,
+    so its share of the number moves with the seed, and ``tests/e2e`` drives a
+    live ASGI server, spending its time in I/O rather than in code the
+    integration layer does not already reach. The third exclusion is
+    ``tests/benchmarks/``: those tests assert on wall-clock timings that do not
+    survive coverage instrumentation overhead. The figure is informational only;
+    nothing in this repo (or in CI) enforces a coverage threshold.
+
+    Arguments passed after ``--`` *replace* that default list instead of
+    extending it, so leaving a path unnamed makes pytest fall back to its
+    ``testpaths`` (``tests``) — which is what the ``coverage`` job in
+    ``.github/workflows/tests.yml`` does, and why that job measures the whole
+    test tree minus benchmarks. Keep the surface narrow by naming paths::
 
         nox -s coverage -- tests/unit --cov-report=xml
     """

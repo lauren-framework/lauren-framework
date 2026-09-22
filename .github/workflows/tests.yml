@@ -66,6 +66,18 @@ jobs:
       - run: nox -s tests_integration -- -q
 
   coverage:
+    # Informational, never a gate: no coverage threshold is configured here, in
+    # pyproject.toml, or in the Codecov step below (`fail_ci_if_error: false`).
+    #
+    # Surface: `nox -s coverage` defaults to tests/unit + tests/integration, but
+    # arguments after `--` replace that default path list instead of extending
+    # it, so passing report flags (as the step below does) leaves pytest to fall
+    # back to `testpaths = ["tests"]` from pyproject.toml — this job therefore
+    # measures the whole test tree (unit + integration + e2e + property) except
+    # tests/benchmarks, which both the explicit --ignore-glob below and the
+    # `-m 'not benchmark'` addopts entry drop: its wall-clock assertions do not
+    # survive coverage instrumentation overhead. The narrower local default is
+    # documented in noxfile.py's `coverage` docstring.
     name: coverage
     runs-on: ubuntu-latest
     needs: [unit, integration]
