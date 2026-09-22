@@ -16,6 +16,12 @@ The request owns its ASGI scope and the ``receive`` callable required to
 consume the body. State, route metadata, and app state are attached by the
 runtime before the handler executes.
 
+Instances are **pooled and reused** by :class:`lauren._arena.RequestArena`:
+``reset()`` clears the instance's entire ``__dict__`` between requests, so
+an attribute set here (e.g. ``request.tenant_id = ...``) is visible only for
+the lifetime of the current request and must never be relied upon to
+persist. Copy anything you need to keep.
+
 #### `Request.reset`
 
 ```python
@@ -35,6 +41,15 @@ caches (``_query_params``, ``_cookies``, ``_body``) are cleared
 so the previous request's data cannot leak across the pool.
 The route-metadata slots (``_matched_route`` etc.) are wiped
 too — the dispatcher re-populates them after routing.
+
+``Request`` is deliberately **not** slotted, so *all* state —
+the canonical fields below and anything user code, middleware,
+or an extension attached — lives in ``self.__dict__``. ``reset``
+therefore clears the whole ``__dict__`` before re-populating the
+canonical fields, which guarantees no attribute from the previous
+request survives onto this one. This is a correctness invariant,
+not hygiene: a leaked attribute would be observable on an
+unrelated request served by the same pooled instance.
 
 #### `Request.body`
 
