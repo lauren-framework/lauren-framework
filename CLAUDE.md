@@ -356,7 +356,8 @@ deterministic).
   just allocated (`lauren/_asgi/__init__.py`: `req._path_params.clear()` then
   `.update(params)`), which is safe **only** because `reset()` guarantees that
   dict is fresh and unshared with any earlier request — a global middleware
-  snapshot taken before routing depends on the params appearing there.
+  snapshot taken before routing depends on the params appearing there. Locked
+  by `tests/integration/test_pre_routing_path_params_snapshot.py`.
 - ❌ Calling `get_type_hints` directly — use `_typing.resolve_type_hints`.
   `_safe_type_hints` in `_asgi/__init__.py` has a three-tier fallback:
   `resolve_type_hints` → retry with frame locals → `inspect.get_annotations(eval_str=True)`.

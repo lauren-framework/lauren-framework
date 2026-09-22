@@ -1166,11 +1166,22 @@ class LaurenApp:
                     compiled = self._handlers[(entry.method, entry.path_template)]
                     # Per-route encoder wins over the app-level encoder.
                     effective_encoder = compiled.encoder or self._json_encoder
-                    # Reuse the request's existing ``_path_params`` dict rather
-                    # than replacing it: for pooled ``Request`` objects the dict
-                    # was already cleared by ``Request.reset``, and for
-                    # user-constructed requests it's an empty dict. This saves
-                    # one allocation per request on the hot path.
+                    # Sanctioned in-place reuse — the one place the framework mutates
+                    # a container that an accessor hands out by reference
+                    # (``Request.path_params`` is the live ``_path_params``).
+                    # See CLAUDE.md §8 and PRD-02 §11.1.
+                    #
+                    # It is safe *only* because ``Request.reset`` assigns a fresh
+                    # ``{}`` that is unshared with any earlier request (a
+                    # user-constructed request's dict is likewise empty), so nothing
+                    # retained from a previous request can be mutated here. It is
+                    # also load-bearing: global middlewares wrap this routing step,
+                    # so a reference they take before routing is empty at capture
+                    # time and must observe the params appearing in the *same*
+                    # object. Assigning a fresh dict instead would silently break
+                    # that pre-routing snapshot, which
+                    # tests/integration/test_pre_routing_path_params_snapshot.py
+                    # locks. Saves one allocation per request on the hot path.
                     req._path_params.clear()
                     req._path_params.update(params)
                     req._matched_route = entry

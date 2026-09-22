@@ -87,7 +87,10 @@ nox -s ver_dec -- --patch
   still hold from an earlier request. Assign a fresh container in `reset()`
   (`self._path_params = {}`), as it already does for `State`. The router
   populating the dict `reset()` just allocated is the one sanctioned
-  in-place reuse.
+  in-place reuse. It is safe because that dict is guaranteed fresh and
+  unshared with any earlier request, and it is load-bearing: a global
+  middleware snapshot taken before routing depends on the params appearing
+  in that same object.
 
 ## File-by-File Ownership
 
