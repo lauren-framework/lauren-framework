@@ -36,8 +36,10 @@ jobs:
           key: prek-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
           restore-keys: |
             prek-${{ runner.os }}-
+      # Pinned: keep in sync with the `prek` session in noxfile.py and the
+      # install hint at the top of .pre-commit-config.yaml.
       - name: Install prek
-        run: pip install "prek>=0.3"
+        run: pip install "prek==0.5.3"
       - name: Run prek
         run: prek run --all-files --show-diff-on-failure --color always
 

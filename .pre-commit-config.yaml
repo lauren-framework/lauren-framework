@@ -4,13 +4,23 @@
 #
 # Install once per clone:
 #
-#     uv tool install prek      # or: brew install prek / pipx install prek
+#     uv tool install 'prek==0.5.3'   # or: pipx install 'prek==0.5.3'
 #     prek install              # writes .git/hooks/pre-commit
 #
 # Run on demand:
 #
 #     prek run                  # changed files only
 #     prek run --all-files      # everything tracked by git
+#
+# NOTE - prek is pinned to 0.5.3. CI (.github/workflows/lint.yml) and the
+# nox `prek` session install that same version, so a local run matches CI.
+#
+# Keep every hook's `additional_dependencies` free of *local paths*. prek
+# 0.5.x builds a hook env inside a temp dir and resolves relative paths
+# there, so an `-e .` entry fails with "does not appear to be a Python
+# project" and the hook env can never be created. The `llms-full-txt-sync`
+# hook below therefore imports `lauren` straight from the checkout (see
+# scripts/check_llms_full.py) and declares only its real dependencies.
 #
 # `prek` keeps full compatibility with classic `pre-commit`, so
 # contributors who prefer the original `pre-commit run` will work too.
@@ -132,10 +142,13 @@ repos:
         language: python
         pass_filenames: false
         files: ^(lauren/.*\.py|llms-full\.txt)$
-        # Editable install of the package so the script can `import lauren`.
+        # No local path here, on purpose. prek 0.5.x resolves a relative
+        # path in `additional_dependencies` against the temp dir it builds
+        # the hook env in, which fails outright. The script puts the
+        # checkout on `sys.path` and imports `lauren` from source instead.
         additional_dependencies:
+          - "anyio>=4.0"
           - "pydantic>=2.0"
-          - "-e ."
 
       # Quick smoke: noxfile.py and pyproject.toml are syntactically valid.
       - id: nox-list

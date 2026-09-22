@@ -20,13 +20,24 @@ import sys
 
 
 def main(argv: list[str]) -> int:
+    # Import `lauren` straight from the checkout rather than relying on the
+    # package being installed into this hook's virtualenv. That is
+    # deliberate: prek 0.5.x builds a hook environment in a temp dir and
+    # resolves relative paths in `additional_dependencies` against that temp
+    # dir, so an `-e .` entry fails with "does not appear to be a Python
+    # project" and the hook env can never be created. Declaring a local path
+    # is therefore not an option, and putting the source tree on `sys.path`
+    # is the alternative.
+    source_dir = pathlib.Path(__file__).resolve().parent.parent
+    if str(source_dir) not in sys.path:
+        sys.path.insert(0, str(source_dir))
+
     pkg = importlib.import_module("lauren")
     public = set(getattr(pkg, "__all__", ()) or ())
     if not public:
         print("ERROR: lauren.__all__ is empty or missing", file=sys.stderr)
         return 2
 
-    source_dir = pathlib.Path(__file__).parent.parent
     llms_path = source_dir / "lauren" / "llms-full.txt"
     if not llms_path.exists():
         print("ERROR: llms-full.txt not found in repo root", file=sys.stderr)
