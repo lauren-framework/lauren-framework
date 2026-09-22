@@ -1,8 +1,15 @@
-"""Property test: no arbitrary attribute survives ``Request.reset``.
+"""Property tests for :meth:`lauren.types.Request.reset` pool-reuse hygiene.
 
-Mirrors the arena's own "correctness invariant" testing style, but as a
-property: for *any* attribute name a contributor might attach, reusing a
-pooled :class:`~lauren.types.Request` must never expose it.
+Two invariants, both as properties:
+
+* **Leakage** — for *any* attribute name a contributor might attach, reusing a
+  pooled :class:`~lauren.types.Request` must never expose it.
+* **Aliasing** — for *any* per-request payload, a container a caller retained
+  from request N must not be mutated when request N+1 reuses the object. The
+  accessors return their containers *by reference*, so ``reset`` has to allocate
+  fresh ones rather than clear the previous request's dict in place.
+
+Mirrors the arena's own "correctness invariant" testing style.
 """
 
 from __future__ import annotations
@@ -50,12 +57,20 @@ async def _noop_receive() -> dict[str, Any]:
     return {"type": "http.request", "body": b"", "more_body": False}
 
 
-def _make_request() -> Request:
+def _make_request(
+    *,
+    raw_query_string: bytes = b"",
+    cookie_header: str | None = None,
+) -> Request:
+    """Build a bare ``Request``; optional raw query / cookie header for the
+    lazily-parsed ``query_params`` / ``cookies`` containers.
+    """
+    headers = Headers([("cookie", cookie_header)]) if cookie_header is not None else Headers()
     return Request(
         method="GET",
         path="/a",
-        raw_query_string=b"",
-        headers=Headers(),
+        raw_query_string=raw_query_string,
+        headers=headers,
         client=ClientInfo(None, None),
         server=ServerInfo(None, None),
         receive=_noop_receive,
@@ -92,3 +107,129 @@ def test_no_arbitrary_attribute_survives_reset(name: str) -> None:
     setattr(req, name, "leaked")
     req.reset(**_reset_kwargs())
     assert not hasattr(req, name)
+
+
+# -- Container aliasing --------------------------------------------------------
+# ``reset`` must do more than hide the previous request's data: because the
+# accessors hand out their containers *by reference* (``types.py:397`` returns
+# ``self._path_params`` itself), a container a caller kept must survive intact.
+# The failure mode here is not leakage but aliasing — request N+1 reusing the
+# pooled object must not mutate a dict that request N's code still holds.
+
+#: Keys/values mirror what a router extracts: identifier-ish text for the
+#: parameter *name*, free text for the *value*.
+_PARAM_NAME = st.text(
+    alphabet=st.characters(whitelist_categories=("L", "Nd", "Pc")),
+    min_size=1,
+    max_size=12,
+)
+_PATH_PARAMS = st.dictionaries(_PARAM_NAME, st.text(max_size=12), max_size=6)
+
+#: Small alphabets so generated payloads routinely collide with the fixed
+#: request-N payloads below, which is where aliasing shows up most sharply.
+_RAW_QUERY_STRING = st.text(alphabet="ab=&", max_size=12)
+_COOKIE_HEADER = st.text(alphabet="abc ;=", max_size=12)
+
+
+def _populate_path_params(req: Request, params: dict[str, str]) -> None:
+    """Mirror the router's population step (``lauren/_asgi/__init__.py:1174``).
+
+    The router fills ``_path_params`` *in place* (``clear`` + ``update``) instead
+    of replacing it, so driving the property through the same two statements is
+    what makes it representative of a real request.
+    """
+    req._path_params.clear()
+    req._path_params.update(params)
+
+
+def _assert_retained_intact(
+    retained: dict[str, str],
+    expected: dict[str, str],
+    *,
+    when: str,
+) -> None:
+    """Assert request N's retained ``path_params`` still holds what N put there.
+
+    Callers pass a *snapshot* of the retained dict taken at the point under test
+    (``dict(held)``) rather than ``held`` itself, and name that point in
+    ``when``. The invariant is checked at three successive stages of one
+    scenario (while the router populated N, right after ``reset``, and after
+    N+1 has been populated again); ``held`` is the very object
+    ``req._path_params`` aliases, and the two later stages mutate that dict
+    through ``req``. Repeating the same comparison against ``n_params`` after
+    each stage is therefore textually the same check three times over, which no
+    static analyser can tell apart from a redundant re-test unless it models
+    aliasing-through-attribute-access. Re-reading the container's contents into
+    a fresh dict at each point makes every check an observation of the dict as
+    it stands *then*, and ``when`` makes sure a failure names the step that
+    clobbered it.
+    """
+    message = (
+        f"request N's retained path_params were mutated {when}: "
+        f"expected {expected!r}, kept {retained!r}"
+    )
+    assert retained == expected, message
+
+
+@settings(max_examples=300, deadline=None)
+@given(n_params=_PATH_PARAMS, next_params=_PATH_PARAMS)
+def test_retained_path_params_are_not_mutated_by_a_later_reset(
+    n_params: dict[str, str], next_params: dict[str, str]
+) -> None:
+    """Request N's ``path_params`` dict is untouched when N+1 reuses the object."""
+    # Only *differing* payloads can reveal an in-place clobber: were the router
+    # to populate the same params again, a mutating ``reset`` would still leave
+    # the retained dict looking correct and the test would pass vacuously. Make
+    # them differ by construction (the sentinel key contains ``\x00``, which the
+    # letter/digit/connector alphabet of the key strategy above cannot produce)
+    # rather than with an ``assume``, so no example is discarded on the way in.
+    next_params = {**next_params, "\x00next-request": "1"}
+
+    req = _make_request()
+    _populate_path_params(req, n_params)
+    held = req.path_params
+    # The accessor handed back exactly what the router put in.
+    _assert_retained_intact(dict(held), n_params, when="while the router populated it")
+
+    req.reset(**_reset_kwargs())  # request N+1 takes the pooled instance over
+    assert req.path_params is not held  # reset allocated a fresh dict...
+    assert req.path_params == {}  # ...which it hands the router empty
+    # N's dict was not emptied by reset:
+    _assert_retained_intact(dict(held), n_params, when="by reset()")
+
+    _populate_path_params(req, next_params)  # the router fills the *new* dict
+    assert req.path_params == next_params
+    # ← the invariant: N's dict survived N+1 intact
+    _assert_retained_intact(dict(held), n_params, when="when request N+1 was populated")
+    assert held is not req.path_params
+
+
+@settings(max_examples=200, deadline=None)
+@given(raw_query_string=_RAW_QUERY_STRING, cookie_header=_COOKIE_HEADER)
+def test_retained_lazy_caches_are_not_mutated_by_a_later_reset(
+    raw_query_string: str, cookie_header: str
+) -> None:
+    """Retained ``query_params`` / ``cookies`` dicts also survive a reset.
+
+    Both are built on first access and cached, so they too are containers handed
+    to user code by reference; an arbitrary request N+1 must not disturb them.
+    """
+    req = _make_request(
+        raw_query_string=b"k=1&k=2",
+        cookie_header="session=abc; theme=dark",
+    )
+    held_query_params = req.query_params
+    held_cookies = req.cookies
+    assert held_query_params == {"k": ["1", "2"]}
+    assert held_cookies == {"session": "abc", "theme": "dark"}
+
+    kwargs = _reset_kwargs()
+    kwargs["raw_query_string"] = raw_query_string.encode("latin-1", "replace")
+    kwargs["headers"] = Headers([("cookie", cookie_header)])
+    req.reset(**kwargs)
+
+    # Whatever N+1 parses, it must be a new object, never the retained one.
+    assert req.query_params is not held_query_params
+    assert req.cookies is not held_cookies
+    assert held_query_params == {"k": ["1", "2"]}
+    assert held_cookies == {"session": "abc", "theme": "dark"}
