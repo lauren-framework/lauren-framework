@@ -142,6 +142,35 @@ def _populate_path_params(req: Request, params: dict[str, str]) -> None:
     req._path_params.update(params)
 
 
+def _assert_retained_intact(
+    retained: dict[str, str],
+    expected: dict[str, str],
+    *,
+    when: str,
+) -> None:
+    """Assert request N's retained ``path_params`` still holds what N put there.
+
+    Callers pass a *snapshot* of the retained dict taken at the point under test
+    (``dict(held)``) rather than ``held`` itself, and name that point in
+    ``when``. The invariant is checked at three successive stages of one
+    scenario (while the router populated N, right after ``reset``, and after
+    N+1 has been populated again); ``held`` is the very object
+    ``req._path_params`` aliases, and the two later stages mutate that dict
+    through ``req``. Repeating the same comparison against ``n_params`` after
+    each stage is therefore textually the same check three times over, which no
+    static analyser can tell apart from a redundant re-test unless it models
+    aliasing-through-attribute-access. Re-reading the container's contents into
+    a fresh dict at each point makes every check an observation of the dict as
+    it stands *then*, and ``when`` makes sure a failure names the step that
+    clobbered it.
+    """
+    message = (
+        f"request N's retained path_params were mutated {when}: "
+        f"expected {expected!r}, kept {retained!r}"
+    )
+    assert retained == expected, message
+
+
 @settings(max_examples=300, deadline=None)
 @given(n_params=_PATH_PARAMS, next_params=_PATH_PARAMS)
 def test_retained_path_params_are_not_mutated_by_a_later_reset(
@@ -159,16 +188,19 @@ def test_retained_path_params_are_not_mutated_by_a_later_reset(
     req = _make_request()
     _populate_path_params(req, n_params)
     held = req.path_params
-    assert held == n_params
+    # The accessor handed back exactly what the router put in.
+    _assert_retained_intact(dict(held), n_params, when="while the router populated it")
 
     req.reset(**_reset_kwargs())  # request N+1 takes the pooled instance over
     assert req.path_params is not held  # reset allocated a fresh dict...
     assert req.path_params == {}  # ...which it hands the router empty
-    assert held == n_params  # N's dict was not emptied by reset
+    # N's dict was not emptied by reset:
+    _assert_retained_intact(dict(held), n_params, when="by reset()")
 
     _populate_path_params(req, next_params)  # the router fills the *new* dict
     assert req.path_params == next_params
-    assert held == n_params  # ← the invariant: N's dict survived N+1 intact
+    # ← the invariant: N's dict survived N+1 intact
+    _assert_retained_intact(dict(held), n_params, when="when request N+1 was populated")
     assert held is not req.path_params
 
 
