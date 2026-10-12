@@ -123,6 +123,9 @@ The pins matter to the numbers. Several frameworks switch JSON encoder on whiche
 
 Median of five repeats, higher is better. `baseline` is the hand-written ASGI callable with no framework in the path — the floor the harness itself can reach, included so you can tell framework cost from client cost. It is not a competitor, and its margin should not be read as one: the 1.13x–1.24x it holds over the best framework in this table is narrower than the spread on most of those cells, and re-running `nox -s bench_frameworks` has moved that margin by more than its own size — once putting the floor behind the best framework outright. Treat the floor as the reference point for what the client costs, not as a leaderboard entry.
 
+![Median throughput by workload, one bar per participant, with error bars spanning the min–max range across the repeats](../assets/bench-throughput-light.svg#only-light)
+![Median throughput by workload, one bar per participant, with error bars spanning the min–max range across the repeats](../assets/bench-throughput-dark.svg#only-dark)
+
 |  | hello | json | path_query | di | validation |
 |---|---|---|---|---|---|
 | **lauren** | 2166.39 | 2134.53 | 1713.02 | 2191.76 | 1748.13 |
@@ -154,6 +157,9 @@ The spread tells you how much of a difference to believe. Median spread across t
 ## Latency
 
 Median of five repeats of the per-request round trip, in milliseconds, lower is better. The same nine participants, the same workloads.
+
+![p50, p95 and p99 round trip per participant, one panel per workload, with error bars spanning the min–max range across the repeats](../assets/bench-latency-light.svg#only-light)
+![p50, p95 and p99 round trip per participant, one panel per workload, with error bars spanning the min–max range across the repeats](../assets/bench-latency-dark.svg#only-dark)
 
 **p50**
 
