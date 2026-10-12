@@ -120,7 +120,7 @@ async def probe(framework: Framework) -> Verdict:
         return verdict
 
     try:
-        app = framework.apps["hello"]()
+        app = framework.app()
     except Exception as exc:  # noqa: BLE001 - the failure *is* the evidence
         verdict.error = f"building the app raised {type(exc).__name__}: {exc}"
         return verdict
