@@ -406,13 +406,13 @@ full tables, the method and the pinned dependency set are on the
 [benchmark page](https://lauren-py.dev/comparisons/performance-benchmarks/).
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/lauren-framework/lauren-framework/main/docs/assets/bench-throughput-dark.svg">
-  <img alt="Median throughput by workload, one bar per participant, with error bars spanning the min&ndash;max range across the repeats" src="https://raw.githubusercontent.com/lauren-framework/lauren-framework/main/docs/assets/bench-throughput-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/lauren-framework/lauren-assets/refs/heads/main/framework/benchmarks/bench-throughput-dark.svg">
+  <img alt="Median throughput by workload, one bar per participant, with error bars spanning the min&ndash;max range across the repeats" src="https://raw.githubusercontent.com/lauren-framework/lauren-assets/refs/heads/main/framework/benchmarks/bench-throughput-light.svg">
 </picture>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/lauren-framework/lauren-framework/main/docs/assets/bench-latency-dark.svg">
-  <img alt="p50, p95 and p99 round trip per participant, one panel per workload, with error bars spanning the min&ndash;max range across the repeats" src="https://raw.githubusercontent.com/lauren-framework/lauren-framework/main/docs/assets/bench-latency-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/lauren-framework/lauren-assets/refs/heads/main/framework/benchmarks/bench-latency-dark.svg">
+  <img alt="p50, p95 and p99 round trip per participant, one panel per workload, with error bars spanning the min&ndash;max range across the repeats" src="https://raw.githubusercontent.com/lauren-framework/lauren-assets/refs/heads/main/framework/benchmarks/bench-latency-light.svg">
 </picture>
 
 ## Optional dependencies
