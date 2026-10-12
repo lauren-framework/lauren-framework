@@ -391,6 +391,30 @@ walking on the hot path. The DI graph, route table, extractor bindings, and
 middleware pipeline are all resolved once at startup. Each request pays only
 the cost of dispatching through the already-compiled graph.
 
+## Benchmarks
+
+Cross-framework numbers are produced by a separate harness: `benches/bench.py`
+drives every participant through the same workloads, one fresh process per
+measurement, and writes `benches/results/frameworks-inprocess.json`. The figures
+below are drawn straight from that committed artifact &mdash; median throughput
+per workload, then the p50/p95/p99 round trip per participant &mdash; with error
+bars spanning the min&ndash;max range across repeats, so the spread sits next to
+the median instead of behind it. The client calls each application through
+`httpx.ASGITransport`: no socket, no server process, no TLS. Read them as the
+cost of the framework layer itself, not as a deployed-configuration number. The
+full tables, the method and the pinned dependency set are on the
+[benchmark page](https://lauren-py.dev/comparisons/performance-benchmarks/).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/lauren-framework/lauren-framework/main/docs/assets/bench-throughput-dark.svg">
+  <img alt="Median throughput by workload, one bar per participant, with error bars spanning the min&ndash;max range across the repeats" src="https://raw.githubusercontent.com/lauren-framework/lauren-framework/main/docs/assets/bench-throughput-light.svg">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/lauren-framework/lauren-framework/main/docs/assets/bench-latency-dark.svg">
+  <img alt="p50, p95 and p99 round trip per participant, one panel per workload, with error bars spanning the min&ndash;max range across the repeats" src="https://raw.githubusercontent.com/lauren-framework/lauren-framework/main/docs/assets/bench-latency-light.svg">
+</picture>
+
 ## Optional dependencies
 
 | Package | Purpose |
