@@ -1,9 +1,17 @@
 # Pinned dependency set for the cross-framework benchmark in benches/.
 #
-# Install into a throwaway environment with:
+# Install into a throwaway environment from *inside this directory*: the ``-e
+# ..`` at the end is resolved against the working directory, not against this
+# file, so running these from the repository root would try to install the
+# directory above the repository and fail with "does not appear to be a Python
+# project".
 #
-#     uv venv benches/.venv --python 3.13
-#     uv pip install --python benches/.venv/bin/python -r benches/requirements-bench.txt
+#     cd benches
+#     uv venv .venv --python 3.13
+#     uv pip install --python .venv/bin/python -r requirements-bench.txt
+#
+# ``nox -s bench_frameworks`` does exactly this (it chdirs first for the same
+# reason) and then runs the harness.
 #
 # These pins are not merely "what happened to resolve" — they are part of the
 # measured configuration.  Several frameworks in this field switch JSON
