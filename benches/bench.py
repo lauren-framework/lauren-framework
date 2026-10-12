@@ -160,9 +160,12 @@ def _spawn(worker_args: Sequence[str], *, timeout: float) -> tuple[int, dict[str
 def measure_startup(framework: Framework, *, repeats: int) -> dict[str, Any]:
     """Cold-start one framework ``repeats`` times, each in a fresh subprocess.
 
-    ``process_ms`` is the parent's wall clock around the whole subprocess — what
-    a user waits for, interpreter boot included.  The phase breakdown comes from
-    inside the child, where the interpreter is already running.
+    ``process_ms`` is the parent's wall clock around the whole subprocess, so it
+    spans interpreter boot through *process exit* -- an upper bound on time to
+    serve, which is what a user waits for, with each framework's teardown
+    counted in at the end.  The phase breakdown comes from inside the child,
+    where the interpreter is already running, and stops at the first ready
+    request.
     """
     samples: list[dict[str, Any]] = []
     for attempt in range(1, repeats + 1):

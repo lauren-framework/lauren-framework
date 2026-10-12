@@ -16,7 +16,9 @@ be measured in the same warm process:
     satisfied by the first real request.  This is "import + build app + first
     ready request", and the check is the same ``Workload.check`` the timed modes
     use, so the readiness probe cannot drift away from the contract the rest of
-    the harness holds every framework to.
+    the harness holds every framework to.  The clock stops at that first answer,
+    *before* the lifespan shutdown handshake that follows it, so nothing
+    measured in this mode includes teardown.
 
 ``measure``
     Check the workload's contract, discard a warmup pass, then time the workload
@@ -216,7 +218,12 @@ async def _measure(args: argparse.Namespace) -> dict[str, Any]:
 
 
 async def _startup(args: argparse.Namespace) -> dict[str, Any]:
-    """Run ``startup`` mode: import, build, first ready request."""
+    """Run ``startup`` mode: import, build, first ready request.
+
+    Readiness is stamped the moment the first request comes back, *before* the
+    lifespan shutdown handshake, so none of the numbers here measure teardown --
+    a framework that is slow to stop is not made to look slow to start.
+    """
     import httpx
 
     from asgi_lifespan import LifespanRunner
@@ -238,9 +245,12 @@ async def _startup(args: argparse.Namespace) -> dict[str, Any]:
             transport=transport, base_url=BASE_URL, timeout=REQUEST_TIMEOUT_S
         ) as client:
             response = await client.request(hello.method, hello.path, json=hello.json_body)
+        # Stamped inside the ``try``, on purpose: the ``finally`` below shuts the
+        # application down, and a readiness timestamp taken after that would fold
+        # each framework's teardown into its startup phase breakdown.
+        t_ready = time.perf_counter()
     finally:
         await lifespan.shutdown()
-    t_ready = time.perf_counter()
 
     # The readiness probe is the ``hello`` contract, checked by the same method
     # every timed workload is checked with -- one copy, so the two cannot drift.
