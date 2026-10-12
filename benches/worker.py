@@ -12,8 +12,11 @@ be measured in the same warm process:
 
 ``startup``
     Import the framework, build the application with all five routes, drive the
-    lifespan startup handshake and get an HTTP 200 from the first real request.
-    This is "import + build app + first ready request".
+    lifespan startup handshake and get the ``hello`` workload's contract
+    satisfied by the first real request.  This is "import + build app + first
+    ready request", and the check is the same ``Workload.check`` the timed modes
+    use, so the readiness probe cannot drift away from the contract the rest of
+    the harness holds every framework to.
 
 ``measure``
     Check the workload's contract, discard a warmup pass, then time the workload
@@ -217,6 +220,9 @@ async def _startup(args: argparse.Namespace) -> dict[str, Any]:
     import httpx
 
     from asgi_lifespan import LifespanRunner
+    from workloads import WORKLOADS
+
+    hello = next(workload for workload in WORKLOADS if workload.name == "hello")
 
     framework = _resolve(args.framework)
 
@@ -231,20 +237,16 @@ async def _startup(args: argparse.Namespace) -> dict[str, Any]:
         async with httpx.AsyncClient(
             transport=transport, base_url=BASE_URL, timeout=REQUEST_TIMEOUT_S
         ) as client:
-            response = await client.get("/")
+            response = await client.request(hello.method, hello.path, json=hello.json_body)
     finally:
         await lifespan.shutdown()
     t_ready = time.perf_counter()
 
-    try:
-        body = json.loads(response.text)
-    except ValueError:
-        body = None
-
-    if response.status_code != 200 or body != {"ok": True}:
-        raise ContractError(
-            f"first request was not the hello contract (HTTP {response.status_code}, body {body!r})"
-        )
+    # The readiness probe is the ``hello`` contract, checked by the same method
+    # every timed workload is checked with -- one copy, so the two cannot drift.
+    outcome = hello.check(response.status_code, response.text)
+    if isinstance(outcome, str):
+        raise ContractError(f"first request was not the hello contract: {outcome}")
 
     return {
         "harness_import_ms": (t_harness_imported - _T0) * 1000.0,
