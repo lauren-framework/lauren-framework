@@ -75,16 +75,26 @@ repos:
   # ---------------------------------------------------------------------
   # Python — mypy (informational by default; CI gates on it)
   # ---------------------------------------------------------------------
+  # The rev is pinned to the same mypy as the `typecheck` session in
+  # noxfile.py. That matters: mypy 1.13.0 and mypy 2.4.0 flagged *different*
+  # lines for the same pydantic release, so two unpinned checkers turn one
+  # breakage into two unrelated-looking failures. Bump both together.
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.13.0
+    rev: v2.4.0
     hooks:
       - id: mypy
         name: mypy (lauren package)
         files: ^lauren/
         args: ["--config-file=pyproject.toml"]
-        # mypy needs the runtime deps to type-check correctly.
+        # mypy needs the runtime deps to type-check correctly. Pinned, because
+        # pydantic's stubs are part of the type-checking surface: an unpinned
+        # `>=2.0` silently changed what this hook reported when pydantic 2.14
+        # retyped `TypeAdapter`'s argument as `TypeForm`. The noxfile session
+        # intentionally follows the project's own resolution instead, so a
+        # genuinely incompatible release still fails CI; bump this pin when
+        # that happens rather than loosening it.
         additional_dependencies:
-          - "pydantic>=2.0"
+          - "pydantic==2.14.1"
 
   # ---------------------------------------------------------------------
   # YAML — schema-aware lint for .github/workflows + issue templates

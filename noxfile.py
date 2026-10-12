@@ -385,7 +385,15 @@ def format(session: nox.Session) -> None:  # noqa: A001 - intentional name
 def typecheck(session: nox.Session) -> None:
     """Run mypy over the lauren package."""
     session.run("uv", "sync", "--extra", "dev", "--active", external=True)
-    session.run("uv", "pip", "install", "mypy>=1.10", external=True)
+    # Pinned: an unpinned mypy can redden a green branch without a single code
+    # change, and the `mypy` hook in .pre-commit-config.yaml pins the same
+    # version, so `prek run` and CI cannot disagree about which errors exist.
+    # Pydantic is deliberately left to the project's own resolution here, so a
+    # genuinely incompatible release still fails this gate loudly. Note that a
+    # developer checkout keeps an ignored `uv.lock`, which can pin older
+    # versions than a fresh CI checkout resolves, so a local green is not proof
+    # that CI is green.
+    session.run("uv", "pip", "install", "mypy==2.4.0", external=True)
     args = session.posargs or ["lauren"]
     session.run("mypy", *args)
 
