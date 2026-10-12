@@ -355,11 +355,18 @@ def _git_provenance() -> dict[str, Any]:
     commit = run("rev-parse", "HEAD")
     if commit is None:
         return {"available": False}
+    changed = [line for line in (run("status", "--porcelain") or "").splitlines() if line.strip()]
     return {
         "available": True,
         "commit": commit,
         "branch": run("rev-parse", "--abbrev-ref", "HEAD"),
-        "dirty": bool(run("status", "--porcelain")),
+        "dirty": bool(changed),
+        # Named, not only flagged.  ``dirty: true`` on its own gives a reader no
+        # way to tell whether the *harness* was edited while the numbers were
+        # being taken -- the one thing that would invalidate them -- or whether
+        # the tree merely carried the artifact being written.  Bounded so an
+        # unrelated untracked directory cannot bloat the document.
+        "dirty_paths": changed[:20],
     }
 
 
