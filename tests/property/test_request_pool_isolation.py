@@ -165,8 +165,7 @@ def _assert_retained_intact(
     clobbered it.
     """
     message = (
-        f"request N's retained path_params were mutated {when}: "
-        f"expected {expected!r}, kept {retained!r}"
+        f"request N's retained path_params were mutated {when}: expected {expected!r}, kept {retained!r}"
     )
     assert retained == expected, message
 
