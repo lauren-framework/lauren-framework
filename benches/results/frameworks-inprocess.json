@@ -1,0 +1,5916 @@
+{
+  "schema": "lauren-framework-bench/1",
+  "generated_utc": "2026-10-12T05:11:33+00:00",
+  "methodology": {
+    "driver": "httpx.ASGITransport (in-process; no socket, no server process)",
+    "isolation": "each repeat runs in its own freshly spawned interpreter with its own application and event loop; nothing is shared between repeats or between frameworks",
+    "ordering": "repeats are interleaved round-robin across frameworks and workloads",
+    "lifespan": "the lifespan startup handshake is driven for every framework before the first request",
+    "fresh_app_per_repeat": true,
+    "repeats": 5,
+    "warmup_s": 0.25,
+    "duration_s": 0.5,
+    "concurrency": 1,
+    "startup_repeats": 5,
+    "startup_scope": "import + build app + first ready request, in a fresh subprocess per repeat",
+    "throughput_definition": "completed requests / elapsed wall time of one repeat",
+    "latency_definition": "per-request round trip observed by the in-process client, pooled over a repeat",
+    "latency_includes": "httpx + ASGITransport client overhead, not handler-only time",
+    "percentile_method": "linear interpolation over the request latencies of each repeat",
+    "spread_definition": "(max - min) / median * 100, over the per-repeat values of that statistic",
+    "contract_enforced": "every repeat re-checks its workload against benches/workloads.py on the application instance it is about to time",
+    "not_measured": "memory / RSS is out of scope for this comparison",
+    "caveat": "in-process numbers are comparable between frameworks but are NOT a deployed-configuration number (uvicorn/gunicorn/granian over a socket)"
+  },
+  "environment": {
+    "python": "3.13.13",
+    "python_implementation": "CPython",
+    "platform": "Linux-7.0.0-14-generic-x86_64-with-glibc2.43",
+    "machine": "x86_64",
+    "cpu_model": "Intel Core Processor (Broadwell, no TSX, IBRS)",
+    "cpu_count_logical": 8,
+    "installed_versions": {
+      "lauren": "1.8.0.post17",
+      "fastapi": "0.143.0",
+      "starlette": "1.7.0",
+      "litestar": "2.24.0",
+      "blacksheep": "2.6.4",
+      "sanic": "25.12.1",
+      "falcon": "4.4.0",
+      "quart": "0.23.1",
+      "aiohttp": "3.14.5",
+      "robyn": "0.88.0"
+    },
+    "harness_sha256": {
+      "benches/asgi_lifespan.py": "ef50b6f8599e2c1b7f5c4e70cfca981f063f1e815f2c30b5c7b4d4472f93117a",
+      "benches/baseline_app.py": "2bd53bed8104bf62cf9945108e84bdea63c52f9d3ac6e975cc33eb10a3e9d0be",
+      "benches/bench.py": "ce9f1ceb2f2048c9d7d560d08a8a911dcb15f9d341173a6f4ccea1e73dd4bc97",
+      "benches/framework_apps.py": "a435a2bf90943008571e1ae699cc41684722b8dfef0e9fc2bc49fd6f1d9420b2",
+      "benches/requirements-bench.txt": "c9d376ea6eddb3e2c1fd7736273aaffa2bc829271c2a52952abc3c93b127f8ce",
+      "benches/run.py": "002ca7de9d690103a8e55240d4beb18179fafd0850e90626ac9cade80aebd27c",
+      "benches/stats.py": "96f55315e5c32dc0819a6fe2744f73995dd090f269ae90802c62160eb4708c6e",
+      "benches/worker.py": "b53da90c6d8d4b00294d1162efa9f164f321b722914f56ac2d936a86d921cabf",
+      "benches/workloads.py": "a27bc038ee13202b5574bf7118303d191120dc443e78000bd85033b2cf6024fa"
+    }
+  },
+  "git": {
+    "available": true,
+    "commit": "bb7c11e1d4e64eb07d543ecdcbec418a9248b9aa",
+    "branch": "feat/benchmark",
+    "dirty": true,
+    "dirty_paths": [
+      "M .gitignore",
+      "?? benches/results/"
+    ]
+  },
+  "frameworks": [
+    {
+      "key": "lauren",
+      "dist": "lauren",
+      "version": "1.8.0.post17",
+      "entrypoint": "lauren.LaurenFactory.create(AppModule) -> LaurenApp",
+      "serialization": "stdlib json (lauren's StdlibJSONEncoder, the default)",
+      "di_mechanism": "constructor injection from the @module provider graph",
+      "validation": "built-in Json[PydanticModel] extractor",
+      "startup": {
+        "repeats": 5,
+        "process_ms": {
+          "median": 705.54,
+          "min": 663.62,
+          "max": 765.43,
+          "spread_pct": 14.43,
+          "stdev": 43.44
+        },
+        "phases_ms": {
+          "harness_import": {
+            "median": 297.27,
+            "min": 277.96,
+            "max": 347.88,
+            "spread_pct": 23.52,
+            "stdev": 27.59
+          },
+          "build_app": {
+            "median": 109.3,
+            "min": 104.06,
+            "max": 131.49,
+            "spread_pct": 25.1,
+            "stdev": 10.63
+          },
+          "first_request": {
+            "median": 4.49,
+            "min": 3.9,
+            "max": 6.14,
+            "spread_pct": 49.97,
+            "stdev": 0.91
+          },
+          "child_total": {
+            "median": 434.14,
+            "min": 391.15,
+            "max": 463.32,
+            "spread_pct": 16.62,
+            "stdev": 27.04
+          }
+        },
+        "lifespan_supported": true,
+        "raw": {
+          "process_ms": [
+            705.54,
+            765.43,
+            663.62,
+            669.73,
+            736.48
+          ],
+          "build_app_ms": [
+            131.49,
+            104.06,
+            109.29,
+            111.27,
+            109.3
+          ],
+          "first_request_ms": [
+            5.38,
+            4.49,
+            3.9,
+            4.3,
+            6.14
+          ]
+        }
+      },
+      "workloads": {
+        "hello": {
+          "describes": "Route lookup and response construction, nothing else \u2014 the floor.",
+          "request": {
+            "method": "GET",
+            "path": "/",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5116,
+          "warmup_requests_total": 2568,
+          "child_process_ms": {
+            "median": 1390.68,
+            "min": 1344.71,
+            "max": 1455.36,
+            "spread_pct": 7.96,
+            "stdev": 45.77
+          },
+          "throughput_rps": {
+            "median": 2068.98,
+            "min": 1919.67,
+            "max": 2127.15,
+            "spread_pct": 10.03,
+            "stdev": 79.64
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.427,
+              "min": 0.4222,
+              "max": 0.4548,
+              "spread_pct": 7.62,
+              "stdev": 0.0138
+            },
+            "p95": {
+              "median": 0.6724,
+              "min": 0.6311,
+              "max": 0.6979,
+              "spread_pct": 9.93,
+              "stdev": 0.0264
+            },
+            "p99": {
+              "median": 0.8905,
+              "min": 0.7107,
+              "max": 1.0683,
+              "spread_pct": 40.16,
+              "stdev": 0.1459
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2020.16,
+              2086.54,
+              1919.67,
+              2127.15,
+              2068.98
+            ],
+            "p50_ms": [
+              0.4428,
+              0.4259,
+              0.4548,
+              0.4222,
+              0.427
+            ],
+            "p95_ms": [
+              0.6879,
+              0.6724,
+              0.6979,
+              0.6311,
+              0.6569
+            ],
+            "p99_ms": [
+              0.8905,
+              0.7557,
+              0.9547,
+              0.7107,
+              1.0683
+            ],
+            "requests": [
+              1011,
+              1044,
+              961,
+              1065,
+              1035
+            ],
+            "elapsed_s": [
+              0.500455,
+              0.500351,
+              0.500607,
+              0.500671,
+              0.500247
+            ],
+            "contract_ms": [
+              1.333,
+              1.3206,
+              1.2979,
+              1.1991,
+              1.1763
+            ]
+          }
+        },
+        "json": {
+          "describes": "Serializing a nested, multi-typed payload.",
+          "request": {
+            "method": "GET",
+            "path": "/json",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 1,
+              "name": "ada",
+              "tags": [
+                "a",
+                "b",
+                "c"
+              ],
+              "nested": {
+                "x": 1.5,
+                "flag": true
+              }
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5265,
+          "warmup_requests_total": 2543,
+          "child_process_ms": {
+            "median": 1429.13,
+            "min": 1328.9,
+            "max": 1539.1,
+            "spread_pct": 14.71,
+            "stdev": 75.4
+          },
+          "throughput_rps": {
+            "median": 2152.78,
+            "min": 1911.84,
+            "max": 2227.6,
+            "spread_pct": 14.67,
+            "stdev": 121.27
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4142,
+              "min": 0.4015,
+              "max": 0.4695,
+              "spread_pct": 16.41,
+              "stdev": 0.0279
+            },
+            "p95": {
+              "median": 0.6696,
+              "min": 0.6063,
+              "max": 0.6745,
+              "spread_pct": 10.18,
+              "stdev": 0.0298
+            },
+            "p99": {
+              "median": 0.9197,
+              "min": 0.6696,
+              "max": 1.2008,
+              "spread_pct": 57.76,
+              "stdev": 0.1897
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2160.15,
+              1911.84,
+              2070.91,
+              2227.6,
+              2152.78
+            ],
+            "p50_ms": [
+              0.4121,
+              0.4695,
+              0.4439,
+              0.4142,
+              0.4015
+            ],
+            "p95_ms": [
+              0.6745,
+              0.6696,
+              0.6343,
+              0.6063,
+              0.6705
+            ],
+            "p99_ms": [
+              0.8809,
+              0.9511,
+              1.2008,
+              0.6696,
+              0.9197
+            ],
+            "requests": [
+              1081,
+              957,
+              1036,
+              1114,
+              1077
+            ],
+            "elapsed_s": [
+              0.500428,
+              0.500565,
+              0.500263,
+              0.500089,
+              0.500282
+            ],
+            "contract_ms": [
+              1.9506,
+              1.2103,
+              1.2244,
+              1.8643,
+              1.3103
+            ]
+          }
+        },
+        "path_query": {
+          "describes": "Extracting and type-coercing one path and two query parameters.",
+          "request": {
+            "method": "GET",
+            "path": "/items/42?limit=10&q=abc",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 42,
+              "limit": 10,
+              "q": "abc"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 4609,
+          "warmup_requests_total": 2324,
+          "child_process_ms": {
+            "median": 1454.1,
+            "min": 1361.1,
+            "max": 1472.34,
+            "spread_pct": 7.65,
+            "stdev": 45.5
+          },
+          "throughput_rps": {
+            "median": 1798.16,
+            "min": 1754.7,
+            "max": 1987.49,
+            "spread_pct": 12.95,
+            "stdev": 99.7
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.487,
+              "min": 0.4654,
+              "max": 0.5138,
+              "spread_pct": 9.92,
+              "stdev": 0.0223
+            },
+            "p95": {
+              "median": 0.7292,
+              "min": 0.6531,
+              "max": 0.7764,
+              "spread_pct": 16.9,
+              "stdev": 0.0462
+            },
+            "p99": {
+              "median": 0.8325,
+              "min": 0.7906,
+              "max": 1.2849,
+              "spread_pct": 59.38,
+              "stdev": 0.2042
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1768.57,
+              1987.49,
+              1754.7,
+              1902.49,
+              1798.16
+            ],
+            "p50_ms": [
+              0.4654,
+              0.4673,
+              0.5138,
+              0.487,
+              0.5075
+            ],
+            "p95_ms": [
+              0.7457,
+              0.6531,
+              0.7764,
+              0.7073,
+              0.7292
+            ],
+            "p99_ms": [
+              0.9605,
+              0.7906,
+              1.2849,
+              0.8325,
+              0.824
+            ],
+            "requests": [
+              885,
+              994,
+              878,
+              952,
+              900
+            ],
+            "elapsed_s": [
+              0.500405,
+              0.500128,
+              0.500371,
+              0.500396,
+              0.500511
+            ],
+            "contract_ms": [
+              2.2234,
+              1.8591,
+              1.4025,
+              1.451,
+              1.4363
+            ]
+          }
+        },
+        "di": {
+          "describes": "Resolving a collaborator through each framework's own injection mechanism.",
+          "request": {
+            "method": "GET",
+            "path": "/di",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "service": "Greeter",
+              "greeting": "hello"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5492,
+          "warmup_requests_total": 2607,
+          "child_process_ms": {
+            "median": 1434.29,
+            "min": 1378.52,
+            "max": 1442.57,
+            "spread_pct": 4.47,
+            "stdev": 29.18
+          },
+          "throughput_rps": {
+            "median": 2212.25,
+            "min": 2112.68,
+            "max": 2313.03,
+            "spread_pct": 9.06,
+            "stdev": 83.2
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4071,
+              "min": 0.4013,
+              "max": 0.4285,
+              "spread_pct": 6.67,
+              "stdev": 0.011
+            },
+            "p95": {
+              "median": 0.6469,
+              "min": 0.5678,
+              "max": 0.6745,
+              "spread_pct": 16.5,
+              "stdev": 0.0404
+            },
+            "p99": {
+              "median": 0.7667,
+              "min": 0.6643,
+              "max": 0.7721,
+              "spread_pct": 14.05,
+              "stdev": 0.0481
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2212.25,
+              2220.94,
+              2112.68,
+              2313.03,
+              2117.48
+            ],
+            "p50_ms": [
+              0.4071,
+              0.4013,
+              0.4285,
+              0.4032,
+              0.4137
+            ],
+            "p95_ms": [
+              0.6745,
+              0.6469,
+              0.645,
+              0.5678,
+              0.6501
+            ],
+            "p99_ms": [
+              0.7721,
+              0.7667,
+              0.7716,
+              0.6643,
+              0.7112
+            ],
+            "requests": [
+              1107,
+              1111,
+              1057,
+              1158,
+              1059
+            ],
+            "elapsed_s": [
+              0.500395,
+              0.500239,
+              0.500311,
+              0.500641,
+              0.500122
+            ],
+            "contract_ms": [
+              1.2887,
+              1.2472,
+              1.3376,
+              1.3136,
+              1.7553
+            ]
+          }
+        },
+        "validation": {
+          "describes": "Validating and coercing a request body, then serializing a derived model.",
+          "request": {
+            "method": "POST",
+            "path": "/validate",
+            "json_body": {
+              "name": "ada",
+              "age": 36
+            }
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "name": "ada",
+              "age": 36,
+              "adult": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 4017,
+          "warmup_requests_total": 2110,
+          "child_process_ms": {
+            "median": 1425.37,
+            "min": 1382.86,
+            "max": 1486.45,
+            "spread_pct": 7.27,
+            "stdev": 37.06
+          },
+          "throughput_rps": {
+            "median": 1601.07,
+            "min": 1571.19,
+            "max": 1652.57,
+            "spread_pct": 5.08,
+            "stdev": 30.85
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.5673,
+              "min": 0.5479,
+              "max": 0.5833,
+              "spread_pct": 6.24,
+              "stdev": 0.013
+            },
+            "p95": {
+              "median": 0.8669,
+              "min": 0.8059,
+              "max": 0.9327,
+              "spread_pct": 14.63,
+              "stdev": 0.0536
+            },
+            "p99": {
+              "median": 1.1956,
+              "min": 0.9303,
+              "max": 1.293,
+              "spread_pct": 30.34,
+              "stdev": 0.1653
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1587.61,
+              1601.07,
+              1652.57,
+              1614.16,
+              1571.19
+            ],
+            "p50_ms": [
+              0.5479,
+              0.5673,
+              0.5597,
+              0.5687,
+              0.5833
+            ],
+            "p95_ms": [
+              0.8989,
+              0.9327,
+              0.8059,
+              0.8174,
+              0.8669
+            ],
+            "p99_ms": [
+              1.293,
+              1.2396,
+              0.9668,
+              1.1956,
+              0.9303
+            ],
+            "requests": [
+              794,
+              802,
+              827,
+              808,
+              786
+            ],
+            "elapsed_s": [
+              0.500122,
+              0.500914,
+              0.500433,
+              0.500569,
+              0.500259
+            ],
+            "contract_ms": [
+              1.5541,
+              1.73,
+              1.4901,
+              1.4426,
+              1.668
+            ]
+          }
+        }
+      }
+    },
+    {
+      "key": "fastapi",
+      "dist": "fastapi",
+      "version": "0.143.0",
+      "entrypoint": "fastapi.FastAPI()",
+      "serialization": "stdlib json (Starlette JSONResponse; ORJSONResponse is opt-in)",
+      "di_mechanism": "Depends(callable), resolved per request",
+      "validation": "built-in body annotation (pydantic)",
+      "startup": {
+        "repeats": 5,
+        "process_ms": {
+          "median": 944.55,
+          "min": 857.48,
+          "max": 1042.56,
+          "spread_pct": 19.59,
+          "stdev": 69.48
+        },
+        "phases_ms": {
+          "harness_import": {
+            "median": 289.89,
+            "min": 270.55,
+            "max": 316.51,
+            "spread_pct": 15.85,
+            "stdev": 20.95
+          },
+          "build_app": {
+            "median": 288.47,
+            "min": 272.48,
+            "max": 310.72,
+            "spread_pct": 13.26,
+            "stdev": 15.57
+          },
+          "first_request": {
+            "median": 3.31,
+            "min": 3.16,
+            "max": 5.33,
+            "spread_pct": 65.52,
+            "stdev": 1.0
+          },
+          "child_total": {
+            "median": 587.0,
+            "min": 555.36,
+            "max": 631.96,
+            "spread_pct": 13.05,
+            "stdev": 29.99
+          }
+        },
+        "lifespan_supported": true,
+        "raw": {
+          "process_ms": [
+            922.66,
+            857.48,
+            944.55,
+            987.53,
+            1042.56
+          ],
+          "build_app_ms": [
+            272.48,
+            281.5,
+            288.47,
+            302.89,
+            310.72
+          ],
+          "first_request_ms": [
+            3.26,
+            3.31,
+            3.16,
+            5.33,
+            4.73
+          ]
+        }
+      },
+      "workloads": {
+        "hello": {
+          "describes": "Route lookup and response construction, nothing else \u2014 the floor.",
+          "request": {
+            "method": "GET",
+            "path": "/",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 4701,
+          "warmup_requests_total": 2336,
+          "child_process_ms": {
+            "median": 1676.03,
+            "min": 1650.86,
+            "max": 1758.49,
+            "spread_pct": 6.42,
+            "stdev": 49.98
+          },
+          "throughput_rps": {
+            "median": 1853.03,
+            "min": 1689.92,
+            "max": 2039.42,
+            "spread_pct": 18.86,
+            "stdev": 131.48
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4875,
+              "min": 0.4479,
+              "max": 0.6029,
+              "spread_pct": 31.8,
+              "stdev": 0.0628
+            },
+            "p95": {
+              "median": 0.7324,
+              "min": 0.657,
+              "max": 0.782,
+              "spread_pct": 17.06,
+              "stdev": 0.0468
+            },
+            "p99": {
+              "median": 0.9086,
+              "min": 0.7845,
+              "max": 1.1666,
+              "spread_pct": 42.05,
+              "stdev": 0.1598
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2039.42,
+              1689.92,
+              1853.03,
+              1852.43,
+              1958.23
+            ],
+            "p50_ms": [
+              0.4521,
+              0.6029,
+              0.4875,
+              0.4883,
+              0.4479
+            ],
+            "p95_ms": [
+              0.657,
+              0.782,
+              0.7409,
+              0.7324,
+              0.6998
+            ],
+            "p99_ms": [
+              0.7845,
+              1.1666,
+              0.9086,
+              0.8318,
+              1.0605
+            ],
+            "requests": [
+              1021,
+              846,
+              927,
+              927,
+              980
+            ],
+            "elapsed_s": [
+              0.500632,
+              0.500615,
+              0.500263,
+              0.500423,
+              0.500451
+            ],
+            "contract_ms": [
+              2.7465,
+              1.8589,
+              2.3044,
+              2.5943,
+              1.8858
+            ]
+          }
+        },
+        "json": {
+          "describes": "Serializing a nested, multi-typed payload.",
+          "request": {
+            "method": "GET",
+            "path": "/json",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 1,
+              "name": "ada",
+              "tags": [
+                "a",
+                "b",
+                "c"
+              ],
+              "nested": {
+                "x": 1.5,
+                "flag": true
+              }
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 4730,
+          "warmup_requests_total": 2253,
+          "child_process_ms": {
+            "median": 1675.73,
+            "min": 1596.21,
+            "max": 1743.72,
+            "spread_pct": 8.8,
+            "stdev": 61.99
+          },
+          "throughput_rps": {
+            "median": 1859.01,
+            "min": 1791.94,
+            "max": 2019.95,
+            "spread_pct": 12.27,
+            "stdev": 106.22
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4727,
+              "min": 0.4397,
+              "max": 0.4924,
+              "spread_pct": 11.14,
+              "stdev": 0.026
+            },
+            "p95": {
+              "median": 0.7236,
+              "min": 0.6598,
+              "max": 0.7455,
+              "spread_pct": 11.84,
+              "stdev": 0.0341
+            },
+            "p99": {
+              "median": 1.0576,
+              "min": 0.7793,
+              "max": 1.1514,
+              "spread_pct": 35.19,
+              "stdev": 0.1444
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2019.95,
+              1797.3,
+              1985.29,
+              1859.01,
+              1791.94
+            ],
+            "p50_ms": [
+              0.4398,
+              0.4727,
+              0.4397,
+              0.4905,
+              0.4924
+            ],
+            "p95_ms": [
+              0.6598,
+              0.7455,
+              0.7143,
+              0.7236,
+              0.7398
+            ],
+            "p99_ms": [
+              0.9691,
+              1.089,
+              1.1514,
+              0.7793,
+              1.0576
+            ],
+            "requests": [
+              1011,
+              899,
+              993,
+              930,
+              897
+            ],
+            "elapsed_s": [
+              0.500507,
+              0.500193,
+              0.500179,
+              0.500266,
+              0.500574
+            ],
+            "contract_ms": [
+              2.2837,
+              1.8239,
+              2.0048,
+              1.825,
+              2.0365
+            ]
+          }
+        },
+        "path_query": {
+          "describes": "Extracting and type-coercing one path and two query parameters.",
+          "request": {
+            "method": "GET",
+            "path": "/items/42?limit=10&q=abc",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 42,
+              "limit": 10,
+              "q": "abc"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 3891,
+          "warmup_requests_total": 1957,
+          "child_process_ms": {
+            "median": 1644.76,
+            "min": 1574.82,
+            "max": 1700.53,
+            "spread_pct": 7.64,
+            "stdev": 45.27
+          },
+          "throughput_rps": {
+            "median": 1618.92,
+            "min": 1275.28,
+            "max": 1666.29,
+            "spread_pct": 24.15,
+            "stdev": 158.75
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.565,
+              "min": 0.5533,
+              "max": 0.79,
+              "spread_pct": 41.88,
+              "stdev": 0.1023
+            },
+            "p95": {
+              "median": 0.8945,
+              "min": 0.7979,
+              "max": 1.0401,
+              "spread_pct": 27.07,
+              "stdev": 0.089
+            },
+            "p99": {
+              "median": 0.9992,
+              "min": 0.942,
+              "max": 1.3439,
+              "spread_pct": 40.22,
+              "stdev": 0.1632
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1275.28,
+              1583.75,
+              1627.57,
+              1666.29,
+              1618.92
+            ],
+            "p50_ms": [
+              0.79,
+              0.565,
+              0.5682,
+              0.5594,
+              0.5533
+            ],
+            "p95_ms": [
+              1.0401,
+              0.8945,
+              0.86,
+              0.7979,
+              0.8969
+            ],
+            "p99_ms": [
+              1.3439,
+              1.0794,
+              0.9992,
+              0.942,
+              0.9698
+            ],
+            "requests": [
+              639,
+              793,
+              814,
+              835,
+              810
+            ],
+            "elapsed_s": [
+              0.501068,
+              0.500711,
+              0.500131,
+              0.501114,
+              0.500333
+            ],
+            "contract_ms": [
+              2.057,
+              2.0375,
+              2.208,
+              2.1908,
+              2.0744
+            ]
+          }
+        },
+        "di": {
+          "describes": "Resolving a collaborator through each framework's own injection mechanism.",
+          "request": {
+            "method": "GET",
+            "path": "/di",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "service": "Greeter",
+              "greeting": "hello"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 2696,
+          "warmup_requests_total": 1327,
+          "child_process_ms": {
+            "median": 1695.4,
+            "min": 1611.87,
+            "max": 1721.48,
+            "spread_pct": 6.47,
+            "stdev": 42.69
+          },
+          "throughput_rps": {
+            "median": 1084.31,
+            "min": 934.26,
+            "max": 1204.34,
+            "spread_pct": 24.91,
+            "stdev": 115.53
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.8342,
+              "min": 0.8011,
+              "max": 1.0711,
+              "spread_pct": 32.36,
+              "stdev": 0.123
+            },
+            "p95": {
+              "median": 1.2984,
+              "min": 0.9838,
+              "max": 1.5011,
+              "spread_pct": 39.85,
+              "stdev": 0.2117
+            },
+            "p99": {
+              "median": 1.5466,
+              "min": 1.2016,
+              "max": 1.9704,
+              "spread_pct": 49.7,
+              "stdev": 0.3207
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              934.26,
+              989.21,
+              1172.06,
+              1204.34,
+              1084.31
+            ],
+            "p50_ms": [
+              1.0711,
+              0.99,
+              0.8051,
+              0.8011,
+              0.8342
+            ],
+            "p95_ms": [
+              1.5011,
+              1.3261,
+              1.0532,
+              0.9838,
+              1.2984
+            ],
+            "p99_ms": [
+              1.9704,
+              1.9278,
+              1.5018,
+              1.2016,
+              1.5466
+            ],
+            "requests": [
+              468,
+              495,
+              587,
+              603,
+              543
+            ],
+            "elapsed_s": [
+              0.500934,
+              0.500402,
+              0.500826,
+              0.50069,
+              0.500781
+            ],
+            "contract_ms": [
+              20.265,
+              24.3474,
+              23.9088,
+              24.2629,
+              29.1635
+            ]
+          }
+        },
+        "validation": {
+          "describes": "Validating and coercing a request body, then serializing a derived model.",
+          "request": {
+            "method": "POST",
+            "path": "/validate",
+            "json_body": {
+              "name": "ada",
+              "age": 36
+            }
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "name": "ada",
+              "age": 36,
+              "adult": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 3669,
+          "warmup_requests_total": 1887,
+          "child_process_ms": {
+            "median": 1690.65,
+            "min": 1570.39,
+            "max": 1875.91,
+            "spread_pct": 18.07,
+            "stdev": 111.48
+          },
+          "throughput_rps": {
+            "median": 1514.81,
+            "min": 1290.37,
+            "max": 1540.6,
+            "spread_pct": 16.52,
+            "stdev": 104.47
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.608,
+              "min": 0.5802,
+              "max": 0.7906,
+              "spread_pct": 34.61,
+              "stdev": 0.0854
+            },
+            "p95": {
+              "median": 0.8888,
+              "min": 0.8347,
+              "max": 0.9819,
+              "spread_pct": 16.56,
+              "stdev": 0.0587
+            },
+            "p99": {
+              "median": 1.2594,
+              "min": 1.1787,
+              "max": 1.3841,
+              "spread_pct": 16.31,
+              "stdev": 0.0789
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1290.37,
+              1514.81,
+              1534.15,
+              1540.6,
+              1451.2
+            ],
+            "p50_ms": [
+              0.7906,
+              0.608,
+              0.5802,
+              0.5968,
+              0.6349
+            ],
+            "p95_ms": [
+              0.9819,
+              0.8347,
+              0.9095,
+              0.8462,
+              0.8888
+            ],
+            "p99_ms": [
+              1.3841,
+              1.2594,
+              1.1787,
+              1.2759,
+              1.2088
+            ],
+            "requests": [
+              646,
+              758,
+              768,
+              771,
+              726
+            ],
+            "elapsed_s": [
+              0.500632,
+              0.500393,
+              0.500603,
+              0.500454,
+              0.500277
+            ],
+            "contract_ms": [
+              2.1531,
+              3.3241,
+              2.1594,
+              2.0362,
+              2.5815
+            ]
+          }
+        }
+      }
+    },
+    {
+      "key": "starlette",
+      "dist": "starlette",
+      "version": "1.7.0",
+      "entrypoint": "starlette.applications.Starlette()",
+      "serialization": "stdlib json (starlette.responses.JSONResponse)",
+      "di_mechanism": "none \u2014 app.state lookup inside the handler",
+      "validation": "manual \u2014 await request.json() then model_validate",
+      "startup": {
+        "repeats": 5,
+        "process_ms": {
+          "median": 571.4,
+          "min": 511.51,
+          "max": 632.32,
+          "spread_pct": 21.14,
+          "stdev": 45.92
+        },
+        "phases_ms": {
+          "harness_import": {
+            "median": 277.47,
+            "min": 253.39,
+            "max": 300.84,
+            "spread_pct": 17.1,
+            "stdev": 16.83
+          },
+          "build_app": {
+            "median": 32.44,
+            "min": 30.33,
+            "max": 42.06,
+            "spread_pct": 36.16,
+            "stdev": 5.22
+          },
+          "first_request": {
+            "median": 1.95,
+            "min": 1.85,
+            "max": 2.15,
+            "spread_pct": 15.02,
+            "stdev": 0.11
+          },
+          "child_total": {
+            "median": 312.06,
+            "min": 285.57,
+            "max": 344.91,
+            "spread_pct": 19.02,
+            "stdev": 21.07
+          }
+        },
+        "lifespan_supported": true,
+        "raw": {
+          "process_ms": [
+            585.73,
+            571.4,
+            540.08,
+            511.51,
+            632.32
+          ],
+          "build_app_ms": [
+            38.21,
+            32.44,
+            30.44,
+            30.33,
+            42.06
+          ],
+          "first_request_ms": [
+            1.95,
+            1.94,
+            2.15,
+            1.85,
+            2.01
+          ]
+        }
+      },
+      "workloads": {
+        "hello": {
+          "describes": "Route lookup and response construction, nothing else \u2014 the floor.",
+          "request": {
+            "method": "GET",
+            "path": "/",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5979,
+          "warmup_requests_total": 3076,
+          "child_process_ms": {
+            "median": 1381.37,
+            "min": 1317.85,
+            "max": 1453.62,
+            "spread_pct": 9.83,
+            "stdev": 50.61
+          },
+          "throughput_rps": {
+            "median": 2415.34,
+            "min": 2150.79,
+            "max": 2650.19,
+            "spread_pct": 20.68,
+            "stdev": 218.52
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3787,
+              "min": 0.3328,
+              "max": 0.4937,
+              "spread_pct": 42.49,
+              "stdev": 0.0736
+            },
+            "p95": {
+              "median": 0.5485,
+              "min": 0.5281,
+              "max": 0.5838,
+              "spread_pct": 10.16,
+              "stdev": 0.0239
+            },
+            "p99": {
+              "median": 0.7962,
+              "min": 0.6125,
+              "max": 1.0607,
+              "spread_pct": 56.3,
+              "stdev": 0.18
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2188.18,
+              2415.34,
+              2150.79,
+              2547.2,
+              2650.19
+            ],
+            "p50_ms": [
+              0.4937,
+              0.3787,
+              0.4688,
+              0.3432,
+              0.3328
+            ],
+            "p95_ms": [
+              0.5806,
+              0.5466,
+              0.5838,
+              0.5281,
+              0.5485
+            ],
+            "p99_ms": [
+              0.7962,
+              1.0607,
+              0.9595,
+              0.7243,
+              0.6125
+            ],
+            "requests": [
+              1095,
+              1208,
+              1076,
+              1274,
+              1326
+            ],
+            "elapsed_s": [
+              0.500417,
+              0.500137,
+              0.500281,
+              0.500158,
+              0.500341
+            ],
+            "contract_ms": [
+              1.0905,
+              1.1047,
+              1.1548,
+              1.1087,
+              1.1669
+            ]
+          }
+        },
+        "json": {
+          "describes": "Serializing a nested, multi-typed payload.",
+          "request": {
+            "method": "GET",
+            "path": "/json",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 1,
+              "name": "ada",
+              "tags": [
+                "a",
+                "b",
+                "c"
+              ],
+              "nested": {
+                "x": 1.5,
+                "flag": true
+              }
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 6378,
+          "warmup_requests_total": 3202,
+          "child_process_ms": {
+            "median": 1343.53,
+            "min": 1314.1,
+            "max": 1369.04,
+            "spread_pct": 4.09,
+            "stdev": 22.14
+          },
+          "throughput_rps": {
+            "median": 2479.15,
+            "min": 2313.23,
+            "max": 2791.88,
+            "spread_pct": 19.31,
+            "stdev": 200.44
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3672,
+              "min": 0.3272,
+              "max": 0.3864,
+              "spread_pct": 16.12,
+              "stdev": 0.0252
+            },
+            "p95": {
+              "median": 0.5388,
+              "min": 0.4934,
+              "max": 0.5788,
+              "spread_pct": 15.85,
+              "stdev": 0.0377
+            },
+            "p99": {
+              "median": 0.6564,
+              "min": 0.5506,
+              "max": 1.0974,
+              "spread_pct": 83.31,
+              "stdev": 0.2388
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2313.23,
+              2791.88,
+              2442.66,
+              2479.15,
+              2722.03
+            ],
+            "p50_ms": [
+              0.3864,
+              0.3272,
+              0.3741,
+              0.3672,
+              0.3371
+            ],
+            "p95_ms": [
+              0.5788,
+              0.4934,
+              0.5599,
+              0.5388,
+              0.4976
+            ],
+            "p99_ms": [
+              0.9473,
+              0.6013,
+              1.0974,
+              0.6564,
+              0.5506
+            ],
+            "requests": [
+              1157,
+              1397,
+              1222,
+              1240,
+              1362
+            ],
+            "elapsed_s": [
+              0.500167,
+              0.500379,
+              0.500274,
+              0.500171,
+              0.500362
+            ],
+            "contract_ms": [
+              1.098,
+              1.5809,
+              1.1128,
+              1.1013,
+              1.0929
+            ]
+          }
+        },
+        "path_query": {
+          "describes": "Extracting and type-coercing one path and two query parameters.",
+          "request": {
+            "method": "GET",
+            "path": "/items/42?limit=10&q=abc",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 42,
+              "limit": 10,
+              "q": "abc"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5592,
+          "warmup_requests_total": 2650,
+          "child_process_ms": {
+            "median": 1348.81,
+            "min": 1308.35,
+            "max": 1543.87,
+            "spread_pct": 17.46,
+            "stdev": 95.54
+          },
+          "throughput_rps": {
+            "median": 2270.69,
+            "min": 2010.7,
+            "max": 2412.97,
+            "spread_pct": 17.72,
+            "stdev": 153.55
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3938,
+              "min": 0.3687,
+              "max": 0.4229,
+              "spread_pct": 13.78,
+              "stdev": 0.0231
+            },
+            "p95": {
+              "median": 0.5928,
+              "min": 0.5841,
+              "max": 0.6351,
+              "spread_pct": 8.6,
+              "stdev": 0.0214
+            },
+            "p99": {
+              "median": 0.7251,
+              "min": 0.6998,
+              "max": 1.2762,
+              "spread_pct": 79.49,
+              "stdev": 0.2479
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2270.69,
+              2314.7,
+              2010.7,
+              2166.4,
+              2412.97
+            ],
+            "p50_ms": [
+              0.3938,
+              0.387,
+              0.4208,
+              0.4229,
+              0.3687
+            ],
+            "p95_ms": [
+              0.5861,
+              0.5928,
+              0.6351,
+              0.6113,
+              0.5841
+            ],
+            "p99_ms": [
+              0.7251,
+              0.7193,
+              1.2762,
+              0.7485,
+              0.6998
+            ],
+            "requests": [
+              1136,
+              1158,
+              1007,
+              1084,
+              1207
+            ],
+            "elapsed_s": [
+              0.500288,
+              0.50028,
+              0.500821,
+              0.500369,
+              0.500213
+            ],
+            "contract_ms": [
+              1.5852,
+              1.749,
+              1.5257,
+              1.1309,
+              1.7566
+            ]
+          }
+        },
+        "di": {
+          "describes": "Resolving a collaborator through each framework's own injection mechanism.",
+          "request": {
+            "method": "GET",
+            "path": "/di",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "service": "Greeter",
+              "greeting": "hello"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 6516,
+          "warmup_requests_total": 2970,
+          "child_process_ms": {
+            "median": 1316.43,
+            "min": 1281.22,
+            "max": 1404.14,
+            "spread_pct": 9.34,
+            "stdev": 49.87
+          },
+          "throughput_rps": {
+            "median": 2678.0,
+            "min": 2186.43,
+            "max": 2812.65,
+            "spread_pct": 23.38,
+            "stdev": 241.68
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3297,
+              "min": 0.327,
+              "max": 0.5034,
+              "spread_pct": 53.5,
+              "stdev": 0.0776
+            },
+            "p95": {
+              "median": 0.5161,
+              "min": 0.4864,
+              "max": 0.6001,
+              "spread_pct": 22.04,
+              "stdev": 0.0429
+            },
+            "p99": {
+              "median": 0.6055,
+              "min": 0.5864,
+              "max": 0.6515,
+              "spread_pct": 10.74,
+              "stdev": 0.0297
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2186.43,
+              2678.0,
+              2812.65,
+              2656.67,
+              2690.58
+            ],
+            "p50_ms": [
+              0.5034,
+              0.334,
+              0.3287,
+              0.3297,
+              0.327
+            ],
+            "p95_ms": [
+              0.6001,
+              0.5207,
+              0.4864,
+              0.5161,
+              0.513
+            ],
+            "p99_ms": [
+              0.6386,
+              0.6055,
+              0.6515,
+              0.5864,
+              0.5877
+            ],
+            "requests": [
+              1094,
+              1340,
+              1407,
+              1329,
+              1346
+            ],
+            "elapsed_s": [
+              0.500359,
+              0.500373,
+              0.50024,
+              0.50025,
+              0.500264
+            ],
+            "contract_ms": [
+              1.1346,
+              1.2835,
+              1.1945,
+              1.1317,
+              1.569
+            ]
+          }
+        },
+        "validation": {
+          "describes": "Validating and coercing a request body, then serializing a derived model.",
+          "request": {
+            "method": "POST",
+            "path": "/validate",
+            "json_body": {
+              "name": "ada",
+              "age": 36
+            }
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "name": "ada",
+              "age": 36,
+              "adult": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 4746,
+          "warmup_requests_total": 2074,
+          "child_process_ms": {
+            "median": 1336.96,
+            "min": 1322.11,
+            "max": 1565.99,
+            "spread_pct": 18.24,
+            "stdev": 103.14
+          },
+          "throughput_rps": {
+            "median": 2060.55,
+            "min": 1265.39,
+            "max": 2190.59,
+            "spread_pct": 44.9,
+            "stdev": 375.37
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4287,
+              "min": 0.4125,
+              "max": 0.6745,
+              "spread_pct": 61.12,
+              "stdev": 0.1108
+            },
+            "p95": {
+              "median": 0.6724,
+              "min": 0.6215,
+              "max": 1.1956,
+              "spread_pct": 85.38,
+              "stdev": 0.2434
+            },
+            "p99": {
+              "median": 0.94,
+              "min": 0.6854,
+              "max": 3.0826,
+              "spread_pct": 255.01,
+              "stdev": 0.9767
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1849.63,
+              2119.45,
+              2060.55,
+              2190.59,
+              1265.39
+            ],
+            "p50_ms": [
+              0.4782,
+              0.416,
+              0.4287,
+              0.4125,
+              0.6745
+            ],
+            "p95_ms": [
+              0.6738,
+              0.646,
+              0.6724,
+              0.6215,
+              1.1956
+            ],
+            "p99_ms": [
+              0.94,
+              0.9272,
+              1.1865,
+              0.6854,
+              3.0826
+            ],
+            "requests": [
+              926,
+              1060,
+              1031,
+              1096,
+              633
+            ],
+            "elapsed_s": [
+              0.500641,
+              0.50013,
+              0.500351,
+              0.500322,
+              0.500239
+            ],
+            "contract_ms": [
+              1.8377,
+              1.5053,
+              1.8165,
+              1.6734,
+              2.5853
+            ]
+          }
+        }
+      }
+    },
+    {
+      "key": "litestar",
+      "dist": "litestar",
+      "version": "2.24.0",
+      "entrypoint": "litestar.Litestar()",
+      "serialization": "msgspec (msgspec.json.Encoder via litestar.serialization)",
+      "di_mechanism": "Provide(dependency) declared on the route",
+      "validation": "built-in typed parameter (pydantic)",
+      "startup": {
+        "repeats": 5,
+        "process_ms": {
+          "median": 989.91,
+          "min": 851.21,
+          "max": 1010.8,
+          "spread_pct": 16.12,
+          "stdev": 74.73
+        },
+        "phases_ms": {
+          "harness_import": {
+            "median": 261.83,
+            "min": 250.2,
+            "max": 299.48,
+            "spread_pct": 18.82,
+            "stdev": 23.33
+          },
+          "build_app": {
+            "median": 334.58,
+            "min": 313.71,
+            "max": 359.21,
+            "spread_pct": 13.6,
+            "stdev": 20.23
+          },
+          "first_request": {
+            "median": 22.48,
+            "min": 20.12,
+            "max": 28.23,
+            "spread_pct": 36.11,
+            "stdev": 3.03
+          },
+          "child_total": {
+            "median": 624.64,
+            "min": 584.03,
+            "max": 682.01,
+            "spread_pct": 15.69,
+            "stdev": 43.37
+          }
+        },
+        "lifespan_supported": true,
+        "raw": {
+          "process_ms": [
+            1010.61,
+            1010.8,
+            889.83,
+            851.21,
+            989.91
+          ],
+          "build_app_ms": [
+            359.21,
+            348.68,
+            314.65,
+            313.71,
+            334.58
+          ],
+          "first_request_ms": [
+            23.32,
+            22.09,
+            22.48,
+            20.12,
+            28.23
+          ]
+        }
+      },
+      "workloads": {
+        "hello": {
+          "describes": "Route lookup and response construction, nothing else \u2014 the floor.",
+          "request": {
+            "method": "GET",
+            "path": "/",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5295,
+          "warmup_requests_total": 2511,
+          "child_process_ms": {
+            "median": 1801.27,
+            "min": 1689.44,
+            "max": 2553.26,
+            "spread_pct": 47.96,
+            "stdev": 346.54
+          },
+          "throughput_rps": {
+            "median": 2161.07,
+            "min": 1828.99,
+            "max": 2498.23,
+            "spread_pct": 30.97,
+            "stdev": 285.96
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4123,
+              "min": 0.3752,
+              "max": 0.5415,
+              "spread_pct": 40.34,
+              "stdev": 0.0695
+            },
+            "p95": {
+              "median": 0.6735,
+              "min": 0.5048,
+              "max": 0.683,
+              "spread_pct": 26.46,
+              "stdev": 0.0757
+            },
+            "p99": {
+              "median": 0.7477,
+              "min": 0.6556,
+              "max": 1.482,
+              "spread_pct": 110.53,
+              "stdev": 0.3396
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2498.23,
+              2161.07,
+              2257.32,
+              1828.99,
+              1839.18
+            ],
+            "p50_ms": [
+              0.3752,
+              0.4123,
+              0.3928,
+              0.5415,
+              0.4828
+            ],
+            "p95_ms": [
+              0.5048,
+              0.6401,
+              0.6735,
+              0.6818,
+              0.683
+            ],
+            "p99_ms": [
+              0.6556,
+              0.7173,
+              0.7477,
+              0.8124,
+              1.482
+            ],
+            "requests": [
+              1250,
+              1081,
+              1129,
+              915,
+              920
+            ],
+            "elapsed_s": [
+              0.500355,
+              0.500216,
+              0.50015,
+              0.500276,
+              0.500222
+            ],
+            "contract_ms": [
+              1.4432,
+              1.3187,
+              1.6168,
+              1.517,
+              1.8856
+            ]
+          }
+        },
+        "json": {
+          "describes": "Serializing a nested, multi-typed payload.",
+          "request": {
+            "method": "GET",
+            "path": "/json",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 1,
+              "name": "ada",
+              "tags": [
+                "a",
+                "b",
+                "c"
+              ],
+              "nested": {
+                "x": 1.5,
+                "flag": true
+              }
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5567,
+          "warmup_requests_total": 2607,
+          "child_process_ms": {
+            "median": 1793.17,
+            "min": 1721.18,
+            "max": 1898.81,
+            "spread_pct": 9.91,
+            "stdev": 69.7
+          },
+          "throughput_rps": {
+            "median": 2297.63,
+            "min": 2037.36,
+            "max": 2411.92,
+            "spread_pct": 16.3,
+            "stdev": 165.22
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4012,
+              "min": 0.3832,
+              "max": 0.4434,
+              "spread_pct": 15.0,
+              "stdev": 0.0268
+            },
+            "p95": {
+              "median": 0.6065,
+              "min": 0.587,
+              "max": 0.6601,
+              "spread_pct": 12.05,
+              "stdev": 0.029
+            },
+            "p99": {
+              "median": 0.9296,
+              "min": 0.7331,
+              "max": 1.0197,
+              "spread_pct": 30.83,
+              "stdev": 0.1264
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2411.92,
+              2297.63,
+              2037.36,
+              2065.42,
+              2316.15
+            ],
+            "p50_ms": [
+              0.3832,
+              0.4012,
+              0.4434,
+              0.4297,
+              0.386
+            ],
+            "p95_ms": [
+              0.587,
+              0.6065,
+              0.6267,
+              0.6601,
+              0.5968
+            ],
+            "p99_ms": [
+              0.9844,
+              1.0197,
+              0.7805,
+              0.9296,
+              0.7331
+            ],
+            "requests": [
+              1207,
+              1149,
+              1019,
+              1033,
+              1159
+            ],
+            "elapsed_s": [
+              0.500431,
+              0.50008,
+              0.500156,
+              0.500141,
+              0.500399
+            ],
+            "contract_ms": [
+              2.3669,
+              1.4636,
+              1.3622,
+              1.7555,
+              1.4402
+            ]
+          }
+        },
+        "path_query": {
+          "describes": "Extracting and type-coercing one path and two query parameters.",
+          "request": {
+            "method": "GET",
+            "path": "/items/42?limit=10&q=abc",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 42,
+              "limit": 10,
+              "q": "abc"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 4990,
+          "warmup_requests_total": 2501,
+          "child_process_ms": {
+            "median": 1797.34,
+            "min": 1714.0,
+            "max": 1888.18,
+            "spread_pct": 9.69,
+            "stdev": 78.19
+          },
+          "throughput_rps": {
+            "median": 1964.9,
+            "min": 1901.89,
+            "max": 2127.84,
+            "spread_pct": 11.5,
+            "stdev": 86.82
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4555,
+              "min": 0.4222,
+              "max": 0.4703,
+              "spread_pct": 10.56,
+              "stdev": 0.0181
+            },
+            "p95": {
+              "median": 0.7146,
+              "min": 0.6592,
+              "max": 0.7633,
+              "spread_pct": 14.56,
+              "stdev": 0.044
+            },
+            "p99": {
+              "median": 0.8637,
+              "min": 0.8004,
+              "max": 0.9135,
+              "spread_pct": 13.09,
+              "stdev": 0.0473
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1964.9,
+              1951.25,
+              2127.84,
+              1901.89,
+              2026.91
+            ],
+            "p50_ms": [
+              0.4555,
+              0.4609,
+              0.4222,
+              0.4703,
+              0.4538
+            ],
+            "p95_ms": [
+              0.7633,
+              0.6831,
+              0.6592,
+              0.7511,
+              0.7146
+            ],
+            "p99_ms": [
+              0.8004,
+              0.8637,
+              0.9135,
+              0.8703,
+              0.8069
+            ],
+            "requests": [
+              983,
+              976,
+              1065,
+              952,
+              1014
+            ],
+            "elapsed_s": [
+              0.50028,
+              0.500192,
+              0.500508,
+              0.500556,
+              0.500269
+            ],
+            "contract_ms": [
+              2.461,
+              2.8494,
+              2.0888,
+              2.2805,
+              3.1532
+            ]
+          }
+        },
+        "di": {
+          "describes": "Resolving a collaborator through each framework's own injection mechanism.",
+          "request": {
+            "method": "GET",
+            "path": "/di",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "service": "Greeter",
+              "greeting": "hello"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5019,
+          "warmup_requests_total": 2386,
+          "child_process_ms": {
+            "median": 1786.25,
+            "min": 1708.57,
+            "max": 1924.83,
+            "spread_pct": 12.11,
+            "stdev": 79.36
+          },
+          "throughput_rps": {
+            "median": 2095.36,
+            "min": 1801.21,
+            "max": 2147.3,
+            "spread_pct": 16.52,
+            "stdev": 159.51
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4339,
+              "min": 0.4074,
+              "max": 0.512,
+              "spread_pct": 24.1,
+              "stdev": 0.0468
+            },
+            "p95": {
+              "median": 0.696,
+              "min": 0.6278,
+              "max": 0.7573,
+              "spread_pct": 18.61,
+              "stdev": 0.0587
+            },
+            "p99": {
+              "median": 0.8477,
+              "min": 0.7408,
+              "max": 1.2086,
+              "spread_pct": 55.18,
+              "stdev": 0.1977
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2147.3,
+              2120.49,
+              2095.36,
+              1868.95,
+              1801.21
+            ],
+            "p50_ms": [
+              0.4339,
+              0.4074,
+              0.4309,
+              0.5025,
+              0.512
+            ],
+            "p95_ms": [
+              0.6278,
+              0.7573,
+              0.6475,
+              0.696,
+              0.7509
+            ],
+            "p99_ms": [
+              0.7408,
+              1.0431,
+              0.7764,
+              0.8477,
+              1.2086
+            ],
+            "requests": [
+              1074,
+              1061,
+              1048,
+              935,
+              901
+            ],
+            "elapsed_s": [
+              0.500163,
+              0.500356,
+              0.500154,
+              0.500282,
+              0.500219
+            ],
+            "contract_ms": [
+              2.0634,
+              1.9404,
+              2.0379,
+              2.8528,
+              2.0131
+            ]
+          }
+        },
+        "validation": {
+          "describes": "Validating and coercing a request body, then serializing a derived model.",
+          "request": {
+            "method": "POST",
+            "path": "/validate",
+            "json_body": {
+              "name": "ada",
+              "age": 36
+            }
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "name": "ada",
+              "age": 36,
+              "adult": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 3803,
+          "warmup_requests_total": 1840,
+          "child_process_ms": {
+            "median": 1718.07,
+            "min": 1697.99,
+            "max": 1951.88,
+            "spread_pct": 14.78,
+            "stdev": 113.99
+          },
+          "throughput_rps": {
+            "median": 1580.47,
+            "min": 1163.55,
+            "max": 1771.42,
+            "spread_pct": 38.46,
+            "stdev": 224.13
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.5672,
+              "min": 0.5269,
+              "max": 0.6285,
+              "spread_pct": 17.9,
+              "stdev": 0.0395
+            },
+            "p95": {
+              "median": 0.8498,
+              "min": 0.667,
+              "max": 0.8754,
+              "spread_pct": 24.52,
+              "stdev": 0.0849
+            },
+            "p99": {
+              "median": 1.0308,
+              "min": 0.8671,
+              "max": 1.7514,
+              "spread_pct": 85.79,
+              "stdev": 0.3515
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1580.47,
+              1771.42,
+              1488.24,
+              1597.51,
+              1163.55
+            ],
+            "p50_ms": [
+              0.5672,
+              0.5269,
+              0.6285,
+              0.5605,
+              0.604
+            ],
+            "p95_ms": [
+              0.8523,
+              0.667,
+              0.8419,
+              0.8498,
+              0.8754
+            ],
+            "p99_ms": [
+              1.0308,
+              0.8671,
+              0.9567,
+              1.1874,
+              1.7514
+            ],
+            "requests": [
+              791,
+              886,
+              745,
+              799,
+              582
+            ],
+            "elapsed_s": [
+              0.500484,
+              0.500162,
+              0.50059,
+              0.500155,
+              0.500195
+            ],
+            "contract_ms": [
+              2.6427,
+              2.2576,
+              2.2759,
+              2.3311,
+              2.3271
+            ]
+          }
+        }
+      }
+    },
+    {
+      "key": "blacksheep",
+      "dist": "blacksheep",
+      "version": "2.6.4",
+      "entrypoint": "blacksheep.Application()",
+      "serialization": "stdlib json (essentials.json.dumps, an optimised json.dumps)",
+      "di_mechanism": "services.add_singleton + handler-parameter resolution",
+      "validation": "built-in pydantic binding on the handler parameter",
+      "startup": {
+        "repeats": 5,
+        "process_ms": {
+          "median": 599.21,
+          "min": 539.05,
+          "max": 637.17,
+          "spread_pct": 16.37,
+          "stdev": 36.77
+        },
+        "phases_ms": {
+          "harness_import": {
+            "median": 258.0,
+            "min": 229.88,
+            "max": 280.42,
+            "spread_pct": 19.59,
+            "stdev": 18.55
+          },
+          "build_app": {
+            "median": 89.85,
+            "min": 77.89,
+            "max": 96.73,
+            "spread_pct": 20.96,
+            "stdev": 7.94
+          },
+          "first_request": {
+            "median": 4.72,
+            "min": 4.25,
+            "max": 5.34,
+            "spread_pct": 23.13,
+            "stdev": 0.42
+          },
+          "child_total": {
+            "median": 348.83,
+            "min": 312.15,
+            "max": 381.88,
+            "spread_pct": 19.99,
+            "stdev": 25.38
+          }
+        },
+        "lifespan_supported": true,
+        "raw": {
+          "process_ms": [
+            571.54,
+            539.05,
+            599.21,
+            637.17,
+            602.73
+          ],
+          "build_app_ms": [
+            84.45,
+            77.89,
+            95.88,
+            96.73,
+            89.85
+          ],
+          "first_request_ms": [
+            4.25,
+            4.37,
+            4.72,
+            4.73,
+            5.34
+          ]
+        }
+      },
+      "workloads": {
+        "hello": {
+          "describes": "Route lookup and response construction, nothing else \u2014 the floor.",
+          "request": {
+            "method": "GET",
+            "path": "/",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 6230,
+          "warmup_requests_total": 2900,
+          "child_process_ms": {
+            "median": 1415.82,
+            "min": 1366.23,
+            "max": 1580.62,
+            "spread_pct": 15.14,
+            "stdev": 86.23
+          },
+          "throughput_rps": {
+            "median": 2544.14,
+            "min": 2225.48,
+            "max": 2701.94,
+            "spread_pct": 18.73,
+            "stdev": 197.52
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3472,
+              "min": 0.326,
+              "max": 0.4168,
+              "spread_pct": 26.14,
+              "stdev": 0.0354
+            },
+            "p95": {
+              "median": 0.5598,
+              "min": 0.516,
+              "max": 0.5834,
+              "spread_pct": 12.03,
+              "stdev": 0.0295
+            },
+            "p99": {
+              "median": 0.7112,
+              "min": 0.5966,
+              "max": 0.8176,
+              "spread_pct": 31.08,
+              "stdev": 0.0892
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2352.56,
+              2544.14,
+              2225.48,
+              2701.94,
+              2629.11
+            ],
+            "p50_ms": [
+              0.3783,
+              0.3472,
+              0.4168,
+              0.326,
+              0.3463
+            ],
+            "p95_ms": [
+              0.5834,
+              0.5598,
+              0.5698,
+              0.516,
+              0.5232
+            ],
+            "p99_ms": [
+              0.8176,
+              0.7112,
+              0.7212,
+              0.6162,
+              0.5966
+            ],
+            "requests": [
+              1177,
+              1273,
+              1113,
+              1352,
+              1315
+            ],
+            "elapsed_s": [
+              0.500306,
+              0.500366,
+              0.500117,
+              0.500382,
+              0.500169
+            ],
+            "contract_ms": [
+              2.4772,
+              2.2802,
+              2.3464,
+              2.7966,
+              2.7179
+            ]
+          }
+        },
+        "json": {
+          "describes": "Serializing a nested, multi-typed payload.",
+          "request": {
+            "method": "GET",
+            "path": "/json",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 1,
+              "name": "ada",
+              "tags": [
+                "a",
+                "b",
+                "c"
+              ],
+              "nested": {
+                "x": 1.5,
+                "flag": true
+              }
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 6000,
+          "warmup_requests_total": 2979,
+          "child_process_ms": {
+            "median": 1407.39,
+            "min": 1339.37,
+            "max": 1526.56,
+            "spread_pct": 13.3,
+            "stdev": 86.48
+          },
+          "throughput_rps": {
+            "median": 2514.68,
+            "min": 1962.21,
+            "max": 2596.33,
+            "spread_pct": 25.22,
+            "stdev": 260.5
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3655,
+              "min": 0.3324,
+              "max": 0.5183,
+              "spread_pct": 50.85,
+              "stdev": 0.0785
+            },
+            "p95": {
+              "median": 0.5394,
+              "min": 0.5166,
+              "max": 0.6016,
+              "spread_pct": 15.77,
+              "stdev": 0.0319
+            },
+            "p99": {
+              "median": 0.7232,
+              "min": 0.5784,
+              "max": 0.823,
+              "spread_pct": 33.82,
+              "stdev": 0.0975
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1962.21,
+              2561.71,
+              2514.68,
+              2596.33,
+              2355.91
+            ],
+            "p50_ms": [
+              0.5183,
+              0.3443,
+              0.3655,
+              0.3324,
+              0.4423
+            ],
+            "p95_ms": [
+              0.6016,
+              0.5394,
+              0.5166,
+              0.5366,
+              0.5526
+            ],
+            "p99_ms": [
+              0.823,
+              0.7232,
+              0.6189,
+              0.5784,
+              0.7326
+            ],
+            "requests": [
+              982,
+              1282,
+              1258,
+              1299,
+              1179
+            ],
+            "elapsed_s": [
+              0.500457,
+              0.500447,
+              0.500262,
+              0.500321,
+              0.500444
+            ],
+            "contract_ms": [
+              2.9205,
+              3.0252,
+              2.3201,
+              2.1314,
+              2.9728
+            ]
+          }
+        },
+        "path_query": {
+          "describes": "Extracting and type-coercing one path and two query parameters.",
+          "request": {
+            "method": "GET",
+            "path": "/items/42?limit=10&q=abc",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 42,
+              "limit": 10,
+              "q": "abc"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5574,
+          "warmup_requests_total": 2756,
+          "child_process_ms": {
+            "median": 1433.36,
+            "min": 1400.29,
+            "max": 1497.89,
+            "spread_pct": 6.81,
+            "stdev": 40.0
+          },
+          "throughput_rps": {
+            "median": 2257.25,
+            "min": 1859.83,
+            "max": 2518.79,
+            "spread_pct": 29.19,
+            "stdev": 253.62
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3802,
+              "min": 0.3647,
+              "max": 0.5471,
+              "spread_pct": 47.97,
+              "stdev": 0.0748
+            },
+            "p95": {
+              "median": 0.5908,
+              "min": 0.5688,
+              "max": 0.629,
+              "spread_pct": 10.19,
+              "stdev": 0.0236
+            },
+            "p99": {
+              "median": 0.6895,
+              "min": 0.6265,
+              "max": 0.9341,
+              "spread_pct": 44.6,
+              "stdev": 0.1197
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1859.83,
+              2120.11,
+              2257.25,
+              2385.15,
+              2518.79
+            ],
+            "p50_ms": [
+              0.5471,
+              0.4172,
+              0.3796,
+              0.3802,
+              0.3647
+            ],
+            "p95_ms": [
+              0.608,
+              0.629,
+              0.5908,
+              0.5811,
+              0.5688
+            ],
+            "p99_ms": [
+              0.9341,
+              0.6812,
+              0.6895,
+              0.6985,
+              0.6265
+            ],
+            "requests": [
+              931,
+              1061,
+              1129,
+              1193,
+              1260
+            ],
+            "elapsed_s": [
+              0.500585,
+              0.500445,
+              0.500167,
+              0.500179,
+              0.500241
+            ],
+            "contract_ms": [
+              2.3689,
+              2.3584,
+              3.3455,
+              2.4147,
+              2.1356
+            ]
+          }
+        },
+        "di": {
+          "describes": "Resolving a collaborator through each framework's own injection mechanism.",
+          "request": {
+            "method": "GET",
+            "path": "/di",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "service": "Greeter",
+              "greeting": "hello"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 6144,
+          "warmup_requests_total": 3105,
+          "child_process_ms": {
+            "median": 1454.25,
+            "min": 1333.59,
+            "max": 1488.15,
+            "spread_pct": 10.63,
+            "stdev": 72.62
+          },
+          "throughput_rps": {
+            "median": 2496.2,
+            "min": 2098.09,
+            "max": 2821.27,
+            "spread_pct": 28.97,
+            "stdev": 268.84
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3476,
+              "min": 0.3355,
+              "max": 0.4338,
+              "spread_pct": 28.26,
+              "stdev": 0.0404
+            },
+            "p95": {
+              "median": 0.5512,
+              "min": 0.4389,
+              "max": 0.6325,
+              "spread_pct": 35.13,
+              "stdev": 0.0693
+            },
+            "p99": {
+              "median": 0.6536,
+              "min": 0.5719,
+              "max": 0.9086,
+              "spread_pct": 51.51,
+              "stdev": 0.1345
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2544.32,
+              2496.2,
+              2098.09,
+              2321.26,
+              2821.27
+            ],
+            "p50_ms": [
+              0.3476,
+              0.3476,
+              0.4338,
+              0.3867,
+              0.3355
+            ],
+            "p95_ms": [
+              0.5288,
+              0.5538,
+              0.6325,
+              0.5512,
+              0.4389
+            ],
+            "p99_ms": [
+              0.6536,
+              0.7082,
+              0.9086,
+              0.595,
+              0.5719
+            ],
+            "requests": [
+              1273,
+              1249,
+              1050,
+              1161,
+              1411
+            ],
+            "elapsed_s": [
+              0.50033,
+              0.500361,
+              0.500456,
+              0.50016,
+              0.500129
+            ],
+            "contract_ms": [
+              2.9883,
+              2.546,
+              2.7072,
+              2.2738,
+              2.3152
+            ]
+          }
+        },
+        "validation": {
+          "describes": "Validating and coercing a request body, then serializing a derived model.",
+          "request": {
+            "method": "POST",
+            "path": "/validate",
+            "json_body": {
+              "name": "ada",
+              "age": 36
+            }
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "name": "ada",
+              "age": 36,
+              "adult": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 4754,
+          "warmup_requests_total": 2370,
+          "child_process_ms": {
+            "median": 1402.82,
+            "min": 1337.09,
+            "max": 1459.89,
+            "spread_pct": 8.75,
+            "stdev": 47.12
+          },
+          "throughput_rps": {
+            "median": 1933.62,
+            "min": 1781.89,
+            "max": 1952.2,
+            "spread_pct": 8.81,
+            "stdev": 71.72
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4687,
+              "min": 0.4403,
+              "max": 0.4811,
+              "spread_pct": 8.71,
+              "stdev": 0.0175
+            },
+            "p95": {
+              "median": 0.7182,
+              "min": 0.6963,
+              "max": 0.7671,
+              "spread_pct": 9.86,
+              "stdev": 0.0307
+            },
+            "p99": {
+              "median": 0.7755,
+              "min": 0.7573,
+              "max": 0.8983,
+              "spread_pct": 18.18,
+              "stdev": 0.0732
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1881.46,
+              1781.89,
+              1952.2,
+              1933.62,
+              1949.25
+            ],
+            "p50_ms": [
+              0.4779,
+              0.4811,
+              0.4687,
+              0.4403,
+              0.4516
+            ],
+            "p95_ms": [
+              0.6963,
+              0.7671,
+              0.7053,
+              0.7528,
+              0.7182
+            ],
+            "p99_ms": [
+              0.7573,
+              0.8947,
+              0.7576,
+              0.8983,
+              0.7755
+            ],
+            "requests": [
+              942,
+              892,
+              977,
+              968,
+              975
+            ],
+            "elapsed_s": [
+              0.500675,
+              0.500592,
+              0.500462,
+              0.500615,
+              0.500194
+            ],
+            "contract_ms": [
+              3.1626,
+              2.5182,
+              2.5037,
+              2.3468,
+              2.2508
+            ]
+          }
+        }
+      }
+    },
+    {
+      "key": "sanic",
+      "dist": "sanic",
+      "version": "25.12.1",
+      "entrypoint": "sanic.Sanic(name) \u2014 Sanic.__call__ is ASGI-native, but the app only serves after the lifespan startup handshake",
+      "serialization": "ujson (sanic.helpers prefers ujson when it is installed)",
+      "di_mechanism": "none \u2014 app.ctx lookup inside the handler",
+      "validation": "manual \u2014 request.json then model_validate",
+      "startup": {
+        "repeats": 5,
+        "process_ms": {
+          "median": 766.59,
+          "min": 686.6,
+          "max": 839.76,
+          "spread_pct": 19.98,
+          "stdev": 55.41
+        },
+        "phases_ms": {
+          "harness_import": {
+            "median": 293.28,
+            "min": 245.38,
+            "max": 331.15,
+            "spread_pct": 29.25,
+            "stdev": 33.34
+          },
+          "build_app": {
+            "median": 142.54,
+            "min": 139.03,
+            "max": 153.41,
+            "spread_pct": 10.09,
+            "stdev": 5.55
+          },
+          "first_request": {
+            "median": 43.91,
+            "min": 41.25,
+            "max": 54.92,
+            "spread_pct": 31.12,
+            "stdev": 6.14
+          },
+          "child_total": {
+            "median": 479.73,
+            "min": 450.53,
+            "max": 525.1,
+            "spread_pct": 15.54,
+            "stdev": 31.16
+          }
+        },
+        "lifespan_supported": true,
+        "raw": {
+          "process_ms": [
+            755.57,
+            686.6,
+            786.75,
+            766.59,
+            839.76
+          ],
+          "build_app_ms": [
+            142.54,
+            153.41,
+            142.95,
+            141.4,
+            139.03
+          ],
+          "first_request_ms": [
+            43.91,
+            52.43,
+            42.97,
+            41.25,
+            54.92
+          ]
+        }
+      },
+      "workloads": {
+        "hello": {
+          "describes": "Route lookup and response construction, nothing else \u2014 the floor.",
+          "request": {
+            "method": "GET",
+            "path": "/",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 4563,
+          "warmup_requests_total": 2227,
+          "child_process_ms": {
+            "median": 1622.95,
+            "min": 1531.38,
+            "max": 2278.61,
+            "spread_pct": 46.04,
+            "stdev": 309.03
+          },
+          "throughput_rps": {
+            "median": 1881.51,
+            "min": 1440.01,
+            "max": 2021.38,
+            "spread_pct": 30.9,
+            "stdev": 222.87
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4361,
+              "min": 0.4272,
+              "max": 0.6246,
+              "spread_pct": 45.25,
+              "stdev": 0.0848
+            },
+            "p95": {
+              "median": 0.6938,
+              "min": 0.6567,
+              "max": 0.9753,
+              "spread_pct": 45.93,
+              "stdev": 0.1314
+            },
+            "p99": {
+              "median": 1.693,
+              "min": 1.5344,
+              "max": 2.3649,
+              "spread_pct": 49.05,
+              "stdev": 0.3261
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1881.51,
+              2021.38,
+              1440.01,
+              1907.02,
+              1869.52
+            ],
+            "p50_ms": [
+              0.4284,
+              0.4361,
+              0.6246,
+              0.4272,
+              0.4543
+            ],
+            "p95_ms": [
+              0.6879,
+              0.6567,
+              0.9753,
+              0.696,
+              0.6938
+            ],
+            "p99_ms": [
+              1.5344,
+              1.6612,
+              2.3649,
+              1.693,
+              1.7285
+            ],
+            "requests": [
+              941,
+              1011,
+              721,
+              954,
+              936
+            ],
+            "elapsed_s": [
+              0.50013,
+              0.500154,
+              0.500691,
+              0.500256,
+              0.500663
+            ],
+            "contract_ms": [
+              3.2985,
+              2.8808,
+              5.725,
+              2.808,
+              2.6013
+            ]
+          }
+        },
+        "json": {
+          "describes": "Serializing a nested, multi-typed payload.",
+          "request": {
+            "method": "GET",
+            "path": "/json",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 1,
+              "name": "ada",
+              "tags": [
+                "a",
+                "b",
+                "c"
+              ],
+              "nested": {
+                "x": 1.5,
+                "flag": true
+              }
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5006,
+          "warmup_requests_total": 2278,
+          "child_process_ms": {
+            "median": 1566.39,
+            "min": 1468.78,
+            "max": 1751.0,
+            "spread_pct": 18.02,
+            "stdev": 107.28
+          },
+          "throughput_rps": {
+            "median": 2043.99,
+            "min": 1796.8,
+            "max": 2110.1,
+            "spread_pct": 15.33,
+            "stdev": 123.23
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4281,
+              "min": 0.408,
+              "max": 0.5237,
+              "spread_pct": 27.01,
+              "stdev": 0.0462
+            },
+            "p95": {
+              "median": 0.6792,
+              "min": 0.6653,
+              "max": 0.7086,
+              "spread_pct": 6.37,
+              "stdev": 0.0176
+            },
+            "p99": {
+              "median": 1.5841,
+              "min": 1.4671,
+              "max": 2.0324,
+              "spread_pct": 35.68,
+              "stdev": 0.2335
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2043.99,
+              2110.1,
+              1796.8,
+              1983.1,
+              2071.53
+            ],
+            "p50_ms": [
+              0.4281,
+              0.408,
+              0.5237,
+              0.4333,
+              0.421
+            ],
+            "p95_ms": [
+              0.6715,
+              0.6653,
+              0.6792,
+              0.6944,
+              0.7086
+            ],
+            "p99_ms": [
+              1.4686,
+              1.4671,
+              2.0324,
+              1.6851,
+              1.5841
+            ],
+            "requests": [
+              1023,
+              1056,
+              899,
+              992,
+              1036
+            ],
+            "elapsed_s": [
+              0.500492,
+              0.50045,
+              0.500335,
+              0.500226,
+              0.500113
+            ],
+            "contract_ms": [
+              2.3861,
+              2.877,
+              3.4292,
+              2.4438,
+              3.4644
+            ]
+          }
+        },
+        "path_query": {
+          "describes": "Extracting and type-coercing one path and two query parameters.",
+          "request": {
+            "method": "GET",
+            "path": "/items/42?limit=10&q=abc",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 42,
+              "limit": 10,
+              "q": "abc"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 4461,
+          "warmup_requests_total": 2127,
+          "child_process_ms": {
+            "median": 1544.11,
+            "min": 1439.55,
+            "max": 1896.43,
+            "spread_pct": 29.59,
+            "stdev": 174.01
+          },
+          "throughput_rps": {
+            "median": 1814.55,
+            "min": 1451.22,
+            "max": 2026.39,
+            "spread_pct": 31.7,
+            "stdev": 224.37
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4825,
+              "min": 0.446,
+              "max": 0.6511,
+              "spread_pct": 42.49,
+              "stdev": 0.0837
+            },
+            "p95": {
+              "median": 0.7382,
+              "min": 0.6282,
+              "max": 0.7702,
+              "spread_pct": 19.24,
+              "stdev": 0.0575
+            },
+            "p99": {
+              "median": 1.7261,
+              "min": 1.5435,
+              "max": 2.3455,
+              "spread_pct": 46.47,
+              "stdev": 0.3074
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1933.42,
+              1814.55,
+              1451.22,
+              1691.19,
+              2026.39
+            ],
+            "p50_ms": [
+              0.4527,
+              0.4825,
+              0.6511,
+              0.5095,
+              0.446
+            ],
+            "p95_ms": [
+              0.6986,
+              0.7382,
+              0.7586,
+              0.7702,
+              0.6282
+            ],
+            "p99_ms": [
+              1.7022,
+              1.7261,
+              2.3455,
+              1.7691,
+              1.5435
+            ],
+            "requests": [
+              967,
+              908,
+              726,
+              846,
+              1014
+            ],
+            "elapsed_s": [
+              0.50015,
+              0.5004,
+              0.50027,
+              0.50024,
+              0.500396
+            ],
+            "contract_ms": [
+              2.4391,
+              2.5933,
+              2.8798,
+              2.6955,
+              2.6904
+            ]
+          }
+        },
+        "di": {
+          "describes": "Resolving a collaborator through each framework's own injection mechanism.",
+          "request": {
+            "method": "GET",
+            "path": "/di",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "service": "Greeter",
+              "greeting": "hello"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 4948,
+          "warmup_requests_total": 2502,
+          "child_process_ms": {
+            "median": 1526.53,
+            "min": 1425.66,
+            "max": 1567.08,
+            "spread_pct": 9.26,
+            "stdev": 68.01
+          },
+          "throughput_rps": {
+            "median": 1954.88,
+            "min": 1768.77,
+            "max": 2255.67,
+            "spread_pct": 24.91,
+            "stdev": 206.16
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4341,
+              "min": 0.391,
+              "max": 0.4934,
+              "spread_pct": 23.59,
+              "stdev": 0.0406
+            },
+            "p95": {
+              "median": 0.6578,
+              "min": 0.6186,
+              "max": 0.7296,
+              "spread_pct": 16.88,
+              "stdev": 0.0489
+            },
+            "p99": {
+              "median": 1.663,
+              "min": 1.4101,
+              "max": 1.9235,
+              "spread_pct": 30.87,
+              "stdev": 0.196
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1768.77,
+              1954.88,
+              2255.67,
+              1801.58,
+              2110.2
+            ],
+            "p50_ms": [
+              0.4934,
+              0.4341,
+              0.391,
+              0.4668,
+              0.4157
+            ],
+            "p95_ms": [
+              0.7153,
+              0.6578,
+              0.6186,
+              0.7296,
+              0.6358
+            ],
+            "p99_ms": [
+              1.9235,
+              1.663,
+              1.4101,
+              1.7531,
+              1.5457
+            ],
+            "requests": [
+              885,
+              978,
+              1128,
+              901,
+              1056
+            ],
+            "elapsed_s": [
+              0.500347,
+              0.500287,
+              0.500073,
+              0.500117,
+              0.500425
+            ],
+            "contract_ms": [
+              2.6151,
+              2.3062,
+              2.2677,
+              2.2023,
+              2.8181
+            ]
+          }
+        },
+        "validation": {
+          "describes": "Validating and coercing a request body, then serializing a derived model.",
+          "request": {
+            "method": "POST",
+            "path": "/validate",
+            "json_body": {
+              "name": "ada",
+              "age": 36
+            }
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "name": "ada",
+              "age": 36,
+              "adult": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 4136,
+          "warmup_requests_total": 2047,
+          "child_process_ms": {
+            "median": 1555.46,
+            "min": 1450.65,
+            "max": 1715.54,
+            "spread_pct": 17.03,
+            "stdev": 102.42
+          },
+          "throughput_rps": {
+            "median": 1710.38,
+            "min": 1379.04,
+            "max": 1750.68,
+            "spread_pct": 21.73,
+            "stdev": 153.96
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.5181,
+              "min": 0.5005,
+              "max": 0.7434,
+              "spread_pct": 46.89,
+              "stdev": 0.1017
+            },
+            "p95": {
+              "median": 0.7675,
+              "min": 0.7447,
+              "max": 0.931,
+              "spread_pct": 24.27,
+              "stdev": 0.0868
+            },
+            "p99": {
+              "median": 1.7746,
+              "min": 1.6834,
+              "max": 2.5223,
+              "spread_pct": 47.28,
+              "stdev": 0.3435
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1750.68,
+              1723.26,
+              1379.04,
+              1697.61,
+              1710.38
+            ],
+            "p50_ms": [
+              0.5005,
+              0.5181,
+              0.7434,
+              0.5376,
+              0.5159
+            ],
+            "p95_ms": [
+              0.7447,
+              0.7469,
+              0.8848,
+              0.7675,
+              0.931
+            ],
+            "p99_ms": [
+              1.7423,
+              1.6834,
+              2.5223,
+              1.7746,
+              1.8988
+            ],
+            "requests": [
+              876,
+              863,
+              690,
+              849,
+              858
+            ],
+            "elapsed_s": [
+              0.500376,
+              0.500794,
+              0.500349,
+              0.500114,
+              0.501643
+            ],
+            "contract_ms": [
+              2.6369,
+              2.5386,
+              2.5174,
+              2.6098,
+              2.4496
+            ]
+          }
+        }
+      }
+    },
+    {
+      "key": "falcon",
+      "dist": "falcon",
+      "version": "4.4.0",
+      "entrypoint": "falcon.asgi.App()",
+      "serialization": "stdlib json (falcon.media.JSONHandler default)",
+      "di_mechanism": "constructor injection at route-registration time",
+      "validation": "manual \u2014 await req.get_media() then model_validate",
+      "startup": {
+        "repeats": 5,
+        "process_ms": {
+          "median": 583.41,
+          "min": 558.69,
+          "max": 623.58,
+          "spread_pct": 11.12,
+          "stdev": 27.79
+        },
+        "phases_ms": {
+          "harness_import": {
+            "median": 283.39,
+            "min": 255.82,
+            "max": 307.96,
+            "spread_pct": 18.4,
+            "stdev": 20.18
+          },
+          "build_app": {
+            "median": 60.24,
+            "min": 56.02,
+            "max": 70.68,
+            "spread_pct": 24.33,
+            "stdev": 5.72
+          },
+          "first_request": {
+            "median": 3.67,
+            "min": 3.32,
+            "max": 4.13,
+            "spread_pct": 22.09,
+            "stdev": 0.29
+          },
+          "child_total": {
+            "median": 342.73,
+            "min": 329.44,
+            "max": 373.64,
+            "spread_pct": 12.9,
+            "stdev": 18.46
+          }
+        },
+        "lifespan_supported": true,
+        "raw": {
+          "process_ms": [
+            583.41,
+            606.39,
+            558.69,
+            623.58,
+            563.33
+          ],
+          "build_app_ms": [
+            56.02,
+            60.24,
+            70.68,
+            62.02,
+            57.66
+          ],
+          "first_request_ms": [
+            3.32,
+            3.71,
+            4.13,
+            3.67,
+            3.6
+          ]
+        }
+      },
+      "workloads": {
+        "hello": {
+          "describes": "Route lookup and response construction, nothing else \u2014 the floor.",
+          "request": {
+            "method": "GET",
+            "path": "/",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5626,
+          "warmup_requests_total": 2593,
+          "child_process_ms": {
+            "median": 1383.05,
+            "min": 1330.42,
+            "max": 1593.74,
+            "spread_pct": 19.04,
+            "stdev": 104.91
+          },
+          "throughput_rps": {
+            "median": 2230.06,
+            "min": 1851.06,
+            "max": 2406.18,
+            "spread_pct": 24.89,
+            "stdev": 211.03
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3848,
+              "min": 0.3532,
+              "max": 0.5229,
+              "spread_pct": 44.11,
+              "stdev": 0.0686
+            },
+            "p95": {
+              "median": 0.6039,
+              "min": 0.5569,
+              "max": 0.6098,
+              "spread_pct": 8.75,
+              "stdev": 0.0224
+            },
+            "p99": {
+              "median": 1.151,
+              "min": 1.0547,
+              "max": 1.2901,
+              "spread_pct": 20.46,
+              "stdev": 0.1011
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2406.18,
+              1851.06,
+              2313.75,
+              2205.38,
+              2230.06
+            ],
+            "p50_ms": [
+              0.3654,
+              0.5229,
+              0.3532,
+              0.388,
+              0.3848
+            ],
+            "p95_ms": [
+              0.5569,
+              0.6039,
+              0.5794,
+              0.6098,
+              0.6051
+            ],
+            "p99_ms": [
+              1.0887,
+              1.2901,
+              1.0547,
+              1.2489,
+              1.151
+            ],
+            "requests": [
+              1220,
+              946,
+              1195,
+              1120,
+              1145
+            ],
+            "elapsed_s": [
+              0.507027,
+              0.511058,
+              0.516477,
+              0.507848,
+              0.513439
+            ],
+            "contract_ms": [
+              2.9191,
+              2.8461,
+              4.8947,
+              2.4791,
+              3.7708
+            ]
+          }
+        },
+        "json": {
+          "describes": "Serializing a nested, multi-typed payload.",
+          "request": {
+            "method": "GET",
+            "path": "/json",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 1,
+              "name": "ada",
+              "tags": [
+                "a",
+                "b",
+                "c"
+              ],
+              "nested": {
+                "x": 1.5,
+                "flag": true
+              }
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5975,
+          "warmup_requests_total": 2642,
+          "child_process_ms": {
+            "median": 1447.77,
+            "min": 1388.43,
+            "max": 1578.44,
+            "spread_pct": 13.12,
+            "stdev": 78.62
+          },
+          "throughput_rps": {
+            "median": 2297.39,
+            "min": 2245.4,
+            "max": 2509.76,
+            "spread_pct": 11.51,
+            "stdev": 103.21
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3682,
+              "min": 0.3528,
+              "max": 0.3778,
+              "spread_pct": 6.8,
+              "stdev": 0.0112
+            },
+            "p95": {
+              "median": 0.5933,
+              "min": 0.5881,
+              "max": 0.6229,
+              "spread_pct": 5.88,
+              "stdev": 0.0151
+            },
+            "p99": {
+              "median": 1.1128,
+              "min": 1.0849,
+              "max": 1.1261,
+              "spread_pct": 3.7,
+              "stdev": 0.0156
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2297.39,
+              2293.51,
+              2245.4,
+              2370.22,
+              2509.76
+            ],
+            "p50_ms": [
+              0.3778,
+              0.3682,
+              0.3706,
+              0.3528,
+              0.3528
+            ],
+            "p95_ms": [
+              0.6079,
+              0.5933,
+              0.6229,
+              0.5882,
+              0.5881
+            ],
+            "p99_ms": [
+              1.1261,
+              1.1128,
+              1.0849,
+              1.1119,
+              1.1187
+            ],
+            "requests": [
+              1164,
+              1176,
+              1147,
+              1212,
+              1276
+            ],
+            "elapsed_s": [
+              0.506662,
+              0.512751,
+              0.510823,
+              0.511344,
+              0.508416
+            ],
+            "contract_ms": [
+              3.0534,
+              3.7441,
+              4.7159,
+              4.5071,
+              2.6889
+            ]
+          }
+        },
+        "path_query": {
+          "describes": "Extracting and type-coercing one path and two query parameters.",
+          "request": {
+            "method": "GET",
+            "path": "/items/42?limit=10&q=abc",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 42,
+              "limit": 10,
+              "q": "abc"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5441,
+          "warmup_requests_total": 2641,
+          "child_process_ms": {
+            "median": 1367.25,
+            "min": 1364.51,
+            "max": 1438.9,
+            "spread_pct": 5.44,
+            "stdev": 32.19
+          },
+          "throughput_rps": {
+            "median": 1956.03,
+            "min": 1863.31,
+            "max": 2530.58,
+            "spread_pct": 34.11,
+            "stdev": 310.6
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4218,
+              "min": 0.3658,
+              "max": 0.5337,
+              "spread_pct": 39.82,
+              "stdev": 0.0733
+            },
+            "p95": {
+              "median": 0.664,
+              "min": 0.5002,
+              "max": 0.8534,
+              "spread_pct": 53.2,
+              "stdev": 0.1445
+            },
+            "p99": {
+              "median": 1.1225,
+              "min": 0.9555,
+              "max": 1.318,
+              "spread_pct": 32.29,
+              "stdev": 0.1555
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1863.31,
+              1890.51,
+              2388.38,
+              2530.58,
+              1956.03
+            ],
+            "p50_ms": [
+              0.4799,
+              0.5337,
+              0.366,
+              0.3658,
+              0.4218
+            ],
+            "p95_ms": [
+              0.664,
+              0.6649,
+              0.5085,
+              0.5002,
+              0.8534
+            ],
+            "p99_ms": [
+              1.318,
+              0.9555,
+              1.0687,
+              1.1225,
+              1.3029
+            ],
+            "requests": [
+              955,
+              968,
+              1237,
+              1285,
+              996
+            ],
+            "elapsed_s": [
+              0.512528,
+              0.51203,
+              0.517924,
+              0.507788,
+              0.509194
+            ],
+            "contract_ms": [
+              3.1368,
+              2.765,
+              3.0758,
+              2.8521,
+              4.4225
+            ]
+          }
+        },
+        "di": {
+          "describes": "Resolving a collaborator through each framework's own injection mechanism.",
+          "request": {
+            "method": "GET",
+            "path": "/di",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "service": "Greeter",
+              "greeting": "hello"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5747,
+          "warmup_requests_total": 2812,
+          "child_process_ms": {
+            "median": 1377.82,
+            "min": 1289.18,
+            "max": 1449.2,
+            "spread_pct": 11.61,
+            "stdev": 60.19
+          },
+          "throughput_rps": {
+            "median": 2340.09,
+            "min": 1957.25,
+            "max": 2547.02,
+            "spread_pct": 25.2,
+            "stdev": 243.37
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3728,
+              "min": 0.3513,
+              "max": 0.4965,
+              "spread_pct": 38.98,
+              "stdev": 0.0739
+            },
+            "p95": {
+              "median": 0.5656,
+              "min": 0.4873,
+              "max": 0.6119,
+              "spread_pct": 22.04,
+              "stdev": 0.0459
+            },
+            "p99": {
+              "median": 1.0751,
+              "min": 1.0231,
+              "max": 1.3784,
+              "spread_pct": 33.04,
+              "stdev": 0.1444
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2547.02,
+              1957.25,
+              2058.51,
+              2386.04,
+              2340.09
+            ],
+            "p50_ms": [
+              0.3595,
+              0.4965,
+              0.494,
+              0.3513,
+              0.3728
+            ],
+            "p95_ms": [
+              0.4873,
+              0.5447,
+              0.6119,
+              0.5656,
+              0.5752
+            ],
+            "p99_ms": [
+              1.1103,
+              1.3784,
+              1.0467,
+              1.0231,
+              1.0751
+            ],
+            "requests": [
+              1297,
+              992,
+              1043,
+              1223,
+              1192
+            ],
+            "elapsed_s": [
+              0.509222,
+              0.506833,
+              0.506677,
+              0.512564,
+              0.509381
+            ],
+            "contract_ms": [
+              2.6449,
+              4.2059,
+              2.3454,
+              2.4938,
+              2.8877
+            ]
+          }
+        },
+        "validation": {
+          "describes": "Validating and coercing a request body, then serializing a derived model.",
+          "request": {
+            "method": "POST",
+            "path": "/validate",
+            "json_body": {
+              "name": "ada",
+              "age": 36
+            }
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "name": "ada",
+              "age": 36,
+              "adult": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 4631,
+          "warmup_requests_total": 2403,
+          "child_process_ms": {
+            "median": 1420.29,
+            "min": 1353.4,
+            "max": 1540.56,
+            "spread_pct": 13.18,
+            "stdev": 68.61
+          },
+          "throughput_rps": {
+            "median": 1761.06,
+            "min": 1719.59,
+            "max": 1984.97,
+            "spread_pct": 15.07,
+            "stdev": 114.93
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.4848,
+              "min": 0.4518,
+              "max": 0.5172,
+              "spread_pct": 13.47,
+              "stdev": 0.0258
+            },
+            "p95": {
+              "median": 0.7514,
+              "min": 0.6601,
+              "max": 0.7806,
+              "spread_pct": 16.03,
+              "stdev": 0.0485
+            },
+            "p99": {
+              "median": 1.2057,
+              "min": 0.9879,
+              "max": 1.3464,
+              "spread_pct": 29.73,
+              "stdev": 0.137
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1904.72,
+              1984.97,
+              1719.59,
+              1761.06,
+              1749.49
+            ],
+            "p50_ms": [
+              0.461,
+              0.4518,
+              0.5172,
+              0.4899,
+              0.4848
+            ],
+            "p95_ms": [
+              0.6997,
+              0.6601,
+              0.7514,
+              0.7543,
+              0.7806
+            ],
+            "p99_ms": [
+              1.2057,
+              1.2809,
+              1.1524,
+              1.3464,
+              0.9879
+            ],
+            "requests": [
+              965,
+              1005,
+              878,
+              898,
+              885
+            ],
+            "elapsed_s": [
+              0.506635,
+              0.506306,
+              0.510586,
+              0.509919,
+              0.505861
+            ],
+            "contract_ms": [
+              2.7237,
+              2.9271,
+              5.9435,
+              3.172,
+              2.9807
+            ]
+          }
+        }
+      }
+    },
+    {
+      "key": "quart",
+      "dist": "quart",
+      "version": "0.23.1",
+      "entrypoint": "quart.Quart(name)",
+      "serialization": "stdlib json (Quart's DefaultJSONProvider)",
+      "di_mechanism": "none \u2014 app.extensions lookup inside the handler",
+      "validation": "manual \u2014 await request.get_json() then model_validate",
+      "startup": {
+        "repeats": 5,
+        "process_ms": {
+          "median": 870.58,
+          "min": 810.49,
+          "max": 990.4,
+          "spread_pct": 20.67,
+          "stdev": 81.72
+        },
+        "phases_ms": {
+          "harness_import": {
+            "median": 302.63,
+            "min": 250.17,
+            "max": 350.22,
+            "spread_pct": 33.06,
+            "stdev": 36.27
+          },
+          "build_app": {
+            "median": 241.64,
+            "min": 220.71,
+            "max": 298.63,
+            "spread_pct": 32.25,
+            "stdev": 34.59
+          },
+          "first_request": {
+            "median": 5.18,
+            "min": 4.63,
+            "max": 7.56,
+            "spread_pct": 56.4,
+            "stdev": 1.16
+          },
+          "child_total": {
+            "median": 549.29,
+            "min": 475.79,
+            "max": 646.19,
+            "spread_pct": 31.02,
+            "stdev": 66.58
+          }
+        },
+        "lifespan_supported": true,
+        "raw": {
+          "process_ms": [
+            810.49,
+            833.42,
+            973.0,
+            990.4,
+            870.58
+          ],
+          "build_app_ms": [
+            220.71,
+            241.64,
+            298.63,
+            290.78,
+            237.98
+          ],
+          "first_request_ms": [
+            4.92,
+            5.56,
+            7.56,
+            5.18,
+            4.63
+          ]
+        }
+      },
+      "workloads": {
+        "hello": {
+          "describes": "Route lookup and response construction, nothing else \u2014 the floor.",
+          "request": {
+            "method": "GET",
+            "path": "/",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 3048,
+          "warmup_requests_total": 1597,
+          "child_process_ms": {
+            "median": 1644.35,
+            "min": 1529.29,
+            "max": 1735.1,
+            "spread_pct": 12.52,
+            "stdev": 82.93
+          },
+          "throughput_rps": {
+            "median": 1293.33,
+            "min": 985.4,
+            "max": 1340.12,
+            "spread_pct": 27.43,
+            "stdev": 154.14
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.7244,
+              "min": 0.6756,
+              "max": 1.0362,
+              "spread_pct": 49.78,
+              "stdev": 0.156
+            },
+            "p95": {
+              "median": 1.0192,
+              "min": 0.9426,
+              "max": 1.2351,
+              "spread_pct": 28.7,
+              "stdev": 0.1192
+            },
+            "p99": {
+              "median": 1.5451,
+              "min": 1.3446,
+              "max": 1.7528,
+              "spread_pct": 26.42,
+              "stdev": 0.1583
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              985.4,
+              1293.33,
+              1137.64,
+              1335.83,
+              1340.12
+            ],
+            "p50_ms": [
+              1.0362,
+              0.7244,
+              0.898,
+              0.6955,
+              0.6756
+            ],
+            "p95_ms": [
+              1.2351,
+              1.0192,
+              1.1349,
+              0.9426,
+              0.9877
+            ],
+            "p99_ms": [
+              1.7528,
+              1.5451,
+              1.5509,
+              1.4032,
+              1.3446
+            ],
+            "requests": [
+              493,
+              647,
+              569,
+              668,
+              671
+            ],
+            "elapsed_s": [
+              0.500306,
+              0.500257,
+              0.50016,
+              0.500064,
+              0.5007
+            ],
+            "contract_ms": [
+              5.8674,
+              4.4132,
+              6.3811,
+              3.9861,
+              5.2522
+            ]
+          }
+        },
+        "json": {
+          "describes": "Serializing a nested, multi-typed payload.",
+          "request": {
+            "method": "GET",
+            "path": "/json",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 1,
+              "name": "ada",
+              "tags": [
+                "a",
+                "b",
+                "c"
+              ],
+              "nested": {
+                "x": 1.5,
+                "flag": true
+              }
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 3099,
+          "warmup_requests_total": 1553,
+          "child_process_ms": {
+            "median": 1628.55,
+            "min": 1557.13,
+            "max": 1816.86,
+            "spread_pct": 15.95,
+            "stdev": 116.78
+          },
+          "throughput_rps": {
+            "median": 1295.07,
+            "min": 1097.3,
+            "max": 1320.31,
+            "spread_pct": 17.22,
+            "stdev": 97.06
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.7139,
+              "min": 0.7043,
+              "max": 0.9331,
+              "spread_pct": 32.05,
+              "stdev": 0.1122
+            },
+            "p95": {
+              "median": 1.0344,
+              "min": 0.9847,
+              "max": 1.0767,
+              "spread_pct": 8.89,
+              "stdev": 0.0398
+            },
+            "p99": {
+              "median": 1.4812,
+              "min": 1.4201,
+              "max": 1.5616,
+              "spread_pct": 9.55,
+              "stdev": 0.0618
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1176.29,
+              1295.07,
+              1097.3,
+              1301.6,
+              1320.31
+            ],
+            "p50_ms": [
+              0.892,
+              0.7105,
+              0.9331,
+              0.7043,
+              0.7139
+            ],
+            "p95_ms": [
+              1.0344,
+              1.0767,
+              1.0095,
+              1.0725,
+              0.9847
+            ],
+            "p99_ms": [
+              1.5616,
+              1.5211,
+              1.4201,
+              1.4812,
+              1.4221
+            ],
+            "requests": [
+              589,
+              648,
+              549,
+              652,
+              661
+            ],
+            "elapsed_s": [
+              0.500728,
+              0.500359,
+              0.500321,
+              0.500923,
+              0.50064
+            ],
+            "contract_ms": [
+              4.11,
+              4.0719,
+              6.6352,
+              4.1172,
+              4.3044
+            ]
+          }
+        },
+        "path_query": {
+          "describes": "Extracting and type-coercing one path and two query parameters.",
+          "request": {
+            "method": "GET",
+            "path": "/items/42?limit=10&q=abc",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 42,
+              "limit": 10,
+              "q": "abc"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 3046,
+          "warmup_requests_total": 1522,
+          "child_process_ms": {
+            "median": 1629.95,
+            "min": 1575.65,
+            "max": 1758.73,
+            "spread_pct": 11.23,
+            "stdev": 69.6
+          },
+          "throughput_rps": {
+            "median": 1207.94,
+            "min": 1184.84,
+            "max": 1288.09,
+            "spread_pct": 8.55,
+            "stdev": 41.14
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.7409,
+              "min": 0.7281,
+              "max": 0.7679,
+              "spread_pct": 5.37,
+              "stdev": 0.0154
+            },
+            "p95": {
+              "median": 1.1103,
+              "min": 1.0042,
+              "max": 1.1251,
+              "spread_pct": 10.89,
+              "stdev": 0.0536
+            },
+            "p99": {
+              "median": 1.5464,
+              "min": 1.5117,
+              "max": 1.7099,
+              "spread_pct": 12.82,
+              "stdev": 0.0779
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1184.84,
+              1207.94,
+              1210.99,
+              1193.26,
+              1288.09
+            ],
+            "p50_ms": [
+              0.7492,
+              0.7409,
+              0.7281,
+              0.7679,
+              0.7345
+            ],
+            "p95_ms": [
+              1.1177,
+              1.1251,
+              1.1103,
+              1.043,
+              1.0042
+            ],
+            "p99_ms": [
+              1.5117,
+              1.7099,
+              1.5464,
+              1.5412,
+              1.5912
+            ],
+            "requests": [
+              593,
+              605,
+              606,
+              597,
+              645
+            ],
+            "elapsed_s": [
+              0.500488,
+              0.500854,
+              0.500415,
+              0.500312,
+              0.500741
+            ],
+            "contract_ms": [
+              4.9616,
+              3.8453,
+              6.5174,
+              4.3604,
+              6.196
+            ]
+          }
+        },
+        "di": {
+          "describes": "Resolving a collaborator through each framework's own injection mechanism.",
+          "request": {
+            "method": "GET",
+            "path": "/di",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "service": "Greeter",
+              "greeting": "hello"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 3319,
+          "warmup_requests_total": 1620,
+          "child_process_ms": {
+            "median": 1614.39,
+            "min": 1581.44,
+            "max": 1709.22,
+            "spread_pct": 7.92,
+            "stdev": 61.4
+          },
+          "throughput_rps": {
+            "median": 1339.23,
+            "min": 1270.86,
+            "max": 1370.82,
+            "spread_pct": 7.46,
+            "stdev": 40.79
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.6855,
+              "min": 0.6402,
+              "max": 0.7001,
+              "spread_pct": 8.74,
+              "stdev": 0.0242
+            },
+            "p95": {
+              "median": 0.999,
+              "min": 0.9497,
+              "max": 1.0651,
+              "spread_pct": 11.55,
+              "stdev": 0.0443
+            },
+            "p99": {
+              "median": 1.5007,
+              "min": 1.3326,
+              "max": 1.5288,
+              "spread_pct": 13.07,
+              "stdev": 0.0837
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1370.82,
+              1270.86,
+              1352.75,
+              1339.23,
+              1299.24
+            ],
+            "p50_ms": [
+              0.6402,
+              0.7001,
+              0.6855,
+              0.6791,
+              0.6983
+            ],
+            "p95_ms": [
+              0.999,
+              0.974,
+              0.9497,
+              1.0204,
+              1.0651
+            ],
+            "p99_ms": [
+              1.3326,
+              1.5007,
+              1.5275,
+              1.4293,
+              1.5288
+            ],
+            "requests": [
+              686,
+              636,
+              677,
+              670,
+              650
+            ],
+            "elapsed_s": [
+              0.50043,
+              0.500449,
+              0.500463,
+              0.500286,
+              0.500293
+            ],
+            "contract_ms": [
+              6.077,
+              4.3225,
+              4.285,
+              3.9411,
+              4.1886
+            ]
+          }
+        },
+        "validation": {
+          "describes": "Validating and coercing a request body, then serializing a derived model.",
+          "request": {
+            "method": "POST",
+            "path": "/validate",
+            "json_body": {
+              "name": "ada",
+              "age": 36
+            }
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "name": "ada",
+              "age": 36,
+              "adult": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 2487,
+          "warmup_requests_total": 1312,
+          "child_process_ms": {
+            "median": 1609.42,
+            "min": 1566.18,
+            "max": 2158.04,
+            "spread_pct": 36.77,
+            "stdev": 249.44
+          },
+          "throughput_rps": {
+            "median": 1068.37,
+            "min": 779.69,
+            "max": 1089.92,
+            "spread_pct": 29.04,
+            "stdev": 133.37
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.8673,
+              "min": 0.8008,
+              "max": 1.0045,
+              "spread_pct": 23.49,
+              "stdev": 0.0862
+            },
+            "p95": {
+              "median": 1.2474,
+              "min": 1.2304,
+              "max": 1.6084,
+              "spread_pct": 30.3,
+              "stdev": 0.1611
+            },
+            "p99": {
+              "median": 1.6255,
+              "min": 1.4889,
+              "max": 3.6382,
+              "spread_pct": 132.22,
+              "stdev": 0.9203
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1068.37,
+              779.69,
+              1089.92,
+              1084.5,
+              946.02
+            ],
+            "p50_ms": [
+              0.8673,
+              0.9782,
+              0.8008,
+              0.8577,
+              1.0045
+            ],
+            "p95_ms": [
+              1.2474,
+              1.6084,
+              1.2304,
+              1.2326,
+              1.3228
+            ],
+            "p99_ms": [
+              1.5117,
+              3.6382,
+              1.4889,
+              1.747,
+              1.6255
+            ],
+            "requests": [
+              535,
+              390,
+              545,
+              543,
+              474
+            ],
+            "elapsed_s": [
+              0.500763,
+              0.500197,
+              0.500038,
+              0.500692,
+              0.501047
+            ],
+            "contract_ms": [
+              4.2683,
+              8.5033,
+              6.2286,
+              4.603,
+              4.5621
+            ]
+          }
+        }
+      }
+    },
+    {
+      "key": "baseline",
+      "dist": "",
+      "version": "n/a \u2014 reference floor, not a framework",
+      "entrypoint": "hand-written ASGI callable (no framework)",
+      "serialization": "stdlib json (json.dumps)",
+      "di_mechanism": "none \u2014 the handler is a literal dict",
+      "validation": "manual \u2014 json.loads + pydantic model_validate",
+      "reference": true,
+      "startup": {
+        "repeats": 5,
+        "process_ms": {
+          "median": 546.95,
+          "min": 535.48,
+          "max": 622.25,
+          "spread_pct": 15.86,
+          "stdev": 35.48
+        },
+        "phases_ms": {
+          "harness_import": {
+            "median": 308.9,
+            "min": 297.47,
+            "max": 352.94,
+            "spread_pct": 17.96,
+            "stdev": 22.85
+          },
+          "build_app": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "spread_pct": 37.24,
+            "stdev": 0.0
+          },
+          "first_request": {
+            "median": 2.81,
+            "min": 2.56,
+            "max": 3.44,
+            "spread_pct": 31.0,
+            "stdev": 0.33
+          },
+          "child_total": {
+            "median": 312.33,
+            "min": 300.22,
+            "max": 355.76,
+            "spread_pct": 17.78,
+            "stdev": 22.87
+          }
+        },
+        "lifespan_supported": true,
+        "raw": {
+          "process_ms": [
+            540.17,
+            622.25,
+            535.48,
+            546.95,
+            562.96
+          ],
+          "build_app_ms": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "first_request_ms": [
+            2.75,
+            2.81,
+            2.56,
+            3.44,
+            2.94
+          ]
+        }
+      },
+      "workloads": {
+        "hello": {
+          "describes": "Route lookup and response construction, nothing else \u2014 the floor.",
+          "request": {
+            "method": "GET",
+            "path": "/",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 6173,
+          "warmup_requests_total": 3556,
+          "child_process_ms": {
+            "median": 1340.56,
+            "min": 1262.38,
+            "max": 1372.34,
+            "spread_pct": 8.2,
+            "stdev": 42.93
+          },
+          "throughput_rps": {
+            "median": 2631.56,
+            "min": 1366.95,
+            "max": 3014.41,
+            "spread_pct": 62.6,
+            "stdev": 636.65
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3406,
+              "min": 0.2859,
+              "max": 0.4614,
+              "spread_pct": 51.53,
+              "stdev": 0.0672
+            },
+            "p95": {
+              "median": 0.5009,
+              "min": 0.4858,
+              "max": 0.5539,
+              "spread_pct": 13.6,
+              "stdev": 0.0275
+            },
+            "p99": {
+              "median": 0.6933,
+              "min": 0.5686,
+              "max": 1.7533,
+              "spread_pct": 170.87,
+              "stdev": 0.4867
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              1366.95,
+              3014.41,
+              2631.56,
+              2594.58,
+              2728.09
+            ],
+            "p50_ms": [
+              0.4614,
+              0.2859,
+              0.389,
+              0.3406,
+              0.3271
+            ],
+            "p95_ms": [
+              0.5539,
+              0.4858,
+              0.5009,
+              0.5154,
+              0.4902
+            ],
+            "p99_ms": [
+              1.7533,
+              0.5686,
+              0.6403,
+              0.9353,
+              0.6933
+            ],
+            "requests": [
+              684,
+              1508,
+              1317,
+              1298,
+              1366
+            ],
+            "elapsed_s": [
+              0.500383,
+              0.500263,
+              0.500464,
+              0.500273,
+              0.500717
+            ],
+            "contract_ms": [
+              1.9902,
+              1.9631,
+              1.7552,
+              1.9748,
+              2.5625
+            ]
+          }
+        },
+        "json": {
+          "describes": "Serializing a nested, multi-typed payload.",
+          "request": {
+            "method": "GET",
+            "path": "/json",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 1,
+              "name": "ada",
+              "tags": [
+                "a",
+                "b",
+                "c"
+              ],
+              "nested": {
+                "x": 1.5,
+                "flag": true
+              }
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 6579,
+          "warmup_requests_total": 3550,
+          "child_process_ms": {
+            "median": 1275.91,
+            "min": 1227.88,
+            "max": 1397.29,
+            "spread_pct": 13.28,
+            "stdev": 74.71
+          },
+          "throughput_rps": {
+            "median": 2758.94,
+            "min": 2116.97,
+            "max": 2802.51,
+            "spread_pct": 24.85,
+            "stdev": 289.78
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3143,
+              "min": 0.299,
+              "max": 0.4654,
+              "spread_pct": 52.94,
+              "stdev": 0.0691
+            },
+            "p95": {
+              "median": 0.5079,
+              "min": 0.4905,
+              "max": 0.5282,
+              "spread_pct": 7.42,
+              "stdev": 0.0152
+            },
+            "p99": {
+              "median": 0.6124,
+              "min": 0.5263,
+              "max": 0.7015,
+              "spread_pct": 28.6,
+              "stdev": 0.0696
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2116.97,
+              2758.94,
+              2802.51,
+              2692.09,
+              2779.81
+            ],
+            "p50_ms": [
+              0.4654,
+              0.299,
+              0.3143,
+              0.3111,
+              0.3248
+            ],
+            "p95_ms": [
+              0.5133,
+              0.5282,
+              0.4905,
+              0.5079,
+              0.4941
+            ],
+            "p99_ms": [
+              0.7015,
+              0.6124,
+              0.5263,
+              0.6728,
+              0.5865
+            ],
+            "requests": [
+              1059,
+              1380,
+              1402,
+              1347,
+              1391
+            ],
+            "elapsed_s": [
+              0.500243,
+              0.500192,
+              0.500265,
+              0.500354,
+              0.500395
+            ],
+            "contract_ms": [
+              2.4638,
+              2.1204,
+              2.1945,
+              2.9682,
+              2.5746
+            ]
+          }
+        },
+        "path_query": {
+          "describes": "Extracting and type-coercing one path and two query parameters.",
+          "request": {
+            "method": "GET",
+            "path": "/items/42?limit=10&q=abc",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "id": 42,
+              "limit": 10,
+              "q": "abc"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 6143,
+          "warmup_requests_total": 3047,
+          "child_process_ms": {
+            "median": 1307.33,
+            "min": 1230.29,
+            "max": 1316.41,
+            "spread_pct": 6.59,
+            "stdev": 39.01
+          },
+          "throughput_rps": {
+            "median": 2364.38,
+            "min": 2353.15,
+            "max": 2645.74,
+            "spread_pct": 12.37,
+            "stdev": 135.76
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3417,
+              "min": 0.3399,
+              "max": 0.3894,
+              "spread_pct": 14.5,
+              "stdev": 0.0237
+            },
+            "p95": {
+              "median": 0.5695,
+              "min": 0.5148,
+              "max": 0.5753,
+              "spread_pct": 10.63,
+              "stdev": 0.025
+            },
+            "p99": {
+              "median": 0.6784,
+              "min": 0.5944,
+              "max": 0.7839,
+              "spread_pct": 27.93,
+              "stdev": 0.0728
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2554.47,
+              2364.38,
+              2645.74,
+              2360.82,
+              2353.15
+            ],
+            "p50_ms": [
+              0.3399,
+              0.3894,
+              0.3399,
+              0.3417,
+              0.3765
+            ],
+            "p95_ms": [
+              0.5512,
+              0.5695,
+              0.5148,
+              0.5753,
+              0.5711
+            ],
+            "p99_ms": [
+              0.7839,
+              0.652,
+              0.5944,
+              0.6784,
+              0.7312
+            ],
+            "requests": [
+              1278,
+              1183,
+              1324,
+              1181,
+              1177
+            ],
+            "elapsed_s": [
+              0.5003,
+              0.500342,
+              0.500427,
+              0.500249,
+              0.500181
+            ],
+            "contract_ms": [
+              2.393,
+              1.9677,
+              1.9991,
+              2.1269,
+              2.1519
+            ]
+          }
+        },
+        "di": {
+          "describes": "Resolving a collaborator through each framework's own injection mechanism.",
+          "request": {
+            "method": "GET",
+            "path": "/di",
+            "json_body": null
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "service": "Greeter",
+              "greeting": "hello"
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 7078,
+          "warmup_requests_total": 3468,
+          "child_process_ms": {
+            "median": 1294.25,
+            "min": 1284.4,
+            "max": 1321.48,
+            "spread_pct": 2.87,
+            "stdev": 14.33
+          },
+          "throughput_rps": {
+            "median": 2789.39,
+            "min": 2546.73,
+            "max": 3127.85,
+            "spread_pct": 20.83,
+            "stdev": 218.57
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3136,
+              "min": 0.2854,
+              "max": 0.3618,
+              "spread_pct": 24.36,
+              "stdev": 0.0313
+            },
+            "p95": {
+              "median": 0.4966,
+              "min": 0.4601,
+              "max": 0.5485,
+              "spread_pct": 17.8,
+              "stdev": 0.0339
+            },
+            "p99": {
+              "median": 0.589,
+              "min": 0.5235,
+              "max": 0.8584,
+              "spread_pct": 56.86,
+              "stdev": 0.134
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2546.73,
+              2789.39,
+              2742.57,
+              3127.85,
+              2943.29
+            ],
+            "p50_ms": [
+              0.3618,
+              0.324,
+              0.3136,
+              0.2873,
+              0.2854
+            ],
+            "p95_ms": [
+              0.5485,
+              0.4747,
+              0.506,
+              0.4601,
+              0.4966
+            ],
+            "p99_ms": [
+              0.589,
+              0.5235,
+              0.8584,
+              0.5503,
+              0.6502
+            ],
+            "requests": [
+              1274,
+              1395,
+              1372,
+              1565,
+              1472
+            ],
+            "elapsed_s": [
+              0.50025,
+              0.50011,
+              0.50026,
+              0.500343,
+              0.500121
+            ],
+            "contract_ms": [
+              2.895,
+              2.8448,
+              1.9988,
+              2.0205,
+              2.1697
+            ]
+          }
+        },
+        "validation": {
+          "describes": "Validating and coercing a request body, then serializing a derived model.",
+          "request": {
+            "method": "POST",
+            "path": "/validate",
+            "json_body": {
+              "name": "ada",
+              "age": 36
+            }
+          },
+          "contract": {
+            "status": 200,
+            "body": {
+              "name": "ada",
+              "age": 36,
+              "adult": true
+            }
+          },
+          "repeats": 5,
+          "expected_repeats": 5,
+          "incomplete": false,
+          "concurrency": 1,
+          "duration_s": 0.5,
+          "warmup_s": 0.25,
+          "isolation": "one process, one application, one event loop per repeat",
+          "requests_total": 5477,
+          "warmup_requests_total": 2618,
+          "child_process_ms": {
+            "median": 1260.22,
+            "min": 1253.42,
+            "max": 1351.52,
+            "spread_pct": 7.78,
+            "stdev": 42.43
+          },
+          "throughput_rps": {
+            "median": 2215.28,
+            "min": 1966.15,
+            "max": 2294.64,
+            "spread_pct": 14.83,
+            "stdev": 130.34
+          },
+          "latency_ms": {
+            "p50": {
+              "median": 0.3921,
+              "min": 0.38,
+              "max": 0.5181,
+              "spread_pct": 35.23,
+              "stdev": 0.0573
+            },
+            "p95": {
+              "median": 0.6547,
+              "min": 0.584,
+              "max": 0.6667,
+              "spread_pct": 12.64,
+              "stdev": 0.0345
+            },
+            "p99": {
+              "median": 0.7484,
+              "min": 0.6615,
+              "max": 1.0204,
+              "spread_pct": 47.96,
+              "stdev": 0.1366
+            }
+          },
+          "raw": {
+            "throughput_rps": [
+              2202.78,
+              2268.06,
+              2215.28,
+              1966.15,
+              2294.64
+            ],
+            "p50_ms": [
+              0.38,
+              0.4009,
+              0.3913,
+              0.5181,
+              0.3921
+            ],
+            "p95_ms": [
+              0.6661,
+              0.6353,
+              0.6547,
+              0.6667,
+              0.584
+            ],
+            "p99_ms": [
+              0.7748,
+              0.7484,
+              0.7345,
+              1.0204,
+              0.6615
+            ],
+            "requests": [
+              1102,
+              1135,
+              1108,
+              984,
+              1148
+            ],
+            "elapsed_s": [
+              0.500277,
+              0.500427,
+              0.500162,
+              0.500471,
+              0.500297
+            ],
+            "contract_ms": [
+              2.2522,
+              2.2972,
+              2.3864,
+              2.8814,
+              2.1317
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "not_measured": [
+    {
+      "key": "aiohttp",
+      "dist": "aiohttp",
+      "entrypoint": "none \u2014 aiohttp.web.Application is not an ASGI application",
+      "reason": "aiohttp.web.Application exposes no ASGI callable: its __call__ is a gunicorn-compatibility stub that takes no arguments and returns self, and the distribution ships no ASGI adapter. The only PyPI shims (aiohttp-asgi, aiohttp-asgi-connector) adapt in the opposite direction \u2014 they host an ASGI app on aiohttp's server \u2014 so they cannot put an aiohttp app behind ASGITransport. Hand-writing the bridge would measure the bridge, not aiohttp."
+    },
+    {
+      "key": "robyn",
+      "dist": "robyn",
+      "entrypoint": "none \u2014 Robyn is a facade over a compiled Rust HTTP server",
+      "reason": "Robyn's Python object configures a compiled Rust server that owns its own socket: the object exposes start()/serve(), defines no __call__, and the package ships no ASGI module (its submodules are router, ws, responses, ... but nothing ASGI). There is no in-process request path to drive, so no comparable number can be produced without measuring Robyn's own server against a socket, which is a different benchmark."
+    }
+  ],
+  "reproduce": "python benches/bench.py"
+}
