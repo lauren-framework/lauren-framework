@@ -53,6 +53,22 @@ pixel of that band reads as blank space around the chart.  Cropping to the
 artists removes it.  The pad is kept small but non-zero so the ink never touches
 the canvas edge.
 
+Mirrored into the assets repository
+-----------------------------------
+
+The README shows these same four files, but it cannot reference them here.  The
+README doubles as the PyPI long description (``pyproject.toml`` sets
+``readme = "README.md"``), so every image in it must be an absolute URL, and an
+absolute URL into this repository only resolves on the default branch -- a
+reader looking at a feature branch would get a broken image.  The README
+therefore points at a copy kept in the org's separate assets repository,
+``lauren-framework/lauren-assets``, under ``framework/benchmarks/``.  That copy
+is not written by this script: a regeneration only rewrites ``docs/assets/``, so
+the four files have to be copied there byte-for-byte, committed and pushed
+afterwards, or the README keeps showing the previous run.  Copy them as they
+are -- no re-encoding, no re-rendering -- so the figure the README shows and the
+figure the benchmark page shows stay the same drawing.
+
 What the error bars mean
 ------------------------
 
