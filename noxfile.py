@@ -67,7 +67,10 @@ BENCH_REQUIREMENTS = BENCH_DIR / "requirements-bench.txt"
 BENCH_VENV = BENCH_DIR / ".venv"
 BENCH_ENV_PYTHON = BENCH_VENV / "bin" / "python"
 BENCH_RUNNER = BENCH_DIR / "bench.py"
+BENCH_PLOTTER = BENCH_DIR / "plot_results.py"
 BENCH_RESULTS = BENCH_DIR / "results" / "frameworks-inprocess.json"
+#: Where ``benches/plot_results.py`` writes the figures the comparison page embeds.
+BENCH_ASSETS = ROOT / "docs" / "assets"
 #: The interpreter the published numbers were measured on.  Changing it changes
 #: the table, so it is pinned here rather than inherited from the session.
 BENCH_PYTHON_VERSION = "3.13"
@@ -222,6 +225,45 @@ def benchmark(session: nox.Session) -> None:
     session.run("pytest", *args)
 
 
+def _prepare_bench_env(session: nox.Session) -> None:
+    """Create (once) and pin the benchmark virtualenv, leaving cwd in ``benches/``.
+
+    Shared by every session that drives something in ``benches/`` so the two of
+    them cannot drift apart on how the environment is prepared.
+
+    ``-e ..`` in requirements-bench.txt is resolved against the working
+    directory rather than against the file, so the install has to run from
+    inside ``benches/`` for that entry to mean "this repository".  Running it
+    from the root instead fails with "does not appear to be a Python project",
+    which is why this chdirs rather than trusting the paths in the file's
+    header.
+
+    The venv is created once and then reused (it is expensive and its contents
+    are pinned); the install is re-run every time so the pins are enforced even
+    if something else has since been installed into it.
+    """
+    session.chdir(BENCH_DIR)
+    if not BENCH_ENV_PYTHON.exists():
+        session.run(
+            "uv",
+            "venv",
+            str(BENCH_VENV),
+            "--python",
+            BENCH_PYTHON_VERSION,
+            external=True,
+        )
+    session.run(
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        str(BENCH_ENV_PYTHON),
+        "-r",
+        str(BENCH_REQUIREMENTS),
+        external=True,
+    )
+
+
 @nox.session(python=False, name="bench_frameworks")
 def bench_frameworks(session: nox.Session) -> None:
     """Run the cross-framework benchmark and print the results artifact.
@@ -270,38 +312,48 @@ def bench_frameworks(session: nox.Session) -> None:
     numbers are held to is asserted by ``benches/run.py``, which can be run
     directly for a pass/fail in seconds without waiting six minutes.
     """
-    # ``-e ..`` in requirements-bench.txt is resolved against the working
-    # directory rather than against the file, so the install has to run from
-    # inside benches/ for that entry to mean "this repository".  Running it
-    # from the root instead fails with "does not appear to be a Python
-    # project", which is why the session chdirs rather than trusting the paths
-    # in the file's header.
-    session.chdir(BENCH_DIR)
-    if not BENCH_ENV_PYTHON.exists():
-        session.run(
-            "uv",
-            "venv",
-            str(BENCH_VENV),
-            "--python",
-            BENCH_PYTHON_VERSION,
-            external=True,
-        )
-    session.run(
-        "uv",
-        "pip",
-        "install",
-        "--python",
-        str(BENCH_ENV_PYTHON),
-        "-r",
-        str(BENCH_REQUIREMENTS),
-        external=True,
-    )
+    _prepare_bench_env(session)
     session.run(str(BENCH_ENV_PYTHON), str(BENCH_RUNNER), *session.posargs, external=True)
     # bench.py prints the path it actually wrote, which differs when --out was
     # passed after ``--``.  What is logged here is only ever the default -- the
     # one the docs quote and BENCH_RESULTS points at -- so it is named as the
     # default rather than as wherever this particular run landed.
     session.log(f"default results artifact: {BENCH_RESULTS.relative_to(ROOT)}")
+
+
+@nox.session(python=False, name="bench_plots")
+def bench_plots(session: nox.Session) -> None:
+    """Render the benchmark figures from the results artifact.
+
+    The figures on ``docs/comparisons/performance-benchmarks.md`` are committed
+    SVGs, so the page builds without this session.  Run it after re-measuring,
+    or after editing ``benches/plot_results.py``, to regenerate them from
+    ``benches/results/frameworks-inprocess.json`` -- the artifact
+    ``nox -s bench_frameworks`` writes.  Every plotted value is read from that
+    artifact, so the figures cannot disagree with the tables beside them.
+
+    It reuses the benchmark virtualenv (``_prepare_bench_env``) rather than
+    making one of its own, because the only extra thing the plotting needs --
+    matplotlib -- is already pinned in ``benches/requirements-bench.txt``.
+
+    Excluded from the default run the same way ``tests/benchmarks/`` is: it is
+    absent from ``nox.options.sessions``, and pytest never collects ``benches/``
+    in the first place because ``testpaths`` is ``tests``.
+
+    Examples::
+
+        nox -s bench_plots
+        nox -s bench_plots -- --out-dir /tmp/figures
+        nox -s bench_plots -- --artifact /tmp/quick.json
+
+    Arguments after ``--`` are passed to ``benches/plot_results.py``; its
+    ``--help`` lists them.  The script prints the path of every SVG it writes.
+    """
+    _prepare_bench_env(session)
+    session.run(str(BENCH_ENV_PYTHON), str(BENCH_PLOTTER), *session.posargs, external=True)
+    # plot_results.py prints each file it wrote; this names the directory the
+    # page's images resolve against, which is the one that matters for a build.
+    session.log(f"default figures directory: {BENCH_ASSETS.relative_to(ROOT)}")
 
 
 # ---------------------------------------------------------------------------
@@ -716,6 +768,7 @@ def help_session(session: nox.Session) -> None:
             not in {
                 "benchmark",
                 "bench_frameworks",
+                "bench_plots",
                 "tests",
                 "tests_unit",
                 "tests_integration",
@@ -755,6 +808,7 @@ def help_session(session: nox.Session) -> None:
 __all__ = [
     "benchmark",
     "bench_frameworks",
+    "bench_plots",
     "build",
     "build_check",
     "ci",

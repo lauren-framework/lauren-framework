@@ -52,3 +52,10 @@ pydantic==2.14.1
 msgspec==0.22.0
 orjson==3.13.0
 ujson==6.0.0
+
+# --- figure rendering (benches/plot_results.py) ----------------------------
+# Not part of the measured configuration: matplotlib never enters a timed
+# process, it only draws docs/comparisons/performance-benchmarks.md's figures
+# from the artifact the timed run produced.  Pinned anyway so the SVGs are
+# reproducible, since matplotlib's output format moves between releases.
+matplotlib==3.11.2
