@@ -19,6 +19,7 @@ the others for the same work.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -76,6 +77,32 @@ class Workload:
     body: dict[str, Any]
     describes: str
     """What this workload is actually measuring, for the results page."""
+
+    def check(self, status_code: int, text: str) -> dict[str, Any] | str:
+        """Hold one response against this workload's contract.
+
+        Returns the parsed payload when the response satisfies the contract, or
+        a human-readable description of the first mismatch when it does not.
+
+        Both runners — the correctness harness (``benches/run.py``) and the
+        timing harness (``benches/bench.py``) — go through here, so a number can
+        never be produced by a handler that is answering the wrong thing.  A 404
+        from a mis-registered route is *faster* than a real handler, which is
+        exactly why the assertion and the measurement are not allowed to drift
+        apart.
+        """
+        if status_code != self.status:
+            return f"expected HTTP {self.status}, got {status_code}"
+
+        try:
+            payload = json.loads(text)
+        except ValueError as exc:
+            return f"response body is not JSON ({exc}): {text[:80]!r}"
+
+        if payload != self.body:
+            return f"body mismatch: expected {self.body!r}, got {payload!r}"
+
+        return payload
 
 
 WORKLOADS: tuple[Workload, ...] = (
