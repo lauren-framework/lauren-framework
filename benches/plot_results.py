@@ -41,6 +41,18 @@ figure by exactly the spaces the hook removes and ``git status`` would never
 come back clean.  With all three, two runs on an unchanged artifact produce
 byte-identical files -- and those bytes are what the hook would leave behind.
 
+Tight margins
+-------------
+
+Each figure is saved with ``bbox_inches="tight"``, so the canvas is the
+drawing's own bounding box plus a hairline ``pad_inches`` rather than the whole
+``figsize`` rectangle.  ``tight_layout`` has already taken most of the slack out
+of the axes, but a band still survives around the artists, and these figures are
+placed inline in a document -- the README and the benchmark page -- where every
+pixel of that band reads as blank space around the chart.  Cropping to the
+artists removes it.  The pad is kept small but non-zero so the ink never touches
+the canvas edge.
+
 What the error bars mean
 ------------------------
 
@@ -79,6 +91,11 @@ _HARNESS_DIR = Path(__file__).resolve().parent
 _ROOT = _HARNESS_DIR.parent
 _DEFAULT_ARTIFACT = _HARNESS_DIR / "results" / "frameworks-inprocess.json"
 _DEFAULT_OUT_DIR = _ROOT / "docs" / "assets"
+
+# The figures are placed inline in a document, so each canvas is cropped to the
+# drawing (``bbox_inches="tight"``) and given only this hairline pad, rather than
+# the slack the ``figsize`` rectangle leaves around the axes.
+_PAD_INCHES = 0.02
 
 # A fixed salt keeps the SVG element ids stable between runs; without it
 # matplotlib salts them per process and the file changes every regeneration.
@@ -438,6 +455,8 @@ def render(artifact_path: Path, out_dir: Path) -> list[Path]:
                 format="svg",
                 transparent=True,
                 metadata={"Date": None},
+                bbox_inches="tight",
+                pad_inches=_PAD_INCHES,
             )
             plt.close(fig)
             _strip_trailing_whitespace(destination)
