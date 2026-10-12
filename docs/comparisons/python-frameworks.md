@@ -158,7 +158,7 @@ This is the single biggest difference between Lauren and the others.
 | Subclass accidentally registered as controller | Possible | Possible | Possible | **`MetadataInheritanceError` at startup** |
 | Forgotten `Depends`/decorator on subclass | Silent | Silent | Silent | **`MetadataInheritanceError` at startup** |
 
-Lauren's "validate-everything-at-startup" stance means the boot phase is more thorough — and slightly slower — than the others. But here's the trade: **a startup error is a CI failure; a runtime error is a 3 a.m. page**.
+Lauren's "validate-everything-at-startup" stance means the boot phase is more thorough — and slightly slower — than the others. We measured that cost rather than asserting it: in [Cross-Framework Performance Benchmarks](performance-benchmarks.md), constructing and validating the application takes Lauren ~98 ms against Starlette's ~34 ms and Falcon's ~68 ms, while the imports every framework pays land in the same 286–338 ms band. But here's the trade: **a startup error is a CI failure; a runtime error is a 3 a.m. page**.
 
 ### Auto-serialization of handler returns
 
@@ -422,6 +422,8 @@ A subjective summary, with the same trade-offs we'd give a colleague choosing a 
 | Raw runtime performance | 🟢 | 🟢 | 🟢🟢 | 🟢🟢 |
 | Ecosystem & docs (today) | 🟢🟢 | 🟢 | 🟢 | 🟡 |
 
+The performance row is a reputation score, not a measurement. The measured numbers — throughput, latency percentiles and cold start for nine ASGI participants, driven in-process through `httpx.ASGITransport` — live in [Cross-Framework Performance Benchmarks](performance-benchmarks.md). Read that page before treating the row above as a fact: on the measured numbers Lauren sits mid-pack, and the entire framework layer is worth only about 1.2x against a hand-written ASGI callable.
+
 If your axis is *"how fast can I ship a prototype?"*, FastAPI wins.
 If your axis is *"will this app survive the next five on-call rotations?"*, Lauren wins.
 
@@ -431,6 +433,7 @@ That's the honest pitch.
 
 ## See also
 
+* [Cross-Framework Performance Benchmarks](performance-benchmarks.md) — the measured throughput, latency and startup numbers behind the performance row above.
 * [Why Lauren?](../getting-started/why-lauren.md) — the design philosophy in full.
 * [Prominent Features](../getting-started/features.md) — every flagship feature, with examples.
 * [Core Concepts](../core-concepts/index.md) — the mental model the comparison is built on.
