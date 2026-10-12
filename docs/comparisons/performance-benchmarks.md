@@ -1,8 +1,6 @@
 # Cross-Framework Performance Benchmarks
 
-> **TL;DR.** One harness drives nine participants — Lauren, FastAPI, Starlette, Litestar, BlackSheep, Sanic, Falcon, Quart and a hand-written ASGI floor — through five workloads, five repeats each, in-process through `httpx.ASGITransport`. **Lauren lands mid-pack and stays there**: 3rd to 6th of the eight frameworks measured on every workload, with a five-repeat range that overlaps Litestar's and Sanic's on all five workloads, FastAPI's on four and BlackSheep's and Falcon's on four, and is cleanly separated only from Quart. Starlette, Falcon and BlackSheep take the podium (in the top three on four or five workloads each); Quart is last on four of five. The hand-written floor -- no framework in the request path at all -- runs only **1.13x to 1.24x** faster than the best measured framework, which is the honest size of the entire framework layer on this machine. Cold start is where Lauren pays for its startup validation: **707 ms** to a served request (median of five, spread 28%), against 552 ms for the floor, with 318 ms of that being imports and 98 ms constructing and validating the application. Two frameworks -- aiohttp and robyn -- could not be driven in-process at all and have no number here.
-
-
+> **TL;DR.** One harness drives nine participants — Lauren, FastAPI, Starlette, Litestar, BlackSheep, Sanic, Falcon, Quart and a hand-written ASGI floor — through five workloads, five repeats each, in-process through `httpx.ASGITransport`. **Lauren lands mid-pack and stays there**: 3rd to 6th of the eight frameworks measured on every workload, with a five-repeat range that overlaps Litestar's and Sanic's on all five workloads, FastAPI's on four and BlackSheep's and Falcon's on four, and is cleanly separated only from Quart. Starlette, Falcon and BlackSheep take the podium (in the top three on four or five workloads each); Quart is last on four of five. The hand-written floor — no framework in the request path at all — runs only **1.13x to 1.24x** faster than the best measured framework, which is the honest size of the entire framework layer on this machine. Cold start is where Lauren pays for its startup validation: **707 ms** to a served request (median of five, spread 28%), against 552 ms for the floor, with 318 ms of that being imports and 98 ms constructing and validating the application. Two frameworks — aiohttp and robyn — could not be driven in-process at all and have no number here.
 
 ---
 
@@ -259,7 +257,6 @@ Installed here as `aiohttp` 3.14.5. Entry point: none — `aiohttp.web.Applicati
 Installed here as `robyn` 0.88.0. Entry point: none — Robyn is a facade over a compiled Rust HTTP server.
 
 > Robyn's Python object configures a compiled Rust server that owns its own socket: the object exposes start()/serve(), defines no __call__, and the package ships no ASGI module (its submodules are router, ws, responses, ... but nothing ASGI). There is no in-process request path to drive, so no comparable number can be produced without measuring Robyn's own server against a socket, which is a different benchmark.
-
 
 If you need a number for either, it has to come from a different benchmark: one that stands up the framework's own server and drives it over a socket. That measures the server too, which is a legitimate question — just not the one this page asks.
 
