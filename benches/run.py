@@ -12,14 +12,22 @@ will happily publish a table in which the broken row wins.  Every request here
 is therefore checked against the contract in ``benches/workloads.py`` before any
 number derived from it is trusted.
 
-Two harness-level properties make the comparison fair, and both live here:
+This harness is a **single pass**: every framework is probed once, against an
+application built for it inside this process.  Repeats belong to the timing
+runner (``benches/bench.py``), which builds one fresh application in one fresh
+interpreter per repeat.  Two properties make the comparison fair, and they are
+split across the two runners deliberately:
 
-* **Lifespan is driven for every framework.**  ``httpx.ASGITransport`` never
-  sends the ``lifespan`` scope, but a deployed ASGI server always does, and Sanic
-  refuses to serve without it.  Driving it everywhere is the deployed path; not
-  driving it would have excluded Sanic for the wrong reason.
-* **A fresh application per repeat.**  No framework inherits another's warm
-  state, and no repeat inherits the previous repeat's.
+* **Lifespan is driven for every framework**, here and in the timing runner.
+  ``httpx.ASGITransport`` never sends the ``lifespan`` scope, but a deployed ASGI
+  server always does, and Sanic refuses to serve without it.  Driving it
+  everywhere is the deployed path; not driving it would have excluded Sanic for
+  the wrong reason.
+* **Every framework is probed on its own fresh application**, so nothing is
+  checked against another framework's warm state.  The timing runner extends
+  that to *per repeat, per process*, because what matters there is that no
+  measurement inherits the previous measurement's warm state — a property this
+  single-pass file neither needs nor claims.
 
 Exit status is non-zero if any workload fails its contract, so this doubles as
 the benchmark's own smoke test.

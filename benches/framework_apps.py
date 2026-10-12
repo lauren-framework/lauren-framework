@@ -24,8 +24,10 @@ deliberate:
   routing cost cannot be an artefact of one framework having one route where
   another has five.
 
-Factories are called once per repeat and must return a **fresh** application, so
-no repeat inherits another's warm state.
+Factories must return a **fresh** application every time they are called.  The
+correctness harness (``benches/run.py``) calls one per framework check; the
+timing runner (``benches/bench.py``) calls one per repeat, in a process of its
+own, so no measurement inherits another's warm state.
 
 Not every framework in the field can be driven this way.  A framework whose
 Python object is only a facade for a different server (Robyn) or that was never
@@ -58,7 +60,7 @@ __all__ = [
 ]
 
 #: Sanic refuses to register two applications with the same name in one
-#: process, and the harness builds a fresh app per repeat.
+#: process, and the harness builds a fresh application for every measurement.
 _sanic_names = itertools.count(1)
 
 
