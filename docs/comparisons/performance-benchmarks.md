@@ -158,8 +158,10 @@ The spread tells you how much of a difference to believe. Median spread across t
 
 Median of five repeats of the per-request round trip, in milliseconds, lower is better. The same nine participants, the same workloads.
 
-![p50, p95 and p99 round trip per participant, one panel per workload, with error bars spanning the min–max range across the repeats](../assets/bench-latency-light.svg#only-light)
-![p50, p95 and p99 round trip per participant, one panel per workload, with error bars spanning the min–max range across the repeats](../assets/bench-latency-dark.svg#only-dark)
+One range does not fit the axis: Starlette's `validation` p99 reaches 10.50 ms, nearly four times the next-largest range in the artifact, so the latency error bars are capped at 2.7 ms. That range is cut off at the cap and carries its true maximum above a break marker, rather than flattening every other bar into the bottom of the chart.
+
+![p50, p95 and p99 round trip per participant, one panel per workload, with error bars spanning the min–max range across the repeats; colour marks the participant, and the one range past the 2.7 ms cap is cut off with its true maximum written above the break](../assets/bench-latency-light.svg#only-light)
+![p50, p95 and p99 round trip per participant, one panel per workload, with error bars spanning the min–max range across the repeats; colour marks the participant, and the one range past the 2.7 ms cap is cut off with its true maximum written above the break](../assets/bench-latency-dark.svg#only-dark)
 
 **p50**
 
@@ -203,7 +205,7 @@ Median of five repeats of the per-request round trip, in milliseconds, lower is 
 | quart | 1.5328 | 1.4848 | 1.477 | 1.5002 | 1.8719 |
 | *baseline* | 0.6074 | 0.5356 | 0.5808 | 0.5312 | 0.7106 |
 
-A word on the tail: p99 spreads of 40–80% are normal here, because a single slow repeat moves the maximum. The extreme is Starlette's `validation`, whose p99 median is 1.22 ms across repeats but whose worst repeat hit 10.50 ms (spread 802%). Read this column as an order of magnitude — "does the framework add a millisecond or ten?" — not as a ranking.
+A word on the tail: p99 spreads of 40–80% are normal here, because a single slow repeat moves the maximum. The extreme is Starlette's `validation`, whose p99 median is 1.22 ms across repeats but whose worst repeat hit 10.50 ms (spread 802%). That is the one range the latency figure cannot draw to scale — its error bars are capped at 2.7 ms and the bar carries its true maximum above a break marker. Read this column as an order of magnitude — "does the framework add a millisecond or ten?" — not as a ranking.
 
 ---
 
