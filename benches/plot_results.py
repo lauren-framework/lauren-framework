@@ -76,6 +76,21 @@ Every statistic in the artifact carries ``spread_pct = (max - min) / median * 10
 over the repeats.  The bars here draw that same range directly -- from ``median``
 down to ``min`` and up to ``max`` -- rather than a symmetric +/- of the percentage,
 because the range is what the reader is being asked to weigh a difference against.
+
+The capped latency axis
+-----------------------
+
+The latency panels share one y-axis, and a single slow outlier -- one framework's
+``validation`` p99, far above every other range in the artifact -- would otherwise
+set the scale for all five workloads and squash every other bar into the bottom of
+the canvas.  Error bars are therefore capped at the tallest range that is not a far
+outlier (Tukey's fence; see ``_LATENCY_FAR_OUTLIER_FACTOR``), and a bar whose
+range crosses that cap is still drawn, and still honest: its error bar stops at
+the cap, a break marker sits on the cap, and the range's true maximum is written
+above the marker.  The caption names the cap and the clipped maximum as well, so
+a reader who never looks at the marker still learns that something was cut.  The
+cap only ever cuts an error-bar tip -- never a bar's own height -- and the note is
+derived from the ceiling the figure draws, so it cannot drift from the picture.
 """
 
 from __future__ import annotations
@@ -123,6 +138,23 @@ matplotlib.rcParams["svg.fonttype"] = "none"
 
 _PERCENTILES: tuple[str, ...] = ("p50", "p95", "p99")
 
+# A lone slow outlier must not set the scale for the whole figure.  The shared
+# latency axis is capped at the tallest upper error bound that is not a *far*
+# outlier, so one 10.5 ms spike cannot squash the other four workloads into the
+# bottom tenth of the canvas.  Tukey's fence is used rather than a percentile
+# because a percentile cap is only as definite as the convention behind it: on
+# the current artifact the 99th percentile of these 135 bounds is 2.69 ms under
+# the linear interpolation this file uses (also numpy's default) but 7.70 ms
+# under the exclusive one (``statistics.quantiles(bounds, n=100)[98]``).  A 5 ms
+# swing that decides whether the waste is removed is not a basis for a limit.
+# The fence's own value moves with the convention as well (2.771 ms vs 2.777 ms
+# here), but its *decision* does not: both conventions keep the same 134 of 135
+# bounds and the same 2.70 ms ceiling, so it is used instead.
+_LATENCY_FAR_OUTLIER_FACTOR = 3.0
+# Space kept above the ceiling, so the true value of a clipped bar can be written
+# beside its break marker instead of on top of the bar.
+_LATENCY_CEILING_HEADROOM = 1.08
+
 # One colour per measured participant, in artifact order (lauren first).  All are
 # mid-saturation so they read on both the light and the dark page background.
 _FRAMEWORK_COLORS: tuple[str, ...] = (
@@ -140,12 +172,6 @@ _FRAMEWORK_COLORS: tuple[str, ...] = (
 # reads as "another framework" that finished on the podium.
 _REFERENCE_COLOR = "#9E9E9E"
 _REFERENCE_HATCH = "//"
-
-_PERCENTILE_COLORS: dict[str, str] = {
-    "p50": "#4C72B0",
-    "p95": "#DD8452",
-    "p99": "#C44E52",
-}
 
 
 @dataclass(frozen=True)
@@ -187,6 +213,63 @@ def _point(stat: dict[str, float]) -> Point:
         median=median,
         down=median - float(stat["min"]),
         up=float(stat["max"]) - median,
+    )
+
+
+def _percentile(sorted_values: list[float], fraction: float) -> float:
+    """Linear-interpolated percentile of an already-sorted list."""
+    last = len(sorted_values) - 1
+    position = fraction * last
+    lower = int(position)
+    upper = min(lower + 1, last)
+    return sorted_values[lower] + (sorted_values[upper] - sorted_values[lower]) * (position - lower)
+
+
+def _latency_bars(artifact: dict[str, Any]) -> list[tuple[float, float]]:
+    """``(median, upper error bound)`` for every latency bar the figure draws."""
+    bars: list[tuple[float, float]] = []
+    for participant in _participants(artifact):
+        for workload in _workload_order(artifact):
+            for percentile in _PERCENTILES:
+                point = _point(participant["workloads"][workload]["latency_ms"][percentile])
+                bars.append((point.median, point.median + point.up))
+    return bars
+
+
+def _latency_ceiling(artifact: dict[str, Any]) -> float:
+    """The tallest upper error bound the shared latency axis has to show.
+
+    Anything above it is a far outlier -- still drawn, but clipped, with its true
+    value written at the break so the reader can see it rather than guess at it.
+    The ceiling never falls below the tallest *bar*: a bar whose own height is cut
+    off would be worse than a tall axis, so the body is always fully visible and
+    only error-bar tips can be clipped.
+    """
+    bars = _latency_bars(artifact)
+    bounds = sorted(bound for _, bound in bars)
+    quartile_one = _percentile(bounds, 0.25)
+    quartile_three = _percentile(bounds, 0.75)
+    fence = quartile_three + _LATENCY_FAR_OUTLIER_FACTOR * (quartile_three - quartile_one)
+    inliers = [bound for bound in bounds if bound <= fence]
+    return max(max(inliers or bounds), max(median for median, _ in bars))
+
+
+def _latency_cap_note(artifact: dict[str, Any], ceiling: float) -> str:
+    """The caption clause naming the error bars the axis cap cuts off.
+
+    Empty when nothing is clipped, so an artifact that fits the axis is never
+    described as if it had been cut -- and derived from the same ceiling the
+    figure draws, so the sentence cannot drift from the picture.
+    """
+    cut = sorted(bound for _, bound in _latency_bars(artifact) if bound > ceiling)
+    if not cut:
+        return ""
+    one = len(cut) == 1
+    ranges = ("one range" if one else f"{len(cut)} ranges").capitalize()
+    return (
+        f"  {ranges} {'is' if one else 'are'} cut off at the {ceiling:.1f} ms cap, because "
+        f"{'it' if one else 'they'} would otherwise flatten the rest of the figure; the true "
+        f"maximum ({cut[-1]:.1f} ms) is written above the break."
     )
 
 
@@ -351,11 +434,21 @@ def throughput_figure(artifact: dict[str, Any], theme: Theme) -> Figure:
 
 
 def latency_figure(artifact: dict[str, Any], theme: Theme) -> Figure:
-    """p50/p95/p99 round trip per participant, one panel per workload."""
+    """p50/p95/p99 round trip per participant, one panel per workload.
+
+    The shared y-axis is capped so one far outlier cannot set the scale for every
+    workload.  A range that crosses the cap is still drawn, but clipped at it and
+    marked with a break, with its true maximum written above the marker; the
+    caption says the same thing in words (see ``_latency_ceiling``).
+    """
     participants = _participants(artifact)
     workloads = _workload_order(artifact)
     colors = _colors_for(artifact)
     reference = _reference_key(artifact)
+    # The panels share one y-axis, so this single number is the scale of the whole
+    # figure -- and the headroom above it is where a clipped bar's value is written.
+    ceiling = _latency_ceiling(artifact)
+    axis_top = ceiling * _LATENCY_CEILING_HEADROOM
 
     columns = 2
     rows = (len(workloads) + columns - 1) // columns
@@ -379,11 +472,16 @@ def latency_figure(artifact: dict[str, Any], theme: Theme) -> Figure:
             for percentile in _PERCENTILES:
                 stat = participant["workloads"][name]["latency_ms"][percentile]
                 point = _point(stat)
+                top = point.median + point.up
+                clipped = top > ceiling
+                column = participant_index + percentile_offsets[percentile]
                 ax.bar(
-                    participant_index + percentile_offsets[percentile],
+                    column,
                     point.median,
                     width=bar_width,
-                    yerr=[[point.down], [point.up]],
+                    # A far outlier stops at the ceiling; the marker and the
+                    # annotation below are what say so, and by how much.
+                    yerr=[[point.down], [min(point.up, ceiling - point.median)]],
                     capsize=1.0,
                     error_kw={"ecolor": theme.spine, "elinewidth": 0.6, "alpha": 0.9},
                     color=colors[key] if not is_reference else _REFERENCE_COLOR,
@@ -392,6 +490,27 @@ def latency_figure(artifact: dict[str, Any], theme: Theme) -> Figure:
                     hatch=_REFERENCE_HATCH if is_reference else None,
                     zorder=3,
                 )
+                if clipped:
+                    ax.plot(
+                        [column],
+                        [ceiling],
+                        marker="^",
+                        markersize=4.5,
+                        linestyle="none",
+                        color=theme.spine,
+                        zorder=4,
+                    )
+                    ax.annotate(
+                        f"{top:.1f}",
+                        (column, ceiling),
+                        xytext=(0, 3),
+                        textcoords="offset points",
+                        ha="center",
+                        va="bottom",
+                        fontsize=7,
+                        color=theme.text,
+                        zorder=5,
+                    )
 
         ax.set_title(name, color=theme.text, fontsize=11, pad=6)
         ax.set_xticks(centers)
@@ -400,6 +519,7 @@ def latency_figure(artifact: dict[str, Any], theme: Theme) -> Figure:
             rotation=45,
             ha="right",
         )
+        ax.set_ylim(0.0, axis_top)
         _style_axes(ax, theme)
 
     for panel_index in range(len(workloads), len(flat)):
@@ -413,25 +533,57 @@ def latency_figure(artifact: dict[str, Any], theme: Theme) -> Figure:
         color=theme.text,
         fontsize=12,
     )
-    handles = [
-        plt.Rectangle((0, 0), 1, 1, color=_PERCENTILE_COLORS[percentile]) for percentile in _PERCENTILES
+    # Colour is the participant's, not the percentile's: the three bars in a group
+    # differ by *position*, so the percentile key is drawn as an unfilled swatch
+    # rather than painted in a colour that appears nowhere on the figure, and the
+    # colours the figure does use are given the key they were missing.
+    percentile_handles = [
+        plt.Rectangle((0, 0), 1, 1, facecolor="none", edgecolor=theme.text, linewidth=0.8)
+        for _ in _PERCENTILES
     ]
     fig.legend(
-        handles,
+        percentile_handles,
         [f"{percentile} (median)" for percentile in _PERCENTILES],
         loc="upper center",
-        bbox_to_anchor=(0.5, 0.945),
+        bbox_to_anchor=(0.5, 0.955),
         ncol=3,
         frameon=False,
         labelcolor=theme.text,
         fontsize=9,
     )
+    # Swatches copied from the bars themselves -- same fill, edge and hatch -- so
+    # the key cannot drift from what is drawn.
+    participant_handles = [
+        plt.Rectangle(
+            (0, 0),
+            1,
+            1,
+            facecolor=colors[key],
+            edgecolor="#6E6E6E" if key == reference else theme.spine,
+            linewidth=0.5,
+            hatch=_REFERENCE_HATCH if key == reference else None,
+        )
+        for key in (str(participant["key"]) for participant in participants)
+    ]
+    fig.legend(
+        participant_handles,
+        [_legend_label(participant, reference) for participant in participants],
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.925),
+        ncol=len(participants),
+        frameon=False,
+        labelcolor=theme.text,
+        fontsize=8.5,
+    )
     fig.text(
         0.5,
-        0.01,
-        f"Each panel is one workload; bars are the median of {_repeats(artifact)} repeats, "
-        "error bars span the min-max range. The hatched group is the reference floor.",
+        0.008,
+        f"Each panel is one workload; within a group the bars are p50, p95 and p99, left to right.  "
+        f"Colour marks the participant and the hatched group is the reference floor.\n"
+        f"Error bars span the min-max range over the {_repeats(artifact)} repeats."
+        + _latency_cap_note(artifact, ceiling),
         ha="center",
+        va="bottom",
         fontsize=8,
         color=theme.text,
         alpha=0.85,
