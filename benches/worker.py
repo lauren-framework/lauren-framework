@@ -25,13 +25,18 @@ Why one process *per measurement*
 Because not every framework tolerates a second application in one interpreter.
 Sanic is the clear case: its ``touchup`` scheme compiles patched handler methods
 into a table keyed per app, and standing up a second Sanic app in the same
-process leaves the applications unable to start at all —
-``KeyError: 'connection_task'`` raised out of ``sanic.touchup.schemes.base``.
-An earlier revision of this harness built one fresh app per repeat inside a
-single process and the *first* workload measured then failed on its *second*
-repeat.  That is a property of the harness, not of Sanic, and publishing it as a
-benchmark result would be a slander; so the harness gives every framework the
-same isolated process rather than special-casing one.
+process leaves applications unable to start at all — a ``KeyError`` raised out of
+``sanic.touchup.schemes.base`` when it looks up a method the table no longer
+holds.  *Which* key is missing varies with what the app registered:
+``'connection_task'``, ``'handle_exception'`` and ``'http1_response_header'``
+have all been observed from that one line, so the failure is something to
+recognise by its traceback rather than by its message.  An earlier revision of
+this harness built one fresh app per repeat inside a single process, and the
+first workload measured there failed on its *second* repeat; a process that
+builds two Sanic apps leaves *both* of them unable to start.  That is a property
+of the harness, not of Sanic, and publishing it as a benchmark result would be a
+slander; so the harness gives every framework the same isolated process rather
+than special-casing one.
 
 Isolation buys a second, larger property for free: no repeat can inherit warm
 state from another, no framework can be affected by another framework's

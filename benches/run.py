@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
 from dataclasses import dataclass, field
 from typing import Any
@@ -89,21 +88,13 @@ class FrameworkReport:
 def _check(workload: Workload, response: httpx.Response) -> dict[str, Any] | str:
     """Compare one response against the contract.
 
-    Returns the parsed payload when the response satisfies the contract, or a
-    human-readable description of the first mismatch when it does not.
+    Thin by design: the comparison itself lives on ``Workload.check``, so the
+    harness that asserts and the harness that times run the *same* code and
+    cannot drift apart.  Returns the parsed payload when the response satisfies
+    the contract, or a human-readable description of the first mismatch when it
+    does not.
     """
-    if response.status_code != workload.status:
-        return f"expected HTTP {workload.status}, got {response.status_code}"
-
-    try:
-        payload = json.loads(response.text)
-    except ValueError as exc:
-        return f"response body is not JSON ({exc}): {response.text[:80]!r}"
-
-    if payload != workload.body:
-        return f"body mismatch: expected {workload.body!r}, got {payload!r}"
-
-    return payload
+    return workload.check(response.status_code, response.text)
 
 
 async def probe_framework(framework: Framework) -> FrameworkReport:
