@@ -57,6 +57,24 @@ DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
 DOCS_REQUIREMENTS = ROOT / "docs-requirements.txt"
 
+# The cross-framework benchmark in ``benches/`` is deliberately not run from a
+# nox virtualenv.  It installs ten frameworks side by side with pinned
+# serializers (see ``benches/requirements-bench.txt``) plus lauren itself
+# editable from this tree, so it owns its environment and the sessions below
+# only prepare and drive it.
+BENCH_DIR = ROOT / "benches"
+BENCH_REQUIREMENTS = BENCH_DIR / "requirements-bench.txt"
+BENCH_VENV = BENCH_DIR / ".venv"
+BENCH_ENV_PYTHON = BENCH_VENV / "bin" / "python"
+BENCH_RUNNER = BENCH_DIR / "bench.py"
+BENCH_PLOTTER = BENCH_DIR / "plot_results.py"
+BENCH_RESULTS = BENCH_DIR / "results" / "frameworks-inprocess.json"
+#: Where ``benches/plot_results.py`` writes the figures the comparison page embeds.
+BENCH_ASSETS = ROOT / "docs" / "assets"
+#: The interpreter the published numbers were measured on.  Changing it changes
+#: the table, so it is pinned here rather than inherited from the session.
+BENCH_PYTHON_VERSION = "3.13"
+
 # ---------------------------------------------------------------------------
 # Nox global configuration
 # ---------------------------------------------------------------------------
@@ -207,6 +225,137 @@ def benchmark(session: nox.Session) -> None:
     session.run("pytest", *args)
 
 
+def _prepare_bench_env(session: nox.Session) -> None:
+    """Create (once) and pin the benchmark virtualenv, leaving cwd in ``benches/``.
+
+    Shared by every session that drives something in ``benches/`` so the two of
+    them cannot drift apart on how the environment is prepared.
+
+    ``-e ..`` in requirements-bench.txt is resolved against the working
+    directory rather than against the file, so the install has to run from
+    inside ``benches/`` for that entry to mean "this repository".  Running it
+    from the root instead fails with "does not appear to be a Python project",
+    which is why this chdirs rather than trusting the paths in the file's
+    header.
+
+    The venv is created once and then reused (it is expensive and its contents
+    are pinned); the install is re-run every time so the pins are enforced even
+    if something else has since been installed into it.
+    """
+    session.chdir(BENCH_DIR)
+    if not BENCH_ENV_PYTHON.exists():
+        session.run(
+            "uv",
+            "venv",
+            str(BENCH_VENV),
+            "--python",
+            BENCH_PYTHON_VERSION,
+            external=True,
+        )
+    session.run(
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        str(BENCH_ENV_PYTHON),
+        "-r",
+        str(BENCH_REQUIREMENTS),
+        external=True,
+    )
+
+
+@nox.session(python=False, name="bench_frameworks")
+def bench_frameworks(session: nox.Session) -> None:
+    """Run the cross-framework benchmark and print the results artifact.
+
+    Not to be confused with ``nox -s benchmark``.  That session runs the
+    *micro*-benchmarks under ``tests/benchmarks/``, which time lauren's own
+    primitives with pytest-benchmark.  This one compares lauren against seven
+    other ASGI frameworks -- fastapi, starlette, litestar, blacksheep, sanic,
+    falcon and quart, plus a hand-written baseline that measures the floor --
+    across the five workloads defined in ``benches/workloads.py``, and writes
+    the JSON document the comparison page quotes: per-workload throughput,
+    p50/p95/p99 latency and a separate cold-start measurement, each as a median
+    with its spread over five repeats.
+
+    A full run is about six minutes on an 8-vCPU machine, because every
+    measurement gets a fresh interpreter of its own.
+
+    Why this owns a virtualenv
+    --------------------------
+    Because the numbers depend on the dependency set, not only on the framework
+    versions.  Several frameworks in this field switch JSON serializer on
+    whichever fast library happens to be importable -- Sanic uses ujson when it
+    is present, Litestar defaults to msgspec -- so the benchmark installs into
+    ``benches/.venv`` from ``benches/requirements-bench.txt`` rather than
+    reusing the project environment, and pins those serializers on purpose.
+    The session therefore declares ``python=False``: it does not need an
+    interpreter of its own, only to prepare that environment and drive it.
+
+    The venv is created once and then reused (it is expensive and its contents
+    are pinned); the install is re-run every time so the pins are enforced even
+    if something else has since been installed into it.
+
+    Excluded from the default run the same way ``tests/benchmarks/`` is: it is
+    absent from ``nox.options.sessions``, and pytest never collects
+    ``benches/`` in the first place because ``testpaths`` is ``tests``.
+
+    Examples::
+
+        nox -s bench_frameworks
+        nox -s bench_frameworks -- lauren fastapi
+        nox -s bench_frameworks -- --repeat 9 --duration 1.0
+        nox -s bench_frameworks -- --repeat 1 --startup-repeats 0 --out /tmp/quick.json
+
+    Arguments after ``--`` are passed to ``benches/bench.py``; its ``--help``
+    lists them, and ``--out`` redirects the artifact.  The contract those
+    numbers are held to is asserted by ``benches/run.py``, which can be run
+    directly for a pass/fail in seconds without waiting six minutes.
+    """
+    _prepare_bench_env(session)
+    session.run(str(BENCH_ENV_PYTHON), str(BENCH_RUNNER), *session.posargs, external=True)
+    # bench.py prints the path it actually wrote, which differs when --out was
+    # passed after ``--``.  What is logged here is only ever the default -- the
+    # one the docs quote and BENCH_RESULTS points at -- so it is named as the
+    # default rather than as wherever this particular run landed.
+    session.log(f"default results artifact: {BENCH_RESULTS.relative_to(ROOT)}")
+
+
+@nox.session(python=False, name="bench_plots")
+def bench_plots(session: nox.Session) -> None:
+    """Render the benchmark figures from the results artifact.
+
+    The figures on ``docs/comparisons/performance-benchmarks.md`` are committed
+    SVGs, so the page builds without this session.  Run it after re-measuring,
+    or after editing ``benches/plot_results.py``, to regenerate them from
+    ``benches/results/frameworks-inprocess.json`` -- the artifact
+    ``nox -s bench_frameworks`` writes.  Every plotted value is read from that
+    artifact, so the figures cannot disagree with the tables beside them.
+
+    It reuses the benchmark virtualenv (``_prepare_bench_env``) rather than
+    making one of its own, because the only extra thing the plotting needs --
+    matplotlib -- is already pinned in ``benches/requirements-bench.txt``.
+
+    Excluded from the default run the same way ``tests/benchmarks/`` is: it is
+    absent from ``nox.options.sessions``, and pytest never collects ``benches/``
+    in the first place because ``testpaths`` is ``tests``.
+
+    Examples::
+
+        nox -s bench_plots
+        nox -s bench_plots -- --out-dir /tmp/figures
+        nox -s bench_plots -- --artifact /tmp/quick.json
+
+    Arguments after ``--`` are passed to ``benches/plot_results.py``; its
+    ``--help`` lists them.  The script prints the path of every SVG it writes.
+    """
+    _prepare_bench_env(session)
+    session.run(str(BENCH_ENV_PYTHON), str(BENCH_PLOTTER), *session.posargs, external=True)
+    # plot_results.py prints each file it wrote; this names the directory the
+    # page's images resolve against, which is the one that matters for a build.
+    session.log(f"default figures directory: {BENCH_ASSETS.relative_to(ROOT)}")
+
+
 # ---------------------------------------------------------------------------
 # Lint / type-check
 # ---------------------------------------------------------------------------
@@ -236,7 +385,15 @@ def format(session: nox.Session) -> None:  # noqa: A001 - intentional name
 def typecheck(session: nox.Session) -> None:
     """Run mypy over the lauren package."""
     session.run("uv", "sync", "--extra", "dev", "--active", external=True)
-    session.run("uv", "pip", "install", "mypy>=1.10", external=True)
+    # Pinned: an unpinned mypy can redden a green branch without a single code
+    # change, and the `mypy` hook in .pre-commit-config.yaml pins the same
+    # version, so `prek run` and CI cannot disagree about which errors exist.
+    # Pydantic is deliberately left to the project's own resolution here, so a
+    # genuinely incompatible release still fails this gate loudly. Note that a
+    # developer checkout keeps an ignored `uv.lock`, which can pin older
+    # versions than a fresh CI checkout resolves, so a local green is not proof
+    # that CI is green.
+    session.run("uv", "pip", "install", "mypy==2.4.0", external=True)
     args = session.posargs or ["lauren"]
     session.run("mypy", *args)
 
@@ -618,6 +775,8 @@ def help_session(session: nox.Session) -> None:
             and name
             not in {
                 "benchmark",
+                "bench_frameworks",
+                "bench_plots",
                 "tests",
                 "tests_unit",
                 "tests_integration",
@@ -656,6 +815,8 @@ def help_session(session: nox.Session) -> None:
 # stable for tooling that parses it.
 __all__ = [
     "benchmark",
+    "bench_frameworks",
+    "bench_plots",
     "build",
     "build_check",
     "ci",

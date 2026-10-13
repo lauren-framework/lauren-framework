@@ -1,0 +1,61 @@
+# Pinned dependency set for the cross-framework benchmark in benches/.
+#
+# Install into a throwaway environment from *inside this directory*: the ``-e
+# ..`` at the end is resolved against the working directory, not against this
+# file, so running these from the repository root would try to install the
+# directory above the repository and fail with "does not appear to be a Python
+# project".
+#
+#     cd benches
+#     uv venv .venv --python 3.13
+#     uv pip install --python .venv/bin/python -r requirements-bench.txt
+#
+# ``nox -s bench_frameworks`` does exactly this (it chdirs first for the same
+# reason) and then runs the harness.
+#
+# These pins are not merely "what happened to resolve" — they are part of the
+# measured configuration.  Several frameworks in this field switch JSON
+# serializer depending on which fast library happens to be importable, so the
+# presence of ujson/orjson/msgspec changes the number that gets published:
+#
+#   * Sanic      -> ujson      when ujson is importable (sanic/helpers.py)
+#   * Litestar   -> msgspec    (msgspec.json.Encoder is its default codec)
+#   * lauren     -> stdlib     (StdlibJSONEncoder is the default; OrjsonEncoder
+#                               and MsgspecEncoder exist but are opt-in)
+#   * BlackSheep -> stdlib     (essentials.json.dumps)
+#   * FastAPI / Starlette / Falcon / Quart -> stdlib
+#
+# Leaving these to resolver luck would mean two machines could publish two
+# different tables for the same "framework version".  See the serialization
+# column in docs/comparisons/performance-benchmarks.md.
+
+# lauren is the working tree under test, installed editable.  Its version comes
+# from setuptools-scm, so it reads as e.g. 1.8.0.post17 on an untagged commit.
+-e ..
+
+# --- frameworks under test -------------------------------------------------
+fastapi==0.143.0
+starlette==1.7.0
+litestar==2.24.0
+blacksheep==2.6.4
+sanic==25.12.1
+falcon==4.4.0
+quart==0.23.1
+aiohttp==3.14.5
+robyn==0.88.0
+
+# --- the in-process driver -------------------------------------------------
+httpx==0.28.1
+
+# --- serializer selection (see the note above: these are deliberate) -------
+pydantic==2.14.1
+msgspec==0.22.0
+orjson==3.13.0
+ujson==6.0.0
+
+# --- figure rendering (benches/plot_results.py) ----------------------------
+# Not part of the measured configuration: matplotlib never enters a timed
+# process, it only draws docs/comparisons/performance-benchmarks.md's figures
+# from the artifact the timed run produced.  Pinned anyway so the SVGs are
+# reproducible, since matplotlib's output format moves between releases.
+matplotlib==3.11.2
