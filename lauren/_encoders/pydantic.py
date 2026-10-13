@@ -57,7 +57,10 @@ class PydanticEncoder:
         if isinstance(value, list) and value and all(isinstance(item, BaseModel) for item in value):
             from pydantic import TypeAdapter  # noqa: PLC0415
 
-            adapter: TypeAdapter[list] = TypeAdapter(list[type(value[0])])  # type: ignore[misc]
+            # ``list[type(value[0])]`` is assembled at runtime, so mypy cannot check the
+            # type form it is handed: ``misc`` for the dynamic subscript, plus
+            # ``arg-type`` from pydantic >= 2.14, which types the argument as ``TypeForm``.
+            adapter: TypeAdapter[list] = TypeAdapter(list[type(value[0])])  # type: ignore[misc, arg-type]
             return adapter.dump_json(value) if compact else adapter.dump_json(value, indent=2)
 
         return self._fallback.encode_compact(value) if compact else self._fallback.encode(value)

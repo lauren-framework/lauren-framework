@@ -15,6 +15,14 @@ Usage::
 
 Run this script whenever docstrings change, then commit the output.
 
+The generated files are committed, so generating them must leave the working
+tree clean: the sections assembled below each end in a blank line, which used
+to leave every file with a trailing empty line that the ``end-of-file-fixer``
+pre-commit hook (see ``.pre-commit-config.yaml``) then stripped.  Every file is
+therefore written through :func:`_finalise`, which normalises the ending to a
+single newline so the hook is a no-op and ``prek run --all-files`` stays green
+straight after a ``nox -s docs`` build.
+
 Requirements:
     griffe>=1.0   (available via ``pip install griffe`` or the docs extras)
 """
@@ -419,6 +427,21 @@ def _render_object(pkg: griffe.Package, dotted: str, heading_level: int = 3) -> 
 # ---------------------------------------------------------------------------
 
 
+def _finalise(content: str) -> str:
+    """Return ``content`` ending in exactly one newline.
+
+    Every rendered section already ends with a blank line, so joining them
+    yields a file whose last bytes are ``"\\n\\n"``.  The ``end-of-file-fixer``
+    hook rewrites that to a single ``"\\n"``, which dirtied the tree and failed
+    ``prek run --all-files`` immediately after a docs build.  Normalising here
+    makes the committed output byte-identical to what the hook expects.
+
+    Empty output is returned untouched \u2014 the hook leaves empty files alone.
+    """
+    stripped = content.rstrip("\n")
+    return stripped + "\n" if stripped else ""
+
+
 def generate() -> None:
     print(f"Loading lauren package from {ROOT / 'lauren'} …")
     pkg = _load_package()
@@ -439,7 +462,7 @@ def generate() -> None:
                 rendered = _render_object(pkg, entry, heading_level=3)
                 sections.append(rendered)
 
-        content = "".join(sections)
+        content = _finalise("".join(sections))
         out_path.write_text(content, encoding="utf-8")
         print(f"  → {out_path.relative_to(ROOT)}\n")
 

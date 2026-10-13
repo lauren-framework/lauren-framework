@@ -60,3 +60,5 @@ site/
 
 # Product requirement docs (local planning scratch, not shipped)
 prds/
+.agenthicc/
+tests/.cassette/

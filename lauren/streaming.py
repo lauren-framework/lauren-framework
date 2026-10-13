@@ -448,7 +448,9 @@ def _build_adapter(target: Any) -> "_ValidationAdapter | None":
         try:
             import pydantic  # noqa: PLC0415
 
-            ta = pydantic.TypeAdapter(target)
+            # ``target`` is only known at runtime, so the adapter's type argument has to
+            # be spelled out -- inference from a dynamic value fails on pydantic >= 2.14.
+            ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(target)
             adapter = _ValidationAdapter(
                 validate_fn=ta.validate_python,
                 dump_fn=lambda v, mode="json": ta.dump_python(v, mode=mode),

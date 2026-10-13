@@ -196,6 +196,7 @@ nav:
   - Comparisons:
     - comparisons/index.md
     - vs FastAPI, Litestar & BlackSheep: comparisons/python-frameworks.md
+    - Cross-framework benchmarks: comparisons/performance-benchmarks.md
   - Reference:
     - reference/index.md
     - App & Factory: reference/app.md
