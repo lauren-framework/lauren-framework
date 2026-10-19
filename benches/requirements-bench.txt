@@ -34,8 +34,8 @@
 -e ..
 
 # --- frameworks under test -------------------------------------------------
-fastapi==0.143.0
-starlette==1.7.0
+fastapi==0.143.2
+starlette==1.8.0
 litestar==2.24.0
 blacksheep==2.6.4
 sanic==25.12.1
