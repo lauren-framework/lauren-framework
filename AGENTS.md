@@ -124,7 +124,10 @@ nox -s ver_dec -- --patch
 | `lauren/reflect/_reader.py`       | Static readers: `reflect_controller`, `reflect_routes`, `reflect_exception_handlers`, … |
 | `lauren/reflect/_app_reader.py`   | App readers: `get_all_routes`, `get_all_ws_gateways`, `get_route_metadata` |
 | `lauren/reflect/_types.py`        | Frozen result types: `ReflectedRoute`, `ReflectedController`, `ReflectedWsGateway`, … |
-| `lauren/decorators.py`            | User-facing decorators only                  |
+| `lauren/decorators.py`            | User-facing decorators only; route-option validation table (`_ROUTE_OPTION_VALIDATORS`); `@raises` |
+| `lauren/responses.py`             | Typed results: `Ok`, `Created`, `Accepted`, `NoContent`, `Status` (no framework imports) |
+| `lauren/_asgi/_contracts.py`      | Response contracts: `describe_responses` (status table, startup checks), `ResponsePlan` (runtime coercion + projection), `ResponseContractViolation` |
+| `lauren/_schema/_contract.py`     | Filter / strict response projectors built over compiled validator nodes |
 | `lauren/extractors.py`            | Typed extractors + pipes + custom extractors |
 | `lauren/exceptions.py`            | The closed error catalog (table: `docs/reference/errors.md`) |
 | `lauren/sessions.py`              | Public session surface (`Session`, `SessionConfig`, stores) |
@@ -283,6 +286,7 @@ Welcome aboard.
 | I need to… | Read first | Copy-paste guide |
 |---|---|---|
 | Add a new route / controller | `lauren/_asgi/__init__.py` | `skills/building-lauren-controllers/` |
+| Shape a response (status, typed results, output filtering, declared errors) | `lauren/responses.py`, `lauren/_asgi/_contracts.py` | `docs/guides/response-contracts.md` |
 | Wire DI / providers / lifecycle | `lauren/_di/__init__.py` | `skills/building-lauren-services/` |
 | Add a guard, middleware, or interceptor | `lauren/decorators.py` | `skills/building-lauren-guards/` |
 | Add exception handlers | `lauren/decorators.py` | `skills/building-lauren-guards/` §Exception handlers |
@@ -344,6 +348,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | Hosted services & scheduled jobs | `docs/guides/scheduling.md` |
 | Validation (stdlib models, constraints, `issues`, `ValidationPolicy`) | `docs/guides/validation.md` |
 | Custom response subclasses and response factories | `docs/guides/custom-responses.md` / `docs/guides/file-responses.md` |
+| Status codes, typed results, response filtering, `@raises`, `json_fallback` | `docs/guides/response-contracts.md` |
 | Testing playbook | `skills/testing-lauren-apps/SKILL.md` |
 | Release / versioning process | `docs/development/release.md` / `docs/development/versioning.md` |
 

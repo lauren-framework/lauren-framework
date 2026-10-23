@@ -49,6 +49,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Subclass `Response`, preserve the concrete type through dispatch, and expose domain-specific response builders or streaming bodies.
 
+-   :material-file-check-outline: [__Response Contracts__](response-contracts.md)
+
+    ---
+    `status_code=`, typed results (`Created[T]`, `NoContent`), `response_validation="filter"` so internal fields never leave, `@raises` and `json_fallback`.
+
 -   :material-shield-key: [__Custom Guards__](custom-guards.md)
 
     ---

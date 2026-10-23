@@ -104,6 +104,8 @@ lauren/                      — framework package
 ├── _validation.py           — provider-agnostic type detection + the 1.x shallow `validate_as` (legacy/warn modes, config loader)
 ├── _ws_runtime.py           — WebSocket dispatch engine + WsConnectionContext / WsUpgradeRequest
 ├── _socketio.py             — Engine.IO/Socket.IO adapter (private)
+├── _schema/                 — native validation engine (F02); `_contract.py` = response projectors
+├── responses.py             — typed results: Ok / Created / Accepted / NoContent / Status
 ├── reflect/                 — public sub-package: full metadata introspection API
 │   ├── __init__.py          — re-exports all public symbols
 │   ├── _reader.py           — static class readers (own-class rule, no inheritance)
@@ -249,6 +251,9 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Persist state across requests for one client | Sessions (`sessions=SessionConfig(...)`; inject `session: Session`) |
 | Read typed configuration | `ConfigModule.for_root(Settings)` (or `for_feature`) + inject `Settings`; `load_settings` for factory kwargs |
 | Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
+| Declare a route's success status | `@post("/", status_code=201)` or a typed result `-> Created[T]` (`Ok` / `Accepted` / `NoContent` / `Annotated[T, Status(206)]`) |
+| Keep internal fields off the wire (declare the output shape) | Annotate the public type and set `response_validation="filter"` (app or route; `"strict"` also validates) |
+| Document the errors a route raises | `@raises(NotFoundError, ...)` on the method or controller |
 | Constrain a field or parameter (bounds, length, regex) | `Annotated[int, Ge(1)]` markers from `lauren.validation` (`QueryField(...)` also works) |
 | Reject unknown keys / rename fields on a stdlib model | `@validation_config(extra="forbid", rename="camel")` |
 | Validate a payload outside a request (service, job, command) | `app.type_compiler.compile(T).validate(data)` |
@@ -303,6 +308,18 @@ See `docs/concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md` for d
   `decorators.py` as a model.
 - Never combine decoration with execution — the decorated object must
   be the same object after decoration.
+- **Route-decorator options go through one table.** `@get` … `@options`
+  (and `Lauren`'s `@app.get` …) validate their keyword options with
+  `_validate_route_options` against `_ROUTE_OPTION_VALIDATORS` in
+  `decorators.py` (name → `validate(value)` returning the normalised value or
+  raising `_RouteOptionError(reason, message)`); a bad value becomes a
+  `DecoratorUsageError` with `detail = {"decorator", "target", "option",
+  "reason"}` at decoration time. To add an option (`consumes`, `name`,
+  `cache_control`, …): add the keyword to `_route_decorator`'s factory and to
+  `RouteMeta.__init__`, and register one validator in the table — never
+  validate inline in a single verb. Options that need the resolved return
+  annotation (e.g. 204 vs a body type) are checked in Phase 5
+  (`lauren/_asgi/_contracts.py::describe_responses`).
 - **Stacking accumulates, never overwrites.** Every metadata decorator in
   the framework is stackable and *additive* — `@get`/`@post` append to
   `ROUTE_META`, `@use_guards`/`@use_interceptors`/`@use_middlewares`/
@@ -635,6 +652,24 @@ exit).
   `.status_code`, `.body`, `.headers`, `.with_header()`, etc. without any
   `isinstance` check.  Code that did `if isinstance(result, dict): result["k"] = v`
   must be updated to parse `result.body` and rebuild via `result.with_body(...)`.
+- ❌ Returning an internal model (`UserInDB`, an ORM row) from a route annotated
+  with a public one (`-> UserOut`) while `response_validation="off"` (the 1.x
+  default) — the runtime object is dumped and its extra fields (`password_hash`)
+  leak; `response_model=` alone only documents. Set
+  `response_validation="filter"` (app-wide or per route): the value is projected
+  onto the declared type, missing required fields become a 500
+  `response_validation_error`.
+- ❌ Using `Response.created(...)` / `Response.json(...)` and expecting the app's
+  `json_encoder` — they use the process-wide default encoder. Return a typed
+  result (`Created(user, location=...)`) or a plain value: the dispatcher
+  encodes those with the route's encoder.
+- ❌ Declaring `status_code=204` (or `Status(204)`) with a body-bearing return
+  annotation — RFC 9110 forbids content, startup raises `DecoratorUsageError`
+  (`reason="body_not_allowed"`). Annotate `-> None` or `-> NoContent`.
+- ❌ Returning SDK clients, settings or arbitrary objects from handlers — the
+  `__dict__` fallback ships their public attributes. `json_fallback="warn"` (the
+  default) logs it once per type; set `json_fallback="error"` to turn it into a
+  500, or declare a response type.
 
 ## 9. Testing Playbook
 
@@ -724,7 +759,13 @@ exit).
   via `with`), `AsyncTestClient`, `Test.create_testing_module` overrides,
   cookie jar, `WsTestClient`, opt-in `pytest_plugin`.
 - `lauren/serialization.py` — JSON encoders: `StdlibJSONEncoder`,
-  `OrjsonEncoder`, `MsgspecEncoder`, `PydanticEncoder`.
+  `OrjsonEncoder`, `MsgspecEncoder`, `PydanticEncoder`; the `json_fallback`
+  policy (`_FallbackPolicy`, applied per app through `_ACTIVE_FALLBACK`).
+- `lauren/responses.py` — typed results (`Ok`, `Created`, `Accepted`,
+  `NoContent`, `Status`); `lauren/_asgi/_contracts.py` — the per-route
+  response table (`describe_responses`) and contract plan
+  (`compile_response_plan`); `lauren/_schema/_contract.py` — the
+  filter/strict projectors built over F02 nodes.
 - `lauren/extractors.py` — typed extractors, pipes, `ExtractionMarker`.
 - `lauren/_schema/` — the validation engine: `_compiler.py` (`TypeCompiler`,
   annotations → nodes), `_nodes.py` (validate / project / schema per type kind),

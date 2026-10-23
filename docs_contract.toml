@@ -71,8 +71,16 @@
 "lauren.LaurenApp" = [
     "router", "container", "app_state", "routes", "openapi",
     "startup", "shutdown", "on_shutdown", "mount", "mounts", "scope", "error_format",
-    "type_compiler", "validation_policy",
+    "type_compiler", "validation_policy", "response_validation", "json_fallback",
 ]
+"lauren.Ok" = ["value", "headers", "status"]
+"lauren.Created" = ["value", "location", "headers", "status"]
+"lauren.Accepted" = ["value", "location", "headers", "status"]
+"lauren.NoContent" = ["headers", "status"]
+"lauren.Status" = ["code", "description"]
+"lauren.decorators.RaisesSpec" = ["exc_type", "description", "status_code", "code"]
+"lauren.ReflectedRoute" = ["status_code", "responses_typed", "raises", "response_model", "handler"]
+"lauren.ReflectedResponse" = ["status", "body_type", "description", "source"]
 "lauren.ValidationPolicy" = ["stdlib_models", "json_mode", "extra", "include_input", "max_issues"]
 "lauren.ValidationIssue" = ["loc", "type", "msg", "input", "ctx", "to_dict", "prefixed"]
 "lauren.validation.ValidationFailed" = ["errors"]

@@ -174,6 +174,7 @@ nav:
     - File Uploads: guides/file-uploads.md
     - File Responses & XML: guides/file-responses.md
     - Custom Responses: guides/custom-responses.md
+    - Response Contracts: guides/response-contracts.md
     - Custom Guards: guides/custom-guards.md
     - Custom Middleware: guides/custom-middleware.md
     - Interceptors: guides/interceptors.md
@@ -209,6 +210,7 @@ nav:
     - Decorators: reference/decorators.md
     - Extractors: reference/extractors.md
     - Validation: reference/validation.md
+    - Responses: reference/responses.md
     - WebSockets: reference/websockets.md
     - Reflect: reference/reflect.md
     - SSE & Streaming: reference/sse.md

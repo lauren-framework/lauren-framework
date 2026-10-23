@@ -157,6 +157,12 @@ core ideas:
   `Last-Event-ID` resumability for AI token-streaming patterns.
 * **Typed streaming** — `StreamingResponse[T]` auto-negotiates between SSE,
   NDJSON, and JSON Lines based on the client's `Accept` header.
+* **Response contracts** — `status_code=` and typed results (`Ok[T]`,
+  `Created[T]`, `Accepted[T]`, `NoContent`) declare a route's statuses on the
+  wire and in OpenAPI. `response_validation="filter"` projects the returned
+  value onto the annotated type, so returning a `UserInDB` (or an ORM row) from
+  a route annotated `-> UserOut` never leaks `password_hash`; `"strict"` also
+  validates it. `@raises(NotFoundError)` documents error responses.
 * **Custom responses & file delivery** — Return your own `Response` subclasses,
   stream downloads with `await Response.file(...)`, or emit XML with
   `Response.xml(...)` while keeping the dispatch pipeline untouched.
@@ -262,9 +268,9 @@ class UserController:
     async def get_user(self, id: int) -> dict:
         return {"id": id, "found": True}
 
-    @post("/")
-    async def create(self, body: CreateUser):
-        return body.model_dump(), 201
+    @post("/", status_code=201)
+    async def create(self, body: CreateUser) -> dict:
+        return body.model_dump()
 
     @get("/admin")
     @use_guards(AdminGuard)

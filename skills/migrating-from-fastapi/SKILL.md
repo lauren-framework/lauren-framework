@@ -25,7 +25,8 @@ FastAPI and Lauren share the "type-annotations-first" philosophy but differ in a
 | `Annotated[str, Query()]` | `q: Query[str]` (or bare `q: str`) | Extractors are type aliases, not annotations |
 | `Annotated[int, Query(le=100)]` / `Field(ge=13)` | `size: Annotated[int, Le(100)] = 10`, `age: Annotated[int, Ge(13)]` | Markers from `lauren.validation`; annotated-types objects work too |
 | `RequestValidationError` (422 `detail: [{loc, msg, type, input, ctx}]`) | `ExtractorError` (422 `error.detail.issues: [{loc, type, msg, ctx}]`) | Same `loc` roots (`["query", "page"]`, `["body", "age"]`); every failing parameter in one response |
-| `response_model=` | Return the Pydantic model directly | Auto-serialized; declare return type for OpenAPI |
+| `response_model=` (filters output) | Return annotation or `response_model=`, plus `response_validation="filter"` | FastAPI always filters; in Lauren 1.x filtering is opt-in (`LaurenFactory.create(..., response_validation="filter")`) — without it a richer object leaks its extra fields |
+| `@app.post(..., status_code=201)` | `@post(..., status_code=201)` or `-> Created[T]` | `Created(user, location=...)` also sets `Location`; `-> None` / `NoContent` → 204 |
 | `Depends(get_db)` for request-scoped deps | `@injectable(scope=Scope.REQUEST)` | Scope is on the provider class, not the injection site |
 
 ## Routing side-by-side
