@@ -73,6 +73,33 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   raises `LifecycleViolationError`.
 - `EventHandlerFailed` lifecycle signal, and test aids `bus.recording()`,
   `bus.drain()`, `bus.disabled()` and `bus.handlers_for()`.
+- **Testing toolkit** (`lauren.testing`): `TestClient` keeps one persistent event
+  loop per client and supports `with TestClient(app)` lifespan (startup on enter;
+  drain → `on_shutdown` → `@pre_destruct` → generator teardown on exit), a
+  browser-like `CookieJar`, `data=` / `files=` / streamed `content=`, `base_url` /
+  `host` / `root_path`, `follow_redirects`, per-request `timeout`,
+  `disconnect_after=` client aborts, `client.stream(...)` with
+  `iter_bytes` / `iter_text` / `iter_lines` / `iter_sse`, `websocket_connect(...)`
+  carrying the jar's cookies, `resolve()`, `capture()`, `set_session()`,
+  `new_session()` and `raise_server_exceptions`.
+- `AsyncTestClient` (the same surface on the caller's loop) and
+  `lauren.testing.lifespan(app)` for third-party clients.
+- `Test.create_testing_module(AppModule, ...)`: startup-validated provider, guard,
+  interceptor, middleware, exception-handler and module overrides
+  (`override_provider(X).use_value/use_class/use_factory/use_existing/use_values`,
+  `.allow()` / `.deny()`, `.passthrough()`, `.with_module()`, `.optional()`, and a
+  declarative `overrides=[...]`).
+- Opt-in pytest plugin `lauren.testing.pytest_plugin` (`lauren_app`,
+  `lauren_client`, `lauren_aclient`, `lauren_ws`, `lauren_capture`; ini options
+  `lauren_app` and `lauren_client_scope`).
+- `TestResponse` gains `content`, `cookies`, `is_success` / `is_redirect` /
+  `is_client_error` / `is_server_error`, `raise_for_status()`
+  (`HTTPStatusAssertionError`), `aborted`, `url`, `request`, `elapsed` and
+  `history`; `ResponseHeaders` keeps the list shape and adds case-insensitive
+  `get` / `getall` / `[]` / `keys` / `in`.
+- `Request.extensions` (the read-only ASGI `scope["extensions"]`),
+  `LaurenFactory.create(lazy_startup=True)` / `Lauren(lazy_startup=True)`, and
+  `WsTestClient.connect(server_timeout=)` with `send_event()` / `receive_event()`.
 
 ### Changed
 
@@ -88,6 +115,14 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   factory.
 - The warning for an unknown `error_format` now says it will become a
   `StartupError` in 2.0.
+- A `LaurenApp` that receives an HTTP or WebSocket request without ever seeing
+  ASGI lifespan events (`httpx.ASGITransport`, `uvicorn --lifespan off`, mounted
+  Lauren sub-apps) now runs `startup()` once and logs a warning; opt out with
+  `lazy_startup=False`.
+- `TestClient` runs startup, requests and shutdown on one event loop per client
+  instead of a new loop per request, and `receive()` blocks after the body until
+  the response completes, then reports `http.disconnect`. `lauren.testing` is now a
+  package; import paths are unchanged.
 
 ### Deprecated
 
@@ -106,6 +141,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `lauren_error`.
 - Docs, skills and the tutorial no longer re-declare `NotFoundError` and friends or
   reference error classes that do not exist.
+- `WebSocketTestSession` no longer leaks `CancelledError` when the server task
+  misses its wind-down timeout.
 
 ## [1.10.0] - 2026-10-23
 
