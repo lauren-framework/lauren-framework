@@ -64,6 +64,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Catch domain errors at the right scope. Class-form (DI-injected) vs function-form. Global vs per-controller vs per-route.
 
+-   :material-bug-outline: [__Debug Error Pages__](debugging.md)
+
+    ---
+    `debug=True` in development: traceback, route chain and a redacted request summary for unhandled errors — loopback-only, refused in production.
+
 -   :material-lan-connect: [__WebSockets__](websockets.md)
 
     ---

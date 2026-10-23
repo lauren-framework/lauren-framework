@@ -30,7 +30,9 @@ The top-level entry points for creating and running a Lauren application.
 | `arena_capacity` | `int` | `None` | Arena pool capacity (mutually exclusive with `arena`) |
 | `json_encoder` | `JSONEncoder` | `None` | JSON encoder (`StdlibJSONEncoder`, `OrjsonEncoder`, `MsgspecEncoder`) |
 | `signals` | `SignalBus` | `None` | Lifecycle event bus (per-app isolation) |
-| `error_format` | `str` | `"default"` | Error envelope: `"default"` or `"rfc7807"` |
+| `error_format` | `str` | `"default"` | Error envelope: `"default"`, `"rfc9457"` (RFC 9457 problem details) or `"rfc7807"` (legacy problem details) — see [Error Catalog](errors.md#problem-details-rfc-9457) |
+| `problem_type_base` | `str` | `None` | Problem-details `type` prefix: `type = base + code` for errors without their own `problem_type` |
+| `debug` | `bool \| DebugConfig` | `False` | [Debug error pages](../guides/debugging.md) for unhandled errors (development only; loopback clients by default) |
 | `root_path` | `str` | `""` | ASGI root path prefix stripped from requests |
 | `mounts` | `dict[str, Any]` | `None` | Pre-built sub-app mounts (`{path: app}`) |
 
@@ -68,7 +70,7 @@ app.include_module(UserModule)
 | `arena` | `RequestArena` | Per-app request pool |
 | `json_encoder` | `JSONEncoder` | Active JSON encoder |
 | `signals` | `SignalBus` | Lifecycle event bus |
-| `error_format` | `str` | `"default"` or `"rfc7807"` |
+| `error_format` | `str` | `"default"`, `"rfc9457"` or `"rfc7807"` |
 | `logger` | `Logger` | Application logger |
 
 ### Key methods

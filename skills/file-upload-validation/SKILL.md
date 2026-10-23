@@ -56,13 +56,8 @@ class FileValidator:
 ## Controller
 
 ```python
-from lauren import controller, post, module, Bytes
-from lauren.exceptions import HTTPError
+from lauren import BadRequestError, controller, post, module, Bytes
 
-
-class BadRequestError(HTTPError):     # lauren ships no generic 400 class — define one
-    status_code = 400
-    code = "bad_request"
 
 @controller("/upload")
 class FileUploadController:

@@ -178,6 +178,7 @@ nav:
     - Interceptors: guides/interceptors.md
     - Propagate Metadata: guides/propagate-metadata.md
     - Custom Exception Handlers: guides/custom-exception-handlers.md
+    - Debug Error Pages: guides/debugging.md
     - WebSockets: guides/websockets.md
     - Server-Sent Events: guides/server-sent-events.md
     - Typed Streaming: guides/typed-streaming.md

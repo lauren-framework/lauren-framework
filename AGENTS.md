@@ -155,7 +155,10 @@ nox -s ver_dec -- --patch
   machine-parseable keys (`target`, `param`, `token`, ...).
 - HTTP-mapped errors render as
   `{"error": {"code": "...", "message": "...", "detail": {...}}}` —
-  the envelope is stable across the entire framework.
+  the envelope is stable across the entire framework (RFC 9457 problem
+  details with `error_format="rfc9457"`). Raise the built-in HTTP errors
+  (`NotFoundError`, `ConflictError`, `TooManyRequestsError`, …) and subclass
+  them for domain codes; errors carry `headers=`.
 - Subclasses do NOT inherit `@injectable` / `@controller` / `@module`
   / `@middleware()` / `@ws_controller` / `@exception_handler` decoration.
 
@@ -340,6 +343,9 @@ Full index: [`skills/README.md`](skills/README.md)
 | `UnresolvableProviderError` | Type not registered anywhere, or owning module not imported | Import the owning module in the consumer module |
 | `SessionConfigError` | Sessions misconfigured, or `Session` injected with sessions disabled | Pass `sessions=SessionConfig(...)` / fix the unsafe cookie config |
 | `ConfigValidationError` | A settings key is missing or invalid, or the profile is unknown (every problem listed in `detail["errors"]`) | Set the listed keys in the environment / `.env` / config files; tests pass `environ=` to `ConfigModule.for_root` |
+| `GuardConfigError` (`reason="invalid_deny_error"`) | A guard's `deny_error` is not an `HTTPError` subclass or a zero-argument factory (e.g. an exception *instance*, `ValueError`) | `deny_error = UnauthorizedError`, or `deny_error = staticmethod(lambda: UnauthorizedError("…", challenge="…"))` |
+| `StartupError` (`reason="debug_in_production"`) | `debug=` enabled while the configuration profile is production | Enable debug pages only in development |
+| `StartupError` (`reason="invalid_debug_config"` / `"invalid_problem_type_base"`) | `debug=` is not a bool / valid `DebugConfig`, or `problem_type_base` is not a non-empty string | Fix the value passed to `LaurenFactory.create` |
 | `StartupError` (generic) | Missing required parameter in constructor injection | Add the type as a `@module` provider or import its module |
 
 ## Interceptor `CallHandler.handle()` contract (v1.4.2+)

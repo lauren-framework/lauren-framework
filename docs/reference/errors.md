@@ -1,6 +1,6 @@
 # Error Catalog
 
-Lauren ships a **closed catalog** of error classes, all rooted at `LaurenError` — the [table below](#the-catalog) is generated from `lauren.exceptions`, so it is always complete. Every HTTP-mapped error renders with the same envelope:
+Lauren ships a **closed catalog** of error classes, all rooted at `LaurenError` — the [table below](#the-catalog) is generated from `lauren.exceptions`, so it is always complete, and [`error_catalog()`](#programmatic-discovery) returns the same list as data. Every HTTP-mapped error renders with the same envelope:
 
 ```json
 {
@@ -12,7 +12,7 @@ Lauren ships a **closed catalog** of error classes, all rooted at `LaurenError` 
 }
 ```
 
-This stability — same shape, same code field, every time — is what enables downstream consumers (other services, audit pipelines, partner integrations) to programmatically distinguish errors.
+This stability — same shape, same code field, every time — is what enables downstream consumers (other services, audit pipelines, partner integrations) to programmatically distinguish errors. Apps that prefer the standard [RFC 9457 problem-details](#problem-details-rfc-9457) shape opt in with `error_format="rfc9457"`.
 
 ## Hierarchy
 
@@ -42,10 +42,19 @@ LaurenError
 ├── HTTPError  → 500  code=http_error
 │   ├── ExtractorError  → 422  code=extractor_error
 │   │   └── ExtractorFieldError  → 422  code=extractor_field_error
-│   ├── RouteNotFoundError  → 404  code=route_not_found
+│   ├── BadRequestError  → 400  code=bad_request
+│   ├── NotFoundError  → 404  code=not_found
+│   │   └── RouteNotFoundError  → 404  code=route_not_found
 │   ├── MethodNotAllowedError  → 405  code=method_not_allowed
+│   ├── NotAcceptableError  → 406  code=not_acceptable
+│   ├── ConflictError  → 409  code=conflict
+│   ├── GoneError  → 410  code=gone
+│   ├── PreconditionFailedError  → 412  code=precondition_failed
 │   ├── RequestBodyTooLarge  → 413  code=request_body_too_large
 │   ├── UnsupportedMediaTypeError  → 415  code=unsupported_media_type
+│   ├── TooManyRequestsError  → 429  code=too_many_requests
+│   ├── ServiceUnavailableError  → 503  code=service_unavailable
+│   ├── RequestTimeoutError  → 504  code=request_timeout
 │   ├── UnauthorizedError  → 401  code=unauthorized
 │   ├── ForbiddenError  → 403  code=forbidden
 │   ├── MissingStateError  → 500  code=missing_state
@@ -97,12 +106,21 @@ best-effort, so they are collected rather than aborting shutdown.
 | `HTTPError` | `LaurenError` | 500 | `http_error` | Base class for errors mapped to HTTP responses. |
 | `ExtractorError` | `HTTPError` | 422 | `extractor_error` | A request value could not be extracted or validated. |
 | `ExtractorFieldError` | `ExtractorError` | 422 | `extractor_field_error` | One parameter is missing or violates a field constraint. |
-| `RouteNotFoundError` | `HTTPError` | 404 | `route_not_found` | No route matches the request path. |
-| `MethodNotAllowedError` | `HTTPError` | 405 | `method_not_allowed` | The path matches, but not for this HTTP method (the response sets `Allow`). |
+| `BadRequestError` | `HTTPError` | 400 | `bad_request` | The request is malformed in a way that is not schema validation. |
+| `NotFoundError` | `HTTPError` | 404 | `not_found` | The requested resource does not exist — the domain 404. |
+| `RouteNotFoundError` | `NotFoundError` | 404 | `route_not_found` | No route matches the request path. |
+| `MethodNotAllowedError` | `HTTPError` | 405 | `method_not_allowed` | The path matches, but not for this HTTP method; `allow=` sets the `Allow` header. |
+| `NotAcceptableError` | `HTTPError` | 406 | `not_acceptable` | No available representation matches the request's `Accept` headers. |
+| `ConflictError` | `HTTPError` | 409 | `conflict` | The request conflicts with the current state of the resource. |
+| `GoneError` | `HTTPError` | 410 | `gone` | The resource existed but has been removed permanently. |
+| `PreconditionFailedError` | `HTTPError` | 412 | `precondition_failed` | A conditional request header (`If-Match`, `If-Unmodified-Since`) evaluated to false. |
 | `RequestBodyTooLarge` | `HTTPError` | 413 | `request_body_too_large` | The request body exceeds `max_body_size`. |
 | `UnsupportedMediaTypeError` | `HTTPError` | 415 | `unsupported_media_type` | The request body's `Content-Type` is not one the route accepts. |
-| `UnauthorizedError` | `HTTPError` | 401 | `unauthorized` | Authentication is missing or invalid. |
-| `ForbiddenError` | `HTTPError` | 403 | `forbidden` | The caller is not allowed — also what a guard returning `False` raises. |
+| `TooManyRequestsError` | `HTTPError` | 429 | `too_many_requests` | The client sent too many requests; `retry_after=` sets `Retry-After`. |
+| `ServiceUnavailableError` | `HTTPError` | 503 | `service_unavailable` | The server cannot handle the request right now; `retry_after=` sets `Retry-After`. |
+| `RequestTimeoutError` | `HTTPError` | 504 | `request_timeout` | A server-side deadline was exceeded while handling the request (504). |
+| `UnauthorizedError` | `HTTPError` | 401 | `unauthorized` | Authentication is missing or invalid; `challenge=` sets `WWW-Authenticate`. |
+| `ForbiddenError` | `HTTPError` | 403 | `forbidden` | The caller is not allowed — also what a guard returning `False` raises by default. |
 | `MissingStateError` | `HTTPError` | 500 | `missing_state` | `request.state.require(key, T)` found no value for `key`. |
 | `StateTypeError` | `HTTPError` | 500 | `state_type_error` | A `request.state` value has the wrong type for `get_typed` / `require`. |
 | `LifecycleError` | `LaurenError` | — | `lifecycle_error` | Base class for errors around startup, shutdown and lifecycle hooks. |
@@ -112,19 +130,44 @@ best-effort, so they are collected rather than aborting shutdown.
 | `DrainTimeoutError` | `LifecycleError` | — | `drain_timeout` | Reserved: not raised — a drain timeout at shutdown is logged as a warning. |
 <!-- /lauren:facts -->
 
-## Subclassing `HTTPError` for domain errors
+## Raising the built-in HTTP errors
 
-Most domain errors should subclass `HTTPError` directly:
+The everyday statuses ship as leaves of `HTTPError` — import them from `lauren`
+instead of declaring your own:
 
+| Status | Class | `code` | Typical use |
+|---|---|---|---|
+| 400 | `BadRequestError` | `bad_request` | Malformed input that is not schema validation (broken JSON, a tampered cursor) |
+| 401 | `UnauthorizedError` | `unauthorized` | Missing / invalid credentials — pass `challenge=` |
+| 403 | `ForbiddenError` | `forbidden` | Authenticated but not allowed |
+| 404 | `NotFoundError` | `not_found` | A resource that does not exist (routing misses raise its subclass `RouteNotFoundError`) |
+| 405 | `MethodNotAllowedError` | `method_not_allowed` | Pass `allow=` — the `Allow` header is sent wherever it is raised |
+| 406 | `NotAcceptableError` | `not_acceptable` | No representation matches `Accept` |
+| 409 | `ConflictError` | `conflict` | Uniqueness / state conflicts |
+| 410 | `GoneError` | `gone` | Permanently removed resources |
+| 412 | `PreconditionFailedError` | `precondition_failed` | A failed `If-Match` / `If-Unmodified-Since` |
+| 413 | `RequestBodyTooLarge` | `request_body_too_large` | Raised by the framework above `max_body_size` |
+| 415 | `UnsupportedMediaTypeError` | `unsupported_media_type` | A body `Content-Type` the route does not accept |
+| 422 | `ExtractorError` | `extractor_error` | Raised by extractors when validation fails |
+| 429 | `TooManyRequestsError` | `too_many_requests` | Rate limits and quotas — pass `retry_after=` |
+| 503 | `ServiceUnavailableError` | `service_unavailable` | Draining, maintenance, load shedding — pass `retry_after=` |
+| 504 | `RequestTimeoutError` | `request_timeout` | A **server-side** deadline was exceeded (not HTTP 408) |
+
+<!-- docs-contract: run -->
 ```python
-from lauren.exceptions import HTTPError
+from lauren import ConflictError, NotFoundError
 
-class UserNotFound(HTTPError):
-    status_code = 404
+
+class UserNotFound(NotFoundError):     # keeps 404, mints a stable domain code
     code = "user_not_found"
 
-# In a handler:
-raise UserNotFound("user does not exist", detail={"id": user_id})
+
+class EmailTaken(ConflictError):
+    code = "email_taken"
+
+
+error = UserNotFound("user does not exist", detail={"id": 7})
+assert (error.status_code, error.code) == (404, "user_not_found")
 ```
 
 Renders as:
@@ -133,23 +176,202 @@ Renders as:
 {"error": {"code": "user_not_found", "message": "user does not exist", "detail": {"id": 7}}}
 ```
 
-For more sophisticated logging, auditing, or response shaping per error class, see [Custom Exception Handlers](../guides/custom-exception-handlers.md).
+Subclassing a built-in keeps the shared status (and lets one
+`@exception_handler(NotFoundError)` claim every 404 of the app) while the
+`code` stays domain-specific. Subclass `HTTPError` directly only for a status
+the family does not cover. For logging, auditing, or response shaping per error
+class, see [Custom Exception Handlers](../guides/custom-exception-handlers.md).
+
+## Headers on errors
+
+Every error accepts `headers=` — a mapping, or an iterable of `(name, value)`
+pairs when a name repeats. Names are lower-cased; a CR, LF or NUL character, a
+value that is not latin-1 encodable, or `content-type` / `content-length`
+(framework-owned) raises `ValueError` **when the error is constructed**, so a
+mistake surfaces at the raise site rather than as a malformed response.
+Status-specific keywords build the headers HTTP requires:
+
+<!-- docs-contract: run -->
+```python
+from datetime import datetime, timezone
+
+from lauren import (
+    MethodNotAllowedError,
+    NotFoundError,
+    ServiceUnavailableError,
+    TooManyRequestsError,
+    UnauthorizedError,
+)
+
+UnauthorizedError("bad token", challenge='Bearer realm="api", error="invalid_token"')  # WWW-Authenticate
+TooManyRequestsError("slow down", retry_after=30)                                       # Retry-After: 30
+ServiceUnavailableError("draining", retry_after=datetime(2026, 10, 23, 18, 0, tzinfo=timezone.utc))
+#   → Retry-After: Fri, 23 Oct 2026 18:00:00 GMT (an RFC 9110 HTTP-date; naive datetimes are rejected)
+MethodNotAllowedError("use PUT", allow=["PUT"])                                          # Allow: PUT
+error = NotFoundError("gone", headers={"Cache-Control": "no-store"})
+assert error.headers == (("cache-control", "no-store"),)
+```
+
+* `challenge=` (`UnauthorizedError` only) takes one string or a list — each
+  becomes its own `WWW-Authenticate` header.
+* `retry_after=` (`TooManyRequestsError`, `ServiceUnavailableError`,
+  `RequestTimeoutError`) takes seconds (`int`/`float`, rounded up), a
+  `timedelta`, or a timezone-aware `datetime`.
+* The headers are sent in every `error_format`, including when the error is
+  raised by a global middleware. An `@exception_handler` that returns its own
+  `Response` owns that response: the error's headers are **not** merged into it
+  (read `exc.headers` if you want them).
+
+## Instance overrides
+
+`HTTPError` accepts `status_code=` and `code=` that shadow the class attributes
+on that one instance — an escape hatch for one-offs and for library code that
+maps foreign errors. Subclassing remains the way to mint stable codes.
+
+<!-- docs-contract: run -->
+```python
+from lauren import ConflictError, HTTPError
+
+teapot = HTTPError("I'm a teapot", status_code=418, code="teapot")
+stale = ConflictError("version mismatch", code="stale_version", detail={"expected": 4, "got": 3})
+assert (teapot.status_code, stale.status_code, stale.code) == (418, 409, "stale_version")
+```
+
+`status_code` must be an `int` between 400 and 599 and `code` a non-empty
+string (`ValueError` otherwise).
+
+## Problem details (RFC 9457)
+
+```python
+app = LaurenFactory.create(
+    AppModule,
+    error_format="rfc9457",                           # "default" | "rfc9457" | "rfc7807"
+    problem_type_base="https://errors.example.com/",  # optional
+)
+```
+
+`raise UserNotFound("user does not exist", detail={"id": 7})` on `GET /users/7`
+then answers with `Content-Type: application/problem+json`:
+
+```json
+{
+  "type": "https://errors.example.com/user_not_found",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "user does not exist",
+  "instance": "/users/7",
+  "code": "user_not_found",
+  "context": {"id": 7}
+}
+```
+
+| Member | Rule |
+|---|---|
+| `type` | the class's `problem_type` if set; else `problem_type_base + code` when a base is configured; else `"about:blank"` (RFC 9457 §3.1.1) |
+| `title` | the class's `problem_title` if set; else the HTTP status phrase |
+| `status`, `code` | the error's status and stable code (`code` is a Lauren extension member) |
+| `detail` | the error message (the title when the message is empty) |
+| `instance` | the request path, as a relative URI reference |
+| `context` | the error's structured `detail` dict (omitted when empty) |
+| `errors` | an **array** of validation entries, for validation failures only |
+
+Each `errors` entry has a human-readable `detail`, plus where the problem is:
+`pointer` (an RFC 6901 JSON Pointer into the request body, as a URI fragment
+such as `"#/address/city"`), or `in` + `parameter` for path / query / header /
+cookie / form values, and a machine `code` when known. Entries come from an
+`issues` list of `{"loc", "type", "msg"}` mappings in the error's `detail` (any
+`HTTPError` carrying one gets the array), or — for today's extractor failures —
+one entry per message of an `ExtractorError` naming a `field`.
+
+Per-class `type` and `title`:
+
+<!-- docs-contract: run -->
+```python
+from lauren import HTTPError
+
+
+class OutOfCredit(HTTPError):
+    status_code = 403
+    code = "out_of_credit"
+    problem_type = "https://example.com/probs/out-of-credit"
+    problem_title = "You do not have enough credit."
+```
+
+`error_format="rfc7807"` is the **legacy** problem-details shape and stays
+byte-for-byte as in earlier releases: a `urn:ietf:rfc:7231:<status>` default
+`type`, no `instance`, and the `detail` dict in an object-valued `errors`
+member (it does honour `problem_type_base`). Prefer `rfc9457` for new apps; a
+future major release may make `rfc7807` an alias of it. Any other
+`error_format` value falls back to `"default"` with a warning (a
+`StartupError` from lauren 2.0).
+
+## Guard denials
+
+A guard whose `can_activate` returns `False` raises `ForbiddenError` (403) with
+`detail={"guard": "<ClassName>"}`. A guard class can declare `deny_error` to
+answer with another `HTTPError` — typically `UnauthorizedError` for
+authentication guards — or a zero-argument factory returning a configured
+instance (for a challenge header). It is validated by `LaurenFactory.create`:
+anything else raises `GuardConfigError`. See
+[Custom Guards](../guides/custom-guards.md#choosing-the-denial-error).
+
+## Internal errors
+
+An exception no handler claims is logged with its traceback and answered with
+`500 internal_error`, `detail={"type": "<ExceptionClass>"}`. In development,
+`LaurenFactory.create(..., debug=True)` replaces that response with a
+[debug error page](../guides/debugging.md) for loopback clients.
+
+!!! note "Deprecation notice"
+    The `detail.type` member of `internal_error` and the `detail.guard` member
+    of guard denials expose implementation class names. They stay in 1.x for
+    compatibility; lauren 2.0 will emit them only when debug pages are enabled.
+    Do not build client logic on them — match on `code`.
+
+## WebSocket errors
+
+WebSocket gateways use their own family (close codes instead of HTTP statuses);
+see [WebSockets](../guides/websockets.md):
+
+| Class | Base | Close code | `code` |
+|---|---|---|---|
+| `WebSocketError` | `LaurenError` | 1011 | `websocket_error` |
+| `WebSocketDisconnect` | `WebSocketError` | 1000 | `websocket_disconnect` |
+| `WebSocketValidationError` | `WebSocketError` | 1003 | `websocket_validation_error` |
+| `WebSocketRouteNotFoundError` | `WebSocketError` | 1008 | `websocket_route_not_found` |
+| `SocketIOError` | `LaurenError` | — | `socketio_error` (raised in-process, e.g. emitting on a closed Socket.IO connection) |
 
 ## Programmatic discovery
 
-```python
-import lauren.exceptions as exc
+`error_catalog()` walks the hierarchy at call time and returns one
+`ReflectedError` per class — framework errors and the application's own:
 
-for cls in exc.LaurenError.__subclasses__():
-    print(cls.__name__)
+<!-- docs-contract: run -->
+```python
+from lauren import NotFoundError
+from lauren.reflect import error_catalog
+
+
+class InvoiceNotFound(NotFoundError):
+    """No invoice has this number."""
+
+    code = "invoice_not_found"
+
+
+entry = next(e for e in error_catalog() if e.cls is InvoiceNotFound)
+assert (entry.code, entry.status_code, entry.category) == ("invoice_not_found", 404, "http")
+assert entry.summary == "No invoice has this number."
+
+framework = error_catalog(include_user=False)          # only lauren's own classes
+assert InvoiceNotFound not in {e.cls for e in framework}
 ```
 
-Or:
+`ReflectedError` fields: `cls`, `code`, `status_code` (`None` outside
+`HTTPError`), `category` (`"startup"`, `"http"`, `"lifecycle"`, `"websocket"` or
+`"other"`), `problem_type`, `problem_title`, and `summary` (the first paragraph
+of the class docstring). It is meant for documentation, OpenAPI tooling and
+tests — never call it on the request path.
 
-```python
-from lauren.exceptions import HTTPError
-for cls in HTTPError.__subclasses__():
-    print(cls.__name__, cls.status_code, cls.code)
-```
-
-This catalog is **closed and stable** — adding a new error class is a public-API change and would be noted in the release notes.
+This catalog is **closed and stable** — adding a framework error class is a
+public-API change, made only through a justified design proposal, and noted in
+the release notes.

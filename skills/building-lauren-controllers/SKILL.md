@@ -114,20 +114,41 @@ def compute(self) -> dict:      # note: def, not async def
 
 ## Exception handling in handlers
 
-Raise Lauren's typed HTTP errors — they serialize to the standard envelope:
+Raise Lauren's built-in HTTP errors — they serialize to the standard envelope.
+Subclass one for a domain `code`; never re-declare `NotFoundError` & co.:
 
 ```python
-from lauren.exceptions import UnauthorizedError, ForbiddenError, RouteNotFoundError
+from lauren import ConflictError, NotFoundError, TooManyRequestsError
+
+class UserNotFound(NotFoundError):          # 404, code "user_not_found"
+    code = "user_not_found"
 
 @get("/{id}")
 async def find_one(self, id: Path[int]) -> UserDto:
     user = await self._svc.find_one(id)
     if user is None:
-        raise RouteNotFoundError(f"User {id} not found")
+        raise UserNotFound(f"User {id} not found", detail={"id": id})
     return user
+
+@post("/")
+async def create(self, body: Json[CreateUser]) -> UserDto:
+    if await self._svc.email_taken(body.email):
+        raise ConflictError("email already registered", code="email_taken")   # instance code override
+    if await self._svc.over_quota():
+        raise TooManyRequestsError("slow down", retry_after=30)                # Retry-After: 30
+    return await self._svc.create(body)
 ```
 
-See `docs/reference/errors.md` (generated from `lauren.exceptions`) for the full catalog.
+Built in: `BadRequestError` 400, `UnauthorizedError` 401 (`challenge=` →
+`WWW-Authenticate`), `ForbiddenError` 403, `NotFoundError` 404,
+`MethodNotAllowedError` 405 (`allow=` → `Allow`), `NotAcceptableError` 406,
+`ConflictError` 409, `GoneError` 410, `PreconditionFailedError` 412,
+`UnsupportedMediaTypeError` 415, `TooManyRequestsError` 429,
+`ServiceUnavailableError` 503, `RequestTimeoutError` 504 (`retry_after=` on the
+last three). Every error accepts `headers=`. `RouteNotFoundError` is reserved for
+routing misses. See `docs/reference/errors.md` (generated from
+`lauren.exceptions`) for the full catalog, and `error_format="rfc9457"` for RFC
+9457 problem details.
 
 ---
 

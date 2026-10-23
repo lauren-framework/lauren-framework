@@ -47,16 +47,10 @@ class UserRepository:
 Controllers are classes decorated with `@controller(prefix)`. Their methods become HTTP handlers when decorated with `@get`, `@post`, etc. Lauren auto-promotes `@controller` classes to **request-scoped injectables**, so you can take any DI dependency in `__init__`.
 
 ```python title="app/controllers.py"
-from lauren import controller, get, post, Path, Json
-from lauren.exceptions import HTTPError
+from lauren import NotFoundError, controller, get, post, Path, Json
 
 from .models import CreateUser, UserOut
 from .services import UserRepository
-
-
-class NotFoundError(HTTPError):
-    status_code = 404
-    code = "not_found"
 
 
 @controller("/users", tags=["users"])

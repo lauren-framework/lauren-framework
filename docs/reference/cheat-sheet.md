@@ -244,7 +244,7 @@ async def create(self, body: Json[Order], tasks: BackgroundTasks) -> dict:
 ## Exception handlers
 
 ```python
-@exception_handler(NotFoundError, ConflictError)
+@exception_handler(NotFoundError, ConflictError)   # built-in classes; claims subclasses too
 class DomainErrors:
     def __init__(self, log: Logger) -> None: self.log = log
     async def catch(self, exc, request) -> Response:
@@ -324,19 +324,29 @@ class CurrentUser(ExtractionMarker):
 ## HTTP errors
 
 ```python
-from lauren.exceptions import HTTPError
-
-class NotFoundError(HTTPError):
-    status_code = 404
-    code = "not_found"
+from lauren import NotFoundError, TooManyRequestsError, UnauthorizedError
 
 raise NotFoundError("user not found", detail={"id": user_id})
+
+class UserNotFound(NotFoundError):          # domain code, same 404
+    code = "user_not_found"
+
+raise UnauthorizedError("bad token", challenge='Bearer realm="api"')   # WWW-Authenticate
+raise TooManyRequestsError("slow down", retry_after=30)                # Retry-After: 30
 ```
 
 Renders as:
 ```json
 {"error": {"code": "not_found", "message": "user not found", "detail": {"id": 7}}}
 ```
+
+Built in: `BadRequestError` 400, `UnauthorizedError` 401, `ForbiddenError` 403,
+`NotFoundError` 404, `MethodNotAllowedError` 405, `NotAcceptableError` 406,
+`ConflictError` 409, `GoneError` 410, `PreconditionFailedError` 412,
+`UnsupportedMediaTypeError` 415, `TooManyRequestsError` 429,
+`ServiceUnavailableError` 503, `RequestTimeoutError` 504. Problem details:
+`LaurenFactory.create(..., error_format="rfc9457")`. Dev error pages:
+`LaurenFactory.create(..., debug=True)`.
 
 ## Streaming
 

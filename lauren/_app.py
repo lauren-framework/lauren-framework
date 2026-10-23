@@ -35,14 +35,13 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
 from collections.abc import Mapping
 from typing import Any, Awaitable, Callable
 
 from .context import OperationScope
 from .decorators import controller, module
 from .exceptions import LifecycleViolationError, StartupError
-from .types import AppState
+from .types import AppState, DebugConfig
 
 
 class Lauren:
@@ -70,7 +69,7 @@ class Lauren:
         redoc_url: str | None = "/redoc",
         servers: list[dict[str, Any]] | None = None,
         security_schemes: dict[str, Any] | None = None,
-        debug: bool = False,
+        debug: bool | DebugConfig = False,
         max_body_size: int = 1_048_576,
         strict_lifecycle: bool = True,
         app_state: AppState | None = None,
@@ -86,6 +85,7 @@ class Lauren:
         content: Any | None = None,
         json_encoder: Any | None = None,
         error_format: str = "default",
+        problem_type_base: str | None = None,
         root_path: str = "",
         mounts: dict[str, Any] | None = None,
         signals: Any | None = None,
@@ -120,18 +120,12 @@ class Lauren:
         self._content = content
         self._json_encoder = json_encoder
         self._error_format = error_format
+        self._problem_type_base = problem_type_base
         self._root_path = root_path
         self._mounts: dict[str, Any] = dict(mounts or {})
         self._signals = signals
         self._arena = arena
         self._arena_capacity = arena_capacity
-        if debug:
-            # Reserved until debug error pages land; say so rather than
-            # silently accepting a flag that changes nothing.
-            message = "Lauren(debug=True) has no effect yet; the flag is reserved for future debug pages"
-            logging.getLogger("lauren").warning(message)
-            if logger is not None:
-                logger.warn(message, context="Lauren")
         self._startup_handlers: list[Callable[[], Any]] = []
         self._shutdown_handlers: list[Callable[[], Any]] = []
 
@@ -158,8 +152,12 @@ class Lauren:
 
     @property
     def debug(self) -> bool:
-        """The ``debug`` constructor flag. Reserved: it has no effect yet."""
-        return self._debug
+        """Whether development error pages are enabled (``debug=True`` or a ``DebugConfig``).
+
+        The value is forwarded to :meth:`LaurenFactory.create` when the app
+        compiles, which validates it and logs a warning when it is on.
+        """
+        return self._debug is not False and self._debug is not None
 
     # ------------------------------------------------------------------
     # Route registration \u2014 FastAPI-style method decorators
@@ -455,6 +453,8 @@ class Lauren:
             content=self._content,
             json_encoder=self._json_encoder,
             error_format=self._error_format,
+            problem_type_base=self._problem_type_base,
+            debug=self._debug,
             root_path=self._root_path,
             mounts=dict(self._mounts) or None,
             signals=self._signals,

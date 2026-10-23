@@ -56,6 +56,7 @@ from ..decorators import (
 from ..exceptions import (
     ExceptionHandlerConfigError,
     ForbiddenError,
+    GuardConfigError,
     HTTPError,
     LaurenError,
     LifecycleViolationError,
@@ -96,6 +97,7 @@ from ..types import (
     CallNext,
     ClientInfo,
     ContentConfig,
+    DebugConfig,
     ExecutionContext,
     Headers,
     Request,
@@ -108,6 +110,7 @@ from .._sessions import (
     SessionConfig,
     configure_sessions,
 )
+from ._problem import instance_reference as _instance_reference, problem_payload as _problem_payload
 
 logger = logging.getLogger("lauren")
 
@@ -770,6 +773,9 @@ class LaurenApp:
         global_ws_guards: list[type] | None = None,
         global_ws_interceptors: list[type] | None = None,
         strict_content_type: bool | str = False,
+        problem_type_base: str | None = None,
+        debug: DebugConfig | None = None,
+        guard_denials: dict[type, Any] | None = None,
     ) -> None:
         self._router = router
         self._container = container
@@ -839,19 +845,26 @@ class LaurenApp:
                 for fn in fns:
                     self._signals.on(evt_type)(fn)
         # Error envelope format. ``"default"`` emits lauren's classic
-        # ``{"error": {"code", "message", "detail"}}`` shape;
-        # ``"rfc7807"`` emits RFC 7807 Problem Details with the
-        # ``application/problem+json`` content type. Anything else
-        # falls back to ``default`` with a log warning rather than
-        # raising — this is a user-facing response shape, not a
-        # startup-critical invariant.
-        if error_format not in ("default", "rfc7807"):
+        # ``{"error": {"code", "message", "detail"}}`` shape; ``"rfc9457"``
+        # emits RFC 9457 Problem Details and ``"rfc7807"`` the legacy
+        # RFC 7807 shape, both with ``application/problem+json``. Anything
+        # else falls back to ``default`` with a log warning (lauren 2.0 turns
+        # an unknown value into a StartupError).
+        if error_format not in _ERROR_FORMATS:
             self._logger.warn(
-                f"unknown error_format {error_format!r}; using 'default'",
+                f"unknown error_format {error_format!r}; using 'default' "
+                f"(expected one of {', '.join(_ERROR_FORMATS)}; lauren 2.0 will raise StartupError)",
                 context="LaurenApp",
             )
             error_format = "default"
         self._error_format = error_format
+        #: Prefix for the problem-details ``type`` member (``base + code``).
+        self._problem_type_base: str | None = problem_type_base
+        #: Development error pages; ``None`` when debug is off (the default).
+        self._debug: DebugConfig | None = debug
+        #: Guard class → its compiled denial (an ``HTTPError`` subclass or a
+        #: zero-argument factory), read from ``deny_error`` at startup.
+        self._guard_denials: dict[type, Any] = dict(guard_denials or {})
         # Mounted sub-applications, ordered by descending prefix length so the
         # most-specific prefix wins when multiple prefixes could match.
         self._mounts: list[tuple[str, Any]] = []
@@ -911,7 +924,7 @@ class LaurenApp:
 
     @property
     def error_format(self) -> str:
-        """``'default'`` or ``'rfc7807'``. See
+        """``'default'``, ``'rfc9457'`` or ``'rfc7807'``. See
         :meth:`LaurenFactory.create` for the configuration hook."""
         return self._error_format
 
@@ -1192,25 +1205,127 @@ class LaurenApp:
 
     # -- Error rendering (route and request boundaries) --------------------
 
-    def _internal_error_response(self, exc: BaseException, *, encoder: JSONEncoder | None = None) -> Response:
+    def _render_error(
+        self,
+        err: LaurenError,
+        *,
+        status: int | None = None,
+        code: str | None = None,
+        encoder: JSONEncoder | None = None,
+        request: Request | None = None,
+        debug: dict[str, Any] | None = None,
+    ) -> Response:
+        """Render ``err`` in the app's ``error_format`` (may raise if encoding fails)."""
+        return _error_response(
+            err,
+            status=status,
+            code=code,
+            error_format=self._error_format,
+            encoder=encoder or self._json_encoder,
+            instance=_instance_reference(request.path) if request is not None else None,
+            problem_type_base=self._problem_type_base,
+            debug=debug,
+        )
+
+    def _internal_error_response(
+        self,
+        exc: BaseException,
+        *,
+        encoder: JSONEncoder | None = None,
+        request: Request | None = None,
+    ) -> Response:
         """The canonical ``internal_error`` 500 envelope for ``exc``.
 
-        Never raises: if the configured encoder cannot render even this
-        envelope, the stdlib encoder is used, and failing that a static body.
+        With debug pages enabled and an allowed client, the response is the
+        debug report instead (see :meth:`_debug_error_response`). Never
+        raises: if the configured encoder cannot render even this envelope,
+        the stdlib encoder is used, and failing that a static body.
         """
+        if self._debug is not None and request is not None:
+            debug_response = self._debug_error_response(exc, request=request, encoder=encoder)
+            if debug_response is not None:
+                return debug_response
         error = LaurenError("internal server error", detail={"type": type(exc).__name__})
         for candidate in (encoder or self._json_encoder, StdlibJSONEncoder()):
             try:
-                return _error_response(
-                    error,
-                    status=500,
-                    code="internal_error",
-                    error_format=self._error_format,
-                    encoder=candidate,
+                return self._render_error(
+                    error, status=500, code="internal_error", encoder=candidate, request=request
                 )
             except Exception:
                 continue
         return Response(_STATIC_INTERNAL_ERROR_BODY, status=500, media_type="application/json")
+
+    def _debug_error_response(
+        self,
+        exc: BaseException,
+        *,
+        request: Request,
+        encoder: JSONEncoder | None,
+    ) -> Response | None:
+        """The development error page for ``exc``, or ``None`` to send the plain 500.
+
+        ``None`` when the client is not allowed to see debug output or when
+        rendering the report itself fails — that secondary error is logged and
+        the caller falls back to the normal envelope (never a 500 inside a 500).
+        """
+        config = self._debug
+        if config is None:
+            return None
+        try:
+            from . import _debug
+
+            if not _debug.client_allowed(config, request):
+                return None
+            info = _debug.collect(exc, request=request, app=self, config=config)
+            if _debug.prefers_html(request.headers.get("accept")):
+                return Response(
+                    _debug.render_html(info),
+                    status=500,
+                    headers=Headers([("cache-control", "no-store")]),
+                    media_type="text/html; charset=utf-8",
+                )
+            error = LaurenError("internal server error", detail={"type": type(exc).__name__})
+            return self._render_error(
+                error, status=500, code="internal_error", encoder=encoder, request=request, debug=info
+            ).with_header("cache-control", "no-store")
+        except Exception as render_error:
+            self._log_debug_failure(render_error, exc, request)
+            return None
+
+    def _debug_raised_at(self, exc: HTTPError, request: Request) -> dict[str, Any] | None:
+        """``debug.raised_at`` for an ``HTTPError`` response (``DebugConfig(include_4xx=True)``)."""
+        config = self._debug
+        if config is None or not config.include_4xx:
+            return None
+        try:
+            from . import _debug
+
+            if not _debug.client_allowed(config, request):
+                return None
+            return _debug.raised_at(exc, config)
+        except Exception as render_error:
+            self._log_debug_failure(render_error, exc, request)
+            return None
+
+    def _log_debug_failure(self, render_error: Exception, exc: BaseException, request: Request) -> None:
+        """Log a failure of the debug renderer itself, naming the error it was rendering."""
+        logger.error(
+            "Debug error page failed while rendering %s (%s %s); sending the normal response",
+            type(exc).__name__,
+            request.method,
+            request.path,
+            exc_info=(type(render_error), render_error, render_error.__traceback__),
+        )
+        self._logger.error(
+            f"Debug error page failed while rendering {type(exc).__name__}: "
+            f"{type(render_error).__name__}: {render_error}",
+            context="Request",
+            method=request.method,
+            path=request.path,
+            error=type(render_error).__name__,
+            origin="debug_renderer",
+            cause=type(exc).__name__,
+        )
 
     def _render_http_error(
         self,
@@ -1220,31 +1335,52 @@ class LaurenApp:
         encoder: JSONEncoder | None,
         origin: str,
     ) -> Response:
-        """Render ``exc``'s own envelope, never raising.
+        """Render ``exc``'s own envelope and headers, never raising.
 
         If its ``detail`` cannot be encoded, the error is logged and rendered
-        with the same status and ``code`` but no detail; if even that fails,
-        the response is the internal-error 500.
+        with the same status, ``code`` and headers but no detail; if even that
+        fails, the response is the internal-error 500.
         """
+        debug = self._debug_raised_at(exc, request) if self._debug is not None else None
         try:
-            resp = _error_response(
-                exc, error_format=self._error_format, encoder=encoder or self._json_encoder
-            )
+            resp = self._render_error(exc, encoder=encoder, request=request, debug=debug)
         except Exception as render_error:
             self._log_unhandled(render_error, request, origin=f"{origin} (rendering {type(exc).__name__})")
             try:
-                resp = _error_response(
-                    LaurenError(str(exc.message)),
+                resp = self._render_error(
+                    LaurenError(str(exc.message), headers=getattr(exc, "headers", ())),
                     status=exc.status_code,
                     code=exc.code,
-                    error_format=self._error_format,
                     encoder=StdlibJSONEncoder(),
+                    request=request,
                 )
             except Exception:
-                return self._internal_error_response(render_error, encoder=encoder)
-        if isinstance(exc, MethodNotAllowedError) and exc.allow:
-            resp = resp.with_header("allow", ", ".join(exc.allow))
+                return self._internal_error_response(render_error, encoder=encoder, request=request)
+        if debug is not None:
+            resp = resp.with_header("cache-control", "no-store")
         return resp
+
+    def _guard_denial(self, guard_cls: type, *, message: str, detail: dict[str, Any]) -> HTTPError:
+        """The error a guard's falsy ``can_activate`` answers with.
+
+        ``ForbiddenError`` unless the guard class declares ``deny_error`` —
+        an ``HTTPError`` subclass (called as ``deny_error(message,
+        detail=detail)``) or a zero-argument factory returning an
+        ``HTTPError``. Compiled at startup; a guard registered after the app
+        was built is compiled on first use.
+        """
+        denial = self._guard_denials.get(guard_cls)
+        if denial is None:
+            denial = self._guard_denials[guard_cls] = _compile_guard_denial(guard_cls)
+        if isinstance(denial, type):
+            return denial(message, detail=detail)
+        error = denial()
+        if not isinstance(error, HTTPError):
+            raise TypeError(
+                f"deny_error factory of guard {guard_cls.__name__} returned {type(error).__name__}, "
+                "expected an HTTPError instance"
+            )
+        return error
 
     def _enforce_json_content_type(self, request: Request, compiled: CompiledHandler) -> None:
         """Apply ``strict_content_type`` to a request bound for a JSON body parameter.
@@ -1346,13 +1482,13 @@ class LaurenApp:
             )
         except _ExceptionHandlerFailure as failure:
             self._log_handler_failure(failure, request)
-            return self._internal_error_response(failure.handler_error)
+            return self._internal_error_response(failure.handler_error, request=request)
         if handled is not None:
             return handled
         if isinstance(exc, HTTPError):
             return self._render_http_error(exc, request=request, encoder=self._json_encoder, origin=origin)
         self._log_unhandled(exc, request, origin=origin)
-        return self._internal_error_response(exc)
+        return self._internal_error_response(exc, request=request)
 
     async def _finalize_request_scope(self, request_cache: dict[type, Any]) -> None:
         """Finalize request-scoped instances: ``@pre_destruct``, then ``aclose()``.
@@ -1471,15 +1607,10 @@ class LaurenApp:
                     # --- Routing ---
                     try:
                         entry, params = self._router.find(req.method, req.path)
-                    except RouteNotFoundError as e:
+                    except (RouteNotFoundError, MethodNotAllowedError) as e:
+                        # The error carries its own headers (``Allow`` on a 405).
                         captured_error = e
-                        return _error_response(e, error_format=self._error_format, encoder=self._json_encoder)
-                    except MethodNotAllowedError as e:
-                        captured_error = e
-                        resp = _error_response(e, error_format=self._error_format, encoder=self._json_encoder)
-                        if e.allow:
-                            resp = resp.with_header("allow", ", ".join(e.allow))
-                        return resp
+                        return self._render_error(e, request=req)
 
                     compiled = self._handlers[(entry.method, entry.path_template)]
                     # Per-route encoder wins over the app-level encoder.
@@ -1558,8 +1689,11 @@ class LaurenApp:
                             )
                             ok = await guard.can_activate(ctx)
                             if not ok:
-                                raise ForbiddenError(
-                                    f"guard {guard_cls.__name__} denied the request",
+                                # ``ForbiddenError`` unless the guard declares
+                                # ``deny_error`` (compiled at startup).
+                                raise self._guard_denial(
+                                    guard_cls,
+                                    message=f"guard {guard_cls.__name__} denied the request",
                                     detail={"guard": guard_cls.__name__},
                                 )
 
@@ -1714,7 +1848,7 @@ class LaurenApp:
                             captured_error = failure.handler_error
                             self._log_handler_failure(failure, req)
                             return self._internal_error_response(
-                                failure.handler_error, encoder=effective_encoder
+                                failure.handler_error, encoder=effective_encoder, request=req
                             )
                         captured_error = e
                         if handled is not None:
@@ -1725,7 +1859,7 @@ class LaurenApp:
                                 e, request=req, encoder=effective_encoder, origin=route_origin
                             )
                         self._log_unhandled(e, req, origin=route_origin)
-                        return self._internal_error_response(e, encoder=effective_encoder)
+                        return self._internal_error_response(e, encoder=effective_encoder, request=req)
 
                     try:
                         # Per-route onion chain (global mw already wraps
@@ -1950,14 +2084,17 @@ class LaurenApp:
                 pass  # a broken logger must not prevent the fallback response
             if not _response_sent:
                 try:
-                    _fallback = _error_response(
+                    _fallback = (
+                        self._debug_error_response(exc, request=request, encoder=None)
+                        if self._debug is not None
+                        else None
+                    ) or self._render_error(
                         LaurenError("internal server error"),
                         status=500,
                         code="internal_error",
-                        error_format=self._error_format,
-                        encoder=self._json_encoder,
-                    ).with_header("connection", "close")
-                    await _send_response(_fallback, send)
+                        request=request,
+                    )
+                    await _send_response(_fallback.with_header("connection", "close"), send)
                 except Exception:
                     pass  # Cannot send — ASGI server will close the connection
         finally:
@@ -2335,6 +2472,10 @@ def _http_status_title(status: int) -> str:
         return "HTTP Error"
 
 
+#: ``error_format`` values :func:`_error_response` understands.
+_ERROR_FORMATS: tuple[str, ...] = ("default", "rfc7807", "rfc9457")
+
+
 def _error_response(
     err: LaurenError,
     *,
@@ -2342,6 +2483,9 @@ def _error_response(
     code: str | None = None,
     error_format: str = "default",
     encoder: JSONEncoder | None = None,
+    instance: str | None = None,
+    problem_type_base: str | None = None,
+    debug: dict[str, Any] | None = None,
 ) -> Response:
     """Build an error :class:`Response` from a :class:`LaurenError`.
 
@@ -2352,44 +2496,64 @@ def _error_response(
       ``application/json`` content type. Preserves backwards
       compatibility for every existing lauren client.
 
-    * ``"rfc7807"`` — the RFC 7807 Problem Details envelope
-      ``{"type", "title", "status", "detail", "instance", "code"}``
-      with the correct ``application/problem+json`` content type.
-      Adopts industry-standard error reporting for clients that
-      understand Problem Details (the OpenAPI ecosystem, many
-      service meshes, etc.).
+    * ``"rfc9457"`` — RFC 9457 Problem Details
+      ``{"type", "title", "status", "detail", "instance", "code", "context",
+      "errors"}`` with ``application/problem+json`` (see
+      :func:`lauren._asgi._problem.problem_payload`). ``instance`` is the
+      request path; ``problem_type_base`` prefixes ``code`` to build ``type``.
+
+    * ``"rfc7807"`` — the legacy RFC 7807 envelope, byte-for-byte as in
+      earlier releases: a ``urn:ietf:rfc:7231:<status>`` default ``type``
+      and the ``detail`` dict in an object-valued ``errors`` member.
 
     The ``"code"`` field is lauren-specific; it rides alongside the
-    RFC 7807 structure as an opaque machine-readable identifier.
-    This is explicitly permitted by RFC 7807 §3.2 which allows
-    extensions.
+    problem-details members as an extension (RFC 9457 §3.2). The error's own
+    ``headers`` are added to the response in every format, and ``debug``
+    (development error pages) becomes a top-level ``debug`` member.
     """
     final_status = status or getattr(err, "status_code", None) or 500
-    final_code = code or getattr(err, "code", "lauren_error")
+    final_code: str = code or getattr(err, "code", None) or "lauren_error"
+    extra_headers: tuple[tuple[str, str], ...] = getattr(err, "headers", ()) or ()
+    payload: dict[str, Any]
 
-    if error_format == "rfc7807":
-        # Allow subclasses to override the ``type`` URI by declaring a
-        # class-level ``problem_type`` attribute. Defaults to the
-        # status-derived URN so the field is always stable.
-        problem_type = getattr(err, "problem_type", None) or _problem_type_for(final_status)
+    if error_format in ("rfc9457", "rfc7807"):
         title = getattr(err, "problem_title", None) or _http_status_title(final_status)
-        payload: dict[str, Any] = {
-            "type": problem_type,
-            "title": title,
-            "status": final_status,
-            "detail": err.message or title,
-            "code": final_code,
-        }
-        # Include the extra ``detail`` dict as a typed extension so
-        # machine clients can still read the structured context
-        # (field names, allowed values, etc.) that lauren's default
-        # envelope exposes. RFC 7807 §3.2 expressly permits this.
-        if err.detail:
-            payload["errors"] = err.detail
+        if error_format == "rfc9457":
+            payload = _problem_payload(
+                err,
+                status=final_status,
+                code=final_code,
+                title=title,
+                instance=instance,
+                type_base=problem_type_base,
+            )
+        else:
+            # Allow subclasses to override the ``type`` URI by declaring a
+            # class-level ``problem_type`` attribute. Defaults to the
+            # status-derived URN so the field is always stable.
+            problem_type = (
+                getattr(err, "problem_type", None)
+                or (f"{problem_type_base}{final_code}" if problem_type_base else None)
+                or _problem_type_for(final_status)
+            )
+            payload = {
+                "type": problem_type,
+                "title": title,
+                "status": final_status,
+                "detail": err.message or title,
+                "code": final_code,
+            }
+            # The structured ``detail`` dict rides as an object-valued
+            # ``errors`` extension (kept for compatibility; ``rfc9457``
+            # renames it to ``context``).
+            if err.detail:
+                payload["errors"] = err.detail
+        if debug is not None:
+            payload["debug"] = debug
         return Response.json(
             payload,
             status=final_status,
-            headers=Headers([("content-type", "application/problem+json")]),
+            headers=Headers([("content-type", "application/problem+json"), *extra_headers]),
             encoder=encoder,
         )
 
@@ -2397,7 +2561,14 @@ def _error_response(
     payload = err.to_payload()
     if code:
         payload["error"]["code"] = code
-    return Response.json(payload, status=final_status, encoder=encoder)
+    if debug is not None:
+        payload["debug"] = debug
+    return Response.json(
+        payload,
+        status=final_status,
+        headers=Headers(list(extra_headers)) if extra_headers else None,
+        encoder=encoder,
+    )
 
 
 async def _send_response(
@@ -2484,6 +2655,8 @@ class LaurenFactory:
         mounts: dict[str, Any] | None = None,
         sessions: SessionConfig | None = None,
         content: ContentConfig | None = None,
+        problem_type_base: str | None = None,
+        debug: bool | DebugConfig = False,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -2509,8 +2682,34 @@ class LaurenFactory:
         (:class:`~lauren.types.ContentConfig`). Left unset, apps with
         ``sessions=`` log mismatched JSON ``Content-Type`` values ("warn")
         and other apps do not check them.
+
+        ``error_format`` picks the error wire shape: ``"default"`` (the
+        ``{"error": {...}}`` envelope), ``"rfc9457"`` (RFC 9457 Problem
+        Details) or ``"rfc7807"`` (the legacy problem-details shape).
+        ``problem_type_base`` (e.g. ``"https://errors.example.com/"``) builds
+        the problem-details ``type`` as ``base + code`` for errors without
+        their own ``problem_type``.
+
+        ``debug=True`` (or a :class:`~lauren.types.DebugConfig`) enables
+        development error pages for unhandled exceptions, served to loopback
+        clients only by default. It is never enabled implicitly; ``create()``
+        logs a warning whenever it is on, and refuses it (``StartupError``,
+        ``reason="debug_in_production"``) when the configuration module's
+        active profile is a production profile.
         """
         _log: Logger = logger or NullLogger()
+        if problem_type_base is not None and (
+            not isinstance(problem_type_base, str) or not problem_type_base
+        ):
+            raise StartupError(
+                f"problem_type_base must be a non-empty string, got {problem_type_base!r}",
+                detail={"reason": "invalid_problem_type_base", "got": repr(problem_type_base)},
+            )
+        debug_config: DebugConfig | None = None
+        if debug is not False and debug is not None:
+            from ._debug import resolve_config as _resolve_debug_config
+
+            debug_config = _resolve_debug_config(debug)
         content_config = content if content is not None else ContentConfig()
         if not isinstance(content_config, ContentConfig):
             raise StartupError(
@@ -2943,6 +3142,20 @@ class LaurenFactory:
         ws_gateways = compile_gateways(graph, container, ws_router=ws_router, logger=_log)
         ws_router.freeze()
 
+        # Guard denials: read each guard's ``deny_error`` once, here, so a bad
+        # value fails startup (GuardConfigError) and dispatch reads a dict.
+        all_guards: list[type] = [*effective_global_guards, *effective_global_ws_guards]
+        for ch in compiled_handlers.values():
+            all_guards.extend(ch.guards)
+        for gw in ws_gateways.values():
+            all_guards.extend((*gw.guards, *gw.on_connect_guards))
+            for ws_message in gw.messages.values():
+                all_guards.extend(ws_message.guards)
+        guard_denials: dict[type, Any] = {}
+        for guard_cls in all_guards:
+            if guard_cls not in guard_denials:
+                guard_denials[guard_cls] = _compile_guard_denial(guard_cls)
+
         # Re-compile after late registrations.
         container._compiled = False
         container.compile()
@@ -2981,6 +3194,28 @@ class LaurenFactory:
         )
 
         # ---- Phase 7: Readiness ----
+        if debug_config is not None:
+            from ._debug import production_profile as _production_profile
+
+            profile_name = _production_profile(container)
+            if profile_name is not None:
+                raise StartupError(
+                    f"debug error pages cannot be enabled in the production profile {profile_name!r}",
+                    detail={"reason": "debug_in_production", "profile": profile_name},
+                )
+            debug_message = (
+                "Debug error pages enabled — never use in production "
+                f"(allow_remote={debug_config.allow_remote}, include_4xx={debug_config.include_4xx})"
+            )
+            logging.getLogger("lauren").warning(debug_message)
+            _log.warn(debug_message, context="LaurenFactory", allow_remote=debug_config.allow_remote)
+        if problem_type_base is not None and error_format == "default":
+            base_message = (
+                "problem_type_base has no effect with error_format='default'; "
+                "use error_format='rfc9457' to emit problem details"
+            )
+            logging.getLogger("lauren").warning(base_message)
+            _log.warn(base_message, context="LaurenFactory")
         final_state = app_state or AppState()
         # Arena policy: an explicit ``arena=`` wins; otherwise build one
         # using ``arena_capacity`` if provided, or fall back to the
@@ -3015,6 +3250,9 @@ class LaurenFactory:
             global_ws_guards=effective_global_ws_guards or None,
             global_ws_interceptors=effective_global_ws_interceptors or None,
             strict_content_type=effective_strict_content_type,
+            problem_type_base=problem_type_base,
+            debug=debug_config,
+            guard_denials=guard_denials,
         )
         # The immutable Phase 6a index; feature consumers read their markers.
         app._discovery = discovery
@@ -3060,6 +3298,44 @@ class LaurenFactory:
             providers=len(container.all_providers()),
         )
         return app
+
+
+def _compile_guard_denial(guard_cls: type) -> Any:
+    """Validate a guard's ``deny_error`` and return what its denials raise.
+
+    ``deny_error`` is plain class configuration read through normal attribute
+    lookup, so a subclass inherits it (like any method override). Absent or
+    ``None`` means :class:`ForbiddenError`. An ``HTTPError`` subclass is
+    returned as-is; a callable must accept zero arguments (it is called on
+    every denial and must return an ``HTTPError`` instance). Anything else —
+    a non-``HTTPError`` class, an exception *instance*, a callable that needs
+    arguments — raises :class:`GuardConfigError` at startup.
+    """
+    name = getattr(guard_cls, "__name__", repr(guard_cls))
+    deny = getattr(guard_cls, "deny_error", None)
+    if deny is None:
+        return ForbiddenError
+    if isinstance(deny, type):
+        if issubclass(deny, HTTPError):
+            return deny
+        reason = f"{deny.__name__} is not an HTTPError subclass"
+    elif isinstance(deny, BaseException):
+        reason = "an exception instance cannot be raised for every denial; use the class or a zero-argument factory"
+    elif callable(deny):
+        try:
+            inspect.signature(deny).bind()
+        except TypeError:
+            reason = "a factory must be callable with no arguments"
+        except ValueError:  # no introspectable signature (C callables): trust it
+            return deny
+        else:
+            return deny
+    else:
+        reason = f"{deny!r} is neither an HTTPError subclass nor a zero-argument factory"
+    raise GuardConfigError(
+        f"guard {name} declares an invalid deny_error: {reason}",
+        detail={"guard": name, "deny_error": repr(deny), "reason": "invalid_deny_error"},
+    )
 
 
 def _ensure_injectable(cls: type) -> None:

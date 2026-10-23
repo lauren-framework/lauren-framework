@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
@@ -15,6 +15,7 @@ __all__ = [
     "ReflectedController",
     "ReflectedModule",
     "ReflectedWsGateway",
+    "ReflectedError",
 ]
 
 
@@ -115,3 +116,32 @@ class ReflectedWsGateway:
     middlewares: tuple[type, ...]
     messages: tuple[ReflectedWsMessage, ...]
     owning_module: type | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReflectedError:
+    """One error class of the catalog — framework or application.
+
+    Returned by :func:`~lauren.reflect.error_catalog`.
+    """
+
+    cls: type
+    """The error class (a :class:`~lauren.exceptions.LaurenError` subclass)."""
+
+    code: str
+    """The class-level stable ``code``."""
+
+    status_code: int | None
+    """The HTTP status for ``HTTPError`` subclasses; ``None`` for startup, lifecycle and WebSocket errors."""
+
+    category: Literal["startup", "http", "lifecycle", "websocket", "other"]
+    """``"other"`` is ``LaurenError`` itself and direct subclasses outside the four families."""
+
+    problem_type: str | None
+    """The class's RFC 9457 ``problem_type``, if it declares one."""
+
+    problem_title: str | None
+    """The class's RFC 9457 ``problem_title``, if it declares one."""
+
+    summary: str
+    """The first paragraph of the class's own docstring, on one line (``""`` without one)."""

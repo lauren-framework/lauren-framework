@@ -13,6 +13,16 @@
 "lauren.types.Headers" = ["get", "getall", "items", "keys", "values"]
 "lauren.types.State" = ["get", "set", "has", "get_typed", "require", "asdict"]
 "lauren.types.ContentConfig" = ["strict_content_type"]
+"lauren.DebugConfig" = [
+    "include_4xx", "allow_remote", "redact_headers", "redact_query_keys",
+    "source_context", "max_frames", "include_locals",
+]
+"lauren.ReflectedError" = ["cls", "code", "status_code", "category", "problem_type", "problem_title", "summary"]
+"lauren.HTTPError" = ["status_code", "code", "problem_type", "problem_title", "headers", "to_payload"]
+"lauren.UnauthorizedError" = ["headers"]
+"lauren.TooManyRequestsError" = ["retry_after", "headers"]
+"lauren.ServiceUnavailableError" = ["retry_after"]
+"lauren.RequestTimeoutError" = ["retry_after"]
 "lauren.Response" = [
     "status", "status_code", "headers", "body",
     "with_header", "with_headers", "with_body", "with_cookie", "delete_cookie",
@@ -26,7 +36,7 @@
 ]
 "lauren.LaurenApp" = [
     "router", "container", "app_state", "routes", "openapi",
-    "startup", "shutdown", "on_shutdown", "mount", "mounts", "scope",
+    "startup", "shutdown", "on_shutdown", "mount", "mounts", "scope", "error_format",
 ]
 "lauren.OperationScope" = ["name", "values", "active", "teardown_errors", "resolve"]
 "lauren.websockets.BroadcastGroup" = [
