@@ -41,6 +41,7 @@ from typing import Any, Awaitable, Callable
 from .context import OperationScope
 from .decorators import controller, module
 from .exceptions import LifecycleViolationError, StartupError
+from .signals import AppLifecycleState
 from .types import AppState, DebugConfig
 
 
@@ -534,6 +535,21 @@ class Lauren:
             raise LifecycleViolationError("scope() is only available after startup()")
         scope: OperationScope = self._compiled.scope(name, values=values)
         return scope
+
+    @property
+    def lifecycle_state(self) -> AppLifecycleState:
+        """The compiled app's :attr:`LaurenApp.lifecycle_state` (``CREATED`` before it compiles)."""
+        if self._compiled is None:
+            return AppLifecycleState.CREATED
+        state: AppLifecycleState = self._compiled.lifecycle_state
+        return state
+
+    def begin_draining(self, *, reason: str = "") -> bool:
+        """Same as :meth:`LaurenApp.begin_draining`; ``False`` before the app has compiled."""
+        if self._compiled is None:
+            return False
+        changed: bool = self._compiled.begin_draining(reason=reason)
+        return changed
 
 
 # ---------------------------------------------------------------------------

@@ -4,10 +4,10 @@
 app, registered as a global value provider next to the request-scoped
 ``EventPublisher`` factory), :func:`compile_events` right after the Phase 6a
 discovery pass (handler validation, the immutable dispatch table) and
-binds the bus to the app in Phase 7. ``LaurenApp.startup`` / ``shutdown``
-drive the bus through its lifecycle states: deferred work emitted during
-startup waits for READY, tracked tasks are drained (then cancelled) during
-shutdown, and emitting after shutdown raises.
+binds the bus to the app in Phase 7. The bus follows the app's lifecycle
+state (``app.lifecycle_state``): deferred work emitted during startup waits
+for READY (``LaurenApp.startup`` releases it), tracked tasks are drained (then
+cancelled) during shutdown, and emitting after shutdown raises.
 
 Dispatch never reflects: an emission looks the event class up in the
 dispatch table (an ``__mro__`` walk, cached per class) and runs each
@@ -41,7 +41,7 @@ from ..exceptions import (
     StartupError,
 )
 from ..logging import Logger, LogLevel, LogRecord, NullLogger
-from ..signals import EventHandlerFailed, SignalBus
+from ..signals import AppLifecycleState, EventHandlerFailed, SignalBus
 from ..types import Request, Scope
 from ._meta import BACKGROUND, INLINE, ON_EVENT_META, PROPAGATE
 from ._plan import DispatchTable, HandlerPlan, compile_handler_plans
@@ -67,11 +67,13 @@ WS_CACHE_ATTR = "_lauren_request_cache"
 #: copy, and two apps never see each other's chains.
 _CHAIN: ContextVar[tuple[type, ...]] = ContextVar("lauren_event_chain", default=())
 
-_CREATED = "created"  # built, startup() not called: dispatch freely (lazy DI, like requests)
-_STARTING = "starting"  # @post_construct hooks running: inline only on built singletons
-_READY = "ready"
-_DRAINING = "draining"  # shutdown: emission works, deferred work meets the drain deadline
-_STOPPED = "stopped"  # emit() raises
+# How the bus treats each app lifecycle state (``app.lifecycle_state``):
+# CREATED (built, startup() not called) dispatches freely, with lazy DI like
+# requests; READY and DRAINING dispatch normally (shutdown drains deferred work
+# against its deadline); the states below queue deferred work until READY and
+# allow inline delivery only to singletons whose @post_construct ran; once the
+# bus itself has stopped (end of shutdown) emit() raises.
+_STARTUP_STATES = frozenset({AppLifecycleState.STARTING, AppLifecycleState.FAILED})
 
 DEFAULT_MAX_DEPTH = 16
 
@@ -185,7 +187,7 @@ class EventBus:
         "_container",
         "_signals",
         "_table",
-        "_state",
+        "_stopped",
         "_tasks",
         "_pending",
         "_recordings",
@@ -209,7 +211,7 @@ class EventBus:
         self._container: DIContainer | None = None
         self._signals: SignalBus | None = None
         self._table = DispatchTable()
-        self._state = _CREATED
+        self._stopped = False
         self._tasks: set[asyncio.Task[Any]] = set()
         self._pending: list[_Deferred] = []
         self._recordings: list[EventRecording] = []
@@ -298,9 +300,17 @@ class EventBus:
 
     def __repr__(self) -> str:
         return (
-            f"<EventBus {len(self._table.plans)} subscription(s), {self._state}, "
+            f"<EventBus {len(self._table.plans)} subscription(s), {self._state.value}, "
             f"{len(self._tasks)} running task(s)>"
         )
+
+    @property
+    def _state(self) -> AppLifecycleState:
+        """The app's lifecycle state (``CREATED`` when unbound); ``STOPPED`` once the bus has shut down."""
+        if self._stopped:
+            return AppLifecycleState.STOPPED
+        app = self._app
+        return app.lifecycle_state if app is not None else AppLifecycleState.CREATED
 
     # -- Dispatch ------------------------------------------------------------
 
@@ -310,7 +320,7 @@ class EventBus:
                 f"emit() takes an event instance, got the class {event.__name__}; write emit({event.__name__}(...))"
             )
         event_type = type(event)
-        if self._state == _STOPPED:
+        if self._stopped:
             raise LifecycleViolationError(
                 f"cannot emit {event_type.__name__}: the application has shut down",
                 detail={"event_type": event_type.__name__, "reason": "app_stopped"},
@@ -332,7 +342,7 @@ class EventBus:
             return EmitResult(event)
         inline = tuple(h for h in handlers if h.mode == INLINE)
         deferred = tuple(h for h in handlers if h.mode != INLINE)
-        if self._state == _STARTING:
+        if self._state in _STARTUP_STATES:
             self._check_startup(event_type, inline, wait=wait and bool(deferred))
         ctx = EventContext(
             event_id=uuid.uuid4().hex,
@@ -475,7 +485,7 @@ class EventBus:
             if plan.mode == BACKGROUND and frame is not None and frame.request is not None:
                 # After the response: the request's own queue, as BackgroundTasks does.
                 _background_tasks(frame.request).add_task(self._run_deferred, job)
-            elif self._state == _STARTING:
+            elif self._state in _STARTUP_STATES:
                 self._pending.append(job)  # released at READY
             else:
                 spawned.append((job, self._spawn(job)))
@@ -612,25 +622,15 @@ class EventBus:
         self._logger = app.logger
         self._loggers.clear()
 
-    def _on_startup(self) -> None:
-        """``startup()`` began: until READY, deferred work queues and inline handlers need built singletons."""
-        if self._state == _CREATED:
-            self._state = _STARTING
-
     def _on_ready(self) -> None:
-        """READY: start the deferred work queued during startup."""
-        if self._state in (_CREATED, _STARTING):
-            self._state = _READY
-            pending, self._pending = self._pending, []
-            for job in pending:
-                self._spawn(job)
+        """The app reached READY: start the deferred work queued during startup."""
+        pending, self._pending = self._pending, []
+        for job in pending:
+            self._spawn(job)
 
     async def _on_drain(self, timeout: float) -> None:
         """Shutdown, after the request drain: await tracked tasks, then cancel the rest."""
-        if self._state == _STOPPED:
-            return
-        self._state = _DRAINING
-        if not self._tasks:
+        if self._stopped or not self._tasks:
             return
         budget = self._drain_timeout if self._drain_timeout is not None else timeout
         self._logger.log(
@@ -651,9 +651,9 @@ class EventBus:
 
     async def _on_stopped(self) -> None:
         """End of shutdown: cancel stragglers; later emissions raise."""
-        if self._state == _STOPPED:
+        if self._stopped:
             return
-        self._state = _STOPPED
+        self._stopped = True
         pending, self._pending = self._pending, []
         for job in pending:  # startup never reached READY
             self._report_cancelled(job.plan, job.event, asyncio.CancelledError())
@@ -749,7 +749,7 @@ class EventPublisher:
         event_type = type(event)
         if isinstance(event, type):
             raise TypeError(f"emit() takes an event instance, got the class {event.__name__}")
-        if bus._state == _STOPPED:
+        if bus._stopped:
             raise LifecycleViolationError(
                 f"cannot emit {event_type.__name__}: the application has shut down",
                 detail={"event_type": event_type.__name__, "reason": "app_stopped"},

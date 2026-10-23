@@ -29,6 +29,8 @@ Core capabilities
 * WebSocket gateways, Server-Sent Events, typed streaming and sessions.
 * Typed application events: ``@on_event`` handlers on providers, validated at
   startup, published through ``EventBus`` / the request-scoped ``EventPublisher``.
+* A public lifecycle state (``app.lifecycle_state``, ``app.begin_draining()``,
+  ``LifecycleStateChanged``) for correct readiness probes.
 * OpenAPI 3.1 generation from return annotations and ``response_model``
   (any of the supported model kinds).
 * Auto-serialization: return dicts, models, dataclasses, or
@@ -193,11 +195,13 @@ from .extractors import (
     pipe,
 )
 from .signals import (
+    AppLifecycleState,
     BackgroundTaskComplete,
     BackgroundTaskFailed,
     BackgroundTaskStarted,
     EventHandlerFailed,
     LifecycleEvent,
+    LifecycleStateChanged,
     RequestComplete,
     RequestReceived,
     ShutdownBegin,
@@ -333,6 +337,9 @@ __all__ = [
     "LaurenFactory",
     "DIContainer",
     "OperationScope",
+    # lifecycle state
+    "AppLifecycleState",
+    "LifecycleStateChanged",
     # Custom providers (NestJS-style)
     "Token",
     "Inject",

@@ -27,6 +27,8 @@ from ..serialization import (
     get_active_encoder,
 )
 from ..signals import (
+    AppLifecycleState,
+    LifecycleStateChanged,
     RequestComplete,
     RequestReceived,
     ShutdownBegin,
@@ -742,6 +744,11 @@ def _normalize_path(*parts: str) -> str:
 # LaurenApp — the ASGI app
 # ---------------------------------------------------------------------------
 
+#: States in which ``startup()`` has completed.
+_STARTED_STATES = frozenset({AppLifecycleState.READY, AppLifecycleState.DRAINING, AppLifecycleState.STOPPED})
+#: States in which the app serves traffic (until ``shutdown()`` begins).
+_RUNNING_STATES = frozenset({AppLifecycleState.READY, AppLifecycleState.DRAINING})
+
 
 class LaurenApp:
     """A compiled, ready-to-serve ASGI application.
@@ -798,9 +805,10 @@ class LaurenApp:
         self._app_state = app_state
         self._strict_lifecycle = strict_lifecycle
         self._max_body_size = max_body_size
-        self._running = False
+        # The public lifecycle state (``lifecycle_state``); ``_started`` and
+        # ``_running`` are derived from it.
+        self._lifecycle_state = AppLifecycleState.CREATED
         self._in_flight: set[asyncio.Task[Any]] = set()
-        self._started = False
         # Settings still waiting on an AsyncSource (``lauren.config``); the
         # factory sets it and ``startup()`` resolves it before any hook runs.
         self._config_pending: Any = None
@@ -931,6 +939,67 @@ class LaurenApp:
         :meth:`LaurenFactory.create` for the configuration hook."""
         return self._error_format
 
+    @property
+    def lifecycle_state(self) -> AppLifecycleState:
+        """Where the app is in its lifetime (:class:`~lauren.signals.AppLifecycleState`).
+
+        ``CREATED`` until :meth:`startup` runs, ``STARTING`` while it runs,
+        ``READY`` once it has finished, ``DRAINING`` after
+        :meth:`begin_draining` or once :meth:`shutdown` begins, ``STOPPED``
+        when :meth:`shutdown` has finished; ``FAILED`` if :meth:`startup`
+        raised. Every transition emits a
+        :class:`~lauren.signals.LifecycleStateChanged` on :attr:`signals`.
+        """
+        return self._lifecycle_state
+
+    @property
+    def _started(self) -> bool:
+        """``True`` once :meth:`startup` has completed (the app reached ``READY``)."""
+        return self._lifecycle_state in _STARTED_STATES
+
+    @property
+    def _running(self) -> bool:
+        """``True`` from ``READY`` until :meth:`shutdown` begins (the pre-stop drain included)."""
+        return self._lifecycle_state in _RUNNING_STATES and not self._shutdown_running
+
+    def begin_draining(self, *, reason: str = "") -> bool:
+        """Announce termination: move ``READY → DRAINING`` so readiness probes fail.
+
+        Requests are still served normally; the drain itself is
+        :meth:`shutdown`'s job. Call it before the server stops accepting
+        connections (a ``preStop`` window, a signal handler —
+        :func:`~lauren.signals.install_signal_handlers` does) so load
+        balancers polling readiness take the instance out of rotation first.
+        Synchronous and idempotent: returns ``True`` when it changed the
+        state, ``False`` in any state other than ``READY``.
+        """
+        if self._lifecycle_state is not AppLifecycleState.READY:
+            return False
+        self._logger.log(
+            f"Draining: readiness now fails{f' ({reason})' if reason else ''}",
+            context="LaurenApp",
+            reason=reason,
+        )
+        event = self._set_lifecycle_state(AppLifecycleState.DRAINING, reason)
+        if event is not None:
+            self._signals.emit_sync(event)
+        return True
+
+    def _set_lifecycle_state(
+        self, state: AppLifecycleState, reason: str = ""
+    ) -> LifecycleStateChanged | None:
+        """Record a transition; return the event to emit (``None`` when unchanged)."""
+        previous = self._lifecycle_state
+        if previous is state:
+            return None
+        self._lifecycle_state = state
+        return LifecycleStateChanged(app=self, previous=previous, current=state, reason=reason)
+
+    async def _transition(self, state: AppLifecycleState, reason: str = "") -> None:
+        event = self._set_lifecycle_state(state, reason)
+        if event is not None:
+            await self._signals.emit(event)
+
     def routes(self) -> list[RouteEntry]:
         return self._router.routes()
 
@@ -1021,28 +1090,43 @@ class LaurenApp:
     # -- Startup / Shutdown ------------------------------------------------
 
     async def startup(self) -> None:
-        if self._started:
+        state = self._lifecycle_state
+        if state is not AppLifecycleState.CREATED:
             if self._strict_lifecycle:
-                raise LifecycleViolationError("startup called twice")
+                raise LifecycleViolationError(
+                    "startup called twice"
+                    if state is not AppLifecycleState.FAILED
+                    else "startup called after a failed startup; build a new app",
+                    detail={"lifecycle_state": state.value},
+                )
             return
         t0 = time.perf_counter()
-        if self._config_pending is not None:
-            await self._config_pending.resolve(self._container)
-            self._config_pending = None
-        # Emit StartupBegin *before* @post_construct runs so listeners
-        # see the "DI graph built, about to come online" moment. The
-        # bus contract is that listener errors never propagate, so a
-        # misbehaving observer cannot prevent startup.
-        await self._signals.emit(StartupBegin(app=self))
-        if self._events is not None:
-            self._events._on_startup()
-        self._logger.log("Running @post_construct hooks", context="Lifecycle")
-        await self._lifecycle.run_post_construct()
-        self._app_state.seal()
-        self._started = True
-        self._running = True
+        await self._transition(AppLifecycleState.STARTING)
+        try:
+            if self._config_pending is not None:
+                await self._config_pending.resolve(self._container)
+                self._config_pending = None
+            # Emit StartupBegin *before* @post_construct runs so listeners
+            # see the "DI graph built, about to come online" moment. The
+            # bus contract is that listener errors never propagate, so a
+            # misbehaving observer cannot prevent startup.
+            await self._signals.emit(StartupBegin(app=self))
+            self._logger.log("Running @post_construct hooks", context="Lifecycle")
+            await self._lifecycle.run_post_construct()
+            self._app_state.seal()
+        except Exception as exc:
+            await self._transition(AppLifecycleState.FAILED, f"{type(exc).__name__}: {exc}")
+            raise
+        except BaseException as exc:  # cancelled: do not await listeners
+            event = self._set_lifecycle_state(AppLifecycleState.FAILED, type(exc).__name__)
+            if event is not None:
+                self._signals.emit_sync(event)
+            raise
+        ready = self._set_lifecycle_state(AppLifecycleState.READY)
         if self._events is not None:
             self._events._on_ready()  # deferred event handlers queued during startup start now
+        if ready is not None:
+            await self._signals.emit(ready)
         duration = time.perf_counter() - t0
         self._logger.log(
             f"Application ready ({format_duration_ms(duration)})",
@@ -1057,12 +1141,14 @@ class LaurenApp:
 
         Steps (each logged as an event):
 
-        1. Mark the app not-running — no new request scheduling.
+        1. Mark the app not-running — no new request scheduling — and move
+           ``READY → DRAINING`` (a no-op after :meth:`begin_draining`).
         2. Drain in-flight requests (up to ``drain_timeout`` seconds), then
            running ``@on_event`` handler tasks (with what is left of it).
         3. Invoke user-registered ``on_shutdown`` callbacks in reverse order.
         4. Run ``@pre_destruct`` hooks in reverse topological order.
 
+        The app ends ``STOPPED`` (a ``FAILED`` app stays ``FAILED``).
         Idempotent: concurrent or repeated calls return as soon as the first
         shutdown has completed.
         """
@@ -1071,7 +1157,8 @@ class LaurenApp:
             return
         shutdown_t0 = time.perf_counter()
         self._shutdown_running = True
-        self._running = False
+        if self._lifecycle_state is AppLifecycleState.READY:
+            await self._transition(AppLifecycleState.DRAINING, "shutdown")
         self._logger.log(
             f"Shutdown initiated (drain_timeout={drain_timeout}s, in_flight={len(self._in_flight)})",
             context="Shutdown",
@@ -1133,6 +1220,8 @@ class LaurenApp:
             )
         if self._events is not None:
             await self._events._on_stopped()  # cancel stragglers; emit() raises from now on
+        if self._lifecycle_state is not AppLifecycleState.FAILED:
+            await self._transition(AppLifecycleState.STOPPED)
         self._logger.log("Shutdown complete. Goodbye.", context="Shutdown")
         self._shutdown_complete.set()
 

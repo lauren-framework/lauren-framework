@@ -202,7 +202,9 @@ the registered routes and modules. Mutators — `include_module`, `add_middlewar
 `mount(path, asgi_app)` and the route decorators — must run before the app
 compiles (first request or `await app.startup()`); afterwards they raise
 `LifecycleViolationError`. `on_startup` hooks run when the app compiles, before
-singletons are built (so before `@post_construct`).
+singletons are built (so before `@post_construct`). `app.lifecycle_state` and
+`app.begin_draining()` forward to the compiled `LaurenApp` (`CREATED` / `False`
+before it compiles).
 
 ### `LaurenApp`
 
@@ -213,8 +215,10 @@ Attributes & methods:
 - `app.app_state: AppState` — sealed, read-only app-level state.
 - `app.routes()` — list of `RouteEntry` objects.
 - `app.openapi()` — OpenAPI 3.1 schema dict.
-- `await app.startup()` — builds singletons and runs `@post_construct` hooks. Invoked by the ASGI lifespan protocol (uvicorn, hypercorn); call it yourself when there is no lifespan (e.g. `httpx.ASGITransport`) — `TestClient` does. A second call raises `LifecycleViolationError` unless the app was built with `strict_lifecycle=False`.
+- `await app.startup()` — builds singletons and runs `@post_construct` hooks. Invoked by the ASGI lifespan protocol (uvicorn, hypercorn); call it yourself when there is no lifespan (e.g. `httpx.ASGITransport`) — `TestClient` does. A second call — also after a failed startup or after shutdown — raises `LifecycleViolationError` (`detail["lifecycle_state"]`) unless the app was built with `strict_lifecycle=False`. Nothing starts the app lazily on a first request.
 - `await app.shutdown(drain_timeout=10.0)` — runs `@pre_destruct` hooks, awaits in-flight requests.
+- `app.lifecycle_state: AppLifecycleState` — `CREATED` → `STARTING` → `READY` → `DRAINING` → `STOPPED`, or `FAILED` when `startup()` raised (see [Lifecycle state](#lifecycle-state)).
+- `app.begin_draining(*, reason="") -> bool` — `READY → DRAINING`: readiness fails while requests are still served. Synchronous, idempotent; `True` only when it changed the state.
 - `await app(scope, receive, send)` — standard ASGI callable (HTTP + lifespan).
 - `app.mount(path, app)` — mount a sub-ASGI application at a path prefix.
 - `app.scope(name="operation", *, values=None)` — open an `OperationScope` for request-scoped providers outside a request (see [Operation scopes](#operation-scopes-appscope)).
@@ -2022,16 +2026,18 @@ error/verbose`` sugar methods.
 
 ``LaurenApp.shutdown()`` is the canonical teardown path. It:
 
-1. Flips the ``_running`` flag so no new work is scheduled.
+1. Stops admitting new work and moves ``READY → DRAINING`` (a no-op when
+   ``app.begin_draining()`` already did).
 2. Drains in-flight requests (up to ``drain_timeout`` seconds), then awaits
    running ``@on_event`` handler tasks with what is left of the budget and
    cancels the rest (see [Application Events](#application-events)).
 3. Runs any ``on_shutdown`` callbacks the user registered (LIFO).
 4. Runs ``@pre_destruct`` hooks in reverse topological order.
 
-All four steps are logged through the installed logger. Calls are
-idempotent: concurrent or repeated ``shutdown()`` invocations return once
-the first shutdown has finished.
+All four steps are logged through the installed logger, and the app ends
+``STOPPED`` (a ``FAILED`` app stays ``FAILED``). Calls are idempotent:
+concurrent or repeated ``shutdown()`` invocations return once the first
+shutdown has finished.
 
 ```python run
 app = LaurenFactory.create(AppModule, logger=default_logger())
@@ -2045,15 +2051,63 @@ async def flush_metrics() -> None:
 from lauren.signals import install_signal_handlers, wait_for_shutdown
 
 async def main():
-    event = install_signal_handlers(app, drain_timeout=30)
+    # SIGTERM / SIGINT: app.begin_draining(), keep serving 10 s, then app.shutdown().
+    event = install_signal_handlers(app, drain_timeout=30, shutdown_delay=10)
     # ... run the app (e.g. via uvicorn.run) ...
     await wait_for_shutdown(event)
 ```
 
+`install_signal_handlers(app, *, signals=(SIGINT, SIGTERM), drain_timeout=10.0,
+shutdown_delay=0.0, loop=None) -> asyncio.Event` — on the first handled signal
+it calls `app.begin_draining(reason="signal SIGTERM")`, waits `shutdown_delay`
+seconds (readiness answers 503 while connections are still accepted), then
+schedules `app.shutdown(drain_timeout=...)`. Later signals are logged and
+ignored; a negative or non-numeric `shutdown_delay` raises `ValueError`.
+
 When running under a well-behaved ASGI server (uvicorn, hypercorn), the
 server already delivers SIGTERM to the lifespan protocol, so you typically
 won't need ``install_signal_handlers`` — it's for standalone scripts and
-customised runners.
+customised runners. Note that uvicorn stops listening and drains connections
+*before* it sends ``lifespan.shutdown``: a readiness flip inside ``shutdown()``
+is invisible to load balancers, so announce termination earlier with
+``app.begin_draining()`` (a ``preStop`` window, a signal handler, a custom runner).
+
+### Lifecycle state
+
+`app.lifecycle_state` is an `AppLifecycleState` (exported from `lauren` and
+`lauren.signals`); every transition emits `LifecycleStateChanged(app, previous,
+current, reason)` on the app's `SignalBus`.
+
+| Transition | Where |
+|---|---|
+| `CREATED → STARTING` | top of `startup()`, before `StartupBegin` |
+| `STARTING → READY` | after every `@post_construct` hook, before `StartupComplete` |
+| `STARTING → FAILED` | `startup()` raised (the lifespan answers `lifespan.startup.failed`) |
+| `READY → DRAINING` | `app.begin_draining(reason=...)`, or the first step of `shutdown()` |
+| `DRAINING → STOPPED` | end of `shutdown()` (`CREATED → STOPPED` for an app never started) |
+
+`STOPPED` and `FAILED` are terminal. During `DRAINING` requests are served
+normally; only readiness fails.
+
+```python run
+from lauren import AppLifecycleState, LifecycleStateChanged, SignalBus, module
+
+
+@module()
+class LsAppModule: ...
+
+
+ls_signals = SignalBus()
+ls_seen: list[str] = []
+ls_signals.on(LifecycleStateChanged)(lambda event: ls_seen.append(event.current.value))
+ls_app = LaurenFactory.create(LsAppModule, signals=ls_signals)
+assert ls_app.lifecycle_state is AppLifecycleState.CREATED
+await ls_app.startup()
+assert ls_app.begin_draining(reason="preStop") is True   # readiness fails; requests still served
+assert ls_app.begin_draining() is False                   # idempotent
+await ls_app.shutdown()
+assert ls_seen == ["starting", "ready", "draining", "stopped"]
+```
 
 ### Signals & Lifecycle Events
 
@@ -2090,6 +2144,7 @@ Full event hierarchy:
 | `BackgroundTaskComplete` | Background task finishes successfully |
 | `BackgroundTaskFailed` | Background task raises |
 | `EventHandlerFailed` | An `@on_event` handler raised or was cancelled at shutdown (`event_type`, `handler`, `error`, `mode`, `event`) |
+| `LifecycleStateChanged` | `app.lifecycle_state` changed (`app`, `previous`, `current`, `reason`) |
 
 `LifecycleEvent` is the common base class for all events above. Domain
 events do not belong here: publish them on the application `EventBus`
@@ -3539,6 +3594,7 @@ request.
 | Read per-route metadata in a guard | `ctx.get_metadata("key", default)` |
 | Attach a singleton explicitly | `app.container.set_singleton(MyCls, instance)` |
 | Run post-construct hook | `@post_construct` on an `async def` method of an `@injectable` |
+| Fail readiness before the server stops accepting traffic | `app.begin_draining()`, or `install_signal_handlers(app, shutdown_delay=10)` |
 | Serve a file (auto MIME, streamed) | `return await Response.file("/path/to/file.pdf")` |
 | Serve a file with custom name | `return await Response.file(path, filename="report.pdf")` |
 | Serve a file inline (browser preview) | `return await Response.file(path, inline=True)` |
