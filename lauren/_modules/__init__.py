@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
-from typing import Any, ForwardRef, Iterable
+from typing import Any, ForwardRef, Iterable, Mapping
 
 from ..decorators import MODULE_META, ModuleMeta
 from .._di.custom import CustomProvider, normalise_provider_token
@@ -181,8 +181,33 @@ class ModuleGraph:
         #: pass. A list is used so that multiple multi-binding providers
         #: for the same token are all preserved.
         self._custom_providers: dict[Any, list[CustomProvider]] = {}
+        #: Modules replaced through ``compile(substitutions=...)`` (testing overrides).
+        self._applied_substitutions: set[type] = set()
 
-    def compile(self, root: type) -> None:
+    @property
+    def applied_substitutions(self) -> frozenset[type]:
+        """Module classes that ``compile(substitutions=...)`` actually replaced."""
+        return frozenset(self._applied_substitutions)
+
+    def compile(self, root: type, *, substitutions: Mapping[type, type] | None = None) -> None:
+        """Build and validate the module DAG rooted at ``root``.
+
+        ``substitutions`` maps a module class to the one that replaces it
+        wherever it is imported (or used as the root) — the hook behind
+        ``lauren.testing.Test...override_module(Old).with_module(New)``. The
+        replacement is visited instead of the original, so its own imports,
+        providers and exports are validated like any other module.
+        """
+        subs = substitutions or {}
+
+        def _substitute(mod_cls: type) -> type:
+            replacement = subs.get(mod_cls)
+            if replacement is None:
+                return mod_cls
+            self._applied_substitutions.add(mod_cls)
+            return replacement
+
+        root = _substitute(root)
         self.root = root
         # DFS with cycle detection.
         WHITE, GRAY, BLACK = 0, 1, 2
@@ -210,7 +235,7 @@ class ModuleGraph:
             # is resolved lazily here (all modules are loaded by compile time).
             imported_exports: set[Any] = set()
             for imp in meta.imports:
-                resolved_imp = _resolve_forward_import(imp, mod_cls)
+                resolved_imp = _substitute(_resolve_forward_import(imp, mod_cls))
                 sub = visit(resolved_imp)
                 imported_exports |= sub.exported
 

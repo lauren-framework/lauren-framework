@@ -15,6 +15,7 @@ from .._typing import resolve_type_hints
 
 from .._arena import RequestArena
 from .._di import INJECTABLE_META, DIContainer, InjectableMeta
+from .._di._overrides import active_override_plan
 from .._di.custom import CustomProvider
 from ..serialization import (
     JSONEncoder,
@@ -2532,10 +2533,14 @@ class LaurenFactory:
             root=root_module.__name__,
         )
 
+        # Build-time overrides — set only inside lauren.testing's
+        # ``TestingModuleBuilder.compile()``; ``None`` for every other build.
+        override_plan = active_override_plan()
+
         # ---- Phase 1: Module graph construction ----
         t0 = time.perf_counter()
         graph = ModuleGraph()
-        graph.compile(root_module)
+        graph.compile(root_module, substitutions=override_plan.modules if override_plan is not None else None)
         _log.verbose(
             f"Phase 1/7 module graph built: {len(graph.modules)} module(s), "
             f"{len(graph.all_controllers)} controller(s), "
@@ -2552,7 +2557,7 @@ class LaurenFactory:
         # it so the container can enforce NestJS-style encapsulation at
         # resolution time.
         t0 = time.perf_counter()
-        container = DIContainer()
+        container = DIContainer(overrides=override_plan)
         for p in graph.iter_providers():
             owning_module = graph.module_for_provider(p)
             # Custom-provider records (use_value / use_class /
