@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from .._stores._lifecycle import adopt_store_lifecycle
+from ._adapters import StoreRevocationStore, StoreSessionStore
 from ._config import ResolvedSessionConfig, SessionConfig, resolve_session_config
 from ._engine import _SessionEngine
 from ._revocation import InMemoryRevocationStore, RevocationStore
@@ -35,6 +36,8 @@ __all__ = [
     "JSONSessionSerializer",
     "RevocationStore",
     "InMemoryRevocationStore",
+    "StoreSessionStore",
+    "StoreRevocationStore",
     # internal wiring (not part of the public lauren surface)
     "configure_sessions",
     "resolve_session_config",

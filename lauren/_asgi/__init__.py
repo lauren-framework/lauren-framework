@@ -22,6 +22,8 @@ from .._di._overrides import active_override_plan
 from .._di.custom import CustomProvider
 from .._discovery import DiscoveryIndex, build_discovery_index, registered_markers
 from .._events import EventBus, compile_events, install_events
+from .._cache import compile_cache_routes, install_cache
+from .._stores import install_stores
 from ..serialization import (
     JSONEncoder,
     StdlibJSONEncoder,
@@ -661,6 +663,8 @@ def _unwrap_handler_descriptor(
         "__lauren_ws_on_error__",
         "__lauren_post_construct__",
         "__lauren_pre_destruct__",
+        "__lauren_cache_response__",
+        "__lauren_idempotent__",
     )
 
     def _merge_markers(descriptor: Any, func: Any) -> None:
@@ -2851,6 +2855,10 @@ class LaurenFactory:
                     ctrl_class,
                     owning_module=graph.module_for_controller(ctrl_class),
                 )
+        # Stores (``StoresModule.for_root``): lifecycle-managed singletons,
+        # registered before sessions so a backend shared with
+        # ``SessionConfig(store=...)`` has its hooks owned by its Store token.
+        install_stores(graph, container)
         # Sessions (optional). Validate the config, build + register the
         # session engine and store, then install the engine as the
         # OUTERMOST global middleware so it loads the session before any
@@ -2950,6 +2958,12 @@ class LaurenFactory:
         # One EventBus per app (global value provider) and the request-scoped
         # EventPublisher; handlers are compiled after discovery (Phase 6a).
         events_bus = install_events(graph, container)
+
+        # ---- Phase 2d: Cache ----
+        # ``CacheModule.for_root`` registers the app's Cache over its Store.
+        install_cache(
+            graph, container, encoder=json_encoder if json_encoder is not None else get_active_encoder()
+        )
 
         # Install per-module visible-token sets. A module sees its own
         # providers, its own controllers, and anything re-exported by a
@@ -3147,6 +3161,10 @@ class LaurenFactory:
             # Ensure _DocsController is resolvable as a global singleton.
             if _DocsController not in {p.cls for p in container.all_providers()}:
                 container.register(_DocsController)
+
+        # ``@cache_response`` / ``@idempotent``: fail without a Cache, and make
+        # the framework interceptor the innermost one on those routes only.
+        compile_cache_routes(compiled_handlers, container, logger=_log)
 
         # Inverse session misconfiguration: a handler injects ``Session``
         # but ``sessions=`` was never supplied. Fail loudly at startup —

@@ -63,8 +63,8 @@ class InMemoryRevocationStore:
     is no longer enforced, so size ``max_entries`` above the revocations you
     expect within one session lifetime (a warning is logged the first time a
     live entry is evicted). Fine for development and single-worker
-    deployments; multi-worker production wants a shared backend with the
-    same surface.
+    deployments; multi-worker production wants a shared backend — pass any
+    :class:`~lauren.stores.Store` as ``SessionConfig(revocation_store=...)``.
     """
 
     requires_secret: ClassVar[bool] = False

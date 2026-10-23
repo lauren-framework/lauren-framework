@@ -7,8 +7,10 @@ engine. Two backends ship in core:
 * :class:`SignedCookieSessionStore` — stateless; the whole payload rides
   in the (signed) cookie, so there is no server-side row at all.
 
-Production multi-worker deployments implement the same Protocol over
-Redis / a database. Stores must be safe under concurrent access.
+Production multi-worker deployments pass any :class:`~lauren.stores.Store`
+(adapted by :class:`~lauren.stores.StoreSessionStore`) or implement the
+same Protocol over Redis / a database. Stores must be safe under
+concurrent access.
 """
 
 from __future__ import annotations
@@ -62,8 +64,9 @@ class InMemorySessionStore:
     tests. Values are kept as Python objects (copied on save and load), so
     they need not be JSON-serialisable.
 
-    Multi-worker production swaps in a shared backend implementing the
-    same Protocol.
+    Multi-worker production swaps in a shared backend: pass any
+    :class:`~lauren.stores.Store` (e.g. a Redis store) as
+    ``SessionConfig(store=...)`` and it is adapted automatically.
     """
 
     requires_secret: ClassVar[bool] = True

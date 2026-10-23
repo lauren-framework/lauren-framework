@@ -16,7 +16,9 @@ from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 from .._config._secret import Secret
+from .._stores._protocol import Store
 from ..exceptions import SessionConfigError
+from ._adapters import adapt_revocation_store, adapt_session_store
 from ._revocation import RevocationStore
 from ._serializer import JSONSessionSerializer, SessionSerializer
 from ._signing import Signer, normalize_secrets
@@ -40,7 +42,11 @@ class SessionConfig:
     #: str / bytes, a :class:`lauren.config.Secret` of either, or a sequence of
     #: those (the first signs, all verify — key rotation).
     secret: _SecretValue | Sequence[_SecretValue] | None = None
-    store: SessionStore | None = None
+    #: A :class:`SessionStore`, or any :class:`~lauren.stores.Store` (adapted
+    #: with :class:`~lauren.stores.StoreSessionStore`). Its ``@post_construct``
+    #: / ``@pre_destruct`` (or ``startup()`` / ``aclose()``) hooks run with the
+    #: app. ``None`` uses a bounded :class:`InMemorySessionStore`.
+    store: SessionStore | Store | None = None
     cookie_name: str = "lauren_session"
     max_age: int | None = 1_209_600  # 14 days
     idle_timeout: int | None = None
@@ -55,8 +61,11 @@ class SessionConfig:
     #: Opt-in revocation index. When set, every cookie carries a token id
     #: and an issued-at stamp; ``invalidate()`` deny-lists the token and
     #: ``RevocationStore.revoke_user(...)`` enables "log out everywhere".
-    #: Leaving this ``None`` keeps the cookie store truly stateless.
-    revocation_store: RevocationStore | None = None
+    #: Leaving this ``None`` keeps the cookie store truly stateless. Any
+    #: :class:`~lauren.stores.Store` is adapted with
+    #: :class:`~lauren.stores.StoreRevocationStore`; lifecycle hooks run as for
+    #: ``store``.
+    revocation_store: RevocationStore | Store | None = None
     #: Session key holding the authenticated user id, consulted for the
     #: per-user revocation cutoff. Only used when ``revocation_store`` is set.
     user_id_key: str = "user_id"
@@ -145,7 +154,9 @@ def resolve_session_config(config: SessionConfig) -> ResolvedSessionConfig:
             raise _fail(f"{label} must be a positive integer or None; got {value!r}", **{label: value})
 
     # --- store + secret ---------------------------------------------
-    store = config.store if config.store is not None else InMemorySessionStore()
+    store = adapt_session_store(
+        config.store if config.store is not None else InMemorySessionStore(), config.serializer
+    )
     secrets = normalize_secrets(config.secret)
     requires_secret = bool(getattr(store, "requires_secret", True))
     if requires_secret and not secrets:
@@ -190,7 +201,7 @@ def resolve_session_config(config: SessionConfig) -> ResolvedSessionConfig:
         autoload=config.autoload,
         client_side=client_side,
         max_cookie_bytes=max_cookie_bytes,
-        revocation=config.revocation_store,
+        revocation=adapt_revocation_store(config.revocation_store),
         user_id_key=config.user_id_key,
         raw=config,
     )

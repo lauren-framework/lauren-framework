@@ -17,6 +17,7 @@ from __future__ import annotations
 import inspect as _inspect
 from typing import Any, ForwardRef, TYPE_CHECKING, get_args, get_origin
 
+from .._cache._policy import CACHE_RESPONSE_META
 from .._typing import resolve_type_hints
 from ..decorators import OPENAPI_SECURITY_META, ControllerMeta, RouteMeta
 from ..extractors import FieldDescriptor, Extraction
@@ -624,6 +625,10 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             # Feature 7 — vendor extension telling OpenAPI tooling this
             # operation yields a structured, typed stream.
             op["x-streaming"] = True
+        cache_policy = getattr(compiled.handler_fn, CACHE_RESPONSE_META, None) if compiled else None
+        if cache_policy is not None:
+            # Server-side response caching (``@cache_response``) — seconds.
+            op["x-cache-ttl"] = cache_policy.ttl
 
         # Calculates the OpenAPI `security` requirements for this operation by inspecting
         # the compiled handler's guards and the app's global guards. Resolution rules:

@@ -29,6 +29,9 @@ Core capabilities
 * WebSocket gateways, Server-Sent Events, typed streaming and sessions.
 * Typed application events: ``@on_event`` handlers on providers, validated at
   startup, published through ``EventBus`` / the request-scoped ``EventPublisher``.
+* Stores & caching: one async key-value ``Store`` protocol (bounded
+  ``MemoryStore`` in core) behind sessions, the ``Cache`` service,
+  ``@cache_response`` and ``@idempotent``.
 * OpenAPI 3.1 generation from return annotations and ``response_model``
   (any of the supported model kinds).
 * Auto-serialization: return dicts, models, dataclasses, or
@@ -275,6 +278,8 @@ from .reflect import (
 )
 from ._staticfiles import StaticFilesModule
 from .config import ConfigModule, Secret
+from .cache import Cache, CacheModule, cache_response, idempotent
+from .stores import Lock, MemoryStore, Store, StoreRegistry, StoresModule
 from .sessions import (
     InMemoryRevocationStore,
     InMemorySessionStore,
@@ -385,6 +390,16 @@ __all__ = [
     # typed configuration (the rest lives in lauren.config)
     "ConfigModule",
     "Secret",
+    # stores & caching (the rest lives in lauren.stores / lauren.cache)
+    "Store",
+    "MemoryStore",
+    "StoresModule",
+    "StoreRegistry",
+    "Lock",
+    "Cache",
+    "CacheModule",
+    "cache_response",
+    "idempotent",
     # sessions
     "Session",
     "SessionConfig",

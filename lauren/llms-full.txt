@@ -40,15 +40,16 @@ common mistakes.
 29. [Typed Streaming](#typed-streaming)
 30. [Socket.IO Compatibility](#socketio-compatibility)
 31. [Sessions](#sessions)
-32. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
-33. [Configuration](#configuration)
-34. [Static Files](#static-files)
-35. [Request Arena](#request-arena)
-36. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
-37. [AI Documentation Access](#ai-documentation-access)
-38. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-39. [Companion Packages](#companion-packages)
-40. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
+32. [Stores & Caching](#stores--caching)
+33. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
+34. [Configuration](#configuration)
+35. [Static Files](#static-files)
+36. [Request Arena](#request-arena)
+37. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+38. [AI Documentation Access](#ai-documentation-access)
+39. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+40. [Companion Packages](#companion-packages)
+41. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -2910,12 +2911,13 @@ class SessionStore(Protocol):
 - `SignedCookieSessionStore(*, max_bytes=4096)` — stateless: the whole
   (signed) payload rides in the cookie, no server row. Signed ≠ encrypted —
   never put confidential data here; an over-size payload raises `ValueError`.
-- Production multi-worker: implement the Protocol over Redis/DB and pass an
-  instance via `SessionConfig(store=...)`. The store is injectable as
-  `store: SessionStore` and is registered as a lifecycle-managed singleton:
-  its `@post_construct` / `@pre_destruct` (or `startup()` / `aclose()`) hooks
-  run at `app.startup()` / `app.shutdown()`, so a store may open its
-  connection pool in `@post_construct`.
+- Production multi-worker: pass any `Store` (e.g. a Redis store) as
+  `SessionConfig(store=...)` — it is adapted with `StoreSessionStore` (see
+  [Stores & Caching](#stores--caching)) — or implement the Protocol yourself.
+  The store is injectable as `store: SessionStore` and is registered as a
+  lifecycle-managed singleton: its `@post_construct` / `@pre_destruct` (or
+  `startup()` / `aclose()`) hooks run at `app.startup()` / `app.shutdown()`,
+  so a store may open its connection pool in `@post_construct`.
 
 ### `SessionSerializer` (Protocol)
 
@@ -2967,8 +2969,9 @@ Two mechanisms, both automatic once enabled:
 `InMemoryRevocationStore(*, max_entries=100_000, sweep_interval=60.0, clock=None)`
 is the dev default: TTL-pruned and bounded (an entry evicted beyond
 `max_entries` is no longer enforced; a warning is logged the first time).
-The store is registered as a global provider (with its lifecycle hooks), so
-handlers can inject it directly.
+Any `Store` passed as `revocation_store=` is adapted with
+`StoreRevocationStore`. The store is registered as a global provider (with
+its lifecycle hooks), so handlers can inject it directly.
 
 **Rule:** revocation requires a finite `max_age` (or `idle_timeout`) so
 deny-list entries can self-prune — `SessionConfigError` at startup
@@ -2999,6 +3002,360 @@ until a policy is chosen. Fix:
 `content=ContentConfig(strict_content_type=True)` (text/plain JSON → 415), and
 `lauren-guards.csrf` for form-encoded routes. See
 [Content-type policy](#content-type-policy-contentconfig).
+
+---
+
+## Stores & Caching
+
+One async key-value contract — `Store` — sits under every stateful feature:
+sessions, session revocation, the `Cache` service, response caching,
+idempotency keys and locks. Core ships the protocol, a bounded `MemoryStore`,
+`Lock`, the session adapters, `StoresModule` (`lauren.stores`) and
+`CacheModule`, `Cache`, `@cache_response`, `@idempotent` (`lauren.cache`).
+Networked backends (Redis, …) live in companion packages; nothing here adds a
+dependency. `Store`, `MemoryStore`, `StoresModule`, `StoreRegistry`, `Lock`,
+`Cache`, `CacheModule`, `cache_response` and `idempotent` are also exported
+from `lauren`.
+
+```python run
+from lauren import LaurenFactory, controller, get, injectable, module, post
+from lauren.cache import Cache, CacheModule, cache_response, idempotent
+from lauren.stores import MemoryStore, StoresModule
+from lauren.testing import TestClient
+
+shop_store = MemoryStore(max_entries=10_000)          # bounded; one backend for everything
+
+
+@injectable()
+class ShopPrices:
+    def __init__(self, cache: Cache) -> None:
+        self._cache = cache
+        self.lookups = 0
+
+    async def price(self, sku: str) -> int:
+        async def load() -> int:                        # the expensive call
+            self.lookups += 1
+            return 42
+
+        return await self._cache.get_or_set(f"price:{sku}", load, ttl=60, tags=("prices",), type=int)
+
+
+@controller("/shop")
+class ShopController:
+    def __init__(self, prices: ShopPrices, cache: Cache) -> None:
+        self.prices, self.cache = prices, cache
+        self.orders = 0
+
+    @get("/price/{sku}")
+    @cache_response(ttl=30, tags=("prices",))           # GET/HEAD only; guards run first
+    async def price(self, sku: str) -> dict:
+        return {"sku": sku, "price": await self.prices.price(sku)}
+
+    @post("/reprice")
+    async def reprice(self) -> dict:
+        await self.cache.invalidate_tags("prices")      # O(1): one incr per tag
+        return {"ok": True}
+
+    @post("/orders")
+    @idempotent(ttl=3600)                               # Idempotency-Key header required
+    async def order(self) -> dict:
+        self.orders += 1
+        return {"order": self.orders}
+
+
+@module(
+    imports=[StoresModule.for_root(default=shop_store), CacheModule.for_root(default_ttl=300)],
+    providers=[ShopPrices],
+    controllers=[ShopController],
+)
+class ShopModule:
+    pass
+
+
+shop_app = LaurenFactory.create(ShopModule)
+with TestClient(shop_app) as client:
+    assert client.get("/shop/price/a").json() == {"sku": "a", "price": 42}
+    assert "age" in client.get("/shop/price/a").headers          # served from the cache
+    client.post("/shop/reprice")
+    assert client.get("/shop/price/a").json()["price"] == 42     # recomputed after invalidation
+    assert client.resolve(ShopPrices).lookups == 2
+    first = client.post("/shop/orders", headers={"Idempotency-Key": "k1"})
+    retry = client.post("/shop/orders", headers={"Idempotency-Key": "k1"})
+    assert first.json() == retry.json() == {"order": 1}
+    assert retry.headers["idempotent-replayed"] == "true"
+```
+
+### `Store` (Protocol)
+
+```python
+@runtime_checkable
+class Store(Protocol):
+    async def get(self, key: str) -> bytes | None: ...
+    async def set(self, key: str, value: bytes, *, ttl: float | None = None) -> None: ...
+    async def delete(self, *keys: str) -> int: ...                     # how many existed
+    async def exists(self, key: str) -> bool: ...
+    async def expire(self, key: str, ttl: float) -> bool: ...          # False when absent
+    async def ttl(self, key: str) -> float | None: ...                 # None: absent or no expiry
+    async def incr(self, key: str, amount: int = 1, *, ttl: float | None = None) -> int: ...
+    async def set_if_absent(self, key: str, value: bytes, *, ttl: float | None = None) -> bool: ...
+    async def delete_if_equal(self, key: str, expected: bytes) -> bool: ...  # compare-and-delete
+    def namespace(self, prefix: str) -> Store: ...                     # keys become "prefix:key"
+```
+
+- Values are `bytes`, keys `str`; `ttl` is seconds (`float`), `None` = no
+  expiry, `<= 0` raises `ValueError`.
+- `incr` is atomic, creates the key at `0` and applies `ttl` **only when it
+  creates the key** (the quota idiom); a non-integer value raises `ValueError`.
+- `set_if_absent` is atomic `SET NX` (locks, idempotency, single-flight);
+  `delete_if_equal` is atomic compare-and-delete (safe lock release).
+- `namespace("cache")` is a cheap view writing `"cache:<key>"`; views nest and
+  share the parent's capacity, clock and connection. `PrefixedStore(store,
+  prefix)` (in `lauren.stores`) is the reusable implementation.
+- No `keys()` / `scan()` / `clear()`: bulk invalidation uses generation
+  counters (`incr`), which every backend supports.
+- A backend may define `async def startup(self)` / `async def aclose(self)`;
+  `StoresModule`, `CacheModule(store=...)` and `SessionConfig(store=...)` run
+  them with the app (`@post_construct` / `@pre_destruct` win when declared).
+
+### `MemoryStore(*, max_entries, sweep_interval=60.0, clock=None)`
+
+Bounded, process-local `Store`. `max_entries` is **required** (`ValueError`
+unless a positive int): least recently used entries are evicted beyond it.
+Expired entries are dropped on read and swept proactively at most every
+`sweep_interval` seconds, so write-once keys never accumulate. Every
+operation is a short synchronous critical section under a `threading.Lock`
+(never awaits while holding it), so one store works across event loops and
+threads. `clock` is a zero-argument callable returning seconds
+(`time.monotonic`) — inject a fake clock to test TTLs without sleeping.
+`len(store)` counts held entries; `store.sweep()` sweeps now.
+
+**Rule:** stores must be bounded — framework-created stores (`StoresModule`
+without `default=`, `CacheModule` without a store, the in-memory session
+stores) use `max_entries=100_000`.
+
+### `StoresModule.for_root(*, default=None, named=None)`
+
+Returns a generated `@module` (put it in `imports=`). Registers, globally:
+the default store under `Store`, each named store under `StoreToken(name)`
+and a `StoreRegistry`. Values are `Store` instances or zero-argument
+factories called **once per app** (several apps built from one module never
+share a store); `default=None` creates a per-app
+`MemoryStore(max_entries=100_000)`. Each store is a lifecycle-managed
+singleton: its `startup()` / `aclose()` hooks run at `app.startup()` /
+`app.shutdown()` — unlike `use_value`, which never runs hooks.
+
+```python
+from typing import Annotated
+from lauren import Inject, injectable
+from lauren.stores import Store, StoreRegistry, StoreToken
+
+@injectable()
+class RateCounter:
+    def __init__(
+        self,
+        store: Store,                                             # the default store
+        local: Annotated[Store, Inject(StoreToken("local"))],     # a named store
+        registry: StoreRegistry,                                  # registry.get("local")
+    ) -> None:
+        self.store, self.local = store, local
+```
+
+Errors (`StartupError`, `detail["reason"]`): `invalid_store` (a factory
+returned a non-store; a bad `for_root` argument raises `DecoratorUsageError`
+with the same reason), `duplicate_store_name` (two `default=`, a name
+registered twice, or a `Store` provider already registered).
+`StoreRegistry.get(name="default")` raises `LookupError` for unknown names.
+
+### `Lock(store, name, *, ttl, wait=None, poll_interval=0.05)`
+
+Async context manager over the key `"lock:<name>"`: acquired with
+`set_if_absent(token, ttl=ttl)` (random token), released with
+`delete_if_equal`, so a holder whose lease expired can never release a newer
+holder's lock. `await lock.acquire(wait=...)` returns a bool (`wait=None` / `0`
+tries once, otherwise retries with capped backoff); `async with` raises
+`TimeoutError` when it cannot acquire; `locked`, `key`, `release()`. The TTL
+is the lease — choose one longer than the critical section (no automatic
+extension).
+
+A distributed lock for another feature (for example a scheduler's
+single-runner lock with `acquire(key, *, ttl) -> bool` / `release(key)`) is
+these two primitives:
+
+```python fragment
+import secrets
+from lauren.stores import Store
+
+class StoreBackedLock:
+    def __init__(self, store: Store) -> None:
+        self._store = store.namespace("locks")
+        self._tokens: dict[str, bytes] = {}
+
+    async def acquire(self, key: str, *, ttl: float) -> bool:
+        token = secrets.token_hex(16).encode()
+        if await self._store.set_if_absent(key, token, ttl=ttl):
+            self._tokens[key] = token
+            return True
+        return False
+
+    async def release(self, key: str) -> None:
+        token = self._tokens.pop(key, None)
+        if token is not None:
+            await self._store.delete_if_equal(key, token)
+```
+
+### Sessions and revocation on a `Store`
+
+`SessionConfig(store=..., revocation_store=...)` accept any `Store` and adapt
+it automatically: `StoreSessionStore(store, *, namespace="session",
+serializer=None)` (payloads JSON-serialised, `ttl=max_age`) and
+`StoreRevocationStore(store, *, namespace="revocation")` (revoked tokens and
+user cutoffs are keys with TTLs). One `MemoryStore` or Redis store can serve
+sessions, revocation and the cache side by side:
+
+```python fragment
+store = MemoryStore(max_entries=200_000)
+app = LaurenFactory.create(
+    AppModule,
+    sessions=SessionConfig(secret="…", store=store, revocation_store=store, max_age=3600),
+)
+```
+
+**Rule:** a store handed to `SessionConfig(store=...)` / `revocation_store=`
+(or the backend an adapter wraps) gets its `@post_construct` /
+`@pre_destruct` — or `startup()` / `aclose()` — hooks run with the app,
+exactly once per object even when the same backend is also a `StoresModule`
+store.
+
+### `CacheModule.for_root(*, store=None, namespace="cache", default_ttl=300.0, codec=None, lock_ttl=30.0, lock_wait=5.0, clock=None)`
+
+Registers the app's `Cache` globally. `store=None` uses the default `Store`
+provider when one exists, else a private per-app
+`MemoryStore(max_entries=100_000)`; a string names a `StoresModule` store; a
+`Store` instance or zero-argument factory is used directly (its lifecycle
+runs with the app). Entries live under `"<namespace>:"`. `codec=None` encodes
+with the app's JSON encoder (`JsonCacheCodec`). `clock` (wall-clock seconds)
+drives stale-while-revalidate and `Age` — inject it in tests. A `Cache` the
+application registers itself wins. Errors: two different `for_root` modules →
+`StartupError(reason="conflicting_cache_options")`; an unknown store name or
+a factory returning a non-store → `reason="invalid_store"`; bad arguments →
+`DecoratorUsageError`.
+
+### `Cache(store, *, default_ttl=300.0, codec=None, lock_ttl=30.0, lock_wait=5.0, clock=None)`
+
+| Method | Semantics |
+|---|---|
+| `await get(key, *, type=None)` | Decoded value or `None` (miss). `type=` validates into a model / dataclass / TypedDict / msgspec struct, `list[T]`, `tuple[T, ...]`, `dict[str, T]`, `T \| None` or a scalar; data that no longer validates is a miss. |
+| `await set(key, value, *, ttl=<default>, tags=())` | Encode and store; `ttl=None` = no expiry. |
+| `await delete(*keys) -> int` | Remove entries. |
+| `await get_or_set(key, factory, *, ttl=<default>, tags=(), type=None, lock=False, stale_ttl=None)` | Cache-aside. `factory()` may return an awaitable. Concurrent misses in one process share **one** call; an exception reaches every waiter and nothing is cached. `lock=True` adds a store lease (others poll up to `lock_wait`, then compute themselves — never deadlock). `stale_ttl` serves the expired value for that long while one caller refreshes in the background (errors logged). |
+| `await invalidate_tags(*tags)` | One `incr` per tag; every entry written under the tag misses. |
+| `typed(T) -> TypedCache` | A view whose reads decode into `T`. |
+
+- Tags use generation counters (no `KEYS` / `SCAN`): an entry records the
+  generations of its tags; a read compares them. Generations are read before
+  the factory runs, so an invalidation that lands mid-computation leaves the
+  new entry stale. Counters are seeded randomly, so an evicted counter never
+  resurrects old entries.
+- Without `type=` a hit returns JSON data (`dict` / `list` / scalars) while a
+  miss returns the factory's own value — pass `type=` to get models both ways.
+- A `stale_ttl` factory may run after the request that triggered it ended:
+  never close over request-scoped objects there.
+- `CacheCodec` (`encode(value) -> bytes`, `decode(bytes) -> Any`) is the codec
+  protocol. There is no pickle codec: values cross process boundaries.
+
+### `@cache_response(*, ttl, vary=(), key=None, tags=(), methods=("GET", "HEAD"), statuses=DEFAULT_CACHEABLE_STATUSES, debug_header=False, respect_client_no_cache=False)`
+
+Server-side response caching for a route handler. Metadata only: validated at
+decoration (`DecoratorUsageError` for bare usage, a missing / non-positive
+`ttl`, an unsafe method, a `key` that does not take one argument, bad
+statuses, stacking, or combining with `@idempotent`), compiled at startup into
+a framework interceptor that is the route's **innermost** interceptor — after
+guards (authorization always runs before a lookup) and inside user
+interceptors (they observe hits). Routes without a policy pay nothing.
+
+- **Key:** method (`HEAD` shares `GET`) + route template + path params + query
+  (order-insensitive across names, repeated values keep their order) + the
+  request headers named in `vary` + `key(ctx)`, hashed into
+  `resp:<route template>:<sha256>`. `key=` is **mandatory for per-user data**;
+  `key(ctx)` returning `None` bypasses the cache for that request. `tags` may
+  be names or a callable of the `ExecutionContext`.
+- **Stored only when** the status is in `statuses`
+  (`DEFAULT_CACHEABLE_STATUSES` = 200, 203, 204, 300, 301, 404, 405, 410 —
+  returned, not raised), the body is not streamed, there is no `Set-Cookie`,
+  `Cache-Control` has no `private` / `no-store` / `no-cache`, and `Vary` names
+  only headers listed in `vary` (never `*`). Anything else is a pass-through
+  miss, never an error.
+- **Hit:** status, headers (minus hop-by-hop) and body are replayed with
+  `Age`; `debug_header=True` adds `X-Cache: HIT|MISS`. Session cookies are
+  applied outside the cache by the session engine, so a hit never replays
+  another user's cookie.
+- Concurrent misses for one key share one handler run when its response is
+  storable; otherwise each request runs its own.
+- It never emits `Cache-Control`; handler-set `Cache-Control` / `ETag` /
+  `Last-Modified` are stored and replayed. `respect_client_no_cache=True` lets
+  a request's `Cache-Control: no-cache` force a refresh (off by default — a
+  trivial cache-busting lever).
+- OpenAPI marks the operation with `x-cache-ttl`.
+- Startup: no `Cache` provider → `StartupError(reason="cache_module_missing",
+  handler=..., method=..., path=...)`; a cached route that injects `Session`
+  without `key=` (or `vary` on `cookie` / `authorization`) logs a warning.
+
+### `@idempotent(*, ttl=86400.0, header="Idempotency-Key", required=True, scope=None, lock_ttl=60.0)`
+
+Retries of an unsafe request with the same key run the handler once
+(Stripe / IETF `Idempotency-Key` semantics), stored under the cache store's
+`idem:` namespace:
+
+| Situation | Response |
+|---|---|
+| No header, `required=True` | `400` `BadRequestError` (`code="idempotency_key_missing"`); a key over 255 characters → `code="idempotency_key_invalid"` |
+| No header, `required=False` | handler runs normally |
+| First request with key `K` | handler runs; its response (status < 500, not streamed, `Set-Cookie` dropped) is stored for `ttl` |
+| Same `K`, same payload, completed | stored response replayed with `Idempotent-Replayed: true` |
+| Same `K` while the first still runs | `409` `ConflictError` (`code="idempotency_key_in_use"`, `Retry-After: 1`) |
+| Same `K`, different payload | `422` (`code="idempotency_key_mismatch"`) |
+| Handler raised | nothing stored — the retry runs again |
+
+The payload fingerprint is SHA-256 over method, route template, path, query
+and body. `scope(ctx)` partitions keys per user / tenant; `lock_ttl` bounds
+how long an in-flight request holds its key. Needs a `Cache` (same startup
+check as `@cache_response`).
+
+### Testing stores
+
+`lauren.testing.store_contract.run_store_contract(make_store, *, advance=None,
+checks=None, concurrency=1000)` runs the normative contract (round-trip, TTL
+semantics and validation, `incr` atomicity under concurrency, `set_if_absent`
+exclusivity, `delete_if_equal`, namespaces, expiry) against fresh stores and
+raises `AssertionError` on the first violation. `advance(seconds)` moves the
+store's clock (sync or async; a networked backend may pass `asyncio.sleep`
+with short TTLs); without it the expiry check is skipped.
+`STORE_CONTRACT_CHECKS` lists the check names for `pytest.mark.parametrize`.
+
+```python run
+import asyncio
+from lauren.stores import MemoryStore
+from lauren.testing.store_contract import run_store_contract
+
+
+class ContractClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+contract_clock = ContractClock()
+asyncio.run(run_store_contract(lambda: MemoryStore(max_entries=10_000, clock=contract_clock),
+                               advance=contract_clock.advance, concurrency=100))
+```
+
+**Rule:** never cache `Set-Cookie` or per-user responses without `key=`, and
+keep values JSON-encodable — there is no pickle codec.
 
 ---
 
@@ -3686,6 +4043,10 @@ request.
 | Serve a file inline (browser preview) | `return await Response.file(path, inline=True)` |
 | Serve XML | `return Response.xml("<root>...</root>")` |
 | Serve Server-Sent Events | `Response.sse(async_iterable_of_dicts)` |
+| Cache an expensive computation | `await cache.get_or_set(key, factory, ttl=60, tags=(...), type=T)` with `CacheModule.for_root()` imported |
+| Cache a GET response | `@cache_response(ttl=30, vary=(...), key=lambda ctx: ...)` on the handler |
+| Make a POST safe to retry | `@idempotent(ttl=86400)` (clients send `Idempotency-Key`) |
+| Share state across workers | one `Store` (`StoresModule.for_root(default=...)`) behind sessions and the cache |
 
 ---
 
