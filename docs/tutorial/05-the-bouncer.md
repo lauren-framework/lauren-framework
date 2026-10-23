@@ -37,6 +37,7 @@ handler's metadata. Here we only need `ctx.request.headers`.
 Reading the roster is public — anyone at HQ can browse heroes. But *recruiting* changes
 data, so we guard just that route with `@use_guards`:
 
+<!-- docs-contract: fragment -->
 ```python title="hero_hq/dispatch.py" hl_lines="1 5 12"
 from lauren import Json, Path, controller, get, post, use_guards
 

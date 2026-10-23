@@ -60,7 +60,7 @@ class MetricsController:
     @get("/")
     async def expose(self) -> Response:
         data = self._metrics.get_metrics()
-        return Response(content=data, media_type=CONTENT_TYPE_LATEST)
+        return Response(data, media_type=CONTENT_TYPE_LATEST)
 
 @module(controllers=[MetricsController], providers=[MetricsService])
 class MetricsModule:
@@ -86,7 +86,7 @@ class MetricsMiddleware:
         duration = time.monotonic() - start
         self._metrics.record_request(
             method=request.method,
-            endpoint=request.url.path,
+            endpoint=request.path,                 # Request.url is a str
             status=response.status_code,
             duration=duration,
         )

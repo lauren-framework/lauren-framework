@@ -117,7 +117,7 @@ nox -s ver_dec -- --patch
 | `lauren/reflect/_types.py`        | Frozen result types: `ReflectedRoute`, `ReflectedController`, `ReflectedWsGateway`, … |
 | `lauren/decorators.py`            | User-facing decorators only                  |
 | `lauren/extractors.py`            | Typed extractors + pipes + custom extractors |
-| `lauren/exceptions.py`            | 29-class error hierarchy                     |
+| `lauren/exceptions.py`            | The closed error catalog (table: `docs/reference/errors.md`) |
 | `lauren/sessions.py`              | Public session surface (`Session`, `SessionConfig`, stores) |
 | `lauren/_sessions/`               | Session engine, stores, HMAC signing, serializer, config |
 | `lauren/streaming.py`             | StreamingResponse[T], Stream, StreamReader   |
@@ -206,7 +206,11 @@ Agents should not silently ship RFC-sized patches; always split them.
 
 A change is ready for merge when:
 
-- [ ] `pytest -q` passes (3297 tests).
+- [ ] `pytest -q` passes.
+- [ ] `nox -s docs_contract` passes: every doc code block compiles, the
+      `run` examples execute, documented attributes exist (new ones are
+      added to `docs_contract.toml`), and generated fact regions are
+      current (`python scripts/sync_doc_facts.py`).
 - [ ] New behaviour has at least one test in the matching layer.
 - [ ] Public API changes are reflected in `__all__`, `llms.txt`,
       and `llms-full.txt`.
@@ -221,14 +225,14 @@ If you've never touched this codebase before, this is the fastest
 path to "I understand what I'm doing":
 
 1. Read `lauren/llms-full.txt`. It's the same content the docs site
-   surfaces, condensed into ~25 KB you can paste into your context
+   surfaces, condensed into one file you can paste into your context
    window.
 2. Skim `tests/integration/`. Each file is a real-world usage pattern
    for one feature. The shapes there are the shapes the framework
    actually supports.
-3. Run `pytest -q` once. If it doesn't pass on a fresh clone (3297
-   tests), that's a bug to report before doing anything else.
-4. Read `.CLAUDE.md` rules 3 (strict inheritance) and 8 (28-class
+3. Run `pytest -q` once. If it doesn't pass on a fresh clone, that's a
+   bug to report before doing anything else.
+4. Read `CLAUDE.md` rules 3 (strict inheritance) and 8 (the closed
    error catalog). They explain decisions that look strange until you
    know why.
 

@@ -175,7 +175,7 @@ The full guide lives at [Custom Providers](../guides/custom-providers.md).
 
 ```python
 @injectable()
-def async_session(cfg: ConfigService) -> AsyncGenerator[AsyncSession, None]:
+async def async_session(cfg: ConfigService) -> AsyncGenerator[AsyncSession, None]:
     session = await asyncpg.create_pool(cfg.db_url)
     try:
         yield session

@@ -445,7 +445,7 @@ provider — both of the following are equivalent:
 
 ```python
 async def h(self, svc: UserService) -> dict: ...        # implicit DI
-async def h(self, svc: Depends[UserService]) -> dict:   # explicit DI
+async def h(self, svc: Depends[UserService]) -> dict: ...  # explicit DI
 ```
 
 Use `Depends[T]` explicitly when:

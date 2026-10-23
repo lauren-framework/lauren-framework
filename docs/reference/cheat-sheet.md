@@ -18,6 +18,7 @@ app = LaurenFactory.create(AppModule, logger=default_logger())
 
 ## Routing
 
+<!-- docs-contract: fragment -->
 ```python
 @controller("/users", tags=["users"])
 class UserController:
@@ -45,15 +46,14 @@ async def h(
     self,
     id: Path[int],                                # path parameter
     q: Query[str],                                # query string
+    sid: Cookie[str],                             # cookie
+    body: Json[CreateUser],                       # JSON body, validated (pydantic, dataclass, …)
+    repo: Depends[UserRepo],                      # DI container
     page: Query[int] = QueryField(default=1, ge=1, le=100),
     auth: Header[str] = HeaderField(alias="x-auth"),
-    sid: Cookie[str],                             # cookie
-    body: Json[CreateUser],                       # JSON body, Pydantic-validated
-    form: Form[Login],                            # form-urlencoded
-    raw: Bytes,                                   # raw body bytes
-    state: State,                                 # request.state
-    repo: Depends[UserRepo],                      # DI container
 ) -> UserOut: ...
+# Other body sources (one per handler): form: Form[Login], raw: Bytes,
+# stream: ByteStream, file: UploadFile. A value a guard put on request.state: user: State[User]
 ```
 
 ## Field constraints
@@ -69,6 +69,7 @@ PathField(...)
 
 ## Injectables
 
+<!-- docs-contract: fragment -->
 ```python
 @injectable(scope=Scope.SINGLETON)        # default
 @injectable(scope=Scope.REQUEST)
@@ -339,6 +340,7 @@ Renders as:
 
 ## Streaming
 
+<!-- docs-contract: fragment -->
 ```python
 # Raw bytes:
 return Response.stream(async_iterable, media_type="application/octet-stream")
@@ -508,5 +510,5 @@ app.container.get_provider(Clock)        # Provider metadata
 
 ```python
 from lauren import docs
-print(docs.llms_full_txt())     # ~25 KB — paste into your AI assistant's context
+print(docs.llms_full_txt())     # the complete reference — paste into your AI assistant's context
 ```

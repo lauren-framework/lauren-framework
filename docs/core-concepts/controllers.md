@@ -53,6 +53,7 @@ What `@controller` does:
 
 ## The route decorators
 
+<!-- docs-contract: fragment -->
 ```python
 @get(path="", *, summary=None, description=None, response_model=None,
      responses=None, deprecated=False, operation_id=None,

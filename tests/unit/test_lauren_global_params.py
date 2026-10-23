@@ -306,3 +306,114 @@ class TestLaurenGlobalExceptionHandlers:
 
         with pytest.raises(LifecycleViolationError):
             app.add_interceptor(I)
+
+
+# ---------------------------------------------------------------------------
+# Factory parity: Lauren forwards the remaining LaurenFactory.create options
+# ---------------------------------------------------------------------------
+
+
+def _compiled(app: Lauren):
+    import asyncio
+
+    return asyncio.run(app.startup())
+
+
+class TestLaurenFactoryParity:
+    def test_error_format_reaches_the_compiled_app(self):
+        app = Lauren(error_format="rfc7807", openapi_url=None, docs_url=None, redoc_url=None)
+
+        r = TestClient(app).get("/missing")
+
+        assert r.status_code == 404
+        assert r.header("content-type") == "application/problem+json"
+
+    def test_json_encoder_reaches_the_compiled_app(self):
+        from lauren import StdlibJSONEncoder
+
+        encoder = StdlibJSONEncoder()
+        app = Lauren(json_encoder=encoder)
+
+        assert _compiled(app)._json_encoder is encoder
+
+    def test_root_path_reaches_the_compiled_app(self):
+        app = Lauren(root_path="/api", openapi_url=None, docs_url=None, redoc_url=None)
+
+        @app.get("/ping")
+        async def ping() -> dict:
+            return {"pong": True}
+
+        assert TestClient(app).get("/api/ping").json() == {"pong": True}
+
+    def test_signals_and_arena_reach_the_compiled_app(self):
+        from lauren import RequestArena, SignalBus
+
+        bus, arena = SignalBus(), RequestArena(capacity=0)
+        compiled = _compiled(Lauren(signals=bus, arena=arena))
+
+        assert compiled._signals is bus
+        assert compiled._arena is arena
+
+    def test_global_ws_guards_reach_the_compiled_app(self):
+        compiled = _compiled(Lauren(global_ws_guards=[GlobalGuard]))
+
+        assert compiled._global_ws_guards == [GlobalGuard]
+
+    def test_mounts_kwarg_and_mount_method_combine(self):
+        async def legacy(scope, receive, send):
+            await send(
+                {"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/plain")]}
+            )
+            await send({"type": "http.response.body", "body": scope["path"].encode()})
+
+        app = Lauren(mounts={"/legacy": legacy}, openapi_url=None, docs_url=None, redoc_url=None)
+        app.mount("/old", legacy)
+        client = TestClient(app)
+
+        assert client.get("/legacy/a").body == b"/a"
+        assert client.get("/old/b").body == b"/b"
+
+    def test_mount_after_compile_raises(self):
+        from lauren.exceptions import LifecycleViolationError
+
+        app = Lauren()
+        _compiled(app)
+
+        with pytest.raises(LifecycleViolationError):
+            app.mount("/late", lambda scope, receive, send: None)
+
+    def test_debug_flag_warns_that_it_is_reserved(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="lauren"):
+            app = Lauren(debug=True)
+
+        assert app.debug is True
+        assert any("no effect yet" in r.getMessage() for r in caplog.records)
+
+    def test_interceptors_and_encoder_on_app_routes_survive_the_wrap(self):
+        from lauren import StdlibJSONEncoder, use_encoder, use_interceptors
+
+        @interceptor()
+        class Tag:
+            async def intercept(self, ctx, call_handler):
+                return (await call_handler.handle()).with_header("x-tag", "1")
+
+        class Marker(StdlibJSONEncoder):
+            def encode(self, value):
+                return b'{"encoded": "marker"}'
+
+            encode_compact = encode
+
+        app = Lauren(openapi_url=None, docs_url=None, redoc_url=None)
+
+        @app.get("/x")
+        @use_interceptors(Tag)
+        @use_encoder(Marker())
+        async def x() -> dict:
+            return {"plain": True}
+
+        r = TestClient(app).get("/x")
+
+        assert r.header("x-tag") == "1"
+        assert r.json() == {"encoded": "marker"}

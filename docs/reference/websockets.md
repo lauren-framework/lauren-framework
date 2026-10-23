@@ -33,8 +33,8 @@ First-class WebSocket support via `@ws_controller` gateways.
 ## Guards & Interceptors
 
 See [Reference → Reflect](reflect.md) for `WsConnectionContext`,
-`WsUpgradeRequest`, and the metadata readers used by the WS guard/interceptor
-pipeline.
+`WsMessageContext`, `WsUpgradeRequest`, and the metadata readers used by the WS
+guard/interceptor pipeline.
 
 ## Exceptions
 

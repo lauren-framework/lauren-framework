@@ -234,6 +234,7 @@ self.log.warn(
 
 All methods share the same signature:
 
+<!-- docs-contract: fragment -->
 ```python
 logger.info("message", *, context: str = "", **extra: Any) -> None
 ```

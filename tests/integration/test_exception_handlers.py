@@ -20,6 +20,7 @@ import pytest
 
 from lauren import (
     CallNext,
+    Depends,
     ExecutionContext,
     Lauren,
     LaurenFactory,
@@ -31,6 +32,7 @@ from lauren import (
     injectable,
     middleware,
     module,
+    Scope,
     use_exception_handlers,
     use_guards,
     use_middlewares,
@@ -40,6 +42,7 @@ from lauren.exceptions import (
     ForbiddenError,
     UnauthorizedError,
 )
+from lauren.logging import InMemoryLogger, LogLevel
 from lauren.testing import TestClient
 
 
@@ -727,3 +730,196 @@ class TestStackedExceptionHandlers:
         r = client.get("/z/boom")
         assert r.status_code == 500
         assert r.header("location") is None
+
+
+# ---------------------------------------------------------------------------
+# Errors raised outside the route boundary (D01)
+#
+# Global middleware runs outside any controller/route scope, so only *global*
+# exception handlers apply to what it raises. A handler whose ``catch`` raises
+# is logged together with the error it was handling and becomes a 500.
+# ---------------------------------------------------------------------------
+
+
+@middleware()
+class TenantFromHeader:
+    async def dispatch(self, request: Request, call_next: CallNext) -> Response:
+        if not request.headers.get("x-tenant"):
+            raise TenantError("tenant header missing")
+        return await call_next(request)
+
+
+@controller("/outer")
+class OuterController:
+    @get("/")
+    async def index(self) -> dict:
+        return {"ok": True}
+
+
+@use_exception_handlers(TenantErrorHandler)
+@controller("/outer-local")
+class OuterLocalHandlerController:
+    @get("/")
+    async def index(self) -> dict:
+        return {"ok": True}
+
+
+@module(controllers=[OuterController])
+class OuterModule:
+    pass
+
+
+@module(controllers=[OuterLocalHandlerController])
+class OuterLocalModule:
+    pass
+
+
+@injectable()
+class TenantAudit:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+
+@exception_handler(TenantError)
+class AuditedTenantHandler:
+    def __init__(self, audit: TenantAudit) -> None:
+        self.audit = audit
+
+    async def catch(self, exc: Exception, request: Request) -> Response:
+        self.audit.events.append(f"tenant:{exc}")
+        return Response.json({"handled_by": "class", "error": str(exc)}, status=400)
+
+
+@exception_handler(TenantError)
+def tenant_function_handler(exc: Exception, request: Request) -> Response:
+    return Response.json({"handled_by": "function"}, status=400)
+
+
+@exception_handler(TenantError)
+def broken_tenant_handler(exc: Exception, request: Request) -> Response:
+    raise RuntimeError("handler is broken")
+
+
+class TestErrorsOutsideTheRouteBoundary:
+    def test_global_class_handler_with_di_catches_global_middleware_error(self):
+        app = LaurenFactory.create(
+            OuterModule,
+            global_middlewares=[TenantFromHeader],
+            global_exception_handlers=[AuditedTenantHandler],
+            global_providers=[TenantAudit],
+        )
+        r = TestClient(app).get("/outer/")
+        assert r.status_code == 400
+        assert r.json() == {"handled_by": "class", "error": "tenant header missing"}
+        audit = app.container.singletons()[TenantAudit]
+        assert audit.events == ["tenant:tenant header missing"]
+
+    def test_global_function_handler_catches_global_middleware_error(self):
+        app = LaurenFactory.create(
+            OuterModule,
+            global_middlewares=[TenantFromHeader],
+            global_exception_handlers=[tenant_function_handler],
+        )
+        r = TestClient(app).get("/outer/")
+        assert r.status_code == 400
+        assert r.json() == {"handled_by": "function"}
+
+    def test_controller_handler_does_not_catch_global_middleware_error(self):
+        # The controller-level handler would map TenantError to 409, but the
+        # error happens before routing, outside the controller's scope.
+        app = LaurenFactory.create(OuterLocalModule, global_middlewares=[TenantFromHeader])
+        r = TestClient(app).get("/outer-local/")
+        assert r.status_code == 500
+        assert r.json()["error"]["code"] == "internal_error"
+        assert r.json()["error"]["detail"] == {"type": "TenantError"}
+
+    def test_unhandled_global_middleware_error_is_logged_with_origin(self):
+        log = InMemoryLogger(level=LogLevel.DEBUG)
+        app = LaurenFactory.create(OuterModule, global_middlewares=[TenantFromHeader], logger=log)
+        r = TestClient(app).get("/outer/")
+        assert r.status_code == 500
+        errors = [rec for rec in log.records if rec.level == LogLevel.ERROR and "origin" in rec.extra]
+        assert len(errors) == 1
+        assert errors[0].extra["error"] == "TenantError"
+        assert errors[0].extra["origin"] == "global middleware TenantFromHeader"
+        # The request log line still records the outcome (5xx → ERROR).
+        assert any(rec.extra.get("status") == 500 for rec in log.records)
+
+    def test_failing_global_handler_is_logged_with_its_cause(self):
+        log = InMemoryLogger(level=LogLevel.DEBUG)
+        app = LaurenFactory.create(
+            OuterModule,
+            global_middlewares=[TenantFromHeader],
+            global_exception_handlers=[broken_tenant_handler],
+            logger=log,
+        )
+        r = TestClient(app).get("/outer/")
+        assert r.status_code == 500
+        assert r.json()["error"]["detail"] == {"type": "RuntimeError"}
+        failure = [rec for rec in log.records if rec.extra.get("origin") == "exception_handler"]
+        assert len(failure) == 1
+        assert failure[0].extra["handler"] == "broken_tenant_handler"
+        assert failure[0].extra["cause"] == "TenantError"
+        assert failure[0].extra["error"] == "RuntimeError"
+
+    def test_failing_route_handler_without_global_middleware_is_logged(self):
+        # Regression: with no global middleware, a raising handler used to
+        # surface as an UnboundLocalError that was swallowed with no log.
+        @exception_handler(TenantError)
+        def broken(exc, request):
+            raise RuntimeError("handler is broken")
+
+        @use_exception_handlers(broken)
+        @controller("/fail")
+        class FailingController:
+            @get("/")
+            async def index(self) -> dict:
+                raise TenantError("acme")
+
+        @module(controllers=[FailingController])
+        class FailingModule:
+            pass
+
+        log = InMemoryLogger(level=LogLevel.DEBUG)
+        r = TestClient(LaurenFactory.create(FailingModule, logger=log)).get("/fail/")
+        assert r.status_code == 500
+        assert r.header("connection") is None
+        failure = [rec for rec in log.records if rec.extra.get("origin") == "exception_handler"]
+        assert [f.extra["cause"] for f in failure] == ["TenantError"]
+
+    def test_per_route_middleware_resolution_error_reaches_route_handlers(self):
+        class LedgerUnavailable(Exception):
+            pass
+
+        @injectable(scope=Scope.REQUEST)
+        def ledger_connection() -> object:
+            raise LedgerUnavailable("ledger is down")
+
+        @middleware()
+        @injectable(scope=Scope.REQUEST)
+        class LedgerMiddleware:
+            def __init__(self, conn: Depends[ledger_connection]) -> None:
+                self.conn = conn
+
+            async def dispatch(self, request: Request, call_next: CallNext) -> Response:
+                return await call_next(request)
+
+        @exception_handler(LedgerUnavailable)
+        def ledger_down(exc, request):
+            return Response.json({"ledger": "down"}, status=503)
+
+        @use_exception_handlers(ledger_down)
+        @use_middlewares(LedgerMiddleware)
+        @controller("/ledger")
+        class LedgerController:
+            @get("/")
+            async def index(self) -> dict:
+                return {"ok": True}
+
+        @module(controllers=[LedgerController], providers=[ledger_connection, LedgerMiddleware])
+        class LedgerModule:
+            pass
+
+        r = TestClient(LaurenFactory.create(LedgerModule)).get("/ledger/")
+        assert r.status_code == 503
+        assert r.json() == {"ledger": "down"}

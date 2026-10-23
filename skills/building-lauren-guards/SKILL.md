@@ -104,6 +104,7 @@ Exception handlers catch typed exceptions and return structured HTTP responses. 
 from lauren import exception_handler
 from lauren.types import Request, Response
 
+# NotFoundError / ConflictError: your own HTTPError subclasses
 @exception_handler(NotFoundError, ConflictError)
 class DomainErrors:
     def __init__(self, log: Logger) -> None:

@@ -81,3 +81,22 @@ jobs:
       - run: pip install nox
       - name: Verify every public symbol appears in llms-full.txt
         run: nox -s llms_check
+
+  docs-contract:
+    name: docs contract (code blocks, claims, facts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install nox
+      # Compiles every fenced python block in llms*.txt, README, docs/ and
+      # skills/, executes the `run` blocks, checks docs_contract.toml claims,
+      # lints llms-full.txt and verifies the generated fact regions.
+      - name: Docs-as-tests
+        run: nox -s docs_contract

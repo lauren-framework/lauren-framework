@@ -7,7 +7,9 @@ pydantic nor msgspec is required at module import time.
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Union, get_args, get_origin, get_type_hints
+from typing import Any, Union, get_args, get_origin
+
+from ._typing import resolve_type_hints
 
 __all__ = [
     "is_pydantic_model",
@@ -228,7 +230,7 @@ def _annotation_to_json_schema(annotation: Any) -> dict[str, Any]:  # noqa: PLR0
 
 
 def _schema_from_dataclass(tp: Any) -> dict[str, Any]:
-    hints = get_type_hints(tp)
+    hints = resolve_type_hints(tp, include_extras=False)
     required: list[str] = []
     properties: dict[str, Any] = {}
     for f in dataclasses.fields(tp):
@@ -242,7 +244,7 @@ def _schema_from_dataclass(tp: Any) -> dict[str, Any]:
 
 
 def _schema_from_typeddict(tp: Any) -> dict[str, Any]:
-    hints = get_type_hints(tp)
+    hints = resolve_type_hints(tp, include_extras=False)
     required_keys: frozenset[str] = getattr(tp, "__required_keys__", frozenset())
     properties = {k: _annotation_to_json_schema(v) for k, v in hints.items()}
     schema: dict[str, Any] = {"type": "object", "properties": properties}

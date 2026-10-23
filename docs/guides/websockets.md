@@ -266,10 +266,13 @@ WebSocket close codes in the **4000–4999** range are reserved for application-
 
 ## Broadcasting and rooms
 
-`BroadcastGroup` is a DI-injectable provider that maintains named sets of subscribers. It's the substrate for chat rooms, presence, real-time dashboards, and any other "fan-out a message to N connections" pattern.
+`BroadcastGroup` maintains named sets of subscribers. It's the substrate for chat rooms, presence, real-time dashboards, and any other "fan-out a message to N connections" pattern. It is not registered by default and is not `@injectable` itself: declare one shared subclass with `@injectable(provides=[BroadcastGroup])` and list it in `providers=`; gateways then inject `BroadcastGroup`.
 
 ```python
-from lauren import BroadcastGroup
+from lauren import BroadcastGroup, injectable
+
+@injectable(provides=[BroadcastGroup])     # one shared registry (singleton)
+class Rooms(BroadcastGroup): ...
 
 @ws_controller("/chat/{room_id}")
 class ChatGateway:
@@ -298,8 +301,8 @@ class ChatGateway:
 
     @on_disconnect
     async def left(self, ws: WebSocket) -> None:
-        # The framework auto-calls ``unsubscribe_all`` on disconnect, but
-        # explicit announcements (e.g. a "user left" broadcast) belong here.
+        # Nothing unsubscribes ``ws`` for you — do it here, then announce.
+        await self._rooms.unsubscribe_all(ws)
         room_id = ws.path_params.get("room_id")
         if room_id:
             await self._rooms.broadcast(
@@ -309,7 +312,7 @@ class ChatGateway:
 
 @module(
     controllers=[ChatGateway],
-    providers=[BroadcastGroup],
+    providers=[Rooms],
 )
 class AppModule:
     pass
@@ -321,7 +324,7 @@ class AppModule:
 |---|---|
 | `await group.subscribe(name, ws)` | Add `ws` to `name`. Idempotent. |
 | `await group.unsubscribe(name, ws)` | Remove. Safe even if not a member. |
-| `await group.unsubscribe_all(ws)` | Remove from every group. Auto-called on disconnect. |
+| `await group.unsubscribe_all(ws)` | Remove from every group. Call it from `@on_disconnect` — the runtime does not. |
 | `await group.broadcast(name, msg, *, as_bytes=False, exclude=None)` | Send to every subscriber. Returns the count of frames actually sent. Detects and prunes dead sockets automatically. |
 | `group.groups()` | List active group names. |
 | `group.member_count(name)` | Count subscribers in a group. |
@@ -666,9 +669,18 @@ All three patterns produce the same client-visible close code. Mixing `close()` 
 
 ## Guards & Interceptors
 
-`@use_guards` and `@use_interceptors` attach to `@ws_controller` classes exactly
-as they do to HTTP `@controller` classes. The WS runtime runs the guard chain
-*before* accepting the connection — rejected clients never complete the handshake.
+`@use_guards` and `@use_interceptors` work on gateways at two levels, and *when*
+they run depends on where they are declared:
+
+| Declared on | Guards run | Interceptors wrap |
+|---|---|---|
+| `global_ws_guards` / `global_ws_interceptors` | once, before accepting the connection | `@on_connect` |
+| the `@ws_controller` class | once, before accepting the connection | `@on_connect` |
+| the `@on_connect` method | once, after the global and class guards | `@on_connect`, inside the class-level ones |
+| an `@on_message` method | **for every frame** routed to that handler | only that handler |
+
+Connection-level guards run *before* accepting the connection — rejected
+clients never complete the handshake (close code `1008`).
 
 ```python
 from lauren import (
@@ -699,6 +711,83 @@ Apply guards across every gateway in the application with `global_ws_guards`:
 app = LaurenFactory.create(AppModule, global_ws_guards=[TokenGuard])
 ```
 
+Guard and interceptor classes are registered with the DI container
+automatically, exactly like HTTP route guards — they do not need to be listed in
+a module's `providers`.
+
+### Per-message guards and interceptors
+
+Protect a privileged event by decorating its handler. The guard runs for every
+frame routed to the handler, after the payload has been validated, and receives
+a `WsMessageContext` — a `WsConnectionContext` plus the frame's `event`, the
+validated `payload`, the handler in `handler_func`, and the class and method
+`@set_metadata` merged (the method wins):
+
+```python
+from dataclasses import dataclass
+
+from lauren import (
+    CallHandler, Json, WebSocket, WsMessageContext,
+    on_message, set_metadata, use_guards, use_interceptors, ws_controller,
+)
+
+@dataclass
+class Kick:
+    user_id: str
+
+class ModeratorOnly:
+    async def can_activate(self, ctx: WsMessageContext) -> bool:
+        return ctx.connection.state.get("role") == ctx.get_metadata("role")
+
+class Audit:
+    async def intercept(self, ctx: WsMessageContext, call_handler: CallHandler):
+        result = await call_handler.handle()   # the handler's raw return value
+        print("audited", ctx.event, ctx.payload)
+        return result
+
+@ws_controller("/room/{room_id}")
+class RoomGateway:
+    @on_message("room.kick")
+    @use_guards(ModeratorOnly)
+    @use_interceptors(Audit)
+    @set_metadata("role", "moderator")
+    async def kick(self, ws: WebSocket, body: Json[Kick]) -> None: ...
+```
+
+Per frame, the order is: payload validation → the handler's guards → its
+interceptors (outermost first) → the handler. A guard that returns `False`
+answers with an error frame and the handler does **not** run; the connection
+stays open, exactly like a validation error:
+
+```json
+{"error": {"code": "forbidden", "message": "guard ModeratorOnly denied the message",
+           "detail": {"guard": "ModeratorOnly", "event": "room.kick"}}}
+```
+
+A guard may raise an `HTTPError` (for example `UnauthorizedError("token expired")`)
+to answer with that error's envelope instead. Any other exception is treated
+like a handler error (`@on_error`, or an `internal error` frame) — the handler
+still does not run. Unlike HTTP, a WS interceptor's `call_handler.handle()`
+returns the handler's raw return value: a WebSocket has no `Response`.
+
+### What is rejected at startup
+
+Placements that WebSockets cannot honour fail `LaurenFactory.create` instead of
+being silently ignored:
+
+| Declaration | Error |
+|---|---|
+| `@use_middlewares` on any hook method — frames have no middleware chain | `MiddlewareConfigError` |
+| `@use_guards` on `@on_disconnect` / `@on_error` | `GuardConfigError` |
+| `@use_interceptors` on `@on_disconnect` / `@on_error` | `InterceptorConfigError` |
+| `@use_exception_handlers` on any hook method — handle WS errors in `@on_error` | `ExceptionHandlerConfigError` |
+| `@use_encoder` on any hook method — frames use the app `json_encoder` | `DecoratorUsageError` |
+| `@use_guards` / `@use_interceptors` / `@use_middlewares` on a Socket.IO `@on_socketio_event` handler | `GuardConfigError` / `InterceptorConfigError` / `MiddlewareConfigError` (at class decoration) |
+
+Class-level `@use_middlewares` on a gateway logs a startup warning; it is stored for introspection
+(`reflect_middlewares`) and never runs — use guards and interceptors for
+WebSocket cross-cutting concerns.
+
 See [Custom Guards → WebSocket gateways](custom-guards.md#guards-on-websocket-gateways)
 for the full pattern including interceptors, metadata access, and testing.
 
@@ -715,5 +804,5 @@ for the full pattern including interceptors, metadata access, and testing.
 * [Server-Sent Events](server-sent-events.md) — for one-way push when you don't need bidirectional traffic.
 * [Signals & Lifecycle Events](signals.md) — `SignalBus` and the `ContextVar` routing pattern shown in the real-world example above.
 * [Class Inheritance Rules](../core-concepts/inheritance.md) — why subclassing a `@ws_controller` doesn't auto-mount.
-* [Custom Guards](custom-guards.md) — `@use_guards` works natively on `@ws_controller` classes; guards run before `@on_connect` with a `WsConnectionContext` that duck-types with `ExecutionContext`. The manual `@on_connect` close pattern is still available for inline one-off checks.
-* [Reference → Error Catalog](../reference/errors.md) — all 28 framework error classes.
+* [Custom Guards](custom-guards.md) — `@use_guards` works natively on `@ws_controller` classes (checked before `@on_connect` with a `WsConnectionContext` that duck-types with `ExecutionContext`) and on `@on_message` handlers (checked per frame with a `WsMessageContext`). The manual `@on_connect` close pattern is still available for inline one-off checks.
+* [Reference → Error Catalog](../reference/errors.md) — every framework error class.

@@ -142,6 +142,7 @@ The dataclass is **frozen** because event values flow through asyncio queues and
 
 Network intermediaries (load balancers, reverse proxies, mobile radios) frequently kill idle connections after 30–60 seconds. Pass `keep_alive=N` (seconds) to make `EventStream` emit a comment frame every `N` seconds when the producer has nothing to send:
 
+<!-- docs-contract: fragment -->
 ```python
 return EventStream(producer(), keep_alive=15.0)
 ```
@@ -202,6 +203,7 @@ async def producer():
 
 For an explicit "end of stream" signal that the browser will respect (no automatic reconnect), the conventional pattern is to send a sentinel event the client knows to handle:
 
+<!-- docs-contract: fragment -->
 ```python
 yield ServerSentEvent(event="end", data={"final": True})
 ```
@@ -389,6 +391,7 @@ async def time(self) -> EventStream:
 
 * **No HTTP error codes mid-stream.** Once the response headers are sent (status 200), the protocol is committed. Detect failure conditions in the *producer* and emit an error-event the client will handle:
 
+  <!-- docs-contract: fragment -->
   ```python
   try:
       ...

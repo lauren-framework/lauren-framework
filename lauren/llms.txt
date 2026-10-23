@@ -19,8 +19,8 @@ pip install "lauren[full]"          # pydantic + msgspec
 - **Dependency Injection** with `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes, Protocol binding, multi-bindings (`list[T]` injection), circular detection, scope-violation checks, the four NestJS-style custom-provider recipes (`use_value`, `use_class`, `use_factory`, `use_existing`) plus `Token` and `Inject`, and **generator function providers** (FastAPI-style lifecycle: code before `yield` = setup, yielded value = dependency, code after `yield` = teardown — scoped to `SINGLETON` or `REQUEST`).
 - **Extractor system** for typed request decomposition (`Path[int]`, `Query[str]`, `Header[str]`, `Cookie[str]`, `Json[Model]`, `Form[Model]`, `Bytes`, `ByteStream`, `UploadFile`, `State`, `Depends[T]`), model extraction for Pydantic / `msgspec.Struct` / Python `dataclass` / `TypedDict` types, **pydantic-free discriminated unions** via `Discriminated[A | B, "key"]`, plus user-defined extractors via an `ExtractionMarker.extract` instance method (legacy classmethod form still supported).
 - **Module system** with explicit imports/exports and circular-import detection (NestJS-style).
-- **Lifecycle hooks** (`@post_construct`, `@pre_destruct`) run in topological order with timeouts. Both sync and async hooks are supported; sync hooks run in a thread pool so they never block the event loop and are subject to the same timeout enforcement as async ones.
-- **First-class WebSockets** — `@ws_controller(path)`, `@on_connect`, `@on_message("event")`, `@on_disconnect`, `@on_error`, with typed validated frames, discriminated-union dispatch (`Discriminated[A | B, "key"]`), `BroadcastGroup` rooms, and native `@use_guards` / `@use_interceptors` support via `lauren.reflect` (guards run before `@on_connect` with `WsConnectionContext` that duck-types with `ExecutionContext`).
+- **Lifecycle hooks** (`@post_construct`, `@pre_destruct`) run in topological order (at `startup()` / shutdown). Both sync and async hooks are supported; `@pre_destruct` hooks have a per-hook timeout and sync ones run in a thread pool so they never block the event loop.
+- **First-class WebSockets** — `@ws_controller(path)`, `@on_connect`, `@on_message("event")`, `@on_disconnect`, `@on_error`, with typed validated frames, discriminated-union dispatch (`Discriminated[A | B, "key"]`), `BroadcastGroup` rooms, and native `@use_guards` / `@use_interceptors`: on the gateway class they run once before `@on_connect` (`WsConnectionContext`, duck-types with `ExecutionContext`); on an `@on_message` handler they run for every frame (`WsMessageContext`). Placements WebSockets cannot honour are rejected at startup.
 - **Server-Sent Events** — `EventStream`, `ServerSentEvent`, `last_event_id`. Per the HTML living standard. Optional keep-alive heartbeats.
 - **Typed streaming** — `StreamingResponse[T]` content-negotiates between SSE / NDJSON / JSON Lines from the `Accept` header, including non-Pydantic item types.
 - **Response shaping** — `Response.file(...)`, `Response.xml(...)`, immutable `with_*` builders, and custom `Response` subclasses that pass through dispatch unchanged while preserving their concrete type.
@@ -41,40 +41,42 @@ pip install "lauren[full]"          # pydantic + msgspec
 - **Signals & lifecycle events** — `SignalBus` with `StartupBegin`, `StartupComplete`, `ShutdownBegin`, `RequestReceived`, `RequestComplete`, `BackgroundTaskStarted`, `BackgroundTaskComplete`, `BackgroundTaskFailed`.
 - **Sub-application mounting** — `app.mount("/prefix", sub_app)` for composing multiple Lauren or ASGI apps.
 - **Sessions** — first-class signed-cookie sessions via `LaurenFactory.create(..., sessions=SessionConfig(...))`. A mutable `session: Session` is injected into handlers at zero per-request reflection cost; pluggable async `SessionStore` (`InMemorySessionStore`, stateless `SignedCookieSessionStore`, or a Redis impl). HMAC-signed, `HttpOnly`/`Secure`/`SameSite=Lax` by default, with `regenerate_id()` (fixation defence) and `invalidate()` (logout). Unsafe configs are rejected at startup.
-- **Static file serving** — `StaticFilesModule.for_root("/assets", directory="./public")` as a feature module.
-- **Background tasks** — `BackgroundTasks` for fire-and-forget work after response, with `TaskHandle` for cancellation and result tracking.
-- **28-class error catalog** with stable `code` strings; consistent `{error: {code, message, detail}}` envelope.
+- **Content-type policy** — `ContentConfig(strict_content_type=True)` rejects non-JSON `Content-Type`s on JSON body parameters with 415 (session apps default to `"warn"`).
+- **Static file serving** — `StaticFilesModule.for_root("/assets", directory="./public")` as a feature module; dotfiles hidden by default (`dotfiles=`).
+- **Background tasks** — `BackgroundTasks` for fire-and-forget work after the response; `add_task` returns a `TaskHandle` (`status`, `done`, `cancel()` for tasks that have not started, `await result()` from another coroutine).
+- **Closed error catalog** with stable `code` strings; consistent `{error: {code, message, detail}}` envelope (or RFC 7807 with `error_format="rfc7807"`).
 - **Pydantic-optional core** — `lauren/_validation.py` centralises all struct-type detection (`is_pydantic_model`, `is_msgspec_struct`, `is_dataclass`, `is_typeddict`) and the `validate_as(tp, data, *, field)` dispatcher. Every validation failure raises `ExtractorError`; callers never see library-specific exception types.
 
 ## LaurenFactory.create() parameters
 
-`LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None)`
+`LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None)`
 
 See [full reference](llms-full.txt) for complete parameter documentation.
 
 ## Companion packages
 
-- **lauren-middlewares** — CORS, rate limit, GZip, security headers, request id, trusted hosts, request log, HTTPS redirect, body size limit, timeout. Each as a factory function returning a `@middleware`-decorated class.
+- **lauren-middlewares** — CORS, rate limit, GZip, security headers, request id, trusted hosts, request log, HTTPS redirect, body size limit, timeout. Each as a factory function returning a `@middleware()`-decorated class.
 - **lauren-logging** — Configurable logging module modelled after NestJS's `LoggerModule.forRoot`. Processor pipeline, contextvars binding, request-logging middleware, pluggable backends (stdlib, structlog, console, file, fan-out, queue, …).
 - **lauren-guards** — Authentication and authorization guards: `bearer_token`, `jwt_bearer`, `api_key`, `basic_auth`, `oauth2_introspection`, `session_cookie`, `require_authenticated`, `require_roles`, `require_scopes`, `csrf`, `ip_allowlist`.
 
 ## Documentation for LLMs
 
+- [Docs MCP server](https://lauren-py.dev/mcp): `https://lauren-py.dev/api/mcp` (Streamable HTTP, read-only) — tools `search_docs`, `get_doc`, `list_docs`, `get_reference`.
 - [Full reference](llms-full.txt): complete API surface, all decorators, extractors, response factories, types, errors, and examples — including WebSocket gateways, SSE, structured streaming, custom providers, custom responses, and exception handlers.
 
 ## Examples
 
-- [Quickstart](#quickstart): routing + DI + extractors in 20 lines.
-- [WebSocket gateways](#websockets): `@ws_controller`, `@on_message`, broadcast.
-- [Server-Sent Events](#sse): `EventStream` with keep-alive and resumability.
-- [Typed streaming](#streaming): `StreamingResponse[T]` with content negotiation.
-- [Custom providers](#custom-providers): `use_value` / `use_class` / `use_factory` / `use_existing`.
-- [Custom extractors](#custom-extractors): creating domain extractors like `CurrentUser`.
-- [Custom responses](#response): subclassing `Response`, file downloads, XML output.
-- [Guards & middleware](#guards-middleware): applying authorization at class or route level.
-- [Exception handlers](#exception-handlers): typed error → response mapping.
-- [Interceptors](#interceptors): timing, caching, response transforms via `CallHandler`.
-- [Pipes](#pipes): parameter-level transforms and validation.
-- [Sub-application mounting](#mounting): composing multiple ASGI apps.
-- [Background tasks](#background-tasks): fire-and-forget work after response.
-- [Sessions](#sessions): signed-cookie sessions with `session: Session` injection and a pluggable store.
+- [Quickstart](llms-full.txt#minimal-example): routing + DI + extractors in 20 lines.
+- [WebSocket gateways](llms-full.txt#websockets): `@ws_controller`, `@on_message`, broadcast.
+- [Server-Sent Events](llms-full.txt#server-sent-events-eventstream): `EventStream` with keep-alive and resumability.
+- [Typed streaming](llms-full.txt#typed-streaming): `StreamingResponse[T]` with content negotiation.
+- [Custom providers](llms-full.txt#custom-providers): `use_value` / `use_class` / `use_factory` / `use_existing`.
+- [Custom extractors](llms-full.txt#custom-extractors-plugin-api): creating domain extractors like `CurrentUser`.
+- [Responses](llms-full.txt#types-request--response--state--headers): subclassing `Response`, file downloads, XML output.
+- [Guards & middleware](llms-full.txt#guards--middleware): applying authorization at class or route level.
+- [Exception handlers](llms-full.txt#exception-handlers): typed error → response mapping.
+- [Interceptors](llms-full.txt#interceptors): timing, caching, response transforms via `CallHandler`.
+- [Pipes](llms-full.txt#pipes): parameter-level transforms and validation.
+- [Sub-application mounting](llms-full.txt#mounting-sub-applications): composing multiple ASGI apps.
+- [Background tasks](llms-full.txt#background-tasks): fire-and-forget work after response.
+- [Sessions](llms-full.txt#sessions): signed-cookie sessions with `session: Session` injection and a pluggable store.

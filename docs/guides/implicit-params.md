@@ -273,9 +273,9 @@ from lauren import Path, Query, Json, Header
 async def update(
     self,
     item_id: Path[int],       # explicit path — same as implicit here
-    page: Query[int] = 1,     # explicit query
     body: Json[CreateItem],   # explicit body
     token: Header[str],       # explicit header — can't be implicit
+    page: Query[int] = 1,     # explicit query (defaults go last, as in any Python signature)
 ) -> dict: ...
 ```
 

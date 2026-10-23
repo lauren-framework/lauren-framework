@@ -12,6 +12,7 @@ import pytest
 
 from lauren import (
     InMemorySessionStore,
+    Json,
     LaurenFactory,
     Request,
     Session,
@@ -22,6 +23,7 @@ from lauren import (
     get,
     module,
     post,
+    put,
 )
 from lauren.exceptions import SessionConfigError
 from lauren.testing import TestClient, TestResponse
@@ -325,3 +327,201 @@ class TestStartupValidation:
     def test_plain_app_without_sessions_is_fine(self):
         client = TestClient(LaurenFactory.create(PlainModule))
         assert client.get("/no-session/").json() == {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# A failing store is rendered through the error pipeline (D01). The session
+# engine is a global middleware, so a store outage used to surface as a bare
+# 500 with ``Connection: close`` and no log.
+# ---------------------------------------------------------------------------
+
+
+class FlakyStore(InMemorySessionStore):
+    """An in-memory store whose ``load`` can be switched into an outage."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.down = False
+
+    async def load(self, session_id: str):
+        if self.down:
+            raise ConnectionError("session backend unavailable")
+        return await super().load(session_id)
+
+
+class TestStoreOutage:
+    def test_store_failure_is_logged_and_rendered_as_internal_error(self):
+        from lauren.logging import InMemoryLogger, LogLevel
+
+        store = FlakyStore()
+        log = InMemoryLogger(level=LogLevel.DEBUG)
+        client = TestClient(
+            LaurenFactory.create(
+                SessionModule,
+                sessions=SessionConfig(secret="x" * 32, store=store),
+                logger=log,
+            )
+        )
+        cookie = _cookie(client.get("/session/visits"))
+        assert cookie
+
+        store.down = True
+        r = client.get("/session/visits", cookies={COOKIE: cookie})
+        assert r.status_code == 500
+        assert r.json()["error"]["code"] == "internal_error"
+        assert r.json()["error"]["detail"] == {"type": "ConnectionError"}
+        assert r.header("connection") is None
+        logged = [
+            rec
+            for rec in log.records
+            if rec.extra.get("error") == "ConnectionError" and "origin" in rec.extra
+        ]
+        assert len(logged) == 1
+        assert logged[0].extra["origin"] == "global middleware _SessionEngine"
+
+
+# ---------------------------------------------------------------------------
+# Content-type posture for cookie-authenticated JSON routes (D03 §5.3). A
+# cross-site HTML form or ``no-cors`` fetch can POST ``text/plain`` without a
+# preflight and the browser attaches the session cookie, so session apps get
+# "warn" by default and a startup warning until they choose a policy.
+# ---------------------------------------------------------------------------
+
+
+@controller("/profile")
+class ProfileController:
+    @post("/")
+    async def update(self, session: Session, body: Json[dict]) -> dict:
+        session["profile"] = body
+        return {"ok": True}
+
+
+@module(controllers=[ProfileController])
+class ProfileModule:
+    pass
+
+
+def _profile_app(log, **kwargs) -> TestClient:
+    return TestClient(
+        LaurenFactory.create(
+            ProfileModule,
+            sessions=SessionConfig(secret="x" * 32),
+            logger=log,
+            **kwargs,
+        )
+    )
+
+
+def _startup_warnings(log) -> list:
+    return [r for r in log.records if r.context == "LaurenFactory" and "cross-site" in r.message]
+
+
+class TestContentTypePosture:
+    def test_text_plain_json_is_accepted_and_warned_once_by_default(self):
+        from lauren.logging import InMemoryLogger, LogLevel
+
+        log = InMemoryLogger(level=LogLevel.DEBUG)
+        client = _profile_app(log)
+
+        first = client.post("/profile/", content=b'{"name": "eve"}', headers={"content-type": "text/plain"})
+        second = client.post("/profile/", content=b'{"name": "eve"}', headers={"content-type": "text/plain"})
+
+        assert (first.status_code, second.status_code) == (200, 200)
+        warned = [r for r in log.records if r.context == "ContentPolicy"]
+        assert len(warned) == 1
+        assert warned[0].level == LogLevel.WARN
+        assert warned[0].extra["content_type"] == "text/plain"
+
+    def test_startup_warns_about_state_changing_json_routes(self):
+        from lauren.logging import InMemoryLogger, LogLevel
+
+        log = InMemoryLogger(level=LogLevel.DEBUG)
+        _profile_app(log)
+
+        warnings = _startup_warnings(log)
+        assert len(warnings) == 1
+        assert warnings[0].level == LogLevel.WARN
+        assert warnings[0].extra["routes"] == ["POST /profile"]
+        assert "strict_content_type=True" in warnings[0].message
+
+    @pytest.mark.parametrize("strict", [True, False, "warn"])
+    def test_explicit_policy_silences_the_startup_warning(self, strict):
+        from lauren import ContentConfig
+        from lauren.logging import InMemoryLogger, LogLevel
+
+        log = InMemoryLogger(level=LogLevel.DEBUG)
+        _profile_app(log, content=ContentConfig(strict_content_type=strict))
+
+        assert _startup_warnings(log) == []
+
+    def test_no_startup_warning_without_json_write_routes(self):
+        from lauren.logging import InMemoryLogger, LogLevel
+
+        log = InMemoryLogger(level=LogLevel.DEBUG)
+        LaurenFactory.create(SessionModule, sessions=SessionConfig(secret="x" * 32), logger=log)
+
+        assert _startup_warnings(log) == []
+
+    def test_strict_mode_rejects_cross_site_simple_requests(self):
+        from lauren import ContentConfig
+        from lauren.logging import InMemoryLogger, LogLevel
+
+        log = InMemoryLogger(level=LogLevel.DEBUG)
+        client = _profile_app(log, content=ContentConfig(strict_content_type=True))
+
+        forged = client.post("/profile/", content=b'{"name": "eve"}', headers={"content-type": "text/plain"})
+        genuine = client.post("/profile/", json={"name": "alice"})
+
+        assert forged.status_code == 415
+        assert forged.json()["error"]["code"] == "unsupported_media_type"
+        assert forged.header("set-cookie") is None
+        assert genuine.status_code == 200
+
+    def test_explicit_false_disables_the_check(self):
+        from lauren import ContentConfig
+        from lauren.logging import InMemoryLogger, LogLevel
+
+        log = InMemoryLogger(level=LogLevel.DEBUG)
+        client = _profile_app(log, content=ContentConfig(strict_content_type=False))
+
+        response = client.post("/profile/", content=b"{}", headers={"content-type": "text/plain"})
+
+        assert response.status_code == 200
+        assert [r for r in log.records if r.context == "ContentPolicy"] == []
+
+    def test_startup_warning_reaches_stdlib_logging_without_a_logger(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="lauren"):
+            LaurenFactory.create(ProfileModule, sessions=SessionConfig(secret="x" * 32))
+
+        assert [r.levelno for r in caplog.records if "cross-site" in r.getMessage()] == [logging.WARNING]
+
+
+@controller("/settings")
+class SettingsWriteController:
+    @post("/")
+    async def create(self, session: Session, body: Json[dict]) -> dict:
+        return {"ok": True}
+
+    @put("/")
+    async def replace(self, session: Session, body: Json[dict]) -> dict:
+        return {"ok": True}
+
+
+@module(controllers=[SettingsWriteController])
+class SettingsWriteModule:
+    pass
+
+
+class TestStartupWarningScope:
+    def test_only_post_routes_are_reported(self):
+        # Cross-site "simple" requests can only POST a body; PUT/PATCH/DELETE
+        # need a CORS preflight, so they are not part of the warning.
+        from lauren.logging import InMemoryLogger, LogLevel
+
+        log = InMemoryLogger(level=LogLevel.DEBUG)
+        LaurenFactory.create(SettingsWriteModule, sessions=SessionConfig(secret="x" * 32), logger=log)
+
+        (warning,) = _startup_warnings(log)
+        assert warning.extra["routes"] == ["POST /settings"]

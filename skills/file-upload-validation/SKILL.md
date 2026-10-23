@@ -57,7 +57,12 @@ class FileValidator:
 
 ```python
 from lauren import controller, post, module, Bytes
-from lauren.exceptions import BadRequestError
+from lauren.exceptions import HTTPError
+
+
+class BadRequestError(HTTPError):     # lauren ships no generic 400 class — define one
+    status_code = 400
+    code = "bad_request"
 
 @controller("/upload")
 class FileUploadController:
@@ -81,7 +86,7 @@ class FileUploadModule:
 Add a `scan(data: bytes) -> bool` method to `FileValidator` backed by ClamAV
 or a cloud scanning API:
 
-```python
+```python fragment
 def scan(self, data: bytes) -> bool:
     # Production: submit data to ClamAV socket or REST API
     # Return False if a threat is detected

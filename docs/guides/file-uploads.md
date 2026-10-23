@@ -75,35 +75,35 @@ curl -F "photos=@img1.jpg" -F "photos=@img2.jpg" localhost:8000/files/gallery
 
 ## Mixed form: files + text fields
 
-Combine `UploadFile` with `Form[T]` for forms that carry both metadata and file
-content:
+!!! warning "`Form[T]` does not read multipart bodies yet"
+    `Form[T]` parses `application/x-www-form-urlencoded` bodies only. In a
+    `multipart/form-data` request it does not see the parts (a model fails
+    validation with 422; a `Form[str]` receives the raw multipart framing).
+
+Read the text fields of a multipart form through `UploadFile` parameters too — a
+text part arrives as an `UploadFile` whose `filename` is `None`:
 
 ```python
-from pydantic import BaseModel
-from lauren import Form, UploadFile, controller, post
-
-class UploadMeta(BaseModel):
-    title: str
-    description: str = ""
+from lauren import UploadFile, controller, post
 
 @controller("/documents")
 class DocumentsController:
     @post("/")
     async def create(
         self,
-        meta: Form[UploadMeta],
-        file: UploadFile,
+        title: UploadFile,          # the text field "title"
+        file: UploadFile,           # the file field "file"
     ) -> dict:
         content = await file.read()
         return {
-            "title": meta.title,
+            "title": (await title.read()).decode(),
             "filename": file.filename,
             "size": len(content),
         }
 ```
 
-The multipart body is parsed **once** per request and shared across all parameters,
-regardless of how many `UploadFile` or `Form[T]` parameters the handler declares.
+The multipart body is parsed **once** per request and shared across all
+`UploadFile` parameters, however many the handler declares.
 
 ---
 
@@ -115,13 +115,13 @@ Use `| None` with a default of `None` to make the file optional:
 @post("/profile")
 async def update_profile(
     self,
-    name: Form[str],
+    name: UploadFile,                       # text field of the multipart form
     avatar: UploadFile | None = None,
 ) -> dict:
     if avatar is not None:
         data = await avatar.read()
         # persist avatar...
-    return {"name": name, "has_avatar": avatar is not None}
+    return {"name": (await name.read()).decode(), "has_avatar": avatar is not None}
 ```
 
 ---
@@ -140,13 +140,13 @@ escaping or transliteration.
 handler or with a pipe:
 
 ```python
-from lauren.exceptions import UnprocessableEntityError
+from lauren.exceptions import ExtractorFieldError
 
 @post("/images")
 async def upload_image(self, image: UploadFile) -> dict:
     allowed = {"image/jpeg", "image/png", "image/webp"}
     if image.content_type not in allowed:
-        raise UnprocessableEntityError(
+        raise ExtractorFieldError(                      # built-in 422
             "unsupported image type",
             detail={"content_type": image.content_type, "allowed": list(allowed)},
         )
@@ -164,8 +164,9 @@ consider:
 * **Streaming writes** — `await file.read()` returns the full bytes, then write to
   disk or cloud storage.
 * **Body size limits** — configure `LaurenFactory.create(..., max_body_size=N)` to
-  reject oversized requests with a `413 Request Body Too Large` before the handler
-  even runs.
+  reject oversized requests before the handler runs. Today an oversize upload is
+  answered with a 422 `extractor_error` (only a `ByteStream` body answers 413
+  `request_body_too_large`).
 
 ```python
 app = LaurenFactory.create(

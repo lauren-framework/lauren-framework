@@ -30,13 +30,30 @@ from __future__ import annotations
 
 import inspect as _inspect
 import json as _jsonlib
+import logging as _stdlib_logging
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterable
 
 from ._di import DIContainer, INJECTABLE_META, InjectableMeta
 from ._routing import Router, RouteEntry
+from .decorators import (
+    SET_METADATA,
+    USE_ENCODER,
+    USE_EXCEPTION_HANDLERS,
+    USE_GUARDS,
+    USE_INTERCEPTORS,
+    USE_MIDDLEWARES,
+)
 from .exceptions import (
+    DecoratorUsageError,
+    ExceptionHandlerConfigError,
+    ForbiddenError,
+    GuardConfigError,
+    HTTPError,
+    InterceptorConfigError,
+    LaurenError,
     MetadataInheritanceError,
+    MiddlewareConfigError,
     StartupError,
     UnresolvableParameterError,
 )
@@ -140,6 +157,30 @@ class WsConnectionContext:
         return self.metadata.get(key, default)
 
 
+@dataclass(frozen=True, slots=True)
+class WsMessageContext(WsConnectionContext):
+    """Context passed to method-level guards and interceptors for one inbound frame.
+
+    Extends :class:`WsConnectionContext` with the frame's ``event`` and its
+    validated ``payload``, and populates ``handler_func`` with the
+    ``@on_message`` handler about to run. ``metadata`` merges the gateway's
+    ``@set_metadata`` with the handler's own (the handler wins), mirroring
+    HTTP routes. Guards written for :class:`WsConnectionContext` or
+    :class:`~lauren.types.ExecutionContext` keep working unchanged::
+
+        async def can_activate(self, ctx) -> bool:
+            if isinstance(ctx, WsMessageContext) and ctx.event.startswith("admin."):
+                return ctx.connection.state.get("role") == "admin"
+            return True
+    """
+
+    event: str = ""
+    """The frame's event name (``"__binary__"`` for binary frames)."""
+
+    payload: Any = None
+    """The validated payload the handler will receive (raw ``bytes`` for binary frames)."""
+
+
 # ---------------------------------------------------------------------------
 # Compiled dispatch records. Produced once at startup; consulted at every
 # frame. Immutable so the hot path stays free of locks and reflection.
@@ -174,6 +215,17 @@ class CompiledMessage:
     #: payload. Resolved once at compile time so the dispatcher can
     #: ``kwargs[body_param] = payload`` without extra lookup.
     payload_param: str | None = None
+    #: Guard classes from ``@use_guards`` on the handler method. Checked
+    #: for every frame routed to this handler, after payload validation;
+    #: a denial answers with a ``forbidden`` error frame and skips the
+    #: handler. Gateway-level guards run once, at connect, instead.
+    guards: tuple[type, ...] = ()
+    #: Interceptor classes from ``@use_interceptors`` on the handler
+    #: method, outermost first. They wrap only this handler's invocation.
+    interceptors: tuple[type, ...] = ()
+    #: Gateway ``@set_metadata`` merged with the method's own (method
+    #: wins) — what ``WsMessageContext.get_metadata`` reads.
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -217,6 +269,16 @@ class CompiledGateway:
     #: Passed to :class:`WsConnectionContext` so guards can read it via
     #: ``ctx.get_metadata(key, default)``.
     metadata: dict[str, Any] = field(default_factory=dict)
+    #: Guard classes from ``@use_guards`` on the ``@on_connect`` method.
+    #: Run after the global and gateway-level guards, before accepting.
+    on_connect_guards: tuple[type, ...] = ()
+    #: Interceptor classes from ``@use_interceptors`` on the ``@on_connect``
+    #: method. They sit inside the global and gateway-level interceptors.
+    on_connect_interceptors: tuple[type, ...] = ()
+    #: ``@on_message`` handlers that carry method-level guards or
+    #: interceptors. Invoking one without its frame context is refused
+    #: rather than silently skipping the policy.
+    guarded_handlers: frozenset[Any] = frozenset()
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +319,13 @@ def compile_gateways(
         ctrl_meta = own_ws_controller_meta(cls)
         hooks = discover_ws_hooks(cls)
         owning_module = module_graph.module_for_controller(cls)
+        _reject_unsupported_hook_policies(cls, hooks)
+        class_guards = reflect_guards(cls)
+        class_interceptors = reflect_interceptors(cls)
+        class_metadata = reflect_user_metadata(cls)
+        connect_fn = hooks["on_connect"]
+        connect_guards = tuple(getattr(connect_fn, USE_GUARDS, ()))
+        connect_interceptors = tuple(getattr(connect_fn, USE_INTERCEPTORS, ()))
 
         # Register the gateway as an injectable (REQUEST scope by
         # default — ``@ws_controller`` already sets that) so the
@@ -343,6 +412,9 @@ def compile_gateways(
                 message_meta=meta,
                 payload_adapter=payload_adapter,
                 payload_param=payload_param,
+                guards=tuple(getattr(fn, USE_GUARDS, ())),
+                interceptors=tuple(getattr(fn, USE_INTERCEPTORS, ())),
+                metadata={**class_metadata, **dict(getattr(fn, SET_METADATA, {}))},
             )
             all_metas.append(meta)
             logger.log(
@@ -352,6 +424,25 @@ def compile_gateways(
                 path=entry.path_template,
                 handler=f"{cls.__name__}.{fn.__name__}",
             )
+
+        class_middlewares = reflect_middlewares(cls)
+        if class_middlewares:
+            names = ", ".join(getattr(m, "__name__", repr(m)) for m in class_middlewares)
+            warning = (
+                f"WebSocket gateway {cls.__name__} declares @use_middlewares({names}), but WebSocket "
+                "connections do not run middleware; use @use_guards / @use_interceptors instead "
+                "(the declaration is kept only for reflect_middlewares)"
+            )
+            _stdlib_logging.getLogger("lauren").warning(warning)
+            logger.warn(warning, context="RouterExplorer", gateway=cls.__name__)
+
+        # Guards and interceptors resolve through DI at connect time and
+        # per frame; register them now, as the HTTP compiler does, so a
+        # missing provider fails startup instead of every connection.
+        policy_classes = list(class_guards + class_interceptors + connect_guards + connect_interceptors)
+        for compiled_message in messages.values():
+            policy_classes.extend(compiled_message.guards + compiled_message.interceptors)
+        _register_policy_providers(container, policy_classes)
 
         compiled = CompiledGateway(
             controller_cls=cls,
@@ -371,13 +462,93 @@ def compile_gateways(
             raw_descriptors=dict(hooks.get("raw_descriptors", {})),
             # Cross-cutting concern metadata — read from cls.__dict__ only
             # (own-class rule: no inheritance of guard/interceptor metadata).
-            guards=reflect_guards(cls),
-            interceptors=reflect_interceptors(cls),
-            middlewares=reflect_middlewares(cls),
-            metadata=reflect_user_metadata(cls),
+            guards=class_guards,
+            interceptors=class_interceptors,
+            middlewares=class_middlewares,
+            metadata=class_metadata,
+            on_connect_guards=connect_guards,
+            on_connect_interceptors=connect_interceptors,
+            guarded_handlers=frozenset(m.handler_fn for m in messages.values() if m.guards or m.interceptors)
+            - {hooks["on_connect"], hooks["on_disconnect"], hooks["on_error"]},
         )
         gateways[entry.path_template] = compiled
     return gateways
+
+
+def _reject_unsupported_hook_policies(cls: type, hooks: dict[str, Any]) -> None:
+    """Fail startup for method-level decorators a WebSocket hook cannot honour.
+
+    Frames have no middleware onion, so ``@use_middlewares`` on any hook
+    would never run; ``@on_disconnect`` / ``@on_error`` hooks have no frame
+    to authorize or wrap, so guards and interceptors there would never run
+    either. Exception handlers render HTTP responses and per-handler
+    encoders have no response to encode. Accepting any of them silently
+    would leave a declaration that does nothing — reject them with the
+    gateway and method named instead.
+    """
+    candidates: list[tuple[str, Any]] = [
+        ("on_connect", hooks["on_connect"]),
+        ("on_disconnect", hooks["on_disconnect"]),
+        ("on_error", hooks["on_error"]),
+    ]
+    candidates.extend(("on_message", fn) for _event, fn, _meta in hooks["messages"])
+    for hook, fn in candidates:
+        if fn is None:
+            continue
+        where = f"{cls.__name__}.{fn.__name__}"
+        detail = {"gateway": cls.__name__, "method": fn.__name__, "hook": hook}
+        if getattr(fn, USE_MIDDLEWARES, None):
+            raise MiddlewareConfigError(
+                f"@use_middlewares on WebSocket hook {where} is not supported: WebSocket frames "
+                "have no middleware chain. Use @use_guards to authorize or @use_interceptors to "
+                "wrap the handler instead.",
+                detail=detail,
+            )
+        if getattr(fn, USE_EXCEPTION_HANDLERS, None):
+            raise ExceptionHandlerConfigError(
+                f"@use_exception_handlers on WebSocket hook {where} is not supported: exception "
+                "handlers render HTTP responses. Handle WebSocket errors in an @on_error hook.",
+                detail=detail,
+            )
+        if getattr(fn, USE_ENCODER, None) is not None:
+            raise DecoratorUsageError(
+                f"@use_encoder on WebSocket hook {where} is not supported: WebSocket frames use "
+                "the app encoder (LaurenFactory.create(json_encoder=...)).",
+                detail=detail,
+            )
+        if hook not in ("on_disconnect", "on_error"):
+            continue
+        if getattr(fn, USE_GUARDS, None):
+            raise GuardConfigError(
+                f"@use_guards on @{hook} hook {where} is not supported: there is no frame to "
+                "authorize. Guard the gateway class (checked at connect) or the @on_message "
+                "handlers instead.",
+                detail=detail,
+            )
+        if getattr(fn, USE_INTERCEPTORS, None):
+            raise InterceptorConfigError(
+                f"@use_interceptors on @{hook} hook {where} is not supported: only @on_connect "
+                "and @on_message handlers can be intercepted.",
+                detail=detail,
+            )
+
+
+def _register_policy_providers(container: DIContainer, classes: Iterable[type]) -> None:
+    """Register guard and interceptor classes with the container.
+
+    A class named in ``@use_guards`` / ``@use_interceptors`` is auto-marked
+    ``@injectable`` (singleton) and registered without an owning module —
+    exactly what the HTTP compiler does for route guards.
+    """
+    from ._asgi import _ensure_injectable as _ensure_policy_injectable  # noqa: PLC0415
+
+    registered = {p.cls for p in container.all_providers()}
+    for policy_cls in classes:
+        if policy_cls in registered:
+            continue
+        _ensure_policy_injectable(policy_cls)
+        container.register(policy_cls)
+        registered.add(policy_cls)
 
 
 def _iter_ws_controllers(module_graph: Any) -> Iterable[type]:
@@ -758,6 +929,7 @@ async def handle_websocket(
         extractions: tuple[Extraction, ...],
         *,
         extra_values: dict[str, Any] | None = None,
+        message: tuple[CompiledMessage, str, Any] | None = None,
     ) -> Any:
         """Bind extractor plan → kwargs and invoke one hook.
 
@@ -765,16 +937,35 @@ async def handle_websocket(
         validated payload under the handler's body parameter, bypassing
         the generic extractor pipeline for the JSON frame since the
         payload came from the wire rather than an HTTP body.
+
+        ``message`` — ``(compiled, event, payload)`` — is passed by the
+        frame dispatchers so a handler's method-level guards and
+        interceptors run around it; handlers without any skip straight to
+        the call.
         """
         if fn is None:
             return None
+        if message is not None and (message[0].guards or message[0].interceptors):
+            return await _run_message_chain(*message, extra_values or {})
+        if message is None and fn in gateway.guarded_handlers:
+            raise RuntimeError(
+                f"{getattr(fn, '__qualname__', fn)} has message-level guards or interceptors but was "
+                "invoked without its frame context; refusing to run it unguarded"
+            )
+        return await _call_hook(fn, extractions, extra_values or {})
+
+    async def _call_hook(
+        fn: Callable[..., Any],
+        extractions: tuple[Extraction, ...],
+        extra_values: dict[str, Any],
+    ) -> Any:
         kwargs = await _bind_ws_kwargs(
             ws,
             extractions,
             container,
             request_cache,
             owning_module,
-            extra_values or {},
+            extra_values,
         )
         # Use the descriptor protocol: ``__get__(instance, cls)`` produces
         # the correctly bound callable for every binding style without an
@@ -791,19 +982,85 @@ async def handle_websocket(
             result = await result
         return result
 
+    async def _run_message_chain(
+        compiled: CompiledMessage,
+        event: str,
+        payload: Any,
+        extra_values: dict[str, Any],
+    ) -> Any:
+        """Run one frame through its handler's guards, then interceptors, then the handler.
+
+        A guard returning a falsy value answers with a ``forbidden`` error
+        frame; a guard raising an :class:`HTTPError` answers with that
+        error's envelope. Either way the handler does not run and the
+        connection stays open. Any other exception propagates to the
+        frame loop like a handler error.
+        """
+        msg_ctx = WsMessageContext(
+            request=_ws_ctx.request,
+            connection=ws,
+            handler_class=gateway.controller_cls,
+            handler_func=compiled.handler_fn,
+            route_template=gateway.path_template,
+            metadata=dict(compiled.metadata),
+            event=event,
+            payload=payload,
+        )
+        for guard_cls in compiled.guards:
+            guard = await container.resolve(
+                guard_cls,
+                request_cache=request_cache,
+                framework_values=_fv,
+                owning_module=owning_module,
+            )
+            try:
+                allowed = await guard.can_activate(msg_ctx)
+            except HTTPError as denial:
+                await _emit_error_frame(ws, denial)
+                return None
+            if not allowed:
+                await _emit_error_frame(
+                    ws,
+                    ForbiddenError(
+                        f"guard {guard_cls.__name__} denied the message",
+                        detail={"guard": guard_cls.__name__, "event": event},
+                    ),
+                )
+                return None
+
+        async def _invoke_handler() -> Any:
+            return await _call_hook(compiled.handler_fn, compiled.extractions, extra_values)
+
+        if not compiled.interceptors:
+            return await _invoke_handler()
+        return await apply_interceptors(
+            compiled.interceptors,
+            _invoke_handler,
+            msg_ctx,
+            container=container,
+            request_cache=request_cache,
+            framework_values=_fv,
+            owning_module=owning_module,
+        )
+
     # ---- Guards + @on_connect (+ interceptors) ----
     #
     # Effective chains: global guards run FIRST (same as HTTP), then
-    # class-level guards.  Interceptors follow the same outermost-first
-    # ordering used by the HTTP interceptor chain.
+    # class-level guards, then the ``@on_connect`` method's own guards.
+    # Interceptors follow the same outermost-first ordering used by the
+    # HTTP interceptor chain.
     #
     # Lazy imports here to avoid circular dependency at module load time:
     #   _ws_runtime → reflect._reader → reflect/__init__.py → reflect._context
     #               → _ws_runtime  [cycle!]
     from .reflect._composer import apply_guards, apply_interceptors  # noqa: PLC0415
 
-    _effective_guards: tuple[type, ...] = tuple(global_ws_guards or ()) + gateway.guards
-    _effective_interceptors: tuple[type, ...] = tuple(global_ws_interceptors or ()) + gateway.interceptors
+    _effective_guards: tuple[type, ...] = (
+        tuple(global_ws_guards or ()) + gateway.guards + gateway.on_connect_guards
+    )
+    _effective_interceptors: tuple[type, ...] = (
+        tuple(global_ws_interceptors or ()) + gateway.interceptors + gateway.on_connect_interceptors
+    )
 
     # Build a WsConnectionContext from the upgrade-request data so that
     # guards and interceptors receive the same duck-typed interface as
@@ -837,7 +1094,11 @@ async def handle_websocket(
                 owning_module=owning_module,
             )
             if not _allowed:
-                await send({"type": "websocket.close", "code": 1008})
+                # A guard may already have closed with its own code
+                # (``await ctx.connection.close(4401)``); never send a
+                # second close frame.
+                if ws.connection_state != ws.STATE_CLOSED:
+                    await send({"type": "websocket.close", "code": 1008})
                 await _finalize_scope(container, request_cache)
                 return
 
@@ -1033,6 +1294,7 @@ async def _dispatch_text(
         compiled.handler_fn,
         compiled.extractions,
         extra_values=extra,
+        message=(compiled, event, payload),
     )
 
 
@@ -1056,10 +1318,11 @@ async def _dispatch_binary(
         compiled.handler_fn,
         compiled.extractions,
         extra_values=extra,
+        message=(compiled, BINARY_EVENT, data),
     )
 
 
-async def _emit_error_frame(ws: WebSocket, exc: WebSocketError) -> None:
+async def _emit_error_frame(ws: WebSocket, exc: LaurenError) -> None:
     """Send ``exc`` back to the client using the canonical envelope.
 
     Matches the HTTP error envelope (``{"error": {"code", "message",
@@ -1223,6 +1486,7 @@ class _WsRequestAdapter:
 __all__ = [
     "CompiledGateway",
     "CompiledMessage",
+    "WsMessageContext",
     "compile_gateways",
     "handle_websocket",
     "WILDCARD_EVENT",

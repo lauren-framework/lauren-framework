@@ -32,19 +32,20 @@ See [logging.md](logging.md) for `LoggingConfig` presets, request-log middleware
 
 ```python
 # main.py
-from lauren import Lauren
+from lauren import LaurenFactory
 from app.app_module import AppModule
 
-from lauren_middlewares import CorsMiddleware, RequestIdMiddleware
+from lauren_middlewares import cors, request_id
 from lauren_logging import LoggingModule, LoggingConfig
 
 logging_module, _ = LoggingModule.for_root(LoggingConfig.for_development())
 
-app = Lauren(
+# Middleware factories return configured classes — pass classes, not instances.
+app = LaurenFactory.create(
     AppModule,
     global_middlewares=[
-        CorsMiddleware(allow_origins=["https://myapp.com"]),
-        RequestIdMiddleware(),          # adds X-Request-ID to every response
+        cors(allow_origins=["https://myapp.com"]),
+        request_id(),                   # adds X-Request-ID to every response
     ],
 )
 ```

@@ -208,6 +208,39 @@ class CrashGuard:
             )
 ```
 
+### Raising errors from middleware
+
+A middleware may simply **raise** to reject a request. Any `HTTPError` — raised
+before or after `call_next` — is rendered with its own status and the standard
+error envelope (`error_format` is honoured), whether the middleware is
+registered globally, on a controller, or on a route:
+
+```python
+@middleware()
+class ApiKeyAuth:
+    async def dispatch(self, request, call_next):
+        if request.headers.get("x-api-key") is None:
+            raise UnauthorizedError("api key required")   # → 401 envelope
+        return await call_next(request)
+
+app = LaurenFactory.create(AppModule, global_middlewares=[ApiKeyAuth])
+```
+
+Which [exception handlers](custom-exception-handlers.md) can claim the error
+depends on where the middleware runs:
+
+| Where the exception is raised | Handlers consulted |
+|---|---|
+| Route / controller middleware (`@use_middlewares`), guards, extractors, the handler | route → controller → global |
+| A route/controller middleware that fails to resolve through DI | route → controller → global |
+| **Global** middleware (before or after `call_next`), the session engine | **global only** |
+| An exception handler's own `catch` | none — logged with the error it was handling, then a 500 |
+
+Any other exception becomes a `500 internal_error` envelope and is logged with
+its traceback and the component that raised it (for example
+`origin="global middleware ApiKeyAuth"`). The connection stays usable, and
+`RequestComplete` fires for every request.
+
 ## Middleware vs guards vs exception handlers
 
 A frequent question: which abstraction do I use?

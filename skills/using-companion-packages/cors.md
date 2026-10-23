@@ -9,14 +9,15 @@ pip install lauren-middlewares
 ## Basic setup
 
 ```python
-from lauren import Lauren
+from lauren import LaurenFactory
 from app.app_module import AppModule
-from lauren_middlewares import CorsMiddleware
+from lauren_middlewares import cors
 
-app = Lauren(
+# cors(...) returns a configured middleware *class* — pass the class itself.
+app = LaurenFactory.create(
     AppModule,
     global_middlewares=[
-        CorsMiddleware(
+        cors(
             allow_origins=["https://myapp.com"],
             allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             allow_headers=["Authorization", "Content-Type"],
@@ -30,36 +31,38 @@ app = Lauren(
 ## Development (allow everything)
 
 ```python
-CorsMiddleware(allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+cors(allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 ```
 
 ## Other middlewares available
 
-| Middleware | Purpose |
+Each middleware ships as a factory returning a configured class, plus a
+default-configured class of the same name (`CorsMiddleware = cors()`):
+
+| Factory (default class) | Purpose |
 |---|---|
-| `CorsMiddleware` | CORS preflight + response headers |
-| `RequestIdMiddleware` | Adds `X-Request-ID` header |
-| `SecurityHeadersMiddleware` | CSP, HSTS, X-Frame-Options |
-| `TrustedHostMiddleware` | Blocks requests with invalid `Host` headers |
-| `GZipMiddleware` | Compresses responses above a size threshold |
-| `RateLimitMiddleware` | Token-bucket rate limiting per IP or user |
-| `BodySizeLimitMiddleware` | Rejects oversized request bodies (413) |
-| `TimeoutMiddleware` | Returns 504 if handler exceeds time limit |
-| `HttpsRedirectMiddleware` | Redirects HTTP → HTTPS |
-| `RequestLogMiddleware` | Structured request/response logging |
+| `cors(...)` (`CorsMiddleware`) | CORS preflight + response headers |
+| `request_id(...)` (`RequestIdMiddleware`) | Adds `X-Request-ID` header |
+| `security_headers(...)` (`SecurityHeadersMiddleware`) | CSP, HSTS, X-Frame-Options |
+| `trusted_hosts(...)` (`TrustedHostsMiddleware`) | Blocks requests with invalid `Host` headers |
+| `gzip(...)` (`GZipMiddleware`) | Compresses responses above a size threshold |
+| `rate_limit(...)` (`RateLimitMiddleware`) | Token-bucket rate limiting per IP or user |
+| `body_size_limit(...)` (`BodySizeLimitMiddleware`) | Rejects oversized request bodies (413) |
+| `timeout(...)` (`TimeoutMiddleware`) | Returns 504 if handler exceeds time limit |
+| `https_redirect(...)` (`HttpsRedirectMiddleware`) | Redirects HTTP → HTTPS |
+| `request_log(...)` (`RequestLogMiddleware`) | Structured request/response logging |
 
 ```python
-from lauren_middlewares import (
-    CorsMiddleware, RequestIdMiddleware, SecurityHeadersMiddleware,
-    GZipMiddleware, RateLimitMiddleware,
-)
+from lauren import LaurenFactory
+from lauren_middlewares import cors, gzip, rate_limit, request_id, security_headers
 
-app = Lauren(AppModule, global_middlewares=[
-    CorsMiddleware(allow_origins=["*"]),
-    RequestIdMiddleware(),
-    SecurityHeadersMiddleware(),
-    GZipMiddleware(minimum_size=1000),
-    RateLimitMiddleware(rate=100, per=60),   # 100 requests per minute
+# Each factory returns a configured middleware *class* (pass classes, not instances).
+app = LaurenFactory.create(AppModule, global_middlewares=[
+    cors(allow_origins=["*"]),
+    request_id(),
+    security_headers(),
+    gzip(minimum_size=1000),
+    rate_limit(per_minute=100),              # 100 requests per minute
 ])
 ```
 

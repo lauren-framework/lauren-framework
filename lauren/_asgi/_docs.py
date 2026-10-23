@@ -1,9 +1,12 @@
 """Interactive API documentation endpoints.
 
 Serves Swagger UI, ReDoc, and the raw OpenAPI 3.1 JSON document. The HTML
-assets are loaded from public CDNs so lauren stays dependency-free; callers
-that need offline assets can override the CDN URLs when calling
-:meth:`LaurenFactory.create`.
+assets are loaded from public CDNs (jsDelivr) so lauren stays
+dependency-free; the factory always uses the default URLs. Apps that need
+offline or CSP-restricted docs can serve their own page by calling
+:func:`swagger_ui_html` / :func:`redoc_html` with ``js_url`` / ``css_url``
+from a regular route. The pages use an empty inline favicon, so they make no
+request to a third-party icon host.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ def swagger_ui_html(
   <meta charset="utf-8" />
   <title>{title}</title>
   <link rel="stylesheet" href="{css_url}" />
-  <link rel="icon" type="image/png" href="https://fastapi.tiangolo.com/img/favicon.png" />
+  <link rel="icon" href="data:," />
 </head>
 <body>
   <div id="swagger-ui"></div>

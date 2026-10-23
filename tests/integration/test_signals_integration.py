@@ -30,9 +30,10 @@ from lauren import (
     StartupComplete,
     controller,
     get,
+    middleware,
     module,
 )
-from lauren.exceptions import HTTPError
+from lauren.exceptions import HTTPError, UnauthorizedError
 from lauren.testing import TestClient
 
 
@@ -303,3 +304,48 @@ def test_raising_request_complete_listener_does_not_drop_response_on_error_path(
     app = LaurenFactory.create(_BoomModule, signals=bus)
     resp = TestClient(app).get("/boom/")
     assert resp.status_code == 418
+
+
+# ---------------------------------------------------------------------------
+# Errors raised outside the route boundary still produce RequestComplete (D01)
+# ---------------------------------------------------------------------------
+
+
+@middleware()
+class _DenyAllMiddleware:
+    async def dispatch(self, request, call_next):
+        raise UnauthorizedError("nope")
+
+
+@middleware()
+class _CrashingMiddleware:
+    async def dispatch(self, request, call_next):
+        raise KeyError("crash")
+
+
+def test_request_complete_fires_for_http_error_in_global_middleware() -> None:
+    bus = SignalBus()
+    captured: list[tuple[int, str | None]] = []
+
+    @bus.on(RequestComplete)
+    def on_done(event: RequestComplete) -> None:
+        captured.append((event.status, type(event.error).__name__ if event.error else None))
+
+    app = LaurenFactory.create(_PingModule, signals=bus, global_middlewares=[_DenyAllMiddleware])
+    r = TestClient(app).get("/ping/")
+    assert r.status_code == 401
+    assert captured == [(401, "UnauthorizedError")]
+
+
+def test_request_complete_fires_for_unexpected_error_in_global_middleware() -> None:
+    bus = SignalBus()
+    captured: list[tuple[int, str | None]] = []
+
+    @bus.on(RequestComplete)
+    def on_done(event: RequestComplete) -> None:
+        captured.append((event.status, type(event.error).__name__ if event.error else None))
+
+    app = LaurenFactory.create(_PingModule, signals=bus, global_middlewares=[_CrashingMiddleware])
+    r = TestClient(app).get("/ping/")
+    assert r.status_code == 500
+    assert captured == [(500, "KeyError")]

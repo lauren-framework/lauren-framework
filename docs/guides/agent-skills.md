@@ -187,7 +187,40 @@ Use that range to:
 ```bash
 uv run nox -s docs
 uv run nox -s llms_check
+uv run nox -s docs_contract   # doc code blocks compile, `run` examples execute, claims hold
 ```
+
+## Docs MCP server
+
+The documentation website runs a public, read-only [MCP](https://modelcontextprotocol.io)
+server, so a coding agent can search and read the current Lauren docs instead of
+relying on training data. It speaks Streamable HTTP (JSON responses, no
+authentication) at:
+
+```text
+https://lauren-py.dev/api/mcp
+```
+
+Claude Code:
+
+```bash
+claude mcp add --transport http lauren-docs https://lauren-py.dev/api/mcp
+```
+
+Most other clients (Cursor, Windsurf, VS Code, Gemini CLI, …) take the same URL
+in their MCP settings; copy-paste configurations for each are on
+[lauren-py.dev/mcp](https://lauren-py.dev/mcp). Clients that only speak stdio can
+bridge with `npx -y mcp-remote https://lauren-py.dev/api/mcp`.
+
+| Tool | Use it to |
+|---|---|
+| `search_docs(query, limit?, section?)` | Rank pages and `llms-full.txt` sections for a query (`use_guards`, "websocket guards") |
+| `get_doc(path, heading?)` | Read a page — or one section of it — as Markdown (`guides/websockets`) |
+| `list_docs(section?)` | Browse the table of contents |
+| `get_reference(variant?)` | Fetch `llms-full.txt` (`"full"`, default) or `llms.txt` (`"summary"`) |
+
+Every page and both reference files are also exposed as MCP resources
+(`lauren-docs://docs/<path>`, `lauren-docs://llms-full.txt`).
 
 ## LLM context files
 
@@ -195,7 +228,7 @@ For agents that ingest raw context rather than SKILL.md files:
 
 | File | Purpose |
 |---|---|
-| [`llms.txt`](https://lauren-py.dev/llms.txt) | 2 KB overview — start here |
-| [`llms-full.txt`](https://github.com/lauren-framework/lauren-framework/raw/main/lauren/llms-full.txt) | 25 KB complete API reference |
+| [`llms.txt`](https://lauren-py.dev/llms.txt) | Overview — start here |
+| [`llms-full.txt`](https://github.com/lauren-framework/lauren-framework/raw/main/lauren/llms-full.txt) | Complete API reference |
 | [`AGENTS.md`](https://github.com/lauren-framework/lauren-framework/blob/main/AGENTS.md) | By-task lookup, common errors, definition of done |
 | [`CLAUDE.md`](https://github.com/lauren-framework/lauren-framework/blob/main/CLAUDE.md) | Architecture invariants, pattern selection |

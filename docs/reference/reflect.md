@@ -21,6 +21,10 @@ import lauren.reflect as reflect
 
 ::: lauren.WsConnectionContext
 
+### `WsMessageContext`
+
+::: lauren.WsMessageContext
+
 ### `WsUpgradeRequest`
 
 ::: lauren.WsUpgradeRequest

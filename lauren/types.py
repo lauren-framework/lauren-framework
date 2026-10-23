@@ -12,6 +12,7 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Literal,
     Mapping,
     Protocol,
     TypeVar,
@@ -246,6 +247,34 @@ class ClientInfo:
 class ServerInfo:
     host: str | None
     port: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class ContentConfig:
+    """Application-wide request-body content policy.
+
+    Pass it to ``LaurenFactory.create(..., content=ContentConfig(...))`` (or
+    ``Lauren(content=...)``). ``strict_content_type`` decides what a JSON body
+    parameter — ``Json[T]``, an implicit model body, ``Discriminated[...]`` —
+    does with the request's ``Content-Type`` before any body byte is read:
+
+    * ``True`` — only ``application/json`` and ``application/*+json`` (charset
+      absent or UTF-8) are accepted; anything else, including a body announced
+      by ``Content-Length`` > 0 or ``Transfer-Encoding`` without a
+      ``Content-Type``, is rejected with 415
+      :class:`~lauren.exceptions.UnsupportedMediaTypeError`. This stops
+      cross-site "simple" requests (HTML forms, ``fetch`` in ``no-cors``
+      mode) from reaching cookie-authenticated JSON routes.
+    * ``"warn"`` — the same check, but mismatches are accepted and logged
+      once per route and media type (a bounded number per route), so the
+      impact can be measured before switching to ``True``.
+    * ``False`` — no check.
+    * ``None`` (default) — ``"warn"`` when ``sessions=`` is configured,
+      otherwise ``False``. Setting any explicit value also silences the
+      startup warning session-enabled apps get.
+    """
+
+    strict_content_type: bool | Literal["warn"] | None = None
 
 
 class Request:
@@ -1336,8 +1365,10 @@ def _extract_discriminator_tag(variant: type, key: str) -> str | None:
         if tag_field == key and tag is not None:
             return str(tag)
 
+    from ._typing import resolve_type_hints  # noqa: PLC0415
+
     try:
-        hints = _typing.get_type_hints(variant, include_extras=False)
+        hints = resolve_type_hints(variant, include_extras=False)
     except Exception:
         hints = {}
     ann = hints.get(key)

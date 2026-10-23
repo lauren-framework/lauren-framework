@@ -269,3 +269,55 @@ class TestMixedRejectionStrategies:
                         assert ws._accepted is True
 
         asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# A connect guard that closes with its own code
+# ---------------------------------------------------------------------------
+
+
+class TestGuardClosesItself:
+    def test_guard_close_is_the_only_close_frame(self):
+        # Regression: after a guard closed with 4401 and returned False, the
+        # runtime sent a second close frame (1008).
+        from lauren import use_guards
+
+        class TokenGuard:
+            async def can_activate(self, ctx) -> bool:
+                await ctx.connection.close(code=4401)
+                return False
+
+        @use_guards(TokenGuard)
+        @ws_controller("/guard-closes")
+        class GuardCloses:
+            @on_connect
+            async def connect(self, ws: WebSocket) -> None:
+                await ws.accept()
+
+        @module(controllers=[GuardCloses])
+        class GuardModule:
+            pass
+
+        app = LaurenFactory.create(GuardModule)
+        frames: list[dict] = []
+
+        async def run() -> None:
+            sent_connect = False
+
+            async def receive() -> dict:
+                nonlocal sent_connect
+                if not sent_connect:
+                    sent_connect = True
+                    return {"type": "websocket.connect"}
+                await asyncio.sleep(3600)
+                return {"type": "websocket.disconnect", "code": 1000}
+
+            async def send(message: dict) -> None:
+                frames.append(message)
+
+            scope = {"type": "websocket", "path": "/guard-closes", "headers": [], "query_string": b""}
+            await asyncio.wait_for(app(scope, receive, send), timeout=5)
+
+        asyncio.run(run())
+
+        assert [f.get("code") for f in frames if f["type"] == "websocket.close"] == [4401]

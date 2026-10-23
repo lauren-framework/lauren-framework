@@ -32,7 +32,7 @@ No module registration needed — `BackgroundTasks` is an extractor, not an inje
 
 `add_task` returns a `TaskHandle` you can include in the response:
 
-```python
+```python fragment
 handle = tasks.add_task(process_file, file_id=upload.id)
 return {"job_id": handle.task_id}   # client can poll for status elsewhere
 ```

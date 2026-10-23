@@ -12,6 +12,8 @@ This module provides:
 * **``WsConnectionContext``** — context object passed to guards and interceptors
   during a WebSocket connection upgrade, mirroring
   :class:`~lauren.types.ExecutionContext` for HTTP.
+* **``WsMessageContext``** — its per-frame extension (``event``, ``payload``)
+  passed to guards and interceptors declared on an ``@on_message`` handler.
 * **Composing utilities** — :func:`apply_guards` and :func:`apply_interceptors`
   are used internally by Lauren's WS runtime and are also public for extension
   authors.
@@ -48,7 +50,7 @@ from __future__ import annotations
 
 from ._app_reader import get_all_routes, get_all_ws_gateways, get_route_metadata
 from ._composer import apply_guards, apply_interceptors
-from ._context import WsConnectionContext, WsUpgradeRequest
+from ._context import WsConnectionContext, WsMessageContext, WsUpgradeRequest
 from ._reader import (
     # cross-cutting (v1.6.0)
     ReflectedMeta,
@@ -81,6 +83,7 @@ from ._types import (
 __all__ = [
     # Context types
     "WsConnectionContext",
+    "WsMessageContext",
     "WsUpgradeRequest",
     # Cross-cutting readers
     "reflect_guards",

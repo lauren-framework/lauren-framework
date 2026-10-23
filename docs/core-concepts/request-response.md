@@ -108,6 +108,7 @@ Lauren's `Response` is **immutable**. Every "modify" method returns a *new* inst
 
 ### Factories
 
+<!-- docs-contract: fragment -->
 ```python
 Response.json(data, *, status=200, headers=None, encoder=None)
 Response.text(data, *, status=200, headers=None)

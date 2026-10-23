@@ -132,13 +132,16 @@ class TestTokenBucketLimiter:
         assert limiter.consume("alice") is False
         assert limiter.consume("bob") is True  # bob has its own bucket
 
-    def test_refill_over_time(self) -> None:
-        # Use a very high refill rate; exhaust the bucket, then wait a tiny
-        # bit and verify tokens are refilled.
+    def test_refill_over_time(self, monkeypatch) -> None:
+        # Exhaust the bucket, advance a fake clock, and verify tokens are
+        # refilled. With the real clock, a scheduler pause of over 1 ms
+        # between the first two calls refilled a token and failed the test.
+        clock = [1000.0]
+        monkeypatch.setattr(time, "monotonic", lambda: clock[0])
         limiter = TokenBucketLimiter(capacity=1, refill_rate=1000.0)
         assert limiter.consume("key") is True
         assert limiter.consume("key") is False
-        time.sleep(0.01)  # 10ms → ~10 tokens refilled
+        clock[0] += 0.01  # 10ms → ~10 tokens refilled
         assert limiter.consume("key") is True
 
     def test_tokens_do_not_exceed_capacity(self) -> None:

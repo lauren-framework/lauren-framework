@@ -157,7 +157,7 @@ implementation details stay encapsulated:
 @module(
     providers=[
         use_value(provide=LLMConfig, value=config),  # internal
-        use_factory(provide=Transport, …),            # exported
+        use_factory(provide=Transport, factory=make_transport),  # exported
         AgentRunner,                                  # exported
         _InternalRetryPolicy,                         # NOT exported
     ],

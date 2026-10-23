@@ -27,7 +27,7 @@ All four are ASGI-compatible Python web frameworks supporting Pydantic v2 and Op
 | Custom providers (NestJS-style) | No | Some | Limited | **Yes — `use_value`/`use_class`/`use_factory`/`use_existing`** |
 | Subclass-decoration semantics | Implicit | Implicit | Implicit | **Strict opt-in (`MetadataInheritanceError`)** |
 | Startup-time graph validation | Partial | Partial | Partial | **Full — fails fast on cycles, scopes, ambiguity, missing providers** |
-| Built-in error catalog | No | Limited | Limited | **28 error classes with stable codes** |
+| Built-in error catalog | No | Limited | Limited | **Closed catalog with stable codes** |
 | Structured JSON logging | No (BYO) | No (BYO) | Limited | **Built-in (`ConsoleLogger`/`JsonLogger`/`InMemory`/`Null`)** |
 | Graceful shutdown phases | Lifespan | Limited | Limited | **4-phase: drain → on_shutdown → @pre_destruct → goodbye** |
 | AI-ready docs (`llms.txt`) | No | No | No | **Yes — bundled `llms-full.txt`** |
@@ -192,7 +192,7 @@ Enterprise services don't get the luxury of "fix it on the next deploy". Misconf
 
 * **FastAPI:** very little startup validation. A missing `Depends` lands on the first request.
 * **Litestar / BlackSheep:** more startup checks than FastAPI, but module/visibility violations are not modeled — Litestar's router-include and BlackSheep's namespace approach don't have an `exports=[...]` concept.
-* **Lauren:** seven-phase startup pipeline. Phase failures raise specific `StartupError` subclasses (15 documented kinds), each addressable by a single grep.
+* **Lauren:** seven-phase startup pipeline. Phase failures raise specific `StartupError` subclasses (see the [error catalog](../reference/errors.md)), each addressable by a single grep.
 
 ### 2. Module boundaries for multi-team codebases
 
@@ -221,7 +221,7 @@ Lauren's four-phase shutdown — **drain → `on_shutdown` callbacks → `@pre_d
 
 Enterprise consumers (other internal services, audit pipelines, partners) require **stable error codes**. A `404` is not enough — they need to programmatically distinguish a "user not found" from a "tenant not found" from a "billing record not found".
 
-Lauren ships **28 error classes**, every HTTP-mapped one with a documented `code`. Every error renders as:
+Lauren ships a **closed [error catalog](../reference/errors.md)**, every HTTP-mapped class with a documented `code`. Every error renders as:
 
 ```json
 {"error": {"code": "user_not_found", "message": "...", "detail": {...}}}
@@ -254,7 +254,7 @@ Configure once, shipping immediately to your aggregator with the schema your exi
 
 This one isn't an enterprise requirement strictly — but every enterprise team uses Copilot / Cursor / Claude Code now, and giving the model the *right* mental model matters.
 
-Lauren ships an `llms.txt` and `llms-full.txt` (~25 KB) at the package root. Paste them into your AI assistant's context and you get idiomatic Lauren on the first try, not the second or third. None of the other three frameworks ship machine-ingestible docs in the [llmstxt.org](https://llmstxt.org) format.
+Lauren ships an `llms.txt` and a complete `llms-full.txt` inside the package. Paste them into your AI assistant's context and you get idiomatic Lauren on the first try, not the second or third. None of the other three frameworks ship machine-ingestible docs in the [llmstxt.org](https://llmstxt.org) format.
 
 ---
 

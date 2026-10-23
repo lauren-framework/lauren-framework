@@ -253,10 +253,14 @@ For unit tests of complex guards, build an `ExecutionContext` manually or mock t
 
 ## Guards on WebSocket gateways
 
-`@use_guards` works identically on `@ws_controller` classes. The framework runs
-the guard chain *before* the `@on_connect` hook and *before* the connection is
-accepted — a rejected client receives WebSocket close code `1008` (policy
-violation) without the handshake ever completing.
+`@use_guards` on a `@ws_controller` class runs the guard chain *before* the
+`@on_connect` hook and *before* the connection is accepted — a rejected client
+receives WebSocket close code `1008` (policy violation) without the handshake
+ever completing. On an `@on_message` method, the guard runs **for every frame**
+routed to that handler instead, receives a `WsMessageContext` (the connection
+context plus `event` and the validated `payload`), and a denial answers with a
+`forbidden` error frame while the connection stays open. See
+[WebSockets → Per-message guards and interceptors](websockets.md#per-message-guards-and-interceptors).
 
 ```python
 from lauren import (

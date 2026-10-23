@@ -38,6 +38,9 @@ nox -s docs                         # strict build (fails on warnings)
 
 # Sync public API reference
 nox -s llms_check                   # verify llms-full.txt matches lauren.__all__
+nox -s docs_contract                # docs-as-tests: compile doc code blocks, run `run` blocks,
+                                    # check docs_contract.toml claims + generated facts
+python scripts/sync_doc_facts.py    # regenerate fact regions (error catalog table/tree)
 
 # Release helpers
 nox -s ver_inc -- --minor          # suggest the next minor tag + git tag command
@@ -58,8 +61,8 @@ design north stars are:
 The framework is intentionally **opinionated and small**. New features
 should be justified against the existing mental model before adding
 surface area. The current public-API surface is documented exhaustively
-in `llms-full.txt` (~25 KB) and a short overview lives in `llms.txt`
-(2 KB) per the [llmstxt.org] convention.
+in `llms-full.txt` and a short overview lives in `llms.txt` per the
+[llmstxt.org] convention. Both are checked by `nox -s docs_contract`.
 
 [llmstxt.org]: https://llmstxt.org
 
@@ -103,7 +106,7 @@ lauren/                      — framework package
 │   ├── _context.py          — WsConnectionContext / WsUpgradeRequest re-export
 │   └── _composer.py         — apply_guards / apply_interceptors helpers
 ├── decorators.py            — user-facing @controller, @module, @get, …
-├── exceptions.py            — error hierarchy (28 classes)
+├── exceptions.py            — the closed error catalog (docstrings feed docs/reference/errors.md)
 ├── extractors.py            — Path/Query/Json/Depends + pipes + custom extractors
 ├── logging.py               — built-in NestJS-style logger
 ├── serialization.py         — JSON encoders (stdlib, orjson, msgspec, pydantic)
@@ -161,10 +164,17 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
    `from __future__ import annotations`. When you need to inspect
    annotations, always route through `lauren._typing.resolve_type_hints`
    — never call `typing.get_type_hints` directly in framework code.
+   *Known exception, scheduled for removal:* the dataclass branch of form
+   coercion in `extractors.py` still calls it at request time. Do not add
+   more.
 
 5. **No global state.** Singletons live inside a `DIContainer`, which
    is itself owned by a `LaurenApp`. Multiple apps must be able to
-   coexist in one process (tests rely on this).
+   coexist in one process (tests rely on this). *Known exceptions,
+   scheduled for removal:* the pipe / extractor instance caches in
+   `extractors.py`, the validation-adapter cache in `streaming.py`, and
+   `_add_ws_route` temporarily widening `Router.HTTP_METHODS`. Do not add
+   more.
 
 6. **Async-first, but not async-only.** Handlers may be sync (`def`) or
    async (`async def`); the dispatch engine adapts.  Sync handlers are
@@ -176,13 +186,16 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
    `import pydantic` with a try/except and expose a clear error when a
    feature that genuinely needs it is used without it.
 
-8. **The 29-class error catalog is closed.** Adding a new error class
-   is a public-API change. There are 35 total exception classes
-   (including base classes); new runtime conditions should subclass an
-   existing category (`StartupError`, `HTTPError`, `LifecycleError`)
-   rather than creating a parallel hierarchy. (`SessionConfigError`, a
-   `StartupError`, was the most recent addition, joining the
-   `*ConfigError` family for the sessions feature.)
+8. **The error catalog is closed.** Adding a new error class is a
+   public-API change; new runtime conditions should subclass an existing
+   category (`StartupError`, `HTTPError`, `LifecycleError`) rather than
+   creating a parallel hierarchy. The complete, generated table lives in
+   `docs/reference/errors.md` — never write the count in prose. A new class
+   needs a one-line docstring (it becomes the table's "Meaning"), entries in
+   `lauren.exceptions.__all__` and `lauren.__all__`, then
+   `python scripts/sync_doc_facts.py`. (`UnsupportedMediaTypeError`, an
+   `HTTPError` (415) raised by `ContentConfig(strict_content_type=True)`,
+   is the most recent addition.)
 
 → *See `skills/building-lauren-apps/` for the complete `LaurenFactory` bootstrap pattern and module wiring.*
 
@@ -234,8 +247,13 @@ See `docs/concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md` for d
 4. Update `lauren/__init__.py::__all__` if there's a new public name.
 5. Update `README.md`, `llms.txt`, and `llms-full.txt` with the new
    surface. The two `llms*` files are read by AI agents and matter.
+   Mark the canonical example ```` ```python run ```` (MkDocs pages:
+   `<!-- docs-contract: run -->` on the line before the fence) so it
+   executes in CI; mark intentional excerpts `fragment`. List any newly
+   documented attribute in `docs_contract.toml`. Never hard-code counts or
+   file sizes in prose — link the generated table instead.
 6. Add a docs page under `docs/guides/` (or extend an existing one).
-7. Run the full suite: `pytest -q`. Every test must pass.
+7. Run the full suite (`pytest -q`) and `nox -s docs_contract`. Both must pass.
 ```
 
 → *See `AGENTS.md §Definition-of-Done` for the merge-readiness checklist. See `skills/building-lauren-apps/` for project scaffolding.*
@@ -412,6 +430,29 @@ deterministic).
   `invalidate()`/`regenerate_id()` then deny-list the cookie's token, and
   `RevocationStore.revoke_user(user_id)` does "log out everywhere". Revocation
   needs a finite `max_age` (else `SessionConfigError` at startup).
+- ❌ Relying on cookie sessions for JSON routes without
+  `content=ContentConfig(strict_content_type=True)` or `lauren-guards.csrf`.
+  A `Json[T]` body is parsed whatever its `Content-Type`, and a cross-site
+  form / `no-cors` fetch can send `text/plain` without a preflight while the
+  browser attaches the cookie. Session apps default to `"warn"` (accept + log
+  once per route and media type) and get one startup WARN until a policy is
+  set explicitly; strict mode answers 415 `UnsupportedMediaTypeError` before
+  the body is read (guards still run first).
+- ❌ Serving a directory that contains secrets with
+  `StaticFilesModule.for_root(..., dotfiles="allow")`. The default
+  (`"allow_well_known"`) answers an empty 404 for any path segment starting
+  with `.` (`.env`, `.git/config`) and still serves `/.well-known/**`;
+  `"deny"` hides `/.well-known/` too. Never widen it for a build output you
+  have not audited.
+- ❌ Putting `@use_guards` on a WebSocket gateway class and expecting it to
+  run per message — class-level (and `global_ws_guards`) guards run **once,
+  at connect**. To authorize individual events, decorate the `@on_message`
+  handler: its guards run for every frame (with a `WsMessageContext`) and a
+  denial answers with a `forbidden` error frame. `@use_middlewares`,
+  `@use_exception_handlers` and `@use_encoder` on any WS hook, and
+  guards/interceptors on `@on_disconnect` / `@on_error` or on Socket.IO
+  `@on_socketio_event` handlers, are rejected at startup; class-level
+  `@use_middlewares` on a gateway never runs and logs a startup warning.
 - ❌ Expecting `@post_construct` / `@pre_destruct` to fire per-request
   on a controller — `@controller` defaults to `Scope.SINGLETON` (NestJS
   behaviour), so lifecycle hooks fire once at startup/shutdown. If a
@@ -439,6 +480,11 @@ deterministic).
   that set `__wrapped__` via `functools.update_wrapper`. Prior versions required
   `__call__` (so that `callable(descriptor)` returned `True`).  The only
   requirement now is `__get__` + `__wrapped__`.
+- ❌ Expecting route- or controller-level exception handlers to catch an error
+  raised by a **global** middleware (or the session engine) — it is raised
+  outside any route, so only `global_exception_handlers` apply. An `HTTPError`
+  raised by middleware at any level still renders its own status; anything
+  unclaimed becomes a logged `500 internal_error`.
 - ❌ Expecting `call_handler.handle()` to return the raw handler value (dict,
   Pydantic model, tuple, etc.) inside an interceptor — as of v1.4.2
   `handle()` always returns a coerced `Response`.  Interceptors can safely call
@@ -505,8 +551,8 @@ deterministic).
   `session: Session` injection lives in `_asgi` (`source="session"`).
 - `lauren/decorators.py` — every public decorator. The `_reject_bare_usage`
   pattern is the model for any new decorator.
-- `lauren/exceptions.py` — full 35-class error hierarchy (29 user-facing
-   + base classes). Pick the closest existing class before adding a new one.
+- `lauren/exceptions.py` — the full error hierarchy (generated table:
+   `docs/reference/errors.md`). Pick the closest existing class before adding a new one.
 - `lauren/signals.py` — `SignalBus`, lifecycle events, POSIX signal handlers.
 - `lauren/testing.py` — `TestClient`, `WsTestClient` for in-process testing.
 - `lauren/serialization.py` — JSON encoders: `StdlibJSONEncoder`,
@@ -527,8 +573,7 @@ codemap find "on_connect" --type method
 ```
 
 When in doubt: grep the tests. They express the invariants more
-precisely than any English prose. Around **3297 tests** currently pass
-in ~60 seconds.
+precisely than any English prose. The whole suite must stay green.
 
 ## 12. Injectable Logger Pattern
 
