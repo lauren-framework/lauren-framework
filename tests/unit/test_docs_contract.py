@@ -405,10 +405,11 @@ def test_unknown_fact_region_is_an_error() -> None:
 
 
 def test_stale_regions_are_detected(tmp_path: Path) -> None:
-    (tmp_path / "doc.md").write_text("<!-- lauren:facts:error-hierarchy -->\nold\n<!-- /lauren:facts -->\n")
+    doc = tmp_path / "doc.md"
+    doc.write_text("<!-- lauren:facts:error-hierarchy -->\nold\n<!-- /lauren:facts -->\n", encoding="utf-8")
 
     assert facts.stale_regions(tmp_path, ("doc.md",)) == ["doc.md"]
-    (tmp_path / "doc.md").write_text(facts.render((tmp_path / "doc.md").read_text()))
+    doc.write_text(facts.render(doc.read_text(encoding="utf-8")), encoding="utf-8")
     assert facts.stale_regions(tmp_path, ("doc.md",)) == []
 
 
