@@ -94,6 +94,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     `SignalBus` for typed pub/sub: `RequestComplete`, `StartupComplete`, background-task signals. MRO dispatch, error isolation, metrics/tracing patterns.
 
+-   :material-heart-pulse: [__Health & Readiness Probes__](health-checks.md)
+
+    ---
+    `HealthModule.for_root()` with `/health/live`, `/ready`, `/startup` and a full report: `@health_check` methods with timeouts, single-flight and caching, the public lifecycle state, `begin_draining()` and Kubernetes manifests.
+
 -   :material-bullhorn: [__Application Events__](events.md)
 
     ---

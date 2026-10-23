@@ -41,6 +41,12 @@ class HeroHQModule:
 Now `GET /status/` is a real health check your load balancer can poll — and it reports `true`
 only after `@post_construct` has run.
 
+!!! note "🩺 Going to Kubernetes?"
+    For real probes — liveness that never checks dependencies, readiness that also fails
+    while the app drains, per-check timeouts and caching — import
+    `HealthModule.for_root()` and mark the grid's ping with `@health_check("grid")`.
+    See [Health & Readiness Probes](../guides/health-checks.md).
+
 !!! tip "⚡ Hero Tip"
     Lifecycle hooks run in **dependency order** at startup and **reverse** order at shutdown,
     each with a timeout. A blocking sync hook is offloaded to a thread so it can't wedge the

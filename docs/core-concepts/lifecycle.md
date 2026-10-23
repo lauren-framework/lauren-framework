@@ -48,6 +48,24 @@ sequenceDiagram
 
 Never start a background loop with `asyncio.create_task(...)` inside `@post_construct`: nothing supervises or stops it, it can outlive the resources it uses, and it dies with the test client's startup loop. Use [`@hosted_service`](../guides/scheduling.md#hosted-services) for loops and [`@interval` / `@cron`](../guides/scheduling.md#scheduled-methods) for recurring work.
 
+## The application lifecycle state
+
+The app itself moves through a public state machine, `app.lifecycle_state` (an `AppLifecycleState`). Every transition emits `LifecycleStateChanged` on `app.signals`:
+
+```mermaid
+stateDiagram-v2
+    [*] --> CREATED: LaurenFactory.create()
+    CREATED --> STARTING: startup()
+    STARTING --> READY: every @post_construct ran
+    STARTING --> FAILED: startup() raised
+    FAILED --> STARTING: startup() retried
+    READY --> DRAINING: begin_draining() / shutdown() begins
+    DRAINING --> STOPPED: shutdown() finished
+    STOPPED --> [*]
+```
+
+`@post_construct` hooks run during `STARTING`; `@pre_destruct` hooks run while the app is `DRAINING`, and it is `STOPPED` once they are done. `app.begin_draining()` lets a pre-stop hook or a signal handler fail readiness *before* `shutdown()` starts, while requests are still served — see [Health & Readiness Probes](../guides/health-checks.md).
+
 ## Topological ordering, with a picture
 
 If your DI graph is `Db ← Repo ← Service`, the timeline looks like this:
@@ -151,13 +169,14 @@ class DbSession:
 | `DestructError` | A `@pre_destruct` hook raised an exception; collected and logged. |
 | `DestructTimeoutError` | A `@pre_destruct` hook exceeded its per-hook timeout. |
 | `DrainTimeoutError` | The drain phase exceeded `drain_timeout`. |
+| `LifecycleViolationError` (startup) | `startup()` called again while starting or after it succeeded, or once shutdown began (`detail["lifecycle_state"]`); retrying after a failed startup is allowed. |
 
 All of them are emitted through the structured logger, so production aggregators see them as JSON records you can alert on.
 
 ## Best practices
 
 * **Keep `@post_construct` cheap.** Anything that can fail and might need retry belongs in a separate "warm" step you can re-run, not in startup.
-* **Plain `def` hooks may block, but only briefly.** Sync hooks now run in a worker thread, which protects the loop, but long CPU-bound work still delays readiness or shutdown completion. Prefer `async def` for naturally async I/O and keep sync cleanup bounded.
+* **Plain `def` hooks may block, but only briefly.** A sync `@post_construct` runs inline on the event loop — the app stays `STARTING` (readiness fails) until it returns; a sync `@pre_destruct` runs in a worker thread, which protects the loop, but long work still delays shutdown completion. Prefer `async def` for naturally async I/O and keep sync hooks bounded.
 * **Use `on_shutdown` for things that aren't owned by a provider** — flushing a global metrics client, sending a "we're shutting down" event to a service registry, closing a side-channel connection.
 * **Use `@pre_destruct` for provider-owned resources** — connection pools, file handles, subprocesses. These mirror the `@post_construct` that opened them.
 * **Don't depend on order between `on_shutdown` callbacks and `@pre_destruct` hooks**, except that all callbacks run before any hooks. Within each phase, registration order (LIFO) and topology decide.

@@ -110,6 +110,8 @@ nox -s ver_dec -- --patch
 | `lauren/_events/`                 | Event bus internals: `@on_event` marker (`_meta`), handler validation + dispatch table (`_plan`), `EventBus` / `EventPublisher`, task tracking, shutdown drain, factory hooks (`_bus`) |
 | `lauren/scheduling.py`            | Public hosted-service / scheduling surface (`@hosted_service`, `@interval`, `@cron`, `@run_once`, `ScheduleModule`, `SchedulerRegistry`, `CronExpression`, `SchedulerLock`, `ManualClock`) |
 | `lauren/_scheduling/`             | Decorators + discovery markers (`_decorators`), supervisor (`_supervisor`), scheduler + registry (`_scheduler`), cron parser (`_cron`), clocks (`_clock`), contexts (`_context`), locks (`_lock`), `ScheduleModule` + factory phases (`_module`) |
+| `lauren/health.py`                | Public health surface (`HealthModule`, `health_check`, `HealthResult`, `HealthStatus`) |
+| `lauren/_health/`                 | Health internals: `@health_check` marker (`_meta`), values + aggregation (`_types`), built-in indicators (`_indicators`), check validation + per-app `HealthRuntime` (`_runtime`), `HealthModule.for_root` + factory hooks (`_module`) |
 | `lauren/_discriminated.py`        | `Discriminated[A\|B,"key"]` — detection, validation, OpenAPI schema |
 | `lauren/_encoders/`               | Optional encoder backends (e.g. `pydantic.py`) |
 | `lauren/_routing/__init__.py`     | Radix-tree router                            |
@@ -139,7 +141,7 @@ nox -s ver_dec -- --patch
 | `lauren/serialization.py`         | JSON encoders: `StdlibJSONEncoder`, `OrjsonEncoder`, `MsgspecEncoder`, `PydanticEncoder`; encoder threaded app-wide; `@use_encoder(enc)` overrides per-route or per-controller (method > controller > app) |
 | `lauren/logging.py`               | NestJS-style logger (built-in, separate from |
 |                                   | the optional `lauren-logging` companion)     |
-| `lauren/signals.py`               | POSIX signal integration                     |
+| `lauren/signals.py`               | POSIX signal integration (`install_signal_handlers(shutdown_delay=)` drains first), `SignalBus`, lifecycle events, `AppLifecycleState` |
 | `lauren/testing/`                 | `TestClient` (persistent portal loop), `AsyncTestClient`, `Test.create_testing_module` overrides, cookie jar, `WsTestClient`, opt-in `pytest_plugin` |
 | `lauren/_di/_overrides.py`        | Build-time override plan read by `LaurenFactory.create` (only set by `lauren.testing`) |
 | `lauren/docs.py`                  | Programmatic access to llms*.txt             |
@@ -293,6 +295,7 @@ Welcome aboard.
 | Add a background task | `lauren/background.py` | `skills/building-lauren-background-tasks/` |
 | Decouple modules with domain events | `lauren/events.py` | `skills/building-lauren-events/` |
 | Run a hosted service or a scheduled job | `lauren/scheduling.py` | `skills/building-lauren-scheduling/` |
+| Add liveness / readiness probes, drain before shutdown | `lauren/health.py`, `LaurenApp.lifecycle_state` | `skills/health-check-probes/` |
 | Add session state | `lauren/sessions.py` | `skills/building-lauren-sessions/` |
 | Read typed configuration / secrets | `lauren/config.py` | `skills/building-lauren-config/` |
 | Add field constraints / validate payloads | `lauren/validation.py`, `lauren/_schema/` | `skills/building-lauren-controllers/` §Validation |
@@ -319,6 +322,7 @@ Welcome aboard.
 | FastAPI → lauren side-by-side equivalents | `skills/migrating-from-fastapi/` |
 | CORS, auth guards, structured logging | `skills/using-companion-packages/` |
 | Copy-paste: CRUD, health check, background job, SSE | `skills/common-patterns/` |
+| Liveness / readiness / startup probes, `@health_check`, draining | `skills/health-check-probes/` |
 | Build a first-party or third-party companion package | `skills/building-companion-packages/` |
 
 Full index: [`skills/README.md`](skills/README.md)
@@ -340,6 +344,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | SSE / streaming | `docs/guides/sse.md` |
 | Session management | `docs/guides/sessions.md` |
 | Domain events between modules | `docs/guides/events.md` |
+| Health probes, lifecycle state, draining | `docs/guides/health-checks.md` |
 | Typed configuration | `docs/guides/configuration.md` |
 | Hosted services & scheduled jobs | `docs/guides/scheduling.md` |
 | Validation (stdlib models, constraints, `issues`, `ValidationPolicy`) | `docs/guides/validation.md` |

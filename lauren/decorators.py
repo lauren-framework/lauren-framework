@@ -73,6 +73,12 @@ INTERCEPTOR_META = "__lauren_interceptor__"
 USE_INTERCEPTORS = "__lauren_use_interceptors__"
 USE_ENCODER = "__lauren_use_encoder__"
 
+#: Well-known ``@set_metadata`` key marking a route or controller as public.
+#: Guards that honour it (``ctx.get_metadata(PUBLIC_METADATA_KEY, False)``)
+#: let the request through; the framework never skips a guard on its own.
+#: Lauren sets it on the ``lauren.health`` probe routes.
+PUBLIC_METADATA_KEY = "lauren.public"
+
 
 # ---------------------------------------------------------------------------
 # @injectable
@@ -1232,6 +1238,7 @@ __all__ = [
     "USE_EXCEPTION_HANDLERS",
     "EXCEPTION_HANDLER_META",
     "SET_METADATA",
+    "PUBLIC_METADATA_KEY",
     "OPENAPI_SECURITY_META",
     "USE_ENCODER",
 ]

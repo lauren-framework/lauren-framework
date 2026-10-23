@@ -45,3 +45,11 @@ POSIX signal integration and application shutdown hooks.
 ::: lauren.JobFailed
 
 ::: lauren.JobSkipped
+
+## Lifecycle state and health events
+
+::: lauren.AppLifecycleState
+
+::: lauren.LifecycleStateChanged
+
+::: lauren.HealthChanged

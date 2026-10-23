@@ -67,11 +67,13 @@
     "include_module", "add_middleware", "add_guard", "add_interceptor",
     "add_exception_handler", "add_provider", "mount", "on_startup", "on_shutdown",
     "startup", "shutdown", "openapi", "routes", "container", "scope", "state", "debug",
+    "lifecycle_state", "begin_draining",
 ]
 "lauren.LaurenApp" = [
     "router", "container", "app_state", "routes", "openapi",
     "startup", "shutdown", "on_shutdown", "mount", "mounts", "scope", "error_format",
     "type_compiler", "validation_policy",
+    "lifecycle_state", "begin_draining",
 ]
 "lauren.ValidationPolicy" = ["stdlib_models", "json_mode", "extra", "include_input", "max_issues"]
 "lauren.ValidationIssue" = ["loc", "type", "msg", "input", "ctx", "to_dict", "prefixed"]
@@ -81,6 +83,12 @@
 "lauren.ExtractorError" = ["issues", "from_issues"]
 "lauren.WebSocketValidationError" = ["issues", "from_issues"]
 "lauren.OperationScope" = ["name", "values", "active", "teardown_errors", "resolve"]
+"lauren.health.HealthModule" = ["for_root"]
+"lauren.health.HealthResult" = ["status", "details", "up", "degraded", "down"]
+"lauren.health.HealthStatus" = ["UP", "DEGRADED", "DOWN"]
+"lauren.AppLifecycleState" = ["CREATED", "STARTING", "READY", "DRAINING", "STOPPED", "FAILED"]
+"lauren.signals.LifecycleStateChanged" = ["app", "previous", "current", "reason", "timestamp"]
+"lauren.signals.HealthChanged" = ["app", "name", "previous", "current", "details", "timestamp"]
 "lauren.events.EventBus" = ["emit", "recording", "drain", "disabled", "handlers_for"]
 "lauren.events.EventPublisher" = ["emit", "emit_threadsafe", "in_request"]
 "lauren.events.EmitResult" = ["event", "handled", "scheduled", "errors", "ok"]

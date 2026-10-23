@@ -18,6 +18,7 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 | [building-lauren-scheduling](building-lauren-scheduling/) | `@hosted_service` loops, `@interval` / `@cron` / `@run_once` jobs, `ScheduleModule`, `SchedulerRegistry`, `SchedulerLock`, `ManualClock` |
 | [building-lauren-sessions](building-lauren-sessions/) | `sessions=SessionConfig(...)`, `session: Session` injection, `SessionStore` backends, signed cookies, `regenerate_id()`/`invalidate()` |
 | [building-lauren-config](building-lauren-config/) | Typed settings validated in `LaurenFactory.create`: `ConfigModule.for_root`/`for_feature`, `.env`/TOML/environment sources, profiles, `Secret[T]`, `load_settings`, `ConfigValidationError` |
+| [health-check-probes](health-check-probes/) | Liveness / readiness / startup probes: `HealthModule.for_root()`, `@health_check`, details policy, `app.lifecycle_state`, `begin_draining()`, Kubernetes manifests |
 | [testing-lauren-apps](testing-lauren-apps/) | Lifespan-managed `TestClient` / `AsyncTestClient`, cookies & sessions, uploads, streams, `Test.create_testing_module` overrides, pytest plugin, startup-failure assertions |
 | [migrating-from-fastapi](migrating-from-fastapi/) | Side-by-side FastAPI → lauren equivalents (routing, DI, middleware, errors) |
 | [using-companion-packages](using-companion-packages/) | CORS, auth guards (`jwt_bearer`, `api_key`), structured logging with `lauren-logging` |

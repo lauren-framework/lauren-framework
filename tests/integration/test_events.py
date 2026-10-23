@@ -1294,6 +1294,48 @@ async def test_handlers_spawned_after_the_drain_are_cancelled_when_shutdown_comp
     assert [f.handler for f in failures] == ["Late.work"]
 
 
+async def test_the_bus_follows_the_application_lifecycle_state() -> None:
+    @module()
+    class AppModule:
+        pass
+
+    app = LaurenFactory.create(AppModule)
+    bus = await bus_of(app)
+    states = [repr(bus).split(", ")[1]]
+
+    await app.startup()
+    states.append(repr(bus).split(", ")[1])
+    app.begin_draining()
+    states.append(repr(bus).split(", ")[1])
+    await app.shutdown()
+    states.append(repr(bus).split(", ")[1])
+
+    assert states == ["created", "ready", "draining", "stopped"]
+
+
+async def test_deferred_work_emitted_while_draining_still_runs() -> None:
+    calls: list[int] = []
+
+    @injectable()
+    class Audit:
+        @on_event(mode="concurrent")
+        async def record(self, event: Ping) -> None:
+            calls.append(event.n)
+
+    @module(providers=[Audit])
+    class AppModule:
+        pass
+
+    app = await started(AppModule)
+    bus = await bus_of(app)
+    app.begin_draining()
+
+    result = await bus.emit(Ping(7), wait=True)
+
+    assert (result.handled, calls) == (1, [7])
+    await app.shutdown()
+
+
 async def test_an_app_that_is_never_started_still_dispatches() -> None:
     calls: list[str] = []
 

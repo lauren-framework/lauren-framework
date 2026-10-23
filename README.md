@@ -210,8 +210,14 @@ core ideas:
 * **OpenAPI 3.1** — Automatic schema generation from Pydantic models,
   dataclasses, `TypedDict`, and `Discriminated` unions. Swagger UI and ReDoc
   served out of the box.
+* **Health & readiness probes** — `HealthModule.for_root()` serves
+  `/health/live`, `/health/ready`, `/health/startup` and a full report from the
+  public `app.lifecycle_state` and `@health_check` methods on your singletons:
+  per-check timeouts, concurrency, single-flight and caching, details hidden by
+  default, and `app.begin_draining()` to fail readiness before the socket closes.
 * **Lifecycle signals** — `SignalBus` with `StartupBegin`, `StartupComplete`,
-  `ShutdownBegin`, `RequestReceived`, `RequestComplete`, and more.
+  `ShutdownBegin`, `RequestReceived`, `RequestComplete`, `LifecycleStateChanged`,
+  and more.
 * **Standards-based** — Built on [ASGI](https://asgi.readthedocs.io/) and
   [anyio](https://anyio.readthedocs.io/). Pydantic is optional (`pip install
   "lauren[pydantic]"`).
@@ -587,6 +593,20 @@ granian --interface asgi main:app --host 0.0.0.0 --port 8000
 # Hypercorn (HTTP/2 + HTTP/3)
 hypercorn main:app --bind 0.0.0.0:8000
 ```
+
+Import `HealthModule.for_root()` and point the orchestrator's probes at it —
+liveness never checks dependencies, readiness fails before startup completes
+and while draining:
+
+```yaml
+startupProbe:   {httpGet: {path: /health/startup, port: 8000}, periodSeconds: 2, failureThreshold: 30}
+livenessProbe:  {httpGet: {path: /health/live, port: 8000}, periodSeconds: 10}
+readinessProbe: {httpGet: {path: /health/ready, port: 8000}, periodSeconds: 5}
+lifecycle:
+  preStop: {exec: {command: ["sleep", "5"]}}
+```
+
+See the [health checks guide](https://lauren-py.dev/guides/health-checks/) for draining and `@health_check`.
 
 ## Contributing
 

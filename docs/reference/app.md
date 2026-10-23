@@ -75,6 +75,7 @@ app.include_module(UserModule)
 | `signals` | `SignalBus` | Lifecycle event bus |
 | `error_format` | `str` | `"default"`, `"rfc9457"` or `"rfc7807"` |
 | `logger` | `Logger` | Application logger |
+| `lifecycle_state` | `AppLifecycleState` | `CREATED`, `STARTING`, `READY`, `DRAINING`, `STOPPED` or `FAILED` — see [Health & Readiness Probes](../guides/health-checks.md#the-lifecycle-state) |
 
 ### Key methods
 
@@ -83,6 +84,7 @@ app.include_module(UserModule)
 | `mount(path, app)` | Mount an ASGI sub-application at `path` |
 | `startup()` | Run `@post_construct` hooks and emit lifecycle events |
 | `shutdown(drain_timeout)` | Gracefully stop: drain requests, run `@pre_destruct` |
+| `begin_draining(reason="")` | `READY → DRAINING`: readiness fails while requests are still served (idempotent) |
 | `handle(request)` | Dispatch a `Request` through middleware, guards, and handler |
 | `routes()` | Return compiled route list |
 | `openapi()` | Return OpenAPI 3.1 document |

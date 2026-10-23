@@ -145,7 +145,7 @@ npx skills add lauren-framework/lauren-framework --local
 | [`structured-json-logging`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/structured-json-logging) | JSON log output, correlation ID middleware |
 | [`prometheus-metrics`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/prometheus-metrics) | Counter, Histogram, `/metrics` endpoint |
 | [`opentelemetry-tracing`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/opentelemetry-tracing) | Distributed tracing, in-memory span exporter |
-| [`health-check-probes`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/health-check-probes) | `/health/live`, `/health/ready`, dependency checks |
+| [`health-check-probes`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/health-check-probes) | `HealthModule.for_root()`, `@health_check`, `/health/live` / `ready` / `startup`, draining |
 | [`audit-log-trail`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/audit-log-trail) | Append-only audit log, query by user / resource |
 
 ### Security & compliance

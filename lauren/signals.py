@@ -41,6 +41,9 @@ Five built-in events are fired by the framework:
 * :class:`ShutdownBegin` — a ``lifespan.shutdown`` message arrived
   or a graceful-shutdown signal was received.
 
+:class:`LifecycleStateChanged` accompanies every transition of
+``app.lifecycle_state`` (:class:`AppLifecycleState`), and
+:class:`HealthChanged` every status change of a ``lauren.health`` check.
 Background work adds its own events: ``BackgroundTask*`` for
 :class:`~lauren.BackgroundTasks`, ``HostedService*`` and ``Job*`` for hosted
 services and scheduled jobs (:mod:`lauren.scheduling`), and the application event
@@ -59,6 +62,7 @@ request path.
 from __future__ import annotations
 
 import asyncio
+import enum
 import inspect as _inspect
 import signal
 import time
@@ -69,12 +73,39 @@ from .logging import Logger
 
 if TYPE_CHECKING:
     from ._asgi import LaurenApp
+    from ._health._types import HealthStatus
 
 
 DEFAULT_SIGNALS: tuple[int, ...] = (
     signal.SIGINT,
     signal.SIGTERM,
 )
+
+
+# ---------------------------------------------------------------------------
+# Application lifecycle state
+# ---------------------------------------------------------------------------
+
+
+class AppLifecycleState(enum.Enum):
+    """Where an application is in its lifetime, read from ``app.lifecycle_state``.
+
+    ``CREATED`` (``LaurenFactory.create`` returned) → ``STARTING``
+    (``startup()`` running) → ``READY`` (serving) → ``DRAINING``
+    (termination requested: readiness fails, requests are still served) →
+    ``STOPPED`` (``shutdown()`` finished, terminal). ``FAILED`` means
+    ``startup()`` raised; it lasts until ``startup()`` is retried
+    (``FAILED → STARTING``) — a ``FAILED`` app that shuts down stays
+    ``FAILED``. Every transition emits a :class:`LifecycleStateChanged` on
+    the app's :class:`SignalBus`.
+    """
+
+    CREATED = "created"
+    STARTING = "starting"
+    READY = "ready"
+    DRAINING = "draining"
+    STOPPED = "stopped"
+    FAILED = "failed"
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +217,44 @@ class ShutdownBegin(LifecycleEvent):
     """
 
     app: Any = None
+
+
+@dataclass
+class LifecycleStateChanged(LifecycleEvent):
+    """Emitted on every transition of ``app.lifecycle_state``.
+
+    Transitions happen in ``startup()`` (``CREATED`` or ``FAILED`` →
+    ``STARTING``, then ``READY`` or ``FAILED``), in ``app.begin_draining()``
+    or at the start of ``shutdown()`` (``READY → DRAINING``) and at the end
+    of ``shutdown()`` (``→ STOPPED``). Listeners run in transition order.
+    """
+
+    app: Any = None
+    #: The state before the transition.
+    previous: AppLifecycleState | None = None
+    #: The state after the transition (also ``app.lifecycle_state``).
+    current: AppLifecycleState | None = None
+    #: Free-form cause, e.g. ``"signal SIGTERM"`` from ``begin_draining(reason=...)``.
+    reason: str = ""
+
+
+@dataclass
+class HealthChanged(LifecycleEvent):
+    """Emitted when a health check's status, or the full report's aggregate status, changes.
+
+    Fired by ``lauren.health`` whenever a check runs and its
+    :class:`~lauren.health.HealthStatus` differs from the previous run
+    (``previous`` is ``None`` the first time a check runs), and when a full
+    report's aggregate status changes (``name`` is ``None``).
+    """
+
+    app: Any = None
+    #: The check's name; ``None`` for the aggregate status of the full report.
+    name: str | None = None
+    previous: HealthStatus | None = None
+    current: HealthStatus | None = None
+    #: The check's details (including ``error`` / ``reason`` when it is down).
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -574,9 +643,15 @@ def install_signal_handlers(
     *,
     signals: Iterable[int] = DEFAULT_SIGNALS,
     drain_timeout: float = 10.0,
+    shutdown_delay: float = 0.0,
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> asyncio.Event:
     """Install async signal handlers that shut the app down gracefully.
+
+    On the first handled signal the handler calls ``app.begin_draining()``
+    (``READY → DRAINING``: readiness probes answer 503 while requests are
+    still served), waits ``shutdown_delay`` seconds so load balancers polling
+    readiness notice, then schedules ``app.shutdown(drain_timeout=...)``.
 
     Returns an :class:`asyncio.Event` that fires once a handled signal has
     been received. Callers can ``await event.wait()`` to block until that
@@ -585,9 +660,17 @@ def install_signal_handlers(
     The handlers are idempotent \u2014 delivering multiple signals never produces
     a second shutdown; the first wins and subsequent ones are logged.
     """
+    if isinstance(shutdown_delay, bool) or not isinstance(shutdown_delay, (int, float)) or shutdown_delay < 0:
+        raise ValueError(f"shutdown_delay must be a number of seconds >= 0, got {shutdown_delay!r}")
     loop = loop or asyncio.get_event_loop()
     event = asyncio.Event()
     logger = app.logger
+    tasks: set[asyncio.Task[Any]] = set()
+
+    def _shutdown() -> None:
+        task = loop.create_task(app.shutdown(drain_timeout=drain_timeout))
+        tasks.add(task)  # keep a reference until it finishes
+        task.add_done_callback(tasks.discard)
 
     def _handler(signum: int) -> None:
         sig_name = signal.Signals(signum).name
@@ -604,7 +687,16 @@ def install_signal_handlers(
             signal=sig_name,
         )
         event.set()
-        loop.create_task(app.shutdown(drain_timeout=drain_timeout))
+        app.begin_draining(reason=f"signal {sig_name}")
+        if shutdown_delay > 0:
+            logger.log(
+                f"Shutdown starts in {shutdown_delay}s (readiness now fails)",
+                context="Shutdown",
+                shutdown_delay=shutdown_delay,
+            )
+            loop.call_later(shutdown_delay, _shutdown)
+        else:
+            _shutdown()
 
     for sig in signals:
         try:
@@ -627,8 +719,12 @@ async def wait_for_shutdown(event: asyncio.Event) -> None:
 
 
 __all__ = [
+    # Lifecycle state
+    "AppLifecycleState",
     # Lifecycle event types
     "LifecycleEvent",
+    "LifecycleStateChanged",
+    "HealthChanged",
     "StartupBegin",
     "StartupComplete",
     "RequestReceived",
