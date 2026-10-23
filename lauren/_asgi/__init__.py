@@ -15,6 +15,7 @@ from .._typing import resolve_type_hints
 
 from .._arena import RequestArena
 from .._di import INJECTABLE_META, DIContainer, InjectableMeta
+from .._di._scope import finalize_scope
 from .._di.custom import CustomProvider
 from ..serialization import (
     JSONEncoder,
@@ -1326,33 +1327,12 @@ class LaurenApp:
     async def _finalize_request_scope(self, request_cache: dict[type, Any]) -> None:
         """Finalize request-scoped instances: ``@pre_destruct``, then ``aclose()``.
 
-        Runs in reverse insertion order so the most recently constructed
-        instance tears down first — analogous to the LIFO order used by the
-        application-level scheduler at shutdown. The keys are snapshotted
-        while the arena lease still holds the pooled dict.
+        Delegates to the shared finaliser (:func:`lauren._di._scope.finalize_scope`)
+        used by WebSocket connections and :class:`~lauren.context.OperationScope`
+        too: newest instance first, errors logged and never raised. The keys
+        are snapshotted while the arena lease still holds the pooled dict.
         """
-        if not request_cache:
-            return
-        providers_by_cls = {p.cls: p for p in self._container.all_providers()}
-        request_scoped_instances = [(cls, request_cache[cls]) for cls in reversed(list(request_cache.keys()))]
-        for cls, instance in request_scoped_instances:
-            provider = providers_by_cls.get(cls)
-            if provider is not None and provider.pre_destruct is not None:
-                try:
-                    bound = getattr(instance, provider.pre_destruct.__name__)
-                    res = bound()
-                    if inspect.isawaitable(res):
-                        await res
-                except Exception:
-                    logger.exception("Error in @pre_destruct on %s", cls.__name__)
-            aclose = getattr(instance, "aclose", None)
-            if callable(aclose):
-                try:
-                    aclose_result = aclose()
-                    if inspect.isawaitable(aclose_result):
-                        await aclose_result
-                except Exception:
-                    logger.exception("Error closing request-scoped instance %r", instance)
+        await finalize_scope(self._container, request_cache, origin="request")
 
     # -- Request logging --------------------------------------------------
 

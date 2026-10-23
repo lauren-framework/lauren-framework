@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterable
 
 from ._di import DIContainer, INJECTABLE_META, InjectableMeta
+from ._di._scope import finalize_scope
 from ._routing import Router, RouteEntry
 from .decorators import (
     SET_METADATA,
@@ -1343,34 +1344,12 @@ async def _finalize_scope(
 ) -> None:
     """Run @pre_destruct / aclose on every request-scoped provider.
 
-    Mirrors the HTTP dispatcher's finalization so DB sessions /
-    connection pools / user-defined request-scoped resources are torn
-    down reliably after every connection — even if the handler raised.
+    Uses the shared finaliser (:func:`lauren._di._scope.finalize_scope`), the
+    same teardown as an HTTP request, so DB sessions / connection pools /
+    user-defined request-scoped resources are torn down reliably after every
+    connection — even if the handler raised.
     """
-    providers_by_cls = {p.cls: p for p in container.all_providers()}
-    for cls in reversed(list(request_cache.keys())):
-        instance = request_cache[cls]
-        provider = providers_by_cls.get(cls)
-        if provider is not None and provider.pre_destruct is not None:
-            try:
-                bound = getattr(instance, provider.pre_destruct.__name__)
-                res = bound()
-                if _inspect.isawaitable(res):
-                    await res
-            except Exception:
-                import logging as _logging
-
-                _logging.getLogger("lauren").exception("Error in @pre_destruct on %s (ws)", cls.__name__)
-        aclose = getattr(instance, "aclose", None)
-        if callable(aclose):
-            try:
-                res = aclose()
-                if _inspect.isawaitable(res):
-                    await res
-            except Exception:
-                import logging as _logging
-
-                _logging.getLogger("lauren").exception("Error in aclose on %s (ws)", cls.__name__)
+    await finalize_scope(container, request_cache, origin="websocket")
 
 
 async def _bind_ws_kwargs(
