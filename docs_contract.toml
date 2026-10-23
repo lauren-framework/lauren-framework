@@ -37,7 +37,15 @@
 "lauren.LaurenApp" = [
     "router", "container", "app_state", "routes", "openapi",
     "startup", "shutdown", "on_shutdown", "mount", "mounts", "scope", "error_format",
+    "type_compiler", "validation_policy",
 ]
+"lauren.ValidationPolicy" = ["stdlib_models", "json_mode", "extra", "include_input", "max_issues"]
+"lauren.ValidationIssue" = ["loc", "type", "msg", "input", "ctx", "to_dict", "prefixed"]
+"lauren.validation.ValidationFailed" = ["errors"]
+"lauren.validation.TypeCompiler" = ["compile", "policy", "max_issues"]
+"lauren.validation.CompiledType" = ["type", "validate", "project", "json_schema", "explicit"]
+"lauren.ExtractorError" = ["issues", "from_issues"]
+"lauren.WebSocketValidationError" = ["issues", "from_issues"]
 "lauren.OperationScope" = ["name", "values", "active", "teardown_errors", "resolve"]
 "lauren.websockets.BroadcastGroup" = [
     "subscribe", "unsubscribe", "unsubscribe_all", "broadcast", "groups", "members", "member_count",

@@ -112,7 +112,9 @@ nox -s ver_dec -- --patch
 | `lauren/_modules/__init__.py`     | Module graph, imports/exports validation     |
 | `lauren/_lifecycle/__init__.py`   | post_construct / pre_destruct scheduler; sync hooks run in thread pool via asyncio.to_thread (timeout-protected, event-loop-safe); second pass runs generator provider teardown (code after yield) for SINGLETON scope |
 | `lauren/_typing/`                 | ForwardRef / PEP 563 resolver                |
-| `lauren/_validation.py`           | Provider-agnostic type detection + validation (pydantic, msgspec, dataclass, TypedDict) |
+| `lauren/_validation.py`           | Provider-agnostic type detection + the 1.x shallow `validate_as` (legacy/warn modes, config loader) |
+| `lauren/validation.py`            | Public validation surface: constraint markers, `ValidationPolicy`, `ValidationIssue`, `validation_config`, `TypeCompiler`, `validate` |
+| `lauren/_schema/`                 | Native validation engine: `_compiler` (`TypeCompiler`/`CompiledType`), `_nodes` (validate/project/schema), `_issues`, `_markers`, `_backends` (pydantic/msgspec + error translation), `_jsonschema`, `_params` (extraction/WS/stream plans, strategies, 422 aggregation), `_scalars` (shared with `_config/_coerce`) |
 | `lauren/_ws_runtime.py`           | WebSocket dispatch loop + `WsConnectionContext` / `WsUpgradeRequest` |
 | `lauren/reflect/`                 | Full metadata introspection API — static readers, app readers, result types, WS composers |
 | `lauren/reflect/_reader.py`       | Static readers: `reflect_controller`, `reflect_routes`, `reflect_exception_handlers`, … |
@@ -285,6 +287,7 @@ Welcome aboard.
 | Add a background task | `lauren/background.py` | `skills/building-lauren-background-tasks/` |
 | Add session state | `lauren/sessions.py` | `skills/building-lauren-sessions/` |
 | Read typed configuration / secrets | `lauren/config.py` | `skills/building-lauren-config/` |
+| Add field constraints / validate payloads | `lauren/validation.py`, `lauren/_schema/` | `skills/building-lauren-controllers/` §Validation |
 | Debug a startup error | `lauren/exceptions.py` | **Common Errors** section below |
 | Port from FastAPI | `llms-full.txt` §Guards | `skills/migrating-from-fastapi/` |
 | Add CORS / auth guards / logging | `AGENTS.md` §Companion Packages | `skills/using-companion-packages/` |
@@ -327,6 +330,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | SSE / streaming | `docs/guides/sse.md` |
 | Session management | `docs/guides/sessions.md` |
 | Typed configuration | `docs/guides/configuration.md` |
+| Validation (stdlib models, constraints, `issues`, `ValidationPolicy`) | `docs/guides/validation.md` |
 | Custom response subclasses and response factories | `docs/guides/custom-responses.md` / `docs/guides/file-responses.md` |
 | Testing playbook | `skills/testing-lauren-apps/SKILL.md` |
 | Release / versioning process | `docs/development/release.md` / `docs/development/versioning.md` |
@@ -346,6 +350,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | `GuardConfigError` (`reason="invalid_deny_error"`) | A guard's `deny_error` is not an `HTTPError` subclass or a zero-argument factory (e.g. an exception *instance*, `ValueError`) | `deny_error = UnauthorizedError`, or `deny_error = staticmethod(lambda: UnauthorizedError("…", challenge="…"))` |
 | `StartupError` (`reason="debug_in_production"`) | `debug=` enabled while the configuration profile is production | Enable debug pages only in development |
 | `StartupError` (`reason="invalid_debug_config"` / `"invalid_problem_type_base"`) | `debug=` is not a bool / valid `DebugConfig`, or `problem_type_base` is not a non-empty string | Fix the value passed to `LaurenFactory.create` |
+| `UnresolvableParameterError` (`reason="bad_constraint"` / `"bad_pattern"` / `"unsupported_type"`) | A validation marker that cannot apply (`Ge` on a `str`, `MinLen > MaxLen`), an invalid `Pattern` regex, or (under `stdlib_models="enforce"`) a model field type the engine does not know | Fix the annotation named by `detail["class"]` / `["handler"]` / `["param"]` / `["field"]` |
 | `StartupError` (generic) | Missing required parameter in constructor injection | Add the type as a `@module` provider or import its module |
 
 ## Interceptor `CallHandler.handle()` contract (v1.4.2+)

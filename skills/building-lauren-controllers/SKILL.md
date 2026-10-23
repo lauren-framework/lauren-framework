@@ -69,6 +69,33 @@ class UsersController:
 
 See [extractors.md](extractors.md) for field descriptors, pipes, and upload files.
 
+## Validation and the 422 payload
+
+Stdlib models are validated natively (no pydantic needed); constraints ride in
+`Annotated` metadata from `lauren.validation`:
+
+```python fragment
+from dataclasses import dataclass
+from typing import Annotated
+from lauren.validation import Ge, MaxLen, Pattern, ValidationPolicy, validation_config
+
+@validation_config(extra="forbid")          # unknown keys → extra_forbidden
+@dataclass
+class CreateUser:
+    email: Annotated[str, Pattern(r"@"), MaxLen(254)]
+    age: Annotated[int, Ge(13)]
+
+app = LaurenFactory.create(AppModule, validation=ValidationPolicy(stdlib_models="enforce"))
+```
+
+Every validation 422 lists **all** failing parameters in
+`error.detail.issues`: `[{"loc": ["query", "page"], "type": "int_parsing",
+"msg": "...", "ctx"?: {...}}, ...]` — `loc` starts with `path` / `query` /
+`header` / `cookie` / `body` / `form`. Clients should read `issues`, not the
+1.x `detail.errors` strings. In 1.x the default `stdlib_models="warn"` only
+logs dataclass/TypedDict failures; a model that uses markers or
+`@validation_config` is always enforced. Full guide: `docs/guides/validation.md`.
+
 ## Auto-serialization return types
 
 ```python fragment
