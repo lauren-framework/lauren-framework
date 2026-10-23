@@ -35,12 +35,15 @@ The top-level entry points for creating and running a Lauren application.
 | `debug` | `bool \| DebugConfig` | `False` | [Debug error pages](../guides/debugging.md) for unhandled errors (development only; loopback clients by default) |
 | `root_path` | `str` | `""` | ASGI root path prefix stripped from requests |
 | `mounts` | `dict[str, Any]` | `None` | Pre-built sub-app mounts (`{path: app}`) |
+| `sessions` | `SessionConfig` | `None` | Enable signed-cookie sessions |
+| `content` | `ContentConfig` | `None` | Request-body content policy (`strict_content_type`) |
+| `lazy_startup` | `bool` | `True` | Start on the first HTTP / WebSocket request when the server sent no lifespan events (logs a warning); `False` keeps the app cold until `await app.startup()` |
 
 ## Lauren
 
 ::: lauren.Lauren
 
-FastAPI-inspired imperative API. Routes are registered via decorator methods (`@app.get`, `@app.post`, etc.) and compiled lazily — by the ASGI lifespan, `await app.startup()`, or the first request. `await app.startup()` only compiles (and runs `on_startup` hooks); the ASGI lifespan — and `TestClient`, on its first request — also start the app: singletons are built and their `@post_construct` hooks run.
+FastAPI-inspired imperative API. Routes are registered via decorator methods (`@app.get`, `@app.post`, etc.) and compiled lazily — by the ASGI lifespan, `await app.startup()`, or the first request. `await app.startup()` only compiles (and runs `on_startup` hooks); the ASGI lifespan — and `TestClient`, on entering `with` or on its first request — also start the app: singletons are built and their `@post_construct` hooks run.
 
 ```python
 from lauren import Lauren, Path

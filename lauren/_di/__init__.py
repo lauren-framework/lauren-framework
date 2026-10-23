@@ -87,6 +87,7 @@ from ..exceptions import (
     UnresolvableParameterError,
 )
 from ..types import Scope
+from ._overrides import OverridePlan, ProviderOverride
 from .custom import (
     CustomProvider,
     OptionalDep,
@@ -258,7 +259,7 @@ class Provider:
 class DIContainer:
     """Compiled DI container; immutable after :meth:`compile`."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, overrides: OverridePlan | None = None) -> None:
         self._providers: dict[type, Provider] = {}
         # Token -> list of providers (for protocols / multi-bindings)
         self._token_bindings: dict[type, list[Provider]] = {}
@@ -280,6 +281,12 @@ class DIContainer:
         #: Instance-cache key -> provider, for scope teardown. Built by
         #: :meth:`compile` and rebuilt lazily after a late registration.
         self._instance_index: dict[Any, Provider] | None = None
+        #: Build-time overrides (``lauren.testing.Test``); ``None`` in production.
+        #: Every registration path consults it, so an override replaces its
+        #: target wherever — and whenever — the target would be registered.
+        self._overrides: OverridePlan | None = overrides
+        #: token -> provider rows built from an override, once applied.
+        self._override_rows: dict[Any, list[Provider]] = {}
 
     # -- Registration ------------------------------------------------------
 
@@ -296,6 +303,17 @@ class DIContainer:
         work uniformly.
         """
         meta = _get_injectable_meta(target)
+        if self._overrides is not None:
+            override = self._overrides.get(target)
+            if override is not None:
+                return self._register_override(
+                    target,
+                    override,
+                    owning_module=owning_module,
+                    target_scope=meta.scope if meta is not None else Scope.SINGLETON,
+                    provides=tuple(meta.provides) if meta is not None else (),
+                    multi=meta.multi if meta is not None else False,
+                )
         if meta is None:
             raise MissingProviderError(f"{_describe(target)} is not marked @injectable")
 
@@ -378,9 +396,182 @@ class DIContainer:
         return provider
 
     def _bind_token(self, token: Any, provider: Provider) -> None:
+        if self._overrides is not None:
+            override = self._overrides.get(token)
+            if override is not None and not any(
+                row is provider for row in self._override_rows.get(token, ())
+            ):
+                # ``provider`` reaches an overridden token through ``provides``
+                # (a Protocol / multi-binding token): the override replaces
+                # the binding instead of joining it.
+                self._register_override(
+                    token,
+                    override,
+                    owning_module=None,
+                    target_scope=provider.scope,
+                    provides=(),
+                    multi=provider.multi,
+                )
+                return
         self._token_bindings.setdefault(token, []).append(provider)
         self._registered.setdefault(id(provider), provider)
         self._instance_index = None
+
+    # ------------------------------------------------------------------
+    # Build-time overrides (``lauren.testing.Test``)
+    # ------------------------------------------------------------------
+
+    def applied_overrides(self) -> frozenset[Any]:
+        """Tokens whose registration an override has replaced in this container."""
+        return frozenset(self._override_rows)
+
+    def _register_override(
+        self,
+        token: Any,
+        override: ProviderOverride,
+        *,
+        owning_module: type | None,
+        target_scope: Scope,
+        provides: tuple[Any, ...],
+        multi: bool,
+    ) -> Provider:
+        """Install the provider rows ``override`` describes in place of ``token``.
+
+        The rows keep the target's token, owning module, ``provides`` and
+        ``multi`` flag, so module visibility, Protocol bindings and
+        ``list[T]`` membership are exactly what the replaced provider had.
+        Applied once per token: later registrations of the same token (a
+        multi-binding sibling, a repeated lazy registration) reuse the rows.
+        No user class is mutated — the rows are built directly.
+        """
+        existing = self._override_rows.get(token)
+        if existing:
+            return existing[0]
+        if override.kind == "values":
+            rows = [
+                self._override_value_row(
+                    token, value, owning_module=owning_module, provides=provides, multi=True
+                )
+                for value in override.values
+            ]
+        elif override.kind == "value":
+            rows = [
+                self._override_value_row(
+                    token, override.value, owning_module=owning_module, provides=provides, multi=multi
+                )
+            ]
+        else:
+            rows = [
+                self._override_built_row(
+                    token,
+                    override,
+                    owning_module=owning_module,
+                    scope=override.scope if override.scope is not None else target_scope,
+                    provides=provides,
+                    multi=multi,
+                )
+            ]
+        self._override_rows[token] = rows
+        for row in rows:
+            self._providers[token] = row
+            self._token_bindings.setdefault(token, []).append(row)
+            if row.provider_kind == "value":
+                key: Any = id(row) if row.multi else token
+                self._singletons[key] = row.factory() if row.factory is not None else None
+                self._singletons_initialized.add(key)
+            for tok in provides:
+                self._bind_token(tok, row)
+        return rows[0]
+
+    def _override_value_row(
+        self,
+        token: Any,
+        value: Any,
+        *,
+        owning_module: type | None,
+        provides: tuple[Any, ...],
+        multi: bool,
+    ) -> Provider:
+        def _value_factory() -> Any:
+            return value
+
+        return Provider(
+            cls=token,
+            scope=Scope.SINGLETON,
+            provides=provides,
+            multi=multi,
+            deps=(),
+            owning_module=owning_module,
+            factory=_value_factory,
+            is_function_provider=True,
+            provider_kind="value",
+        )
+
+    def _override_built_row(
+        self,
+        token: Any,
+        override: ProviderOverride,
+        *,
+        owning_module: type | None,
+        scope: Scope,
+        provides: tuple[Any, ...],
+        multi: bool,
+    ) -> Provider:
+        if override.kind == "class":
+            cls = override.use_class
+            if not isinstance(cls, type):
+                raise UnresolvableParameterError(
+                    f"use_class override for {_describe(token)} needs a class; got {cls!r}"
+                )
+            return Provider(
+                cls=token,
+                scope=scope,
+                provides=provides,
+                multi=multi,
+                deps=tuple(_inspect_class_deps(cls)),
+                owning_module=owning_module,
+                factory=cls,
+                field_deps=tuple(_collect_field_deps(cls)),
+                is_function_provider=False,
+                provider_kind="class",
+                post_construct=_find_lifecycle_hook(cls, "__lauren_post_construct__"),
+                pre_destruct=_find_lifecycle_hook(cls, "__lauren_pre_destruct__"),
+            )
+        if override.kind == "factory":
+            optional_names: set[str] = set()
+            deps: list[tuple[str, Any]] = []
+            for i, raw in enumerate(override.injects):
+                name = f"__factory_arg_{i}"
+                if isinstance(raw, OptionalDep):
+                    optional_names.add(name)
+                    raw = raw.token
+                deps.append((name, raw))
+            return Provider(
+                cls=token,
+                scope=scope,
+                provides=provides,
+                multi=multi,
+                deps=tuple(deps),
+                owning_module=owning_module,
+                factory=override.factory,
+                is_function_provider=True,
+                provider_kind="factory",
+                optional_dep_names=frozenset(optional_names),
+                positional_arg_names=tuple(name for name, _ in deps),
+            )
+        # "existing": an alias row; the resolver forwards to the target.
+        return Provider(
+            cls=token,
+            scope=Scope.SINGLETON,
+            provides=provides,
+            multi=multi,
+            deps=(),
+            owning_module=owning_module,
+            factory=None,
+            is_function_provider=True,
+            provider_kind="existing",
+            alias_target=override.existing,
+        )
 
     # ------------------------------------------------------------------
     # Custom-provider registration
@@ -610,6 +801,17 @@ class DIContainer:
         Used by :class:`LaurenFactory` so the module-graph compiler
         doesn't need to know the four-way branch.
         """
+        if self._overrides is not None:
+            override = self._overrides.get(custom.provide)
+            if override is not None:
+                return self._register_override(
+                    custom.provide,
+                    override,
+                    owning_module=owning_module,
+                    target_scope=custom.scope if custom.kind in ("class", "factory") else Scope.SINGLETON,
+                    provides=(),
+                    multi=custom.multi,
+                )
         if custom.kind == "value":
             return self.register_value(
                 custom.provide,

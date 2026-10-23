@@ -136,7 +136,8 @@ nox -s ver_dec -- --patch
 | `lauren/logging.py`               | NestJS-style logger (built-in, separate from |
 |                                   | the optional `lauren-logging` companion)     |
 | `lauren/signals.py`               | POSIX signal integration                     |
-| `lauren/testing.py`               | `TestClient`, `WsTestClient`                 |
+| `lauren/testing/`                 | `TestClient` (persistent portal loop), `AsyncTestClient`, `Test.create_testing_module` overrides, cookie jar, `WsTestClient`, opt-in `pytest_plugin` |
+| `lauren/_di/_overrides.py`        | Build-time override plan read by `LaurenFactory.create` (only set by `lauren.testing`) |
 | `lauren/docs.py`                  | Programmatic access to llms*.txt             |
 | `lauren/llms-full.txt`            | Public-API reference for AI ingestion        |
 | `lauren/llms.txt`                 | Short overview (llmstxt.org convention)      |
@@ -284,6 +285,7 @@ Welcome aboard.
 | Add WebSocket / SSE / streaming | `lauren/websockets.py`, `lauren/sse.py` | `skills/building-lauren-streaming/` |
 | Serve static files | `lauren/_staticfiles.py` | `skills/building-lauren-apps/` §Static files |
 | Write unit or integration tests | `tests/integration/test_di.py` | `skills/testing-lauren-apps/` |
+| Mock / replace a provider in tests | `lauren/testing/_module.py` | `Test.create_testing_module(...)` in `skills/testing-lauren-apps/` |
 | Add a background task | `lauren/background.py` | `skills/building-lauren-background-tasks/` |
 | Decouple modules with domain events | `lauren/events.py` | `skills/building-lauren-events/` |
 | Add session state | `lauren/sessions.py` | `skills/building-lauren-sessions/` |

@@ -18,6 +18,7 @@ from .._arena import RequestArena
 from .._config._module import install_config
 from .._di import INJECTABLE_META, DIContainer, InjectableMeta
 from .._di._scope import finalize_scope
+from .._di._overrides import active_override_plan
 from .._di.custom import CustomProvider
 from .._discovery import DiscoveryIndex, build_discovery_index, registered_markers
 from .._events import EventBus, compile_events, install_events
@@ -777,6 +778,7 @@ class LaurenApp:
         problem_type_base: str | None = None,
         debug: DebugConfig | None = None,
         guard_denials: dict[type, Any] | None = None,
+        lazy_startup: bool = True,
     ) -> None:
         self._router = router
         self._container = container
@@ -804,6 +806,13 @@ class LaurenApp:
         # Settings still waiting on an AsyncSource (``lauren.config``); the
         # factory sets it and ``startup()`` resolves it before any hook runs.
         self._config_pending: Any = None
+        # Lazy startup for servers / drivers that never send lifespan events
+        # (``httpx.ASGITransport``, some embedded servers): the first ``http``
+        # or ``websocket`` scope starts the app once, behind a single-flight
+        # task, unless a lifespan message was seen or the app opted out.
+        self._lazy_startup = lazy_startup
+        self._lifespan_seen = False
+        self._lazy_start_task: asyncio.Task[None] | None = None
         self._shutdown_event = asyncio.Event()
         self._shutdown_running = False
         self._shutdown_complete = asyncio.Event()
@@ -2001,8 +2010,12 @@ class LaurenApp:
         send: Callable[[dict[str, Any]], Awaitable[None]],
     ) -> None:
         if scope["type"] == "lifespan":
+            self._lifespan_seen = True
             await self._lifespan(scope, receive, send)
             return
+        if not self._started and self._lazy_startup and not self._lifespan_seen:
+            if scope["type"] in ("http", "websocket") and not self._shutdown_running:
+                await self._start_lazily()
         # Check mounted sub-applications before lauren's own routing.  Only
         # HTTP and WebSocket scopes can match a path prefix; other ASGI types
         # (e.g. custom extensions) are left to fall through to the normal path.
@@ -2052,6 +2065,7 @@ class LaurenApp:
             receive=receive,
             app_state=self._app_state,
             max_body_size=self._max_body_size,
+            extensions=scope.get("extensions"),
         )
         task = asyncio.current_task()
         if task is not None:
@@ -2123,6 +2137,24 @@ class LaurenApp:
             # iterable it may still reference the request's ``_receive``
             # callable.
             self._arena.release_request(request)
+
+    async def _start_lazily(self) -> None:
+        """Run :meth:`startup` once for a driver that never sent lifespan events.
+
+        Concurrent first requests share one startup task; a startup failure is
+        re-raised to every request (the app is not retried — a half-run
+        ``@post_construct`` sequence cannot be replayed safely).
+        """
+        task = self._lazy_start_task
+        if task is None:
+            message = (
+                "app started lazily on its first request; the ASGI server did not send "
+                "lifespan events (pass lazy_startup=False to LaurenFactory.create to disable)"
+            )
+            logger.warning(message)
+            self._logger.warn(message, context="LaurenApp")
+            task = self._lazy_start_task = asyncio.ensure_future(self.startup())
+        await asyncio.shield(task)
 
     async def _websocket(
         self,
@@ -2674,6 +2706,7 @@ class LaurenFactory:
         content: ContentConfig | None = None,
         problem_type_base: str | None = None,
         debug: bool | DebugConfig = False,
+        lazy_startup: bool = True,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -2713,6 +2746,11 @@ class LaurenFactory:
         logs a warning whenever it is on, and refuses it (``StartupError``,
         ``reason="debug_in_production"``) when the configuration module's
         active profile is a production profile.
+
+        ``lazy_startup`` (default ``True``) makes the app run :meth:`LaurenApp.startup`
+        on its first HTTP or WebSocket request when the ASGI server never
+        sent lifespan events (``httpx.ASGITransport``), logging a warning.
+        Pass ``False`` to keep such an app cold until ``startup()`` is awaited.
         """
         _log: Logger = logger or NullLogger()
         if problem_type_base is not None and (
@@ -2758,10 +2796,14 @@ class LaurenFactory:
             root=root_module.__name__,
         )
 
+        # Build-time overrides — set only inside lauren.testing's
+        # ``TestingModuleBuilder.compile()``; ``None`` for every other build.
+        override_plan = active_override_plan()
+
         # ---- Phase 1: Module graph construction ----
         t0 = time.perf_counter()
         graph = ModuleGraph()
-        graph.compile(root_module)
+        graph.compile(root_module, substitutions=override_plan.modules if override_plan is not None else None)
         _log.verbose(
             f"Phase 1/7 module graph built: {len(graph.modules)} module(s), "
             f"{len(graph.all_controllers)} controller(s), "
@@ -2778,7 +2820,7 @@ class LaurenFactory:
         # it so the container can enforce NestJS-style encapsulation at
         # resolution time.
         t0 = time.perf_counter()
-        container = DIContainer()
+        container = DIContainer(overrides=override_plan)
         for p in graph.iter_providers():
             owning_module = graph.module_for_provider(p)
             # Custom-provider records (use_value / use_class /
@@ -3276,6 +3318,7 @@ class LaurenFactory:
             problem_type_base=problem_type_base,
             debug=debug_config,
             guard_denials=guard_denials,
+            lazy_startup=lazy_startup,
         )
         # The immutable Phase 6a index; feature consumers read their markers.
         app._discovery = discovery

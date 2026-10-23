@@ -5,6 +5,7 @@ from __future__ import annotations
 import enum
 import json as jsonlib
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import (
     Annotated,
     Any,
@@ -351,6 +352,7 @@ class Request:
         receive: Callable[[], Awaitable[dict[str, Any]]] | None = None,
         app_state: AppState | None = None,
         max_body_size: int = 1_048_576,
+        extensions: dict[str, Any] | None = None,
     ) -> None:
         self._method = method.upper()
         self._path = path
@@ -373,6 +375,10 @@ class Request:
         self._route_template: str | None = None
         # Cookies cache
         self._cookies: dict[str, str] | None = None
+        # ASGI ``scope["extensions"]``: stored only when the server sent some,
+        # so the common case adds no attribute (see the ``extensions`` property).
+        if extensions:
+            self._extensions = extensions
 
     # -- Arena support ----------------------------------------------------
 
@@ -388,6 +394,7 @@ class Request:
         receive: Callable[[], Awaitable[dict[str, Any]]],
         app_state: AppState,
         max_body_size: int,
+        extensions: dict[str, Any] | None = None,
     ) -> None:
         """Re-initialise this :class:`Request` in place for reuse.
 
@@ -450,6 +457,8 @@ class Request:
         self._handler_func = None
         self._route_template = None
         self._cookies = None
+        if extensions:
+            self._extensions = extensions
 
     # -- Core properties ---------------------------------------------------
 
@@ -513,6 +522,22 @@ class Request:
     @property
     def app_state(self) -> AppState:
         return self._app_state
+
+    @property
+    def extensions(self) -> Mapping[str, Any]:
+        """The ASGI ``scope["extensions"]`` of this request, read-only.
+
+        Servers advertise optional protocol features here (``"tls"``,
+        ``"http.response.trailers"``, …); in-process drivers such as
+        :class:`lauren.testing.TestClient` use it to correlate a request with
+        the test that sent it. Empty when the server sent no extensions.
+        """
+        # ``reset()`` cleared ``__dict__``, so an absent attribute reliably
+        # means "this request carried no extensions".
+        ext = self.__dict__.get("_extensions")
+        if not ext:
+            return _EMPTY_EXTENSIONS
+        return MappingProxyType(ext)
 
     # -- Body consumption --------------------------------------------------
 
@@ -592,6 +617,9 @@ class Request:
 
     def get_matched_route(self) -> Any | None:
         return self._matched_route
+
+
+_EMPTY_EXTENSIONS: Mapping[str, Any] = MappingProxyType({})
 
 
 async def _empty_receive() -> dict[str, Any]:

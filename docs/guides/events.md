@@ -419,11 +419,12 @@ async def test_registration_sends_a_welcome_mail(app: LaurenApp) -> None:
 * Unit-testing a service that publishes? Pass it a bare `EventBus()` — it has
   no handlers — and assert on `bus.recording()`.
 
-!!! warning "The synchronous `TestClient` and concurrent handlers"
-    The synchronous `TestClient` runs every request in its own event loop, so a
-    `"concurrent"` handler a request starts is cancelled when that loop closes.
-    Use `wait=True`, `mode="background"`, or an async test that calls
-    `await client.arequest(...)` and then `await bus.drain()`.
+!!! tip "Concurrent handlers in tests"
+    `TestClient` keeps one event loop for the client's lifetime, so a
+    `"concurrent"` handler a request starts keeps running after the response.
+    Call `bus.drain()` (or emit with `wait=True`) before asserting on its side
+    effects; in an async test, `AsyncTestClient` runs the app on the test's own
+    loop.
 
 ---
 

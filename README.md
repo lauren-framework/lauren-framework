@@ -182,6 +182,13 @@ core ideas:
   TOML and the environment, validated inside `LaurenFactory.create` — one
   `ConfigValidationError` lists every missing or invalid key with its source —
   and injected through DI. `Secret[T]` is redacted in logs, JSON and errors.
+* **Testing toolkit** — `with TestClient(app)` runs startup and the full
+  shutdown on one persistent event loop, keeps a browser-like cookie jar, sends
+  forms / uploads / streamed bodies, reads endless streams event by event and
+  simulates client aborts. `Test.create_testing_module(AppModule)
+  .override_provider(X).use_value(fake).compile()` swaps any provider, guard,
+  middleware or module and is validated by the real factory. `AsyncTestClient`
+  and an opt-in pytest plugin round it out.
 * **Static files** — `StaticFilesModule.for_root("/assets", directory="./public")`
   with ETag caching, `Cache-Control`, path-traversal protection, and dotfiles
   (`.env`, `.git/`) hidden by default (`/.well-known/` still served).
@@ -454,6 +461,24 @@ Values come from `.env`, `.env.{profile}` and the environment (the environment
 always wins; `os.environ` is never written). Profiles, TOML / YAML / secret-file
 sources, feature-scoped settings and `load_settings(...)` for factory kwargs:
 see the [Typed Configuration guide](https://lauren-py.dev/guides/configuration/).
+
+## Testing
+
+```python
+from lauren.testing import Test, TestClient
+
+app = Test.create_testing_module(AppModule).override_provider(Mailer).use_value(FakeMailer()).compile()
+
+with TestClient(app) as client:                 # startup() on enter, shutdown() on exit
+    client.post("/account/login")               # Set-Cookie kept in client.cookies
+    assert client.get("/account/visits").json() == {"visits": 1}
+    with client.stream("GET", "/events") as r:  # endless SSE, event by event
+        first = next(r.iter_sse())
+```
+
+One event loop per client keeps startup-created resources (pools, `asyncio`
+primitives, background tasks) alive across requests. See the
+[testing guide](https://lauren-py.dev/guides/testing/).
 
 ## Performance
 

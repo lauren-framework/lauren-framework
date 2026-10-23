@@ -1,6 +1,6 @@
 ---
 name: testing-lauren-apps
-description: Tests Lauren apps with TestClient (sync) and httpx.AsyncClient (async). Covers conftest setup, env vars before imports, app startup, mock providers, common assertion patterns, e2e multi-backend testing, and Hypothesis property tests. Use when writing unit, integration, e2e, or property tests for a Lauren app.
+description: Tests Lauren apps with TestClient (sync, lifespan-managed) and AsyncTestClient (async). Covers conftest setup, env vars before imports, lifespan, cookies and sessions, uploads, streaming, provider overrides with Test.create_testing_module, the pytest plugin, common assertion patterns, e2e multi-backend testing, and Hypothesis property tests. Use when writing unit, integration, e2e, or property tests for a Lauren app.
 ---
 
 > Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
@@ -24,10 +24,15 @@ from myapp.main import app          # or LaurenFactory.create(TestModule)
 
 @pytest.fixture(scope="session")
 def client():
-    return TestClient(app)
+    with TestClient(app) as c:      # startup() on enter, shutdown() on exit
+        yield c
 ```
 
-`TestClient.__init__` calls `await app.startup()` automatically (idempotent).
+`with TestClient(app)` runs startup on enter and the full shutdown
+(`@pre_destruct`, generator teardown) on exit. A bare `TestClient(app)` still
+starts the app at construction (1.x behaviour). One event loop per client:
+resources created at startup (`asyncio.Event`, pools, tasks spawned in
+`@post_construct`) keep working across requests.
 
 ## TestClient — synchronous
 
@@ -50,38 +55,64 @@ resp = client.patch("/users/1", json={"name": "Partial"})
 
 # Headers and cookies
 resp = client.get("/me", headers={"Authorization": "Bearer token123"})
-resp = client.get("/profile", cookies={"session": "abc"})
+resp = client.get("/profile", cookies={"session": "abc"})   # this request only
 
-# Raw bytes body
-resp = client.post("/upload", content=b"\x00\x01\x02")
+# Bodies
+resp = client.post("/upload", content=b"\x00\x01\x02")            # raw bytes
+resp = client.post("/login", data={"user": "ada", "pw": "x"})      # urlencoded form
+resp = client.post("/avatar", files={"file": ("me.png", png, "image/png")})  # multipart
+resp = client.post("/ingest", content=(c for c in chunks))         # streamed body
+
+# Redirects, timeouts, simulated aborts
+resp = client.get("/old", follow_redirects=True)                   # resp.history
+resp = client.get("/slow", timeout=5)                              # TimeoutError on expiry
+resp = client.get("/slow", disconnect_after=0.2)                   # resp.aborted is True
 ```
 
 ### TestResponse
 
 ```python
-resp.status_code              # int
-resp.json()                   # parsed JSON body
-resp.text                     # str body
-resp.body                     # bytes body (no .content)
-resp.headers                  # list[tuple[str, str]] — not a mapping
-resp.header("content-type")   # first value, case-insensitive (None if absent)
-resp.headers_all("set-cookie")  # every value
+resp.status_code                 # int
+resp.json()                      # parsed JSON body
+resp.text                        # str body
+resp.body / resp.content         # bytes body
+resp.headers                     # list[tuple[str, str]] ...
+resp.headers.get("content-type") # ... with case-insensitive mapping accessors
+resp.headers["content-type"]
+resp.header("content-type")      # first value, case-insensitive (None if absent)
+resp.headers_all("set-cookie")   # every value
+resp.cookies                     # cookies set by this response
+resp.raise_for_status()          # HTTPStatusAssertionError for 4xx/5xx
 ```
 
-## Async client — httpx
+### Cookies, sessions, streams, WebSockets
+
+```python
+with TestClient(app) as client:              # Set-Cookie stored in client.cookies
+    client.post("/auth/login", json={...})
+    client.get("/account")                   # session cookie replayed
+    other = client.new_session()             # second user, empty jar
+    client.set_session({"user_id": "u-1"})   # signed by the app's session engine
+
+    with client.stream("GET", "/events") as r:   # endless SSE, event by event
+        first = next(r.iter_sse())
+
+    with client.websocket_connect("/chat") as ws:   # carries the jar's cookies
+        ws.send_event("chat.send", {"text": "hi"})
+        reply = ws.receive_event()
+```
+
+## Async client — AsyncTestClient
 
 For `asyncio_mode = "auto"` pytest-asyncio tests:
 
 ```python
 import pytest
-import httpx
+from lauren.testing import AsyncTestClient
 
 @pytest.fixture
 async def aclient(app):
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
-    ) as c:
+    async with AsyncTestClient(app) as c:     # startup/shutdown on the test's loop
         yield c
 
 async def test_create_user(aclient):
@@ -90,32 +121,54 @@ async def test_create_user(aclient):
     assert resp.json()["name"] == "Alice"
 ```
 
-For WebSocket testing use `WsTestClient` — see [async-testing.md](async-testing.md) for lifecycle startup, streaming, and WebSocket patterns.
+Keeping `httpx.AsyncClient(transport=ASGITransport(app))`? Wrap it in
+`async with lauren.testing.lifespan(app):` so startup and shutdown run. See
+[async-testing.md](async-testing.md) for streaming and WebSocket patterns.
 
-## Isolating services with use_value
+## Replacing providers: Test.create_testing_module
+
+Swap a provider anywhere in the module graph — no test module to re-declare:
 
 ```python
-from lauren import module, use_value, LaurenFactory
-from lauren.testing import TestClient
+from lauren.testing import Test, TestClient
 
 class FakeUsersService:
     async def find_all(self): return [{"id": 1, "name": "Mock"}]
 
-@module(
-    controllers=[UsersController],
-    providers=[use_value(provide=UsersService, value=FakeUsersService())],
-)
-class TestModule:
-    pass
-
 @pytest.fixture(scope="module")
 def client():
-    app = LaurenFactory.create(TestModule)
-    return TestClient(app)
+    app = (
+        Test.create_testing_module(AppModule)        # same kwargs as LaurenFactory.create
+        .override_provider(UsersService).use_value(FakeUsersService())
+        .override_guard(JwtGuard).allow()
+        .compile()                                   # full startup validation
+    )
+    with TestClient(app) as c:
+        yield c
 
 def test_list(client):
     resp = client.get("/users")
     assert resp.status_code == 200
+```
+
+Also: `.use_class(C)`, `.use_factory(fn, injects=[...])`, `.use_existing(token)`,
+`.override_interceptor(I).passthrough()`, `.override_middleware(M).passthrough()`,
+`.override_exception_handler(H).use_value(...)`,
+`.override_module(Old).with_module(New)`. A target nothing registers fails
+`compile()` with `MissingProviderError` (`.optional()` to allow it).
+
+## pytest plugin (opt-in)
+
+```python
+# conftest.py
+pytest_plugins = ["lauren.testing.pytest_plugin"]
+
+@pytest.fixture(scope="module")
+def lauren_testing_module():
+    return Test.create_testing_module(AppModule).override_provider(Mailer).use_value(FakeMailer())
+
+def test_hello(lauren_client):      # also: lauren_app, lauren_aclient, lauren_ws, lauren_capture
+    assert lauren_client.get("/hello").status_code == 200
 ```
 
 ## pyproject.toml for tests
@@ -159,8 +212,8 @@ def test_protected(client, valid_token):
 
 ## Testing background tasks
 
-`TestClient` runs background tasks synchronously in the same event loop before
-the request returns, so side effects are directly assertable:
+`TestClient` runs background tasks on the client's event loop before the
+request returns, so side effects are directly assertable:
 
 ```python
 from lauren import module, controller, post, LaurenFactory, BackgroundTasks, Json
@@ -198,19 +251,21 @@ def test_task_handle_id_in_response():
     assert resp.json()["task_id"]             # non-empty string
 ```
 
-For signal-based assertions, subscribe before the request:
+For signal-based assertions, capture the events around the request:
 
 ```python
 from lauren import BackgroundTaskFailed
 
-failures = []
-
 def test_failed_task_emits_signal():
-    app.signals.on(BackgroundTaskFailed)(failures.append)
-    client.post("/path-that-triggers-bad-task")
+    with client.capture(BackgroundTaskFailed) as failures:
+        client.post("/path-that-triggers-bad-task")
     assert len(failures) == 1
     assert isinstance(failures[0].error, SomeExpectedError)
 ```
+
+`TestClient(app, raise_server_exceptions=True)` re-raises an unhandled handler
+error (the one that became a 500) with its traceback instead of returning the
+envelope.
 
 ## E2E multi-backend testing
 

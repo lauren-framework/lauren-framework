@@ -17,7 +17,7 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 | [building-lauren-events](building-lauren-events/) | Typed domain events between modules: `@on_event` handlers, `EventBus` / `EventPublisher`, delivery modes, priorities, error policies, after-commit emission, `recording()` / `drain()` |
 | [building-lauren-sessions](building-lauren-sessions/) | `sessions=SessionConfig(...)`, `session: Session` injection, `SessionStore` backends, signed cookies, `regenerate_id()`/`invalidate()` |
 | [building-lauren-config](building-lauren-config/) | Typed settings validated in `LaurenFactory.create`: `ConfigModule.for_root`/`for_feature`, `.env`/TOML/environment sources, profiles, `Secret[T]`, `load_settings`, `ConfigValidationError` |
-| [testing-lauren-apps](testing-lauren-apps/) | `TestClient`, `WsTestClient`, async tests, mock providers, startup-failure assertions |
+| [testing-lauren-apps](testing-lauren-apps/) | Lifespan-managed `TestClient` / `AsyncTestClient`, cookies & sessions, uploads, streams, `Test.create_testing_module` overrides, pytest plugin, startup-failure assertions |
 | [migrating-from-fastapi](migrating-from-fastapi/) | Side-by-side FastAPI → lauren equivalents (routing, DI, middleware, errors) |
 | [using-companion-packages](using-companion-packages/) | CORS, auth guards (`jwt_bearer`, `api_key`), structured logging with `lauren-logging` |
 | [building-companion-packages](building-companion-packages/) | Package structure, DI/module integration, CI/CD, `llms*.txt`, and publishing for Lauren ecosystem packages |

@@ -7,8 +7,42 @@
 
 [attributes]
 "lauren.background.TaskHandle" = ["task_id", "status", "done", "result", "cancel"]
-"lauren.testing.TestResponse" = ["status_code", "headers", "body", "text", "json", "header", "headers_all"]
-"lauren.testing.TestClient" = ["get", "post", "put", "patch", "delete", "options", "head", "request", "arequest"]
+"lauren.testing.TestResponse" = [
+    "status_code", "headers", "body", "content", "text", "json", "header", "headers_all", "cookies",
+    "is_success", "is_redirect", "is_client_error", "is_server_error", "raise_for_status",
+    "aborted", "url", "request", "elapsed", "history",
+]
+"lauren.testing.TestClient" = [
+    "get", "post", "put", "patch", "delete", "options", "head", "request", "arequest",
+    "stream", "websocket_connect", "close", "new_session", "resolve", "capture", "set_session",
+    "timeout", "persists_cookies",
+]
+"lauren.testing.AsyncTestClient" = [
+    "get", "post", "put", "patch", "delete", "options", "head", "request",
+    "stream", "websocket_connect", "aclose", "new_session", "resolve", "capture", "set_session",
+]
+"lauren.testing.ResponseHeaders" = ["get", "getall", "get_list", "keys", "values", "items", "multi_items"]
+"lauren.testing.StreamingTestResponse" = [
+    "iter_bytes", "iter_text", "iter_lines", "iter_sse", "read", "close",
+    "aiter_bytes", "aiter_text", "aiter_lines", "aiter_sse", "aread", "aclose",
+]
+"lauren.testing.CookieJar" = ["get", "set", "delete", "clear", "as_dict"]
+"lauren.testing.StoredCookie" = ["name", "value", "domain", "path", "expires", "secure", "http_only", "same_site", "host_only"]
+"lauren.testing.Test" = ["create_testing_module"]
+"lauren.testing.TestingModuleBuilder" = [
+    "override_provider", "override_guard", "override_interceptor", "override_middleware",
+    "override_exception_handler", "override_module", "compile",
+]
+"lauren.testing.WebSocketTestSession" = [
+    "send_text", "send_bytes", "send_json", "send_event",
+    "receive", "receive_text", "receive_bytes", "receive_json", "receive_event", "close",
+]
+"lauren.testing.WebSocketSession" = [
+    "send_text", "send_bytes", "send_json", "send_event",
+    "receive", "receive_text", "receive_bytes", "receive_json", "receive_event", "close",
+    "close_code", "close_reason", "accepted_subprotocol",
+]
+"lauren.types.Request" = ["extensions"]
 "lauren.types.UploadFile" = ["filename", "content_type", "headers", "name", "size", "read", "read_sync"]
 "lauren.types.Headers" = ["get", "getall", "items", "keys", "values"]
 "lauren.types.State" = ["get", "set", "has", "get_typed", "require", "asdict"]

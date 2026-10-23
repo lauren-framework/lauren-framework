@@ -46,7 +46,7 @@ from lauren.exceptions import (
     UnresolvableParameterError,
 )
 from lauren.signals import EventHandlerFailed, SignalBus
-from lauren.testing import TestClient, WsTestClient
+from lauren.testing import AsyncTestClient, TestClient, WsTestClient
 from lauren.websockets import WebSocket
 
 
@@ -331,7 +331,10 @@ async def test_emit_threadsafe_publishes_from_a_sync_handler() -> None:
 
     app = await started(AppModule)
 
-    response = await TestClient(app).arequest("POST", "/users/")
+    # AsyncTestClient drives the app on this test's event loop, so the loop
+    # thread is this thread: the handler must run here, the sync route elsewhere.
+    async with AsyncTestClient(app, lifespan="off") as client:
+        response = await client.post("/users/")
 
     body = response.json()
     assert body["handled"] == 1
