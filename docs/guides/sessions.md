@@ -48,7 +48,7 @@ to `LaurenFactory.create` (or the `Lauren(sessions=...)` constructor).
 
 | Field | Type | Default | Purpose |
 |---|---|---|---|
-| `secret` | `str \| bytes \| Sequence[...]` | `None` | HMAC signing key(s). **Required.** A list rotates keys (first signs, all verify). |
+| `secret` | `str \| bytes \| Secret[...] \| Sequence[...]` | `None` | HMAC signing key(s). **Required.** A list rotates keys (first signs, all verify). A [`Secret`](configuration.md#secrets) from typed configuration is unwrapped internally. |
 | `store` | `SessionStore` | `InMemorySessionStore()` | Backend (see [Stores](#stores)). |
 | `cookie_name` | `str` | `"lauren_session"` | Cookie name. `__Host-`/`__Secure-` prefixes are validated. |
 | `max_age` | `int \| None` | `1209600` | Absolute cookie lifetime + server TTL, in seconds (14 days). |

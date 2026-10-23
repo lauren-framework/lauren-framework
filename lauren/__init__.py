@@ -119,6 +119,7 @@ from .decorators import (
 from .exceptions import (
     CircularDependencyError,
     CircularModuleError,
+    ConfigValidationError,
     DecoratorUsageError,
     DestructError,
     DestructTimeoutError,
@@ -257,6 +258,7 @@ from .reflect import (
     ReflectedWsGateway,
 )
 from ._staticfiles import StaticFilesModule
+from .config import ConfigModule, Secret
 from .sessions import (
     InMemoryRevocationStore,
     InMemorySessionStore,
@@ -356,6 +358,9 @@ __all__ = [
     "OpenAPISecurityMeta",
     # static files
     "StaticFilesModule",
+    # typed configuration (the rest lives in lauren.config)
+    "ConfigModule",
+    "Secret",
     # sessions
     "Session",
     "SessionConfig",
@@ -495,6 +500,7 @@ __all__ = [
     "InterceptorConfigError",
     "ExceptionHandlerConfigError",
     "SessionConfigError",
+    "ConfigValidationError",
     "OpenAPISchemaError",
     "ExtractorError",
     "ExtractorFieldError",

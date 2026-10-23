@@ -171,6 +171,11 @@ core ideas:
   Unsafe configuration is rejected at startup. Pair with
   `content=ContentConfig(strict_content_type=True)` so cross-site `text/plain`
   posts to JSON routes are rejected (415).
+* **Typed configuration** — settings classes (frozen dataclasses, pydantic
+  models, `msgspec.Struct`) loaded by `ConfigModule.for_root(...)` from `.env`,
+  TOML and the environment, validated inside `LaurenFactory.create` — one
+  `ConfigValidationError` lists every missing or invalid key with its source —
+  and injected through DI. `Secret[T]` is redacted in logs, JSON and errors.
 * **Static files** — `StaticFilesModule.for_root("/assets", directory="./public")`
   with ETag caching, `Cache-Control`, path-traversal protection, and dotfiles
   (`.env`, `.git/`) hidden by default (`/.well-known/` still served).
@@ -401,6 +406,42 @@ The cookie is HMAC-signed and secure by default (`HttpOnly`, `Secure`,
 `SignedCookieSessionStore` or a Redis-backed `SessionStore` in production.
 Unsafe configuration fails inside `LaurenFactory.create`, not at runtime.
 
+## Configuration
+
+```python
+from dataclasses import dataclass
+
+from lauren import LaurenFactory, injectable, module
+from lauren.config import ConfigModule, Secret
+
+@dataclass(frozen=True)
+class DatabaseSettings:
+    url: str
+    pool_size: int = 10
+
+@dataclass(frozen=True)
+class AppSettings:
+    session_secret: Secret[str]       # redacted in repr, logs and JSON
+    database: DatabaseSettings        # APP_DATABASE__URL, APP_DATABASE__POOL_SIZE
+    debug: bool = False               # APP_DEBUG=yes
+
+@injectable()
+class Mailer:
+    def __init__(self, settings: AppSettings) -> None:
+        self.debug = settings.debug
+
+@module(imports=[ConfigModule.for_root(AppSettings, env_prefix="APP_")], providers=[Mailer])
+class AppModule:
+    pass
+
+app = LaurenFactory.create(AppModule)   # raises one ConfigValidationError listing every bad key
+```
+
+Values come from `.env`, `.env.{profile}` and the environment (the environment
+always wins; `os.environ` is never written). Profiles, TOML / YAML / secret-file
+sources, feature-scoped settings and `load_settings(...)` for factory kwargs:
+see the [Typed Configuration guide](https://lauren-py.dev/guides/configuration/).
+
 ## Performance
 
 Runtime is **pure traversal of pre-compiled structures** — no
@@ -444,6 +485,7 @@ full tables, the method and the pinned dependency set are on the
 | `pydantic` / `msgspec` | Model validation and OpenAPI for those model kinds (`lauren[pydantic]`, `lauren[msgspec]`, `lauren[full]`) |
 | `orjson` | Faster JSON via `OrjsonEncoder` — opt in with `json_encoder=OrjsonEncoder()` or `json_encoder=auto_encoder()` |
 | `msgspec` | Alternative fast JSON encoder via `MsgspecEncoder` |
+| `pyyaml` | `YamlSource` for typed configuration (`lauren[yaml]`); TOML, `.env` and the environment need nothing extra |
 | `httpx` | Only if you prefer `httpx.ASGITransport` in tests — `lauren.testing.TestClient` needs nothing extra |
 
 Form bodies and multipart uploads are parsed in-tree; no `python-multipart` needed.

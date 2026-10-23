@@ -1155,7 +1155,8 @@ def _json_default(obj: Any) -> Any:
     It knows how to handle Pydantic v2 models, standard-library datetimes,
     :class:`enum.Enum`, :class:`uuid.UUID`, :class:`pathlib.PurePath`,
     :class:`decimal.Decimal`, :class:`set` / :class:`frozenset`, and
-    dataclass instances.
+    dataclass instances. Secrets (:class:`lauren.config.Secret`, pydantic
+    ``SecretStr`` / ``SecretBytes``) encode as ``"**********"``.
     """
     import enum
     import dataclasses
@@ -1163,6 +1164,8 @@ def _json_default(obj: Any) -> Any:
     import decimal
     import pathlib
     import uuid
+
+    from ._config._secret import REDACTED, is_secret
 
     # Pydantic v2 models
     if hasattr(obj, "model_dump") and callable(getattr(obj, "model_dump")):
@@ -1184,6 +1187,10 @@ def _json_default(obj: Any) -> Any:
         return list(obj)
     if isinstance(obj, bytes):
         return obj.decode("utf-8", errors="replace")
+    # Secrets (lauren.config.Secret, pydantic SecretStr / SecretBytes) never
+    # leak; checked after the common rich types so they pay nothing for it.
+    if is_secret(obj):
+        return REDACTED
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return dataclasses.asdict(obj)
     # msgspec.Struct — detected via __struct_fields__ without importing msgspec.

@@ -39,13 +39,14 @@ common mistakes.
 28. [Socket.IO Compatibility](#socketio-compatibility)
 29. [Sessions](#sessions)
 30. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
-31. [Static Files](#static-files)
-32. [Request Arena](#request-arena)
-33. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
-34. [AI Documentation Access](#ai-documentation-access)
-35. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-36. [Companion Packages](#companion-packages)
-37. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
+31. [Configuration](#configuration)
+32. [Static Files](#static-files)
+33. [Request Arena](#request-arena)
+34. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+35. [AI Documentation Access](#ai-documentation-access)
+36. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+37. [Companion Packages](#companion-packages)
+38. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -115,7 +116,7 @@ assert client.post("/users/", json={"name": "Ada", "age": 36}).status_code == 20
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
 1. **Module graph construction** — walk `@module(imports=[...])` edges, detect cycles.
-2. **Provider collection** — gather every `@injectable` from the graph.
+2. **Provider collection** — gather every `@injectable` from the graph; then (Phase 2b) load and validate every `ConfigModule` settings class, raising one `ConfigValidationError` for all problems (see [Configuration](#configuration)).
 3. **Protocol binding** — resolve `provides=[Protocol]` declarations.
 4. **DI graph compilation** — detect circular deps, scope violations, protocol ambiguities.
 5. **Router compilation** — walk controllers, compile handler signatures into extraction plans, insert into the radix tree.
@@ -1551,6 +1552,7 @@ by `LaurenFactory.create` or at decoration time and are never HTTP-mapped;
 | `InterceptorConfigError` | `StartupError` | — | `interceptor_config` | An interceptor lacks `intercept(ctx, call_handler)`, or `@use_interceptors` cannot run where placed. |
 | `ExceptionHandlerConfigError` | `StartupError` | — | `exception_handler_config` | An `@exception_handler` / `@use_exception_handlers` was misused. |
 | `SessionConfigError` | `StartupError` | — | `session_config` | A `SessionConfig` was invalid, or a `Session` was injected into a handler in an app that did not enable sessions. |
+| `ConfigValidationError` | `StartupError` | — | `config_validation` | One or more settings classes failed to load or validate. |
 | `OpenAPISchemaError` | `StartupError` | — | `openapi_schema` | Reserved for strict OpenAPI generation — not raised yet. |
 | `DecoratorUsageError` | `StartupError` | — | `decorator_usage` | A decorator or provider helper was used incorrectly — most often without parentheses. |
 | `HTTPError` | `LaurenError` | 500 | `http_error` | Base class for errors mapped to HTTP responses. |
@@ -2275,6 +2277,8 @@ app = LaurenFactory.create(
 ```
 
 - `secret` accepts a list for **rotation**: the first signs, all verify.
+  Each entry may be a `lauren.config.Secret` (unwrapped internally), so
+  `SessionConfig(secret=settings.session_secret)` works with typed configuration.
 - `same_site="none"` requires `secure=True`; a `__Host-`/`__Secure-`
   `cookie_name` is validated against `secure`/`path`/`domain`; `max_age` /
   `idle_timeout` must be positive — each rejected with `SessionConfigError`.
@@ -2457,6 +2461,188 @@ and `UploadFile` parameters are not gated. `Request.json()` called inside a
 handler is not gated. The 415 is an ordinary `HTTPError`: exception handlers
 can claim it. An invalid value (or a non-`ContentConfig` `content=`) raises
 `StartupError` with `detail["reason"] == "invalid_content_config"`.
+
+---
+
+## Configuration
+
+Typed settings, validated inside `LaurenFactory.create` (factory Phase 2b,
+before the DI graph compiles). Settings classes are DI providers; every
+missing or invalid value in every settings class is raised together as one
+`ConfigValidationError`; `Secret[T]` is redacted everywhere; `os.environ` is
+read, never written. Public names live in `lauren.config` (`ConfigModule` and
+`Secret` are also exported from `lauren`; `ConfigValidationError` from
+`lauren` and `lauren.exceptions`).
+
+```python run
+from dataclasses import dataclass, field
+from typing import Annotated
+
+from lauren import LaurenFactory, controller, get, injectable, module
+from lauren.config import ConfigModule, Env, EnvSource, Profile, Secret
+from lauren.testing import TestClient
+
+
+@dataclass(frozen=True)
+class CfgDatabaseSettings:
+    url: str                                    # required
+    pool_size: int = 10
+
+
+@dataclass(frozen=True)
+class CfgAppSettings:
+    session_secret: Secret[str]                 # required, redacted
+    database: CfgDatabaseSettings               # nested section: APP_DATABASE__URL
+    debug: bool = False
+    allowed_origins: list[str] = field(default_factory=list)   # "a, b" or '["a","b"]'
+    llm_api_key: Annotated[Secret[str], Env("LLM_API_KEY")] = Secret("")  # explicit name, no prefix
+
+
+@injectable()
+class CfgMailer:
+    def __init__(self, settings: CfgAppSettings, profile: Profile) -> None:  # typed injection
+        self.debug = settings.debug
+        self.sandbox = not profile.is_production
+
+
+@controller("/cfg")
+class CfgController:
+    def __init__(self, mailer: CfgMailer, settings: CfgAppSettings) -> None:
+        self.mailer, self.settings = mailer, settings
+
+    @get("/")
+    async def show(self) -> dict:
+        return {"debug": self.mailer.debug, "pool": self.settings.database.pool_size,
+                "secret": self.settings.session_secret}        # JSON-encodes as "**********"
+
+
+@module(
+    imports=[ConfigModule.for_root(
+        CfgAppSettings,
+        env_prefix="APP_",
+        sources=[EnvSource()],                  # production: omit -> .env, .env.{profile}, environment
+        environ={"APP_SESSION_SECRET": "s3cr3t", "APP_DATABASE__URL": "sqlite://",
+                 "APP_DATABASE__POOL_SIZE": "5"},   # tests: replaces os.environ; production: omit
+    )],
+    controllers=[CfgController],
+    providers=[CfgMailer],
+)
+class CfgAppModule:
+    pass
+
+
+cfg_app = LaurenFactory.create(CfgAppModule)
+assert TestClient(cfg_app).get("/cfg/").json() == {"debug": False, "pool": 5, "secret": "**********"}
+```
+
+### `ConfigModule.for_root(settings_cls, *, env_prefix="", sources=None, section=None, profile=None, profiles=("development", "test", "production"), environ=None, overrides=None, is_global=True, expose_sections=False)`
+
+Returns a new generated `@module` class per call (put it in `imports=`).
+Global by default: every module can inject `settings_cls` without importing
+anything. `profile=`, `profiles=` and `environ=` are app-wide (several
+`for_root` modules must agree on them, else `StartupError`
+`reason="conflicting_config_roots"`). `is_global=False` makes it
+module-scoped like `for_feature`.
+
+### `ConfigModule.for_feature(settings_cls, *, env_prefix="", sources=None, section=None, overrides=None, expose_sections=False)`
+
+Module-scoped: the importing module, and importers of a module that
+re-exports the class, can inject it; anyone else gets `MissingProviderError`.
+`sources=None` inherits the root's sources (or the default stack).
+`section="database"` reads the `[database]` table of TOML / YAML files.
+Declaring the same class in two feature modules is a `ModuleExportViolation`.
+`expose_sections=True` (both factories) also provides every nested section
+class as its own token; a section type used twice is a
+`DuplicateBindingError`.
+
+### Sources and precedence
+
+Lowest → highest: class defaults < `sources` in list order < `EnvSource()`
+(must be **last**; a `.env` file never overrides the real environment) <
+`overrides={"dotted.path": value}`. `sources=None` =
+`[DotenvSource(".env", required=False), DotenvSource(".env.{profile}", required=False), EnvSource()]`.
+
+| Source | Notes |
+|---|---|
+| `EnvSource()` | `os.environ`, or the `environ=` mapping |
+| `DotenvSource(path, *, required=True, encoding="utf-8")` | stdlib parser: `KEY=VALUE`, `export`, `#` comments, `'literal'`, `"escaped\n"` multi-line; no `${VAR}` interpolation; never writes `os.environ` |
+| `TomlSource(path, *, required=True)` | `tomllib`; tables → nested sections; values checked strictly |
+| `YamlSource(path, *, required=True)` | needs PyYAML (`lauren[yaml]`); like TOML |
+| `SecretsDirSource(path, *, required=True)` | one file per key (Docker/Kubernetes `/run/secrets`); name = env name or its lower case |
+| `AsyncSource` (Protocol) | `async def load(self, keys) -> Mapping[str, str]`; optional `name` attribute |
+
+`{profile}` in paths is substituted. Env names: `APP_` + field path joined
+with `__`, upper case (`database.url` → `APP_DATABASE__URL`);
+`Annotated[T, Env("A", "B")]` reads the first present of `A`, `B` with no
+prefix. String values (env, `.env`, secret files, async) use the lax table:
+`int`/`float`/`Decimal`, `bool` (`1/0 true/false yes/no on/off` — anything
+else is **invalid**), `Enum` (value then name), `Literal`, `Path`, `UUID`,
+ISO `datetime`/`date`/`time`, `timedelta` (seconds or `PT5M`),
+`list`/`tuple`/`set` (JSON array or comma-separated), `dict` (JSON object),
+`X | None` (`""` → `None`), `Secret[T]`. TOML/YAML values are already typed and
+checked strictly.
+
+Settings shapes: frozen `@dataclass` (recommended, stdlib-only), pydantic
+`BaseModel` (coerced, then `model_validate`; constraint errors mapped back),
+`msgspec.Struct` (coerced, then `msgspec.convert(strict=False)`), and
+`pydantic_settings.BaseSettings` (delegated entirely; `env_prefix=`,
+`sources=`, `section=` rejected). TypedDict is rejected. A non-frozen
+dataclass logs a startup warning.
+
+### Profiles — `Profile(name)`
+
+Active profile: `for_root(profile=...)`, else `LAUREN_PROFILE` (from
+`environ=` when given), else `"development"`. Not in `profiles=` →
+`ConfigValidationError` (`reason="unknown_profile"`), never a fallback.
+`Profile` (frozen: `name`, `is_development`, `is_test`, `is_production`) is
+registered globally whenever the app has a `ConfigModule`.
+
+### `Secret[T]`
+
+`Secret(value)`; `get_secret_value()` reads it. `repr`/`str`/f-strings print
+`Secret('**********')`; Lauren's JSON encoders (and pydantic JSON mode for a
+`Secret[T]` model field) print `"**********"`, as they do for pydantic
+`SecretStr`/`SecretBytes`. `==`/`hash` compare the value; `bool()` follows it.
+`SessionConfig(secret=Secret(...))` (or a list of them) is accepted.
+
+### `load_settings(settings_cls, *, env_prefix="", sources=None, section=None, profile=None, profiles=..., environ=None, overrides=None)`
+
+Same loader and aggregated error, outside the module graph — for values
+needed *before* the factory (`sessions=`, `docs_url=`, `logger=`). Then pass
+`global_providers=[use_value(provide=AppSettings, value=settings)]`.
+`await aload_settings(...)` also awaits async sources (`load_settings`
+rejects them with `DecoratorUsageError`).
+
+### `ConfigValidationError`
+
+`StartupError` subclass (`code="config_validation"`). Message: one line per
+problem, e.g. `AppSettings.database.pool_size  [APP_DATABASE__POOL_SIZE]  invalid int 'ten' (from environment)`.
+`detail = {"profile": str, "errors": [entry, ...]}`; each entry has `reason`:
+`missing` (`settings`, `field`, `key`, `searched`), `invalid` (`settings`,
+`field`, `key`, `expected`, `source`, `value` — omitted for secrets —,
+`message`), `unknown_field` (an `overrides` key), `unknown_profile`
+(`profile`, `allowed`, `source`), `missing_file` / `parse_error` (`line` for
+`.env`) / `source_error` (`source`, `message`). Feature-module entries add
+`module`. Misuse of the API itself (TypedDict, `EnvSource()` not last, bad
+argument types) raises `DecoratorUsageError` when the module is declared.
+
+### Async sources
+
+Settings that list an `AsyncSource` finish loading at the start of
+`LaurenApp.startup()` (lifespan / `TestClient`), before `@post_construct` —
+the one exception to "validated in `create()`". `create()` still raises for
+problems an async source cannot fix (e.g. an invalid value in the
+higher-precedence `EnvSource()`). Resolving such settings before startup
+raises `StartupError` (`reason="settings_not_loaded"`).
+
+`create()` logs one INFO line, context `Config`:
+`profile=production settings=AppSettings(8 keys) MailSettings(2 keys) sources=.env.production, environment`
+(sources actually read; never values).
+
+**Rule:** never read `os.environ` in `__init__` or at import time, and never
+`load_dotenv(override=True)` — declare a settings class, import a
+`ConfigModule`, inject the class. Tests pass `environ={...}` instead of
+mutating the process environment.
 
 ---
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
+from .._config._secret import Secret
 from ..exceptions import SessionConfigError
 from ._revocation import RevocationStore
 from ._serializer import JSONSessionSerializer, SessionSerializer
@@ -22,6 +23,8 @@ from ._signing import Signer, normalize_secrets
 from ._store import InMemorySessionStore, SessionStore
 
 _SAME_SITE_CANONICAL = {"lax": "Lax", "strict": "Strict", "none": "None"}
+#: One signing secret: plain, or wrapped in :class:`lauren.config.Secret`.
+_SecretValue = str | bytes | Secret[str] | Secret[bytes]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +37,9 @@ class SessionConfig:
     (e.g. ``same_site="none"`` without ``secure``) at startup.
     """
 
-    secret: str | bytes | Sequence[str | bytes] | None = None
+    #: str / bytes, a :class:`lauren.config.Secret` of either, or a sequence of
+    #: those (the first signs, all verify — key rotation).
+    secret: _SecretValue | Sequence[_SecretValue] | None = None
     store: SessionStore | None = None
     cookie_name: str = "lauren_session"
     max_age: int | None = 1_209_600  # 14 days

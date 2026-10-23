@@ -88,6 +88,7 @@ lauren/                      — framework package
 ├── _app.py                  — high-level orchestration (Lauren class)
 ├── _arena/                  — per-request allocation arena (private)
 ├── _asgi/                   — ASGI adapter, OpenAPI, docs
+├── _config/                 — typed configuration: coercion, sources, loader, ConfigModule (Phase 2b), Secret
 ├── _di/                     — dependency injection container + custom providers; _scope.py = shared scope finaliser
 ├── _discovery.py            — startup discovery pass over provider methods/classes (Phase 6a, private)
 ├── _discriminated.py        — Discriminated[A|B,"key"] runtime (detection, validation, OpenAPI)
@@ -112,6 +113,7 @@ lauren/                      — framework package
 ├── logging.py               — built-in NestJS-style logger
 ├── serialization.py         — JSON encoders (stdlib, orjson, msgspec, pydantic)
 ├── background.py            — BackgroundTasks, TaskHandle (fire-and-forget after response)
+├── config.py                — ConfigModule, Secret, sources, Profile, load_settings (typed configuration)
 ├── context.py               — OperationScope (request scope outside HTTP, via app.scope())
 ├── signals.py               — POSIX signal integration + on_shutdown hooks
 ├── streaming.py             — StreamingResponse[T], Stream, StreamReader
@@ -235,6 +237,7 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Share state for the app lifetime | `Scope.SINGLETON` injectable |
 | Use request-scoped providers outside a request (script, job, worker) | `async with app.scope("name") as scope:` + `await scope.resolve(T)` |
 | Persist state across requests for one client | Sessions (`sessions=SessionConfig(...)`; inject `session: Session`) |
+| Read typed configuration | `ConfigModule.for_root(Settings)` (or `for_feature`) + inject `Settings`; `load_settings` for factory kwargs |
 | Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
 | Copy Lauren metadata (guards, interceptors, …) to another class/fn | `@propagate_metadata(source)` |
 | Read all routes declared on a controller | `reflect_routes(cls)` → `tuple[ReflectedRoute, ...]` |
@@ -409,6 +412,14 @@ deterministic).
   dict is fresh and unshared with any earlier request — a global middleware
   snapshot taken before routing depends on the params appearing there. Locked
   by `tests/integration/test_pre_routing_path_params_snapshot.py`.
+- ❌ Reading `os.environ` in `__init__` or at import time. It fails late (after
+  `create()` returned, or while Python imports the module graph), one key at a
+  time, and makes two apps with different configuration impossible in one
+  process. Declare a settings class, import `ConfigModule.for_root(Settings)`
+  and inject `Settings`; tests pass `environ={...}`.
+- ❌ `load_dotenv(override=True)` — a `.env` file must never override the real
+  environment, and the framework never writes `os.environ`. `DotenvSource`
+  parses into a private mapping and `EnvSource()` (always last) wins.
 - ❌ Calling `get_type_hints` directly — use `_typing.resolve_type_hints`.
   `_safe_type_hints` in `_asgi/__init__.py` has a three-tier fallback:
   `resolve_type_hints` → retry with frame locals → `inspect.get_annotations(eval_str=True)`.
@@ -591,6 +602,9 @@ deterministic).
 - `lauren/streaming.py` — `StreamingResponse[T]`, `Stream`,
   `StreamReader`, content-negotiation logic.
 - `lauren/background.py` — `BackgroundTasks`, `TaskHandle`, `_BG_TASKS_ATTR`.
+- `lauren/config.py` / `lauren/_config/` — `ConfigModule`, `Secret`, sources,
+  the coercion table (`_coerce.py`, the one place string → type conversion
+  lives) and `install_config`, the factory's Phase 2b (`_module.py`).
 - `lauren/sessions.py` / `lauren/_sessions/` — `Session`, `SessionConfig`,
   `SessionStore`, `InMemorySessionStore`, `SignedCookieSessionStore`, the
   signing/serialiser, and the `_SessionEngine` the factory installs. Native
