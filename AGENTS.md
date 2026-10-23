@@ -132,7 +132,10 @@ nox -s ver_dec -- --patch
 | `lauren/sessions.py`              | Public session surface (`Session`, `SessionConfig`, stores) |
 | `lauren/config.py`                | Public typed-configuration surface (`ConfigModule`, `Secret`, sources, `Profile`, `load_settings`) |
 | `lauren/_config/`                 | Settings loader: coercion table (`_coerce`), sources + `.env` parser (`_sources`), layered resolution + aggregated errors (`_loader`), `ConfigModule` + factory Phase 2b (`_module`), `Secret` (`_secret`) |
-| `lauren/_sessions/`               | Session engine, stores, HMAC signing, serializer, config |
+| `lauren/_sessions/`               | Session engine, stores, serializer, config (signing re-exported from `lauren/_signing.py`) |
+| `lauren/_signing.py`              | The shared HMAC signer: key rotation, constant-time verify, per-feature `namespace` (sessions, pagination cursors, signed URLs) |
+| `lauren/pagination.py`            | Public pagination surface (`OffsetPagination`, `PageNumberPagination`, `CursorPagination`, `PaginationConfig`, `Page`, `CursorPage`, `paginate_sequence`) |
+| `lauren/_pagination/`             | Pagination internals: config resolution (`_config`), paging values + `PaginationPlan` (`_params`, the `"pagination"` extraction source), cursor codec (`_cursor`), `Link` URLs (`_links`), page rendering (`_page`), OpenAPI contribution (`_openapi`) |
 | `lauren/streaming.py`             | StreamingResponse[T], Stream, StreamReader   |
 | `lauren/sse.py`                   | EventStream, ServerSentEvent, last_event_id  |
 | `lauren/types.py`                 | Request, Response, State, Headers, Scope, `Discriminated`, … |
@@ -297,6 +300,7 @@ Welcome aboard.
 | Run a hosted service or a scheduled job | `lauren/scheduling.py` | `skills/building-lauren-scheduling/` |
 | Add liveness / readiness probes, drain before shutdown | `lauren/health.py`, `LaurenApp.lifecycle_state` | `skills/health-check-probes/` |
 | Add session state | `lauren/sessions.py` | `skills/building-lauren-sessions/` |
+| Paginate a list endpoint (offset, page number, cursor) | `lauren/pagination.py` | `skills/rest-crud-endpoints/` §Pagination |
 | Read typed configuration / secrets | `lauren/config.py` | `skills/building-lauren-config/` |
 | Add field constraints / validate payloads | `lauren/validation.py`, `lauren/_schema/` | `skills/building-lauren-controllers/` §Validation |
 | Debug a startup error | `lauren/exceptions.py` | **Common Errors** section below |
@@ -343,6 +347,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | Enumerating all HTTP routes / WS gateways at runtime | `get_all_routes`, `get_all_ws_gateways` in `lauren.reflect` |
 | SSE / streaming | `docs/guides/sse.md` |
 | Session management | `docs/guides/sessions.md` |
+| Pagination, envelopes, `Link` headers, signed cursors | `docs/guides/pagination.md` |
 | Domain events between modules | `docs/guides/events.md` |
 | Health probes, lifecycle state, draining | `docs/guides/health-checks.md` |
 | Typed configuration | `docs/guides/configuration.md` |
@@ -369,6 +374,8 @@ Full index: [`skills/README.md`](skills/README.md)
 | `StartupError` (`reason="debug_in_production"`) | `debug=` enabled while the configuration profile is production | Enable debug pages only in development |
 | `StartupError` (`reason="invalid_debug_config"` / `"invalid_problem_type_base"`) | `debug=` is not a bool / valid `DebugConfig`, or `problem_type_base` is not a non-empty string | Fix the value passed to `LaurenFactory.create` |
 | `UnresolvableParameterError` (`reason="bad_constraint"` / `"bad_pattern"` / `"unsupported_type"`) | A validation marker that cannot apply (`Ge` on a `str`, `MinLen > MaxLen`), an invalid `Pattern` regex, or (under `stdlib_models="enforce"`) a model field type the engine does not know | Fix the annotation named by `detail["class"]` / `["handler"]` / `["param"]` / `["field"]` |
+| `StartupError` (`reason="pagination_secret_missing"`) | A route takes `CursorPagination` but no cursor secret is configured | `LaurenFactory.create(..., pagination=PaginationConfig(cursor_secret=...))` with a dedicated key (never the session secret) |
+| `StartupError` (`reason="invalid_pagination_config"`) | A `PaginationConfig` value is invalid (`default_limit > max_limit` at one level, duplicate parameter names, `envelope` set per parameter, …) — `detail["field"]` names it | Fix the field; `envelope` / `meta_keys` belong on the app-level config |
 | `StartupError` (generic) | Missing required parameter in constructor injection | Add the type as a `@module` provider or import its module |
 
 ## Interceptor `CallHandler.handle()` contract (v1.4.2+)

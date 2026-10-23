@@ -157,6 +157,11 @@ core ideas:
   `Last-Event-ID` resumability for AI token-streaming patterns.
 * **Typed streaming** — `StreamingResponse[T]` auto-negotiates between SSE,
   NDJSON, and JSON Lines based on the client's `Accept` header.
+* **Pagination** — `paging: OffsetPagination` (or `PageNumberPagination`,
+  `CursorPagination[C]`) and a `Page[T]` / `CursorPage[T]` return value give
+  validated parameters with hard maxima, one envelope per app, RFC 8288 `Link`
+  headers, opaque HMAC-signed cursors with key rotation, and named OpenAPI
+  components.
 * **Custom responses & file delivery** — Return your own `Response` subclasses,
   stream downloads with `await Response.file(...)`, or emit XML with
   `Response.xml(...)` while keeping the dispatch pipeline untouched.

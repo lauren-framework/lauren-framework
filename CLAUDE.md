@@ -97,8 +97,10 @@ lauren/                      — framework package
 ├── _health/                 — health probes: @health_check marker, HealthRuntime (timeouts, single-flight, cache), indicators, HealthModule
 ├── _lifecycle/              — post_construct / pre_destruct machinery
 ├── _modules/                — module graph & visibility
+├── _pagination/             — pagination: PaginationConfig resolution, paging plans ("pagination" source), cursor codec, Link URLs, Page rendering, OpenAPI contribution
 ├── _routing/                — radix-tree HTTP router
 ├── _scheduling/             — hosted-service supervisor, scheduler, cron parser, clocks, ScheduleModule (private)
+├── _signing.py              — the shared HMAC signer (key rotation, constant-time verify, namespaces): sessions, cursors, signed URLs
 ├── _schema/                 — native validation engine: type compiler, validator nodes, issues,
 │                              pydantic/msgspec backends, JSON-Schema emitter, request/frame/item plans
 ├── _typing/                 — ForwardRef / PEP 563 resolver (private)
@@ -123,6 +125,7 @@ lauren/                      — framework package
 ├── events.py                — EventBus, EventPublisher, @on_event, EventContext, EmitResult (domain events)
 ├── scheduling.py            — @hosted_service, @interval/@cron/@run_once, ScheduleModule, SchedulerRegistry, ManualClock
 ├── health.py                — HealthModule, @health_check, HealthResult, HealthStatus (liveness/readiness probes)
+├── pagination.py            — OffsetPagination, PageNumberPagination, CursorPagination, PaginationConfig, Page, CursorPage, paginate_sequence
 ├── signals.py               — POSIX signal integration + on_shutdown hooks
 ├── streaming.py             — StreamingResponse[T], Stream, StreamReader
 ├── sse.py                   — EventStream, ServerSentEvent, last_event_id
@@ -252,6 +255,8 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Run a long-lived loop for the app's lifetime (consumer, relay, heartbeat) | `@hosted_service()` class with `async def run(self, ctx: ServiceContext)` |
 | Run code on a schedule | `@interval` / `@cron` / `@run_once` on a singleton method + `ScheduleModule.for_root()` |
 | Persist state across requests for one client | Sessions (`sessions=SessionConfig(...)`; inject `session: Session`) |
+| Paginate a list endpoint | `paging: OffsetPagination` / `PageNumberPagination` / `CursorPagination[C]` + return `Page[T]` / `CursorPage[T]` (`Page.of`, `Page.from_rows`, `CursorPage.from_rows`); `PaginationConfig` app-wide or in `Annotated[...]` |
+| Sign a value the client must not forge | `lauren._signing.Signer(secrets, namespace="<feature>")` (first key signs, all verify) — never hand-rolled `hmac` |
 | Read typed configuration | `ConfigModule.for_root(Settings)` (or `for_feature`) + inject `Settings`; `load_settings` for factory kwargs |
 | Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
 | Constrain a field or parameter (bounds, length, regex) | `Annotated[int, Ge(1)]` markers from `lauren.validation` (`QueryField(...)` also works) |
@@ -545,6 +550,17 @@ exit).
 - ❌ Writing another request-scope teardown loop. HTTP, WebSocket and
   `OperationScope` all call `lauren._di._scope.finalize_scope`, which finds
   providers through the container's precomputed `instance_index()`.
+- ❌ Exposing raw database ids or offsets as cursors, or hand-rolling
+  base64 + HMAC cursors. Use `CursorPagination[C]`: cursors are opaque, signed
+  with the shared `lauren._signing.Signer` in their own namespace, versioned
+  and optionally expiring; a tampered one is a 400 `invalid_cursor`. Give it a
+  dedicated `PaginationConfig(cursor_secret=...)` — never the session secret —
+  or the route fails startup (`reason="pagination_secret_missing"`).
+- ❌ Guessing `has_next` from `len(items) == limit`, or hand-building a
+  `{"data": ..., "pagination": ...}` envelope per endpoint. Return
+  `Page.of(rows, paging, total=...)` (or fetch `limit + 1` rows and use
+  `Page.from_rows`); the app's `PaginationConfig(envelope=...)` decides the
+  shape once, and only pages built from a paging value carry `Link` headers.
 - ❌ Injecting `session: Session` (or reading `request.state.session`)
   without `sessions=SessionConfig(...)` on the factory — raises
   `SessionConfigError` at startup, not at runtime.
@@ -738,8 +754,21 @@ exit).
   lives) and `install_config`, the factory's Phase 2b (`_module.py`).
 - `lauren/sessions.py` / `lauren/_sessions/` — `Session`, `SessionConfig`,
   `SessionStore`, `InMemorySessionStore`, `SignedCookieSessionStore`, the
-  signing/serialiser, and the `_SessionEngine` the factory installs. Native
+  serialiser, and the `_SessionEngine` the factory installs. Native
   `session: Session` injection lives in `_asgi` (`source="session"`).
+- `lauren/_signing.py` — the one HMAC signer (`Signer`, `normalize_secrets`):
+  key rotation (first secret signs, all verify), constant-time verification,
+  and `namespace=` so tokens of one feature never verify in another. Sessions
+  sign in the empty namespace (`lauren/_sessions/_signing.py` re-exports it),
+  pagination cursors in `"lauren.cursor"`; signed URLs (F10) reuse it.
+- `lauren/pagination.py` / `lauren/_pagination/` — `PaginationConfig` and its
+  startup resolution (`_config.py`), the paging values and per-parameter
+  `PaginationPlan` behind the built-in `"pagination"` extraction source
+  (`_params.py`), the signed cursor codec (`_cursor.py`), request snapshots and
+  `Link` URLs (`_links.py`), `Page` / `CursorPage` rendering — reached from
+  `_coerce_to_response` through one `isinstance(value, PageResponse)` check
+  until F01's response protocol lands (`_page.py`) — and the single OpenAPI
+  contribution function (`_openapi.py`).
 - `lauren/decorators.py` — every public decorator. The `_reject_bare_usage`
   pattern is the model for any new decorator.
 - `lauren/exceptions.py` — the full error hierarchy (generated table:

@@ -1799,7 +1799,7 @@ PaginationConfig(...)]`. Precedence: parameter → app → built-in default.
 
 | Field | Built-in | Notes |
 |---|---|---|
-| `default_limit` / `max_limit` | `20` / `100` | ints >= 1; an inherited default above a more specific `max_limit` follows it down |
+| `default_limit` / `max_limit` | `20` / `100` | ints >= 1; `default_limit > max_limit` is an error unless the maximum comes from a more specific level — then the inherited default follows it down |
 | `max_offset` | `None` (unbounded) | int >= 0; links beyond it are omitted |
 | `limit_param` / `offset_param` / `page_param` / `per_page_param` / `cursor_param` | `limit` / `offset` / `page` / `per_page` / `cursor` | non-empty, distinct within a style |
 | `envelope` | `"items"` | `"items"` \| `"data"` \| `"bare"` — app level only |

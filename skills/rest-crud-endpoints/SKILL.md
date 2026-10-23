@@ -58,8 +58,9 @@ class TaskRepository:
             raise RouteNotFoundError(f"Task {task_id} not found")
         return self._store[task_id]
 
-    def list_all(self) -> list[dict]:
-        return list(self._store.values())
+    def list_page(self, *, limit: int, offset: int) -> tuple[list[dict], int]:
+        rows = list(self._store.values())
+        return rows[offset : offset + limit], len(rows)
 
     def update(self, task_id: int, **fields) -> dict:
         task = self.get(task_id)
@@ -74,7 +75,7 @@ class TaskRepository:
 ## Controller
 
 ```python
-from lauren import controller, get, post, put, delete, Path, Json
+from lauren import controller, get, post, put, delete, Path, Json, OffsetPagination, Page
 from lauren.types import Response
 
 @controller("/tasks")
@@ -83,8 +84,9 @@ class TaskController:
         self._repo = repo
 
     @get("/")
-    async def list_tasks(self) -> list[TaskResponse]:
-        return [TaskResponse(**t) for t in self._repo.list_all()]
+    async def list_tasks(self, paging: OffsetPagination) -> Page[TaskResponse]:
+        rows, total = self._repo.list_page(limit=paging.limit, offset=paging.offset)
+        return Page.of([TaskResponse(**t) for t in rows], paging, total=total)
 
     @post("/")
     async def create_task(self, body: Json[CreateTask]) -> Response:
@@ -105,6 +107,26 @@ class TaskController:
         self._repo.delete(task_id)
         return Response.no_content()
 ```
+
+## Pagination
+
+List endpoints never return an unbounded array. `paging: OffsetPagination`
+reads and validates `?limit=&offset=` (default 20, maximum 100 — a bigger
+`limit` is a 422 on `["query", "limit"]`), and returning `Page.of(rows, paging,
+total=...)` renders `{"items": [...], "meta": {"limit", "offset", "total",
+"has_next"}}` plus RFC 8288 `Link` headers. Tune it app-wide with
+`LaurenFactory.create(..., pagination=PaginationConfig(max_limit=200))` or per
+route with `Annotated[OffsetPagination, PaginationConfig(...)]`.
+
+* Counting is optional: fetch `paging.limit + 1` rows and return
+  `Page.from_rows(rows, paging)` — never guess `has_next` from the row count.
+* `PageNumberPagination` (`?page=&per_page=`) suits UI pagers; it exposes the
+  same `.limit` / `.offset`.
+* Large or fast-changing tables: `CursorPagination[TaskKey]` +
+  `CursorPage.from_rows(rows, paging, key=...)` with
+  `PaginationConfig(cursor_secret=...)` — opaque signed cursors, never raw ids.
+
+See `docs/guides/pagination.md`.
 
 ## Module wiring
 

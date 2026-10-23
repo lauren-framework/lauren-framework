@@ -40,9 +40,9 @@ class PaginationConfig:
     (``default_limit=20``, ``max_limit=100``, ``max_offset`` unbounded,
     ``limit`` / ``offset`` / ``page`` / ``per_page`` / ``cursor`` parameters,
     ``envelope="items"``, ``meta_keys="snake"``). ``envelope`` and
-    ``meta_keys`` are app-wide only. An inherited ``default_limit`` above a
-    more specific ``max_limit`` is lowered to it; setting both at one level
-    with ``default_limit > max_limit`` is an error. ``total_header`` defaults to on for the
+    ``meta_keys`` are app-wide only. ``default_limit > max_limit`` is an error
+    unless the maximum comes from a more specific level, which lowers the
+    inherited default with it. ``total_header`` defaults to on for the
     ``"bare"`` envelope and off otherwise. ``base_url`` (a trusted
     ``https://host`` origin) makes ``Link`` URLs absolute; they are relative
     otherwise. ``cursor_secret`` signs cursors (first key signs, all verify);

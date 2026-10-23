@@ -113,6 +113,16 @@
     "secret", "store", "cookie_name", "max_age", "idle_timeout", "rolling", "path", "domain",
     "secure", "http_only", "same_site", "serializer", "autoload", "revocation_store", "user_id_key",
 ]
+"lauren.PaginationConfig" = [
+    "default_limit", "max_limit", "max_offset", "limit_param", "offset_param", "page_param",
+    "per_page_param", "cursor_param", "envelope", "meta_keys", "total_header", "base_url",
+    "cursor_secret", "cursor_max_age",
+]
+"lauren.OffsetPagination" = ["limit", "offset"]
+"lauren.PageNumberPagination" = ["page", "per_page", "limit", "offset"]
+"lauren.CursorPagination" = ["cursor", "direction", "limit", "encode_cursor"]
+"lauren.Page" = ["items", "limit", "offset", "total", "has_next", "of", "from_rows"]
+"lauren.CursorPage" = ["items", "limit", "has_next", "next_cursor", "prev_cursor", "from_rows"]
 "lauren.config.ConfigModule" = ["for_root", "for_feature"]
 "lauren.config.Secret" = ["get_secret_value"]
 "lauren.config.Profile" = ["name", "is_development", "is_test", "is_production"]

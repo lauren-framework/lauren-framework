@@ -109,6 +109,39 @@ return Response.redirect("/new-url", status=301)
 
 Pydantic models, dataclasses, and `msgspec.Struct` values serialize out of the box.
 
+## Pagination
+
+List routes take a paging parameter and return a page — no hand-rolled
+`limit=min(100, max(1, limit))` clamps or ad-hoc envelopes:
+
+```python fragment
+from typing import Annotated
+
+from lauren import CursorPage, CursorPagination, OffsetPagination, Page, PaginationConfig
+
+@get("/")
+async def list_users(self, paging: OffsetPagination) -> Page[UserOut]:      # ?limit=&offset=
+    rows, total = await self.repo.list(limit=paging.limit, offset=paging.offset)
+    return Page.of(rows, paging, total=total)                               # or has_next=...
+
+@get("/export")
+async def export(self, paging: Annotated[OffsetPagination, PaginationConfig(max_limit=1000)]) -> Page[UserOut]:
+    rows = await self.repo.list(limit=paging.limit + 1, offset=paging.offset)
+    return Page.from_rows(rows, paging)                                     # probe row → has_next
+
+@get("/events")
+async def events(self, paging: CursorPagination[EventKey]) -> CursorPage[EventOut]:
+    rows = await self.repo.page(paging.cursor, paging.direction, paging.limit + 1)
+    return CursorPage.from_rows(rows, paging, key=lambda e: EventKey(e.created_at, e.id))
+```
+
+- Bad values are a 422 on `["query", "limit"]`; the maximum is a hard cap (default 100).
+- The envelope (`"items"` / `"data"` / `"bare"`), `meta` key style, `Link` / `X-Total-Count`
+  headers and the cursor secret are app-wide: `LaurenFactory.create(..., pagination=PaginationConfig(...))`.
+- `CursorPagination` needs `PaginationConfig(cursor_secret=...)` (startup error otherwise);
+  a tampered cursor is a 400 `invalid_cursor`. `PageNumberPagination` reads `?page=&per_page=`.
+- `paginate_sequence(items, paging)` paginates an in-memory list.
+
 ## Choosing the JSON encoder
 
 ```python
