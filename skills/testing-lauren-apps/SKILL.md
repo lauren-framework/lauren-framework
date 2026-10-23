@@ -157,6 +157,10 @@ Also: `.use_class(C)`, `.use_factory(fn, injects=[...])`, `.use_existing(token)`
 `.override_module(Old).with_module(New)`. A target nothing registers fails
 `compile()` with `MissingProviderError` (`.optional()` to allow it).
 
+Commands and scripts: `async with app.context() as ctx:` on the compiled app,
+then `result = await ctx.run_command("db:seed", "--count", "3")`
+(`result.exit_code`, `result.stdout`); see `skills/building-lauren-commands/`.
+
 ## pytest plugin (opt-in)
 
 ```python

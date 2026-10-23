@@ -16,6 +16,7 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 | [building-lauren-background-tasks](building-lauren-background-tasks/) | `BackgroundTasks`, `TaskHandle`, fire-and-forget patterns |
 | [building-lauren-events](building-lauren-events/) | Typed domain events between modules: `@on_event` handlers, `EventBus` / `EventPublisher`, delivery modes, priorities, error policies, after-commit emission, `recording()` / `drain()` |
 | [building-lauren-scheduling](building-lauren-scheduling/) | `@hosted_service` loops, `@interval` / `@cron` / `@run_once` jobs, `ScheduleModule`, `SchedulerRegistry`, `SchedulerLock`, `ManualClock` |
+| [building-lauren-commands](building-lauren-commands/) | The app without HTTP: `LaurenFactory.create_context`, `ctx.scope()`, `@command` + `Opt` + `CommandContext`, `python -m lauren exec` / `commands` / `console`, `ctx.run_command` in tests, workers, `strict_request_scope` |
 | [building-lauren-sessions](building-lauren-sessions/) | `sessions=SessionConfig(...)`, `session: Session` injection, `SessionStore` backends, signed cookies, `regenerate_id()`/`invalidate()` |
 | [building-lauren-config](building-lauren-config/) | Typed settings validated in `LaurenFactory.create`: `ConfigModule.for_root`/`for_feature`, `.env`/TOML/environment sources, profiles, `Secret[T]`, `load_settings`, `ConfigValidationError` |
 | [health-check-probes](health-check-probes/) | Liveness / readiness / startup probes: `HealthModule.for_root()`, `@health_check`, details policy, `app.lifecycle_state`, `begin_draining()`, Kubernetes manifests |
@@ -37,6 +38,8 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 | `SessionConfigError` | [building-lauren-sessions](building-lauren-sessions/) §Configuration |
 | `ConfigValidationError` | [building-lauren-config](building-lauren-config/) §Testing |
 | `LifecycleConfigError` (scheduling) | [building-lauren-scheduling](building-lauren-scheduling/) §Startup errors |
+| `DIScopeViolationError` (`no_active_scope`) | [building-lauren-commands](building-lauren-commands/) §Testing |
+| `DuplicateBindingError` (`duplicate_command_name`) | [building-lauren-commands](building-lauren-commands/) §Startup errors |
 
 ## See also
 

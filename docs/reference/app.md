@@ -38,12 +38,23 @@ The top-level entry points for creating and running a Lauren application.
 | `sessions` | `SessionConfig` | `None` | Enable signed-cookie sessions |
 | `content` | `ContentConfig` | `None` | Request-body content policy (`strict_content_type`) |
 | `lazy_startup` | `bool` | `True` | Start on the first HTTP / WebSocket request when the server sent no lifespan events (logs a warning); `False` keeps the app cold until `await app.startup()` |
+| `hosted_services` | `bool` | `True` | `False` discovers and validates `@hosted_service` classes but does not start them |
+| `scheduler` | `bool` | `True` | `False` keeps scheduled jobs validated (and `SchedulerRegistry.trigger` working) but fires nothing |
+| `strict_request_scope` | `bool` | `False` | `True` raises `DIScopeViolationError` (`reason="no_active_scope"`) when a `Scope.REQUEST` provider is resolved outside a request, WebSocket connection or `app.scope()`; the default falls back to an untracked transient and warns once per provider — see [Dependency Injection](../guides/dependency-injection.md#request-scoped-providers-resolved-outside-any-scope) |
+
+### `LaurenFactory.create_context()`
+
+`LaurenFactory.create_context(root_module, *, hosted_services=False, scheduler=False, drain_timeout=10.0, **create_kwargs)`
+builds the app with `create()` and returns an
+[`ApplicationContext`](commands.md#applicationcontext): `async with` starts it
+(without serving HTTP) and shuts it down. Hosted services and the scheduler
+are off unless enabled. See [Commands & Scripts](../guides/commands-and-scripts.md).
 
 ## Lauren
 
 ::: lauren.Lauren
 
-FastAPI-inspired imperative API. Routes are registered via decorator methods (`@app.get`, `@app.post`, etc.) and compiled lazily — by the ASGI lifespan, `await app.startup()`, or the first request. `await app.startup()` only compiles (and runs `on_startup` hooks); the ASGI lifespan — and `TestClient`, on entering `with` or on its first request — also start the app: singletons are built and their `@post_construct` hooks run.
+FastAPI-inspired imperative API. Routes are registered via decorator methods (`@app.get`, `@app.post`, etc.) and compiled lazily — by the ASGI lifespan, `await app.startup()`, or the first request. `await app.startup()` only compiles; the ASGI lifespan — and `TestClient`, on entering `with` or on its first request, and an `ApplicationContext` (`ApplicationContext.from_lauren(app)`) — also start the app: singletons are built, their `@post_construct` hooks run, and then the `on_startup` hooks run (before hosted services start and before any request; a failing hook raises `StartupError`).
 
 ```python
 from lauren import Lauren, Path
@@ -82,10 +93,12 @@ app.include_module(UserModule)
 | Method | Description |
 |---|---|
 | `mount(path, app)` | Mount an ASGI sub-application at `path` |
-| `startup()` | Run `@post_construct` hooks and emit lifecycle events |
+| `startup()` | Run `@post_construct` hooks (then `Lauren.on_startup` hooks), start hosted services and emit lifecycle events |
 | `shutdown(drain_timeout)` | Gracefully stop: drain requests, run `@pre_destruct` |
 | `begin_draining(reason="")` | `READY → DRAINING`: readiness fails while requests are still served (idempotent) |
 | `handle(request)` | Dispatch a `Request` through middleware, guards, and handler |
 | `routes()` | Return compiled route list |
 | `openapi()` | Return OpenAPI 3.1 document |
 | `on_shutdown(callback)` | Register a shutdown callback (LIFO order) |
+| `scope(name, *, values=None)` | Open an `OperationScope` for request-scoped providers outside a request |
+| `context(*, hosted_services=False, scheduler=False, drain_timeout=10.0)` | Wrap the built, not yet started app in an [`ApplicationContext`](commands.md#applicationcontext) |

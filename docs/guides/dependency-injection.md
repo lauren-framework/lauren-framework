@@ -767,14 +767,70 @@ validation, which only knows registered providers. Framework features declare
 their context types (a job or command context) so that it does. Your own
 types need a provider, or a default value on the parameter.
 
+Scripts and commands rarely build and start the app by hand:
+`LaurenFactory.create_context(AppModule)` does both and gives you
+`ctx.scope()`, the same scope — see
+[Commands & Scripts](commands-and-scripts.md).
+
 ### Request-scoped providers resolved outside any scope
 
 Resolving a `Scope.REQUEST` provider through the container directly
 (`await app.container.resolve(DbSession)`), outside a request, a WebSocket
-connection or `app.scope()`, falls back to **transient** behaviour: a new
-instance on every call that is **never torn down** (no `@pre_destruct`, no
-generator teardown). Use `app.scope()` instead whenever you resolve
-request-scoped providers in scripts or background work.
+connection or `app.scope()`, is a leak. By default it falls back to
+**transient** behaviour — a new instance on every call that is **never torn
+down** (no `@pre_destruct`, no generator teardown) — and logs a warning on the
+`lauren` logger, once per provider:
+
+```text
+DbSession is request-scoped but was resolved outside a request or `app.scope()`;
+it will never be torn down. Use `app.scope()` or enable `strict_request_scope=True`.
+```
+
+Turn the leak into an error with `strict_request_scope=True` (on
+`LaurenFactory.create`, `LaurenFactory.create_context`, `Lauren(...)` or
+`Test.create_testing_module(...)`):
+
+| Mode | A `Scope.REQUEST` provider resolved outside any scope |
+|---|---|
+| `strict_request_scope=False` (the 1.x default) | A new instance per resolution, never torn down; one warning per provider and app |
+| `strict_request_scope=True` | `DIScopeViolationError` with `detail={"token": "DbSession", "reason": "no_active_scope"}` |
+
+<!-- docs-contract: run -->
+```python
+import asyncio
+
+from lauren import LaurenFactory, Scope, injectable, module
+from lauren.exceptions import DIScopeViolationError
+
+
+@injectable(scope=Scope.REQUEST)
+class Session:
+    pass
+
+
+@module(providers=[Session])
+class StrictModule:
+    pass
+
+
+async def main() -> None:
+    app = LaurenFactory.create(StrictModule, strict_request_scope=True)
+    try:
+        await app.container.resolve(Session)  # no request, no scope
+    except DIScopeViolationError as exc:
+        assert exc.detail == {"token": "Session", "reason": "no_active_scope"}
+    await app.startup()
+    async with app.scope("job") as scope:
+        await scope.resolve(Session)  # fine: torn down when the block exits
+    await app.shutdown()
+
+
+asyncio.run(main())
+```
+
+Requests, WebSocket connections and operation scopes behave the same in both
+modes. Strict mode becomes the default in lauren 2.0, so enable it in tests
+now: the suite then proves nothing leaks.
 
 ---
 
@@ -798,6 +854,8 @@ request-scoped providers in scripts or background work.
 | Inject into middleware (with deps) | `@middleware()` + `@injectable()` |
 | Reference a function provider | `Depends[factory_fn]` |
 | Non-class token | `Token("X")` + `Inject(TOKEN)` in `Annotated[T, Inject(TOKEN)]` |
+| Request-scoped providers in a script or job | `async with app.scope() as scope:` / `ctx.scope()` |
+| Fail on request-scoped providers resolved outside a scope | `strict_request_scope=True` |
 | Use request-scoped providers outside a request | `async with app.scope("name") as scope:` + `await scope.resolve(T)` |
 
 ---

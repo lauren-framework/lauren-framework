@@ -24,6 +24,8 @@ Every public name lives at the top of the `lauren` package and is re-exported fr
 from lauren import (
     # Application
     Lauren, LaurenApp, LaurenFactory,
+    # Standalone contexts & commands
+    ApplicationContext, OperationScope, command, Opt, CommandContext, CommandResult,
     # Decorators
     controller, module, injectable, middleware, exception_handler,
     get, post, put, patch, delete, head, options,

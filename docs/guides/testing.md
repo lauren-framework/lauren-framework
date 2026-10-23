@@ -302,6 +302,11 @@ Overrides are applied while the app is built: nothing is mutated on your
 classes, nothing is consulted per request, and two testing modules with
 different overrides coexist in one process.
 
+The compiled app also works without a client: `async with app.context() as ctx:`
+runs its lifecycle for a script-style test, and `await ctx.run_command("db:seed",
+"--count", "3")` runs a `@command` and captures its exit code and output — see
+[Commands & Scripts](commands-and-scripts.md#test-commands).
+
 ---
 
 ## Server exceptions and events

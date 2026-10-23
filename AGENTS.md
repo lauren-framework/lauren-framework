@@ -105,7 +105,10 @@ nox -s ver_dec -- --patch
 |                                   | `use_existing` / `Token` / `Inject`          |
 | `lauren/_di/_scope.py`            | Shared request-scope finaliser (`finalize_scope`) used by HTTP, WebSocket and `OperationScope`; `register_framework_value` |
 | `lauren/_discovery.py`            | Startup discovery pass (Phase 6a): marker registry, `DiscoveryIndex`, compiled `CallPlan`s for provider methods |
-| `lauren/context.py`               | `OperationScope` (public; built by `app.scope()`) |
+| `lauren/context.py`               | `OperationScope` (public; built by `app.scope()`) and `ApplicationContext` (`LaurenFactory.create_context`, `app.context()`, `from_lauren`) |
+| `lauren/commands.py`              | Public command surface (`command`, `Opt`, `CommandContext`, `CommandResult`, `CommandInfo`, `CommandParameter`) |
+| `lauren/_commands/`               | `@command` marker (`_meta`), Phase 6a compiler + argparse parsers + `CommandRegistry` (`_compile`), `CommandContext` / `CommandResult` (`_context`), `python -m lauren` runner and TARGET resolution (`_runner`) |
+| `lauren/__main__.py`              | `python -m lauren exec \| commands \| console` entry point |
 | `lauren/events.py`                | Public application-event surface (`EventBus`, `EventPublisher`, `on_event`, `EventContext`, `EmitResult`, `EventsModule`, `TransactionPhase`, `UnitOfWork`) |
 | `lauren/_events/`                 | Event bus internals: `@on_event` marker (`_meta`), handler validation + dispatch table (`_plan`), `EventBus` / `EventPublisher`, task tracking, shutdown drain, factory hooks (`_bus`) |
 | `lauren/scheduling.py`            | Public hosted-service / scheduling surface (`@hosted_service`, `@interval`, `@cron`, `@run_once`, `ScheduleModule`, `SchedulerRegistry`, `CronExpression`, `SchedulerLock`, `ManualClock`) |
@@ -296,6 +299,7 @@ Welcome aboard.
 | Decouple modules with domain events | `lauren/events.py` | `skills/building-lauren-events/` |
 | Run a hosted service or a scheduled job | `lauren/scheduling.py` | `skills/building-lauren-scheduling/` |
 | Add liveness / readiness probes, drain before shutdown | `lauren/health.py`, `LaurenApp.lifecycle_state` | `skills/health-check-probes/` |
+| Run code outside HTTP / add an admin command | `lauren/context.py`, `lauren/commands.py` | `skills/building-lauren-commands/` |
 | Add session state | `lauren/sessions.py` | `skills/building-lauren-sessions/` |
 | Read typed configuration / secrets | `lauren/config.py` | `skills/building-lauren-config/` |
 | Add field constraints / validate payloads | `lauren/validation.py`, `lauren/_schema/` | `skills/building-lauren-controllers/` §Validation |
@@ -316,6 +320,7 @@ Welcome aboard.
 | `BackgroundTasks`, `TaskHandle` | `skills/building-lauren-background-tasks/` |
 | Domain events: `@on_event`, `EventBus`, `EventPublisher` | `skills/building-lauren-events/` |
 | Hosted services, `@interval` / `@cron` / `@run_once`, `ScheduleModule` | `skills/building-lauren-scheduling/` |
+| `create_context`, `@command`, `python -m lauren exec`, `ctx.run_command` | `skills/building-lauren-commands/` |
 | Sessions: signed cookies, `Session` injection, pluggable store | `skills/building-lauren-sessions/` |
 | Typed configuration: `ConfigModule`, sources, profiles, `Secret[T]` | `skills/building-lauren-config/` |
 | `TestClient`, async tests, mock providers | `skills/testing-lauren-apps/` |
@@ -348,6 +353,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | Typed configuration | `docs/guides/configuration.md` |
 | Hosted services & scheduled jobs | `docs/guides/scheduling.md` |
 | Validation (stdlib models, constraints, `issues`, `ValidationPolicy`) | `docs/guides/validation.md` |
+| Standalone contexts, commands, `python -m lauren` | `docs/guides/commands-and-scripts.md` |
 | Custom response subclasses and response factories | `docs/guides/custom-responses.md` / `docs/guides/file-responses.md` |
 | Testing playbook | `skills/testing-lauren-apps/SKILL.md` |
 | Release / versioning process | `docs/development/release.md` / `docs/development/versioning.md` |
@@ -364,6 +370,8 @@ Full index: [`skills/README.md`](skills/README.md)
 | `UnresolvableProviderError` | Type not registered anywhere, or owning module not imported | Import the owning module in the consumer module |
 | `LifecycleConfigError` | A scheduled job without `ScheduleModule.for_root()`, a hosted service / job on a non-singleton provider, or a hook on a non-method | Import `ScheduleModule.for_root()`; make the provider a singleton; decorate methods only |
 | `SessionConfigError` | Sessions misconfigured, or `Session` injected with sessions disabled | Pass `sessions=SessionConfig(...)` / fix the unsafe cookie config |
+| `DIScopeViolationError` (`reason="no_active_scope"`) | With `strict_request_scope=True`, a `Scope.REQUEST` provider resolved outside a request, WebSocket connection or `app.scope()`; also `ctx.resolve()` of a request-scoped token | Resolve it inside `async with app.scope() as scope:` / `ctx.scope()` |
+| `DuplicateBindingError` (`reason="duplicate_command_name"`) / `UnresolvableParameterError` (`reason="unsupported_command_parameter"`) | Two `@command`s share a name or alias / a command parameter is neither a CLI type nor a provider visible from its module | Rename; use a CLI type, or export/import the provider |
 | `ConfigValidationError` | A settings key is missing or invalid, or the profile is unknown (every problem listed in `detail["errors"]`) | Set the listed keys in the environment / `.env` / config files; tests pass `environ=` to `ConfigModule.for_root` |
 | `GuardConfigError` (`reason="invalid_deny_error"`) | A guard's `deny_error` is not an `HTTPError` subclass or a zero-argument factory (e.g. an exception *instance*, `ValueError`) | `deny_error = UnauthorizedError`, or `deny_error = staticmethod(lambda: UnauthorizedError("…", challenge="…"))` |
 | `StartupError` (`reason="debug_in_production"`) | `debug=` enabled while the configuration profile is production | Enable debug pages only in development |
