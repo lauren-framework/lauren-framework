@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple, TYPE_CHECKING
 
+from ._responses import static_route_responses
 from ._types import (
     ReflectedController,
     ReflectedModule,
@@ -216,6 +217,7 @@ def reflect_routes(cls: type) -> tuple[ReflectedRoute, ...]:
         if not route_metas:
             continue
         for rm in route_metas:
+            status_code, responses_typed, raises = static_route_responses(cls, val, rm)
             result.append(
                 ReflectedRoute(
                     method=rm.method,
@@ -230,6 +232,9 @@ def reflect_routes(cls: type) -> tuple[ReflectedRoute, ...]:
                     include_in_schema=rm.include_in_schema,
                     tags=tuple(rm.tags),
                     handler=val,
+                    status_code=status_code,
+                    responses_typed=responses_typed,
+                    raises=raises,
                 )
             )
     return tuple(result)

@@ -25,7 +25,7 @@ class PydanticEncoder:
 
     __slots__ = ("_fallback",)
 
-    def __init__(self, default: Any = None) -> None:
+    def __init__(self, default: Any = None, *, fallback: str | None = None) -> None:
         try:
             import pydantic  # noqa: F401
         except ImportError as exc:
@@ -35,7 +35,7 @@ class PydanticEncoder:
             ) from exc
         from lauren.serialization import StdlibJSONEncoder  # noqa: PLC0415
 
-        self._fallback = StdlibJSONEncoder(default=default)
+        self._fallback = StdlibJSONEncoder(default=default, fallback=fallback)
 
     def encode(self, value: Any) -> bytes:
         """Serialize *value* to pretty-printed JSON bytes."""

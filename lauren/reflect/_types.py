@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "ReflectedResponse",
     "ReflectedRoute",
     "ReflectedWsMessage",
     "ReflectedController",
@@ -17,6 +18,28 @@ __all__ = [
     "ReflectedWsGateway",
     "ReflectedError",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class ReflectedResponse:
+    """One documented response of a route: a declared success, a ``@raises`` error or a manual entry.
+
+    Returned in :attr:`ReflectedRoute.responses_typed`.
+    """
+
+    status: int
+    """The HTTP status."""
+
+    body_type: Any
+    """The declared body type; ``None`` for no body, :class:`~lauren.types.Response` for a
+    passthrough, ``typing.Any`` when undeclared, the error class for a ``@raises`` entry."""
+
+    description: str | None
+    """The description (``Status(description=...)``, ``@raises(description=...)``, ``responses=``)."""
+
+    source: Literal["declared", "raises", "manual"]
+    """``"declared"``: ``status_code=`` / return annotation / ``response_model=``;
+    ``"raises"``: ``@raises``; ``"manual"``: the free-form ``responses=`` dict."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +70,17 @@ class ReflectedRoute:
 
     handler: Any
     """The unbound method function that handles this route."""
+
+    status_code: int = 200
+    """The effective success status: ``status_code=`` / ``Status(...)`` for plain values,
+    else the first declared response (``-> None`` → 204, ``-> Created[T]`` → 201); 200
+    when undeclared."""
+
+    responses_typed: tuple[ReflectedResponse, ...] = ()
+    """Every documented response: declared successes, ``@raises`` errors and ``responses=`` entries."""
+
+    raises: tuple[type, ...] = ()
+    """The ``@raises`` error classes (the method's, then the controller's own)."""
 
 
 @dataclass(frozen=True, slots=True)

@@ -28,8 +28,11 @@ from .._health._module import compile_health, install_health
 from .._cache import compile_cache_routes, install_cache
 from .._stores import install_stores
 from ..serialization import (
+    _ACTIVE_FALLBACK,
+    JSON_FALLBACK_POLICIES,
     JSONEncoder,
     StdlibJSONEncoder,
+    _FallbackPolicy,
     get_active_encoder,
 )
 from ..signals import (
@@ -51,6 +54,8 @@ from .._routing import RouteEntry, Router
 from ..decorators import (
     CONTROLLER_META,
     EXCEPTION_HANDLER_META,
+    RAISES_META,
+    RESPONSE_VALIDATION_MODES,
     ROUTE_META,
     SET_METADATA,
     USE_ENCODER,
@@ -129,6 +134,13 @@ from .._sessions import (
     configure_sessions,
 )
 from ._problem import instance_reference as _instance_reference, problem_payload as _problem_payload
+from ._contracts import (
+    ResponseContractViolation,
+    _coerce_result,
+    compile_response_plan,
+    describe_responses,
+)
+from ..responses import RESULT_TYPES as _RESULT_TYPES
 
 logger = logging.getLogger("lauren")
 
@@ -224,6 +236,15 @@ class CompiledHandler:
     #: implicit model body, ``Discriminated[...]``). Such routes are subject
     #: to ``ContentConfig.strict_content_type``.
     json_body: bool = False
+    #: Declared success responses (:class:`~lauren._asgi._contracts.ResponseTable`),
+    #: read once at startup; consumed by OpenAPI and the reflect readers.
+    response_table: Any = None
+    #: Compiled response contract (:class:`~lauren._asgi._contracts.ResponsePlan`),
+    #: or ``None`` when the plain coercion path is equivalent (no declared
+    #: status, no typed results, ``response_validation="off"``).
+    response_plan: Any = None
+    #: ``@raises`` declarations (method first, then the controller's own).
+    raises: tuple[Any, ...] = ()
 
 
 #: Media types a JSON body parameter accepts under ``strict_content_type``.
@@ -840,6 +861,8 @@ class LaurenApp:
         guard_denials: dict[type, Any] | None = None,
         lazy_startup: bool = True,
         validation: ValidationRuntime | None = None,
+        response_validation: str = "off",
+        json_fallback: str = "warn",
     ) -> None:
         self._router = router
         self._container = container
@@ -958,6 +981,14 @@ class LaurenApp:
         # ``Lauren.on_startup`` hooks: run by ``startup()`` right after the
         # ``@post_construct`` hooks, so the DI graph is fully initialised.
         self._startup_hooks: list[Callable[[], Any]] = []
+        #: App default of the per-route ``response_validation`` mode.
+        self._response_validation = response_validation
+        #: ``json_fallback`` policy, applied to every encoder without a pinned
+        #: ``fallback=`` while this app handles a request (``_ACTIVE_FALLBACK``).
+        self._json_fallback = _FallbackPolicy(json_fallback, logger=self._logger)
+        #: (route, error class) pairs already reported by the debug-mode
+        #: undeclared-``@raises`` check.
+        self._undeclared_raise_warned: set[tuple[str, type]] = set()
 
     # -- Introspection -----------------------------------------------------
 
@@ -1084,6 +1115,16 @@ class LaurenApp:
 
     async def _transition(self, state: AppLifecycleState, reason: str = "") -> None:
         await self._signals.emit(self._set_lifecycle_state(state, reason))
+
+    @property
+    def response_validation(self) -> str:
+        """The app's default response-contract mode: ``"off"``, ``"filter"`` or ``"strict"``."""
+        return self._response_validation
+
+    @property
+    def json_fallback(self) -> str:
+        """The ``json_fallback`` policy: ``"dict"``, ``"warn"`` or ``"error"``."""
+        return self._json_fallback.mode
 
     def routes(self) -> list[RouteEntry]:
         return self._router.routes()
@@ -1690,6 +1731,91 @@ class LaurenApp:
             cause=type(failure.original).__name__,
         )
 
+    def _log_contract_violation(self, violation: ResponseContractViolation, request: Request | None) -> None:
+        """Log a response-contract violation at ERROR with its structured issues."""
+        issues = [issue.to_dict() for issue in violation.issues]
+        method = request.method if request is not None else None
+        path = request.path if request is not None else None
+        logger.error(
+            "Response of %s (%s) violates its declared type (response_validation=%r): %s",
+            violation.handler,
+            violation.route,
+            violation.mode,
+            "; ".join(str(issue) for issue in violation.issues),
+        )
+        try:
+            self._logger.error(
+                f"Response contract violated by {violation.handler} ({violation.route}): "
+                f"{len(violation.issues)} issue(s)",
+                context="ResponseContract",
+                method=method,
+                path=path,
+                handler=violation.handler,
+                route=violation.route,
+                mode=violation.mode,
+                issues=issues,
+            )
+        except Exception:  # a broken logger must not change the response
+            logger.exception("Logging a response-contract violation failed")
+
+    def _contract_violation_response(
+        self,
+        violation: ResponseContractViolation,
+        *,
+        encoder: JSONEncoder | None,
+        request: Request,
+    ) -> Response:
+        """The 500 ``response_validation_error`` envelope (issues only with debug pages)."""
+        detail: dict[str, Any] = {}
+        debug = False
+        if self._debug is not None:
+            try:
+                from . import _debug
+
+                debug = _debug.client_allowed(self._debug, request)
+            except Exception:  # pragma: no cover - defensive
+                debug = False
+        if debug:
+            detail["issues"] = [issue.to_dict() for issue in violation.issues]
+        error = LaurenError("response validation failed", detail=detail)
+        for candidate in (encoder or self._json_encoder, StdlibJSONEncoder()):
+            try:
+                response = self._render_error(
+                    error, status=500, code="response_validation_error", encoder=candidate, request=request
+                )
+                return response.with_header("cache-control", "no-store") if debug else response
+            except Exception:
+                continue
+        return self._internal_error_response(violation, request=request)  # pragma: no cover
+
+    def _warn_undeclared_raise(self, exc: HTTPError, compiled: CompiledHandler) -> None:
+        """Debug pages on: warn once per (route, class) when a handler raises an undeclared error."""
+        declared = tuple(spec.exc_type for spec in compiled.raises)
+        if isinstance(exc, declared):
+            return
+        code = getattr(compiled.handler_fn, "__code__", None)
+        tb = exc.__traceback__
+        raised_by_handler = False
+        while tb is not None:
+            if tb.tb_frame.f_code is code:
+                raised_by_handler = True
+                break
+            tb = tb.tb_next
+        if not raised_by_handler:
+            return  # guards, extraction and interceptors raise for their own reasons
+        route = f"{compiled.route_meta.method} {compiled.path_template}"
+        key = (route, type(exc))
+        if key in self._undeclared_raise_warned:
+            return
+        self._undeclared_raise_warned.add(key)
+        message = (
+            f"{route} raised {type(exc).__name__} ({exc.status_code}), which its @raises "
+            f"declarations do not list; add @raises({type(exc).__name__}) so the OpenAPI document "
+            "and generated clients know about it"
+        )
+        logger.warning(message)
+        self._logger.warn(message, context="ResponseContract", route=route, error=type(exc).__name__)
+
     async def _render_outer_error(
         self,
         exc: Exception,
@@ -2044,6 +2170,9 @@ class LaurenApp:
                         _captured_streaming_item_type = compiled.streaming_item_type
                         _captured_req2 = req2
                         _captured_effective_encoder = effective_encoder
+                        # Response contract (declared status, typed results,
+                        # filter/strict projection) — ``None`` keeps the plain path.
+                        _plan = compiled.response_plan
 
                         async def _coerced_invoke() -> Response:
                             raw = await _invoke_handler()
@@ -2054,7 +2183,11 @@ class LaurenApp:
                                     request=_captured_req2,
                                     encoder=_captured_effective_encoder,
                                     adapter=compiled.streaming_adapter,
+                                    plan=_plan,
+                                    on_violation=self._log_contract_violation,
                                 )
+                            if _plan is not None:
+                                return _plan.coerce(raw, _captured_effective_encoder)
                             return _coerce_to_response(raw, encoder=_captured_effective_encoder)
 
                         call_handler: CallHandler = CallHandler(_coerced_invoke)
@@ -2089,6 +2222,17 @@ class LaurenApp:
                         the error it was handling and also becomes a 500.
                         """
                         nonlocal captured_error
+                        if isinstance(e, ResponseContractViolation):
+                            # The framework's own 500: exception handlers do not
+                            # see it (the handler did not raise, its output is
+                            # wrong), and the body never carries the payload.
+                            captured_error = e
+                            self._log_contract_violation(e, req)
+                            return self._contract_violation_response(
+                                e, encoder=effective_encoder, request=req
+                            )
+                        if self._debug is not None and compiled.raises and isinstance(e, HTTPError):
+                            self._warn_undeclared_raise(e, compiled)
                         try:
                             handled = await self._dispatch_exception_handlers(
                                 e,
@@ -2300,6 +2444,9 @@ class LaurenApp:
         if task is not None:
             self._in_flight.add(task)
         _response_sent = False
+        # Every encoder without a pinned ``fallback=`` follows this app's
+        # json_fallback policy while the request (and its body) is produced.
+        _fallback_token = _ACTIVE_FALLBACK.set(self._json_fallback)
         try:
             response = await self.handle(request)
             _bg: _BackgroundTasks | None = request.state.get(_BG_TASKS_ATTR)
@@ -2358,6 +2505,7 @@ class LaurenApp:
                 except Exception:
                     pass  # Cannot send — ASGI server will close the connection
         finally:
+            _ACTIVE_FALLBACK.reset(_fallback_token)
             if task is not None:
                 self._in_flight.discard(task)
             # Return the Request instance to the pool for reuse. Done
@@ -2418,6 +2566,7 @@ class LaurenApp:
         task = asyncio.current_task()
         if task is not None:
             self._in_flight.add(task)
+        _fallback_token = _ACTIVE_FALLBACK.set(self._json_fallback)
         try:
             await handle_websocket(
                 self,
@@ -2443,6 +2592,7 @@ class LaurenApp:
                 "Unhandled error in WebSocket handler (path=%s)", scope.get("path", "?")
             )
         finally:
+            _ACTIVE_FALLBACK.reset(_fallback_token)
             if task is not None:
                 self._in_flight.discard(task)
 
@@ -2556,12 +2706,16 @@ def _coerce_to_response(value: Any, *, encoder: JSONEncoder | None = None) -> Re
     7. Pydantic v2 model (has ``model_dump``) → JSON serialization via
        ``model_dump(mode="json")``.
     8. ``list`` / ``tuple`` of Pydantic models → JSON array of dumped models.
-    9. Dataclass instance → JSON via :func:`dataclasses.asdict`.
-    10. Plain ``dict`` / ``list`` / ``int`` / ``float`` / ``bool`` → JSON.
-    11. Anything else → JSON with a permissive default handler.
+    9. A typed result (``Ok`` / ``Created`` / ``Accepted`` / ``NoContent``) →
+       its status and headers, the value coerced by these rules.
+    10. Dataclass instance → JSON via :func:`dataclasses.asdict`.
+    11. Plain ``dict`` / ``list`` / ``int`` / ``float`` / ``bool`` → JSON.
+    12. Anything else → JSON with a permissive default handler (subject to
+        the app's ``json_fallback`` policy).
     """
-    # Status-override tuple form: (body, status) or (body, status, headers)
-    if isinstance(value, tuple) and len(value) in (2, 3):
+    # Status-override tuple form: (body, status) or (body, status, headers).
+    # A plain tuple only: a NamedTuple is a value, not a status pair.
+    if type(value) is tuple and len(value) in (2, 3):
         body_val = value[0]
         status = value[1]
         headers = value[2] if len(value) == 3 else None
@@ -2591,6 +2745,9 @@ def _coerce_to_response(value: Any, *, encoder: JSONEncoder | None = None) -> Re
     # Sequence of Pydantic models (common: return list of DTOs).
     if isinstance(value, list) and value and all(hasattr(v, "model_dump") for v in value):
         return Response.json([v.model_dump(mode="json") for v in value], encoder=encoder)
+    # Typed results are dataclasses: unwrap them before the dataclass branch.
+    if isinstance(value, _RESULT_TYPES):
+        return _coerce_result(value, encoder=encoder, coerce=_coerce_to_response)
     # Dataclass instance?
     try:
         import dataclasses
@@ -2616,6 +2773,8 @@ async def _coerce_streaming_response(
     request: Request,
     encoder: JSONEncoder | None = None,
     adapter: Any = _BUILD_ADAPTER,
+    plan: Any = None,
+    on_violation: Callable[[ResponseContractViolation, Request], None] | None = None,
 ) -> Response:
     """Serialize an async iterable of ``item_type`` as a typed stream.
 
@@ -2641,6 +2800,12 @@ async def _coerce_streaming_response(
     status code. Errors raised after the first item are logged and the
     stream is truncated — by that point the response start line has
     already shipped and the HTTP status is immutable.
+
+    With a response contract (``plan`` under ``response_validation="filter"``
+    / ``"strict"``) every item is projected onto ``item_type`` first. A first
+    item that does not fit fails the request with a 500; a later one is
+    reported to ``on_violation``, ends the stream with an error frame
+    (``response_validation_error``).
     """
     if not hasattr(iterable, "__aiter__") and not inspect.isasyncgen(iterable):
         raise TypeError(
@@ -2656,8 +2821,14 @@ async def _coerce_streaming_response(
     # reference — matters for the ``msgspec`` backend which bakes
     # its options into a reusable Encoder instance.
     json_encoder = encoder if encoder is not None else get_active_encoder()
+    projector = plan.stream_projector if plan is not None else None
+    position = [0]
 
     def _dump(item: Any) -> bytes:
+        if projector is not None:
+            index = position[0]
+            position[0] = index + 1
+            return json_encoder.encode_compact(plan.project_item(item, index))
         if adapter is not None:
             # Pydantic type: convert to a JSON-safe dict first, then encode.
             # This preserves discriminated-union serialisation and custom
@@ -2713,9 +2884,22 @@ async def _coerce_streaming_response(
                 yield b"data: " + payload + b"\n\n"
             else:
                 yield payload + b"\n"
+        except ResponseContractViolation as violation:
+            # Same shape as a post-header HTTPError: log, one error frame, end.
+            if on_violation is not None:
+                on_violation(violation, request)
+            envelope = LaurenError("response validation failed").to_payload()
+            envelope["error"]["code"] = "response_validation_error"
+            payload = json_encoder.encode_compact(envelope)
+            if fmt == "sse":
+                yield b"event: error\n"
+                yield b"data: " + payload + b"\n\n"
+            else:
+                yield payload + b"\n"
 
     headers = Headers([("cache-control", "no-cache")]) if fmt == "sse" else None
-    return Response.stream(_produce(), media_type=media_type, headers=headers)
+    status = plan.default_status if plan is not None else 200
+    return Response.stream(_produce(), status=status, media_type=media_type, headers=headers)
 
 
 #: Registry mapping HTTP status codes to RFC 7807 type URIs.
@@ -2947,6 +3131,8 @@ class LaurenFactory:
         scheduler: bool = True,
         validation: ValidationPolicy | None = None,
         strict_request_scope: bool = False,
+        response_validation: str = "off",
+        json_fallback: str = "warn",
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -3009,8 +3195,29 @@ class LaurenFactory:
         (``reason="no_active_scope"``). The default keeps the 1.x fallback — a
         new, never torn down instance per resolution — and logs a warning once
         per provider.
+
+        ``response_validation`` is the default response contract of every route
+        (``@get(..., response_validation=...)`` overrides it): ``"off"`` (the
+        default) serializes the returned value as it is, ``"filter"`` projects
+        it onto the declared return type so undeclared fields never leave, and
+        ``"strict"`` also validates every value. ``json_fallback`` decides what
+        an encoder does with an object it has no rule for: ``"dict"`` sends its
+        public attributes, ``"warn"`` (the default) does too and logs once per
+        type, ``"error"`` fails the response with a 500.
         """
         _log: Logger = logger or NullLogger()
+        if response_validation not in RESPONSE_VALIDATION_MODES:
+            raise StartupError(
+                f"response_validation must be one of {', '.join(map(repr, RESPONSE_VALIDATION_MODES))}, "
+                f"got {response_validation!r}",
+                detail={"reason": "invalid_response_validation", "got": repr(response_validation)},
+            )
+        if json_fallback not in JSON_FALLBACK_POLICIES:
+            raise StartupError(
+                f"json_fallback must be one of {', '.join(map(repr, JSON_FALLBACK_POLICIES))}, "
+                f"got {json_fallback!r}",
+                detail={"reason": "invalid_json_fallback", "got": repr(json_fallback)},
+            )
         if problem_type_base is not None and (
             not isinstance(problem_type_base, str) or not problem_type_base
         ):
@@ -3269,6 +3476,8 @@ class LaurenFactory:
         phase5_t0 = time.perf_counter()
         router = Router()
         compiled_handlers: dict[tuple[str, str], CompiledHandler] = {}
+        # Routes whose ``response_model=`` only documents (contract off).
+        documentation_only_models: list[str] = []
         from ..websockets import WS_CONTROLLER_META
 
         for ctrl_cls in graph.iter_controllers():
@@ -3330,10 +3539,17 @@ class LaurenFactory:
                         continue
                     resolved_methods[attr_name] = (fn, binding, raw)
 
+            ctrl_raises = list(ctrl_cls.__dict__.get(RAISES_META, []))
             for attr_name, (fn, binding, raw) in resolved_methods.items():
                 route_metas: list[RouteMeta] = getattr(fn, ROUTE_META, [])
                 if not route_metas:
                     continue
+                # ``@raises``: the method's declarations, then the controller's own.
+                fn_raises = list(getattr(fn, RAISES_META, []))
+                route_raises: list[Any] = []
+                for spec in fn_raises + ctrl_raises:
+                    if all(spec.exc_type is not known.exc_type for known in route_raises):
+                        route_raises.append(spec)
                 fn_mw = list(getattr(fn, USE_MIDDLEWARES, []))
                 fn_guards = list(getattr(fn, USE_GUARDS, []))
                 fn_interceptors = list(getattr(fn, USE_INTERCEPTORS, []))
@@ -3388,6 +3604,32 @@ class LaurenFactory:
                     # The streamed-response serializer is built once here (no
                     # process-wide adapter cache).
                     streaming_adapter = _build_adapter(streaming_item) if streaming_item is not None else None
+                    # Response contract: the declared statuses / body types
+                    # (contradictions fail here) and, when the route needs
+                    # runtime work, its compiled plan.
+                    route_label = f"{rmeta.method} {entry.path_template}"
+                    response_table = describe_responses(
+                        rmeta, return_hint, fn=fn, streaming_item=streaming_item
+                    )
+                    route_mode = rmeta.response_validation or response_validation
+                    if route_mode != "off" and not response_table.typed:
+                        _log.verbose(
+                            f"{route_label} ({ctrl_cls.__name__}.{fn.__name__}) declares no response "
+                            f"type; response_validation={route_mode!r} does not apply to it",
+                            context="ResponseContract",
+                            route=route_label,
+                        )
+                    if rmeta.response_model is not None and route_mode == "off":
+                        documentation_only_models.append(route_label)
+                    response_plan = compile_response_plan(
+                        response_table,
+                        mode=route_mode,
+                        compiler=validation_runtime.compiler,
+                        coerce=_coerce_to_response,
+                        controller_cls=ctrl_cls,
+                        fn=fn,
+                        route=route_label,
+                    )
                     compiled = CompiledHandler(
                         controller_cls=ctrl_cls,
                         handler_fn=fn,
@@ -3414,6 +3656,9 @@ class LaurenFactory:
                         # Method-level encoder wins over controller-level.
                         encoder=fn_encoder or ctrl_encoder or None,
                         json_body=any(ext.source == "json" for ext in extractions),
+                        response_table=response_table,
+                        response_plan=response_plan,
+                        raises=tuple(route_raises),
                     )
                     compiled_handlers[(entry.method, entry.path_template)] = compiled
                     _log.log(
@@ -3490,6 +3735,17 @@ class LaurenFactory:
                 # stdlib "lauren" logger by name.
                 logging.getLogger("lauren").warning(message)
                 _log.warn(message, context="LaurenFactory", routes=exposed)
+
+        # ``response_model=`` with the contract off documents a shape the wire
+        # does not honour (a richer object leaks its extra fields). Say so once.
+        if documentation_only_models:
+            message = (
+                f"response_model= is documentation-only on {len(documentation_only_models)} route(s) "
+                f"(e.g. {', '.join(documentation_only_models[:3])}) because response_validation is 'off'; "
+                "set response_validation='filter' (app-wide or per route) to enforce it"
+            )
+            logging.getLogger("lauren").warning(message)
+            _log.warn(message, context="ResponseContract", routes=documentation_only_models)
 
         # ---- Phase 5b: WebSocket gateway compilation ----
         # The WS compiler walks the same module graph, picks every
@@ -3630,6 +3886,8 @@ class LaurenFactory:
             guard_denials=guard_denials,
             lazy_startup=lazy_startup,
             validation=validation_runtime,
+            response_validation=response_validation,
+            json_fallback=json_fallback,
         )
         # The immutable Phase 6a index; feature consumers read their markers.
         app._discovery = discovery

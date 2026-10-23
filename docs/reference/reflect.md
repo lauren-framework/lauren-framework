@@ -102,6 +102,10 @@ Require a started `LaurenApp` (return empty / `None` before startup).
 
 ::: lauren.ReflectedRoute
 
+### `ReflectedResponse`
+
+::: lauren.ReflectedResponse
+
 ### `ReflectedWsMessage`
 
 ::: lauren.ReflectedWsMessage

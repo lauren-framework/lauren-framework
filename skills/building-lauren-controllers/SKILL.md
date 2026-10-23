@@ -12,7 +12,7 @@ description: Writes Lauren controllers with route handlers, typed extractors, an
 ## Controller skeleton
 
 ```python
-from lauren import controller, get, post, put, delete, patch
+from lauren import NotFoundError, controller, get, post, put, delete, patch, raises
 from lauren.types import ExecutionContext, Path, Query, Json
 
 @controller("/users", tags=["users"])
@@ -28,19 +28,19 @@ class UsersController:
     async def find_one(self, id: Path[int]) -> UserDto:
         return await self._svc.find_one(id)
 
-    @post("/")
+    @post("/", status_code=201)      # declared success status (sent + documented)
     async def create(self, body: Json[CreateUserDto]) -> UserDto:
-        user = await self._svc.create(body)
-        return user, 201   # tuple: (data, status_code)
+        return await self._svc.create(body)
 
     @put("/{id}")
     async def update(self, id: Path[int], body: Json[UpdateUserDto]) -> UserDto:
         return await self._svc.update(id, body)
 
     @delete("/{id}")
+    @raises(NotFoundError)          # documents the 404 in OpenAPI
     async def remove(self, id: Path[int]) -> None:
         await self._svc.remove(id)
-        # return None → 204 No Content
+        # return None → 204 No Content (documented as 204)
 ```
 
 - `@controller` makes the class `REQUEST`-scoped automatically — DI injects services per request.
@@ -102,12 +102,30 @@ logs dataclass/TypedDict failures; a model that uses markers or
 return {"ok": True}             # → JSON 200
 return "plain text"             # → text/plain 200
 return None                     # → 204 No Content
-return body, 201                # → JSON 201 (tuple shorthand)
+return Created(user, location=f"/users/{user.id}")   # → JSON 201 + Location (typed result)
+return body, 201                # → JSON 201 (tuple shorthand — not documented in OpenAPI)
 return Response.json(data, status=202)          # explicit Response
 return Response.redirect("/new-url", status=301)
 ```
 
 Pydantic models, dataclasses, and `msgspec.Struct` values serialize out of the box.
+
+## Response contracts — status codes and output shape
+
+- Declare the success status with `@post("/", status_code=201)` or a typed
+  result in the annotation: `-> Created[UserDto]`, `-> Ok[UserDto] | Created[UserDto]`,
+  `-> NoContent`, `-> Annotated[Chunk, Status(206)]` (`from lauren import Ok, Created,
+  Accepted, NoContent, Status`). Contradictions (204 with a body type,
+  `status_code=200` on `-> Created[T]`) fail at startup.
+- `LaurenFactory.create(..., response_validation="filter")` (or per route
+  `@get(..., response_validation="filter")`) projects the returned value onto the
+  annotated type: return the entity (`UserInDB`, an ORM row), annotate the DTO
+  (`-> UserDto`), and only the DTO's fields leave. `"strict"` also validates;
+  a value that does not fit is a 500 `response_validation_error`.
+- `@raises(NotFoundError, ConflictError)` documents error responses.
+- Prefer typed results over `Response.created(...)`: they use the route's encoder.
+
+Full guide: `docs/guides/response-contracts.md`.
 
 ## Choosing the JSON encoder
 

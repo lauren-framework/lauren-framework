@@ -39,7 +39,7 @@ class TaskResponse(BaseModel):
 
 ```python
 from lauren import injectable, Scope
-from lauren.exceptions import RouteNotFoundError
+from lauren import NotFoundError
 
 @injectable(scope=Scope.SINGLETON)
 class TaskRepository:
@@ -55,7 +55,7 @@ class TaskRepository:
 
     def get(self, task_id: int) -> dict:
         if task_id not in self._store:
-            raise RouteNotFoundError(f"Task {task_id} not found")
+            raise NotFoundError(f"Task {task_id} not found")
         return self._store[task_id]
 
     def list_all(self) -> list[dict]:
@@ -67,15 +67,14 @@ class TaskRepository:
         return task
 
     def delete(self, task_id: int) -> None:
-        self.get(task_id)  # raises RouteNotFoundError if missing
+        self.get(task_id)  # raises NotFoundError if missing
         del self._store[task_id]
 ```
 
 ## Controller
 
 ```python
-from lauren import controller, get, post, put, delete, Path, Json
-from lauren.types import Response
+from lauren import NoContent, NotFoundError, controller, get, post, put, delete, raises, Path, Json
 
 @controller("/tasks")
 class TaskController:
@@ -86,12 +85,13 @@ class TaskController:
     async def list_tasks(self) -> list[TaskResponse]:
         return [TaskResponse(**t) for t in self._repo.list_all()]
 
-    @post("/")
-    async def create_task(self, body: Json[CreateTask]) -> Response:
+    @post("/", status_code=201)
+    async def create_task(self, body: Json[CreateTask]) -> TaskResponse:
         task = self._repo.create(body.title, body.description)
-        return Response.json(TaskResponse(**task).model_dump(), status=201)
+        return TaskResponse(**task)
 
     @get("/{task_id}")
+    @raises(NotFoundError)
     async def get_task(self, task_id: Path[int]) -> TaskResponse:
         return TaskResponse(**self._repo.get(task_id))
 
@@ -101,9 +101,10 @@ class TaskController:
         return TaskResponse(**task)
 
     @delete("/{task_id}")
-    async def delete_task(self, task_id: Path[int]) -> Response:
+    @raises(NotFoundError)
+    async def delete_task(self, task_id: Path[int]) -> NoContent:
         self._repo.delete(task_id)
-        return Response.no_content()
+        return NoContent()
 ```
 
 ## Module wiring
@@ -118,8 +119,12 @@ class TaskModule:
 
 ## Key points
 
-- `RouteNotFoundError` (HTTP 404) is in `lauren.exceptions` and is the correct error for missing resources.
-- Returning `Response.no_content()` produces HTTP 204 with no body.
-- Use `Response.json(..., status=201)` for created resources.
+- `NotFoundError` (HTTP 404, built in) is the error for missing resources; declare it with `@raises(NotFoundError)`.
+- `-> NoContent` (or `-> None`) produces HTTP 204 with no body, documented as 204.
+- Use `@post(..., status_code=201)` (or `-> Created[TaskResponse]` +
+  `return Created(task, location=...)`) for created resources — the status is
+  sent and documented in OpenAPI; `@raises(NotFoundError)` documents the 404.
+- Set `response_validation="filter"` on the app so a repository record with
+  extra fields never leaks past the annotated `TaskResponse`.
 - `UpdateTask` uses `exclude_none=True` so only supplied fields are patched.
 - To use a real database, swap `TaskRepository` for a service that injects a DB session provider.

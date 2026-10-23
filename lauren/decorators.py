@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Callable, ForwardRef, TypeVar
 
 from ._di import INJECTABLE_META, InjectableMeta
@@ -72,6 +74,7 @@ OPENAPI_SECURITY_META = "__lauren_openapi_security__"
 INTERCEPTOR_META = "__lauren_interceptor__"
 USE_INTERCEPTORS = "__lauren_use_interceptors__"
 USE_ENCODER = "__lauren_use_encoder__"
+RAISES_META = "__lauren_raises__"
 
 #: Well-known ``@set_metadata`` key marking a route or controller as public.
 #: Guards that honour it (``ctx.get_metadata(PUBLIC_METADATA_KEY, False)``)
@@ -288,6 +291,9 @@ class RouteMeta:
         operation_id: str | None = None,
         include_in_schema: bool = True,
         tags: list[str] | None = None,
+        status_code: int | None = None,
+        response_validation: str | None = None,
+        response_headers: Mapping[str, Any] | None = None,
     ) -> None:
         self.method = method.upper()
         self.path = path
@@ -299,6 +305,108 @@ class RouteMeta:
         self.operation_id = operation_id
         self.include_in_schema = include_in_schema
         self.tags = tuple(tags or [])
+        #: Declared success status (``None``: 200, or 204 when the handler returns ``None``).
+        self.status_code = status_code
+        #: Per-route ``"off"`` / ``"filter"`` / ``"strict"``; ``None`` follows the app.
+        self.response_validation = response_validation
+        #: Documentation-only response headers: name → description or OpenAPI Header Object.
+        self.response_headers: dict[str, Any] = dict(response_headers or {})
+
+
+# ---------------------------------------------------------------------------
+# Route options — one validation table shared by every verb decorator
+# ---------------------------------------------------------------------------
+
+#: The response-contract modes, in increasing strictness.
+RESPONSE_VALIDATION_MODES: tuple[str, ...] = ("off", "filter", "strict")
+
+
+class _RouteOptionError(Exception):
+    """A route-option validator rejected a value (``reason`` lands in ``detail``)."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.message = message
+
+
+def _check_status_code(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 100 <= value <= 599:
+        raise _RouteOptionError(
+            "invalid_status_code", f"status_code must be an int between 100 and 599, got {value!r}"
+        )
+    return value
+
+
+def _check_response_validation(value: Any) -> str:
+    if not isinstance(value, str) or value not in RESPONSE_VALIDATION_MODES:
+        raise _RouteOptionError(
+            "invalid_response_validation",
+            f"response_validation must be one of {', '.join(map(repr, RESPONSE_VALIDATION_MODES))}, "
+            f"got {value!r}",
+        )
+    return value
+
+
+def _check_response_headers(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise _RouteOptionError(
+            "invalid_response_headers",
+            f"response_headers must map header names to descriptions, got {type(value).__name__}",
+        )
+    out: dict[str, Any] = {}
+    for name, spec in value.items():
+        if not isinstance(name, str) or not name.strip():
+            raise _RouteOptionError(
+                "invalid_response_headers", f"response_headers keys must be header names, got {name!r}"
+            )
+        if isinstance(spec, str):
+            out[name] = spec
+        elif isinstance(spec, Mapping):
+            out[name] = dict(spec)
+        else:
+            raise _RouteOptionError(
+                "invalid_response_headers",
+                f"response_headers[{name!r}] must be a description string or an OpenAPI Header "
+                f"Object (a dict), got {type(spec).__name__}",
+            )
+    return out
+
+
+#: Route-decorator option validators: keyword name → ``validate(value)``.
+#:
+#: Every verb decorator (``@get`` … ``@options``, and ``Lauren``'s ``@app.get``
+#: …) runs its options through :func:`_validate_route_options`, so a bad value
+#: fails at decoration time with a :class:`DecoratorUsageError` whose ``detail``
+#: is ``{"decorator", "target", "option", "reason"}``. A validator returns the
+#: normalised value or raises :class:`_RouteOptionError`; ``None`` always means
+#: "not set" and skips it. To add an option: add the keyword to
+#: ``_route_decorator``'s factory and to :class:`RouteMeta`, and register its
+#: validator here.
+_ROUTE_OPTION_VALIDATORS: dict[str, Callable[[Any], Any]] = {
+    "status_code": _check_status_code,
+    "response_validation": _check_response_validation,
+    "response_headers": _check_response_headers,
+}
+
+
+def _validate_route_options(decorator: str, target: Any, options: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate route options against :data:`_ROUTE_OPTION_VALIDATORS`; return the normalised values."""
+    out: dict[str, Any] = {}
+    for name, value in options.items():
+        validate = _ROUTE_OPTION_VALIDATORS.get(name)
+        if value is None or validate is None:
+            out[name] = value
+            continue
+        try:
+            out[name] = validate(value)
+        except _RouteOptionError as exc:
+            target_name = getattr(target, "__qualname__", None) or _describe(target)
+            raise DecoratorUsageError(
+                f"@{decorator}(..., {name}={value!r}) on {target_name}: {exc.message}",
+                detail={"decorator": decorator, "target": target_name, "option": name, "reason": exc.reason},
+            ) from None
+    return out
 
 
 def _route_decorator(method: str) -> Callable[..., Callable[[F], F]]:
@@ -313,6 +421,9 @@ def _route_decorator(method: str) -> Callable[..., Callable[[F], F]]:
         operation_id: str | None = None,
         include_in_schema: bool = True,
         tags: list[str] | None = None,
+        status_code: int | None = None,
+        response_validation: str | None = None,
+        response_headers: Mapping[str, Any] | None = None,
     ) -> Callable[[F], F]:
         # Bare usage — ``@get`` on a function — passes the function as
         # ``path``. Reject loudly: the undetected case would silently
@@ -321,6 +432,15 @@ def _route_decorator(method: str) -> Callable[..., Callable[[F], F]]:
             _reject_bare_usage(method.lower(), path)
 
         def decorator(fn: F) -> F:
+            options = _validate_route_options(
+                method.lower(),
+                fn,
+                {
+                    "status_code": status_code,
+                    "response_validation": response_validation,
+                    "response_headers": response_headers,
+                },
+            )
             existing: list[RouteMeta] = getattr(fn, ROUTE_META, [])
             existing.append(
                 RouteMeta(
@@ -334,6 +454,7 @@ def _route_decorator(method: str) -> Callable[..., Callable[[F], F]]:
                     operation_id=operation_id,
                     include_in_schema=include_in_schema,
                     tags=tags,
+                    **options,
                 )
             )
             setattr(fn, ROUTE_META, existing)
@@ -1132,6 +1253,106 @@ def set_metadata(key: str, value: Any) -> Callable[[_T], _T]:
 
 
 # ---------------------------------------------------------------------------
+# @raises — declared error responses
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RaisesSpec:
+    """One ``@raises`` declaration: an ``HTTPError`` subclass and an optional description."""
+
+    exc_type: type
+    description: str | None = None
+
+    @property
+    def status_code(self) -> int:
+        """The HTTP status the error class renders with."""
+        return int(self.exc_type.status_code)  # type: ignore[attr-defined]
+
+    @property
+    def code(self) -> str:
+        """The error class's stable ``code``."""
+        return str(getattr(self.exc_type, "code", ""))
+
+
+def raises(*exceptions: type, description: str | None = None) -> Callable[[_T], _T]:
+    """Declare the ``HTTPError`` subclasses a route (or every route of a controller) raises.
+
+    Metadata only: the declarations feed the OpenAPI document (one response
+    per status) and :attr:`ReflectedRoute.raises <lauren.reflect.ReflectedRoute>`;
+    raising an undeclared error behaves exactly as before (with ``debug=``
+    enabled, a route that declares ``@raises`` logs one warning per undeclared
+    error type it raises)::
+
+        @controller("/users")
+        @raises(UnauthorizedError)              # every route of the controller
+        class UserController:
+            @get("/{id}")
+            @raises(NotFoundError, description="No user with that id")
+            async def show(self, id: int) -> UserOut: ...
+
+    Stacking accumulates. On a class it reads the class's **own** declarations
+    (a subclass controller does not inherit them); on a method it propagates
+    through normal attribute lookup like ``@get``. Every argument must be an
+    :class:`~lauren.exceptions.HTTPError` subclass with an integer
+    ``status_code``; bare ``@raises`` and ``@raises()`` are rejected.
+    """
+    if exceptions:
+        first = exceptions[0]
+        is_exception_class = isinstance(first, type) and issubclass(first, BaseException)
+        if not is_exception_class and (isinstance(first, type) or callable(first)):
+            _reject_bare_usage("raises", first)
+    if not exceptions:
+        raise DecoratorUsageError(
+            "@raises requires at least one HTTPError subclass: write '@raises(NotFoundError)'.",
+            detail={"decorator": "raises", "target": None, "reason": "no_exceptions"},
+        )
+    from .exceptions import HTTPError  # noqa: PLC0415
+
+    for exc in exceptions:
+        status = getattr(exc, "status_code", None)
+        if not (isinstance(exc, type) and issubclass(exc, HTTPError)):
+            raise DecoratorUsageError(
+                f"@raises arguments must be HTTPError subclasses; got {_describe(exc)}.",
+                detail={"decorator": "raises", "target": _describe(exc), "reason": "not_http_error"},
+            )
+        if isinstance(status, bool) or not isinstance(status, int) or not 400 <= status <= 599:
+            raise DecoratorUsageError(
+                f"@raises({exc.__name__}): the class must declare an integer status_code "
+                f"between 400 and 599, got {status!r}.",
+                detail={"decorator": "raises", "target": exc.__name__, "reason": "no_status_code"},
+            )
+    if description is not None and not isinstance(description, str):
+        raise DecoratorUsageError(
+            f"@raises(description=...) must be a string, got {type(description).__name__}.",
+            detail={"decorator": "raises", "target": None, "reason": "invalid_description"},
+        )
+    specs = [RaisesSpec(exc, description) for exc in exceptions]
+
+    def decorator(target: _T) -> _T:
+        # Own metadata only on classes (strict inheritance); the top decorator
+        # applies last, so its specs come first (source order). One spec per
+        # exception type — the first declaration wins.
+        if isinstance(target, type):
+            existing = list(target.__dict__.get(RAISES_META, []))
+        else:
+            existing = list(getattr(target, RAISES_META, []))
+        merged: list[RaisesSpec] = []
+        seen: set[type] = set()
+        for spec in [*specs, *existing]:
+            if spec.exc_type not in seen:
+                seen.add(spec.exc_type)
+                merged.append(spec)
+        try:
+            setattr(target, RAISES_META, merged)
+        except (AttributeError, TypeError) as exc:  # pragma: no cover
+            raise DecoratorUsageError(f"Cannot attach @raises metadata to {target!r}") from exc
+        return target
+
+    return decorator
+
+
+# ---------------------------------------------------------------------------
 # @use_encoder — per-controller / per-route encoder override
 # ---------------------------------------------------------------------------
 
@@ -1224,11 +1445,15 @@ __all__ = [
     "set_metadata",
     "propagate_metadata",
     "openapi_security",
+    "raises",
     "ControllerMeta",
     "ModuleMeta",
     "RouteMeta",
+    "RaisesSpec",
     "ExceptionHandlerMeta",
     "OpenAPISecurityMeta",
+    "RAISES_META",
+    "RESPONSE_VALIDATION_MODES",
     "CONTROLLER_META",
     "MODULE_META",
     "ROUTE_META",

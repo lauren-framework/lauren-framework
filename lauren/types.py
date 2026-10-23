@@ -1222,7 +1222,7 @@ class Response:
         return self.with_cookie(key, "", max_age=0, path=path)
 
 
-def _json_default(obj: Any) -> Any:
+def _json_default(obj: Any, fallback: Any = None) -> Any:
     """Fallback JSON encoder covering common rich types.
 
     Lauren's default response builder invokes this via :func:`json.dumps`
@@ -1232,6 +1232,11 @@ def _json_default(obj: Any) -> Any:
     :class:`decimal.Decimal`, :class:`set` / :class:`frozenset`, and
     dataclass instances. Secrets (:class:`lauren.config.Secret`, pydantic
     ``SecretStr`` / ``SecretBytes``) encode as ``"**********"``.
+
+    Any other object with a ``__dict__`` goes through the ``json_fallback``
+    policy: ``fallback`` (an encoder's pinned policy) or else the policy of the
+    app handling the current request; outside an app its public attributes
+    are dumped (the historical behaviour).
     """
     import enum
     import dataclasses
@@ -1273,9 +1278,11 @@ def _json_default(obj: Any) -> Any:
     if hasattr(obj, "__struct_fields__"):
         return {field: getattr(obj, field) for field in obj.__struct_fields__}
     if hasattr(obj, "__dict__"):
-        # Last-resort: return the instance dict (filtering out private attrs
-        # and non-data attributes).
-        return {k: v for k, v in obj.__dict__.items() if not k.startswith("_") and not callable(v)}
+        # Last resort: the instance's public data attributes — subject to the
+        # json_fallback policy ("dict" / "warn" / "error").
+        from .serialization import _object_fallback
+
+        return _object_fallback(obj, fallback)
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 

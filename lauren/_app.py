@@ -97,6 +97,8 @@ class Lauren:
         scheduler: bool = True,
         validation: Any | None = None,
         strict_request_scope: bool = False,
+        response_validation: str = "off",
+        json_fallback: str = "warn",
     ) -> None:
         self._title = title
         self._version = version
@@ -137,6 +139,8 @@ class Lauren:
         self._scheduler = scheduler
         self._validation = validation
         self._strict_request_scope = strict_request_scope
+        self._response_validation = response_validation
+        self._json_fallback = json_fallback
         self._startup_handlers: list[Callable[[], Any]] = []
         self._shutdown_handlers: list[Callable[[], Any]] = []
 
@@ -188,6 +192,10 @@ class Lauren:
 
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             self._assert_not_compiled("register a route")
+            # Route options fail here, at decoration time, like ``@get(...)``.
+            from .decorators import _validate_route_options
+
+            _validate_route_options(f"app.{method.lower()}", fn, kwargs)
             self._route_buffer.append(_PendingRoute(method=method, path=path, fn=fn, kwargs=kwargs))
             return fn
 
@@ -474,6 +482,8 @@ class Lauren:
             scheduler=self._scheduler,
             validation=self._validation,
             strict_request_scope=self._strict_request_scope,
+            response_validation=self._response_validation,
+            json_fallback=self._json_fallback,
         )
         # --- Startup hooks run inside LaurenApp.startup(), after every
         # @post_construct hook (not here, before singletons exist) ---------
@@ -671,6 +681,7 @@ def _wrap_function_as_method(fn: Callable[..., Any]) -> Callable[..., Any]:
         "__lauren_use_exception_handlers__",
         "__lauren_use_encoder__",
         "__lauren_metadata__",
+        "__lauren_raises__",
     ):
         if hasattr(fn, marker):
             setattr(method, marker, getattr(fn, marker))

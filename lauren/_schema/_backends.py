@@ -76,7 +76,11 @@ class PydanticModelNode(Node):
     def project(self, value: Any) -> Any:
         if not isinstance(value, self.model):
             value = self.model.model_validate(value)  # type: ignore[attr-defined]
-        return value.model_dump(mode="json", by_alias=True)
+        # The declared model's serializer, not ``value.model_dump()``: a subclass
+        # instance (``UserInDB`` for ``UserOut``) must not emit its extra fields.
+        return self.model.__pydantic_serializer__.to_python(  # type: ignore[attr-defined]
+            value, mode="json", by_alias=True
+        )
 
     def is_instance(self, value: Any) -> bool:
         return isinstance(value, self.model)
