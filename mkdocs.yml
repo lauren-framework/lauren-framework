@@ -194,6 +194,7 @@ nav:
     - Scheduling & Hosted Services: guides/scheduling.md
     - Commands & Scripts: guides/commands-and-scripts.md
     - Sessions: guides/sessions.md
+    - Stores & Caching: guides/caching.md
     - Typed Configuration: guides/configuration.md
     - Testing: guides/testing.md
     - DI with Data Model Types: guides/di-model-types.md
@@ -221,6 +222,8 @@ nav:
     - Scheduling: reference/scheduling.md
     - Contexts & Commands: reference/commands.md
     - Sessions: reference/sessions.md
+    - Stores: reference/stores.md
+    - Cache: reference/cache.md
     - Configuration: reference/config.md
     - Signals: reference/signals.md
     - Health: reference/health.md

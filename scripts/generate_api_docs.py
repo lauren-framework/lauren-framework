@@ -316,6 +316,48 @@ PAGES: dict[str, list[str | tuple[str, str]]] = {
         "lauren.scheduling.InMemorySchedulerLock",
         "lauren.scheduling.ManualClock",
     ],
+    "stores.md": [
+        (
+            "# Stores\n\nThe async key-value `Store` behind sessions, revocation, the cache, "
+            "idempotency keys and locks.",
+            "",
+        ),
+        ("## The protocol", ""),
+        "lauren.stores.Store",
+        "lauren.stores.PrefixedStore",
+        ("## In-process store", ""),
+        "lauren.stores.MemoryStore",
+        ("## Registration", ""),
+        "lauren.stores.StoresModule",
+        "lauren.stores.StoreToken",
+        "lauren.stores.StoreRegistry",
+        ("## Locks", ""),
+        "lauren.stores.Lock",
+        ("## Session adapters", ""),
+        "lauren.stores.StoreSessionStore",
+        "lauren.stores.StoreRevocationStore",
+    ],
+    "cache.md": [
+        (
+            "# Cache\n\nThe `Cache` service, `CacheModule`, codecs and the `@cache_response` / "
+            "`@idempotent` route decorators.",
+            "",
+        ),
+        ("## Module", ""),
+        "lauren.cache.CacheModule",
+        ("## Service", ""),
+        "lauren.cache.Cache",
+        "lauren.cache.TypedCache",
+        ("## Codecs", ""),
+        "lauren.cache.CacheCodec",
+        "lauren.cache.JsonCacheCodec",
+        ("## Response caching", ""),
+        "lauren.cache.cache_response",
+        "lauren.cache.CachePolicy",
+        ("## Idempotency keys", ""),
+        "lauren.cache.idempotent",
+        "lauren.cache.IdempotencyPolicy",
+    ],
     "testing.md": [
         (
             "# Testing\n\nIn-process ASGI test clients for unit and integration tests.",

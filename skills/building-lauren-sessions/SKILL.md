@@ -75,7 +75,7 @@ refreshed. A pure read costs no store write and no `Set-Cookie`.
 
 | Store | Use |
 |---|---|
-| `InMemorySessionStore` | Dev / single-worker. Process-local dict, lazy TTL. |
+| `InMemorySessionStore` | Dev / single-worker. Process-local, bounded (`max_entries`, expired sessions swept). |
 | `SignedCookieSessionStore(max_bytes=4096)` | Stateless — payload lives in the (signed, not encrypted) cookie. No confidential data; small payloads only. |
 | Custom `SessionStore` (Redis/DB) | Multi-worker production. |
 

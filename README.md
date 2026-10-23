@@ -190,6 +190,12 @@ core ideas:
   Unsafe configuration is rejected at startup. Pair with
   `content=ContentConfig(strict_content_type=True)` so cross-site `text/plain`
   posts to JSON routes are rejected (415).
+* **Stores & caching** — one async key-value `Store` protocol (bounded
+  `MemoryStore` in core; Redis and friends plug in) behind sessions, session
+  revocation, the `Cache` service (`get_or_set` with single-flight, tag
+  invalidation, stale-while-revalidate), `@cache_response` server-side
+  response caching with correct-by-default rules, and `@idempotent`
+  `Idempotency-Key` handling.
 * **Typed configuration** — settings classes (frozen dataclasses, pydantic
   models, `msgspec.Struct`) loaded by `ConfigModule.for_root(...)` from `.env`,
   TOML and the environment, validated inside `LaurenFactory.create` — one
@@ -442,8 +448,50 @@ app = LaurenFactory.create(
 
 The cookie is HMAC-signed and secure by default (`HttpOnly`, `Secure`,
 `SameSite=Lax`). Swap `InMemorySessionStore` for the stateless
-`SignedCookieSessionStore` or a Redis-backed `SessionStore` in production.
+`SignedCookieSessionStore` or any shared key-value `Store` (adapted
+automatically) in production.
 Unsafe configuration fails inside `LaurenFactory.create`, not at runtime.
+
+## Caching
+
+```python
+from lauren import LaurenFactory, controller, get, injectable, module, post
+from lauren.cache import Cache, CacheModule, cache_response, idempotent
+
+@injectable()
+class Products:
+    def __init__(self, cache: Cache) -> None:
+        self._cache = cache
+
+    async def get(self, pid: int) -> dict:
+        return await self._cache.get_or_set(
+            f"product:{pid}", lambda: load_product(pid), ttl=60, tags=(f"product:{pid}",)
+        )
+
+@controller("/products")
+class ProductController:
+    def __init__(self, products: Products) -> None:
+        self._products = products
+
+    @get("/{pid}")
+    @cache_response(ttl=30, vary=("accept-language",))   # server-side; guards still run first
+    async def show(self, pid: int) -> dict:
+        return await self._products.get(pid)
+
+    @post("/{pid}/orders")
+    @idempotent(ttl=24 * 3600)                           # Idempotency-Key retries run once
+    async def order(self, pid: int) -> dict:
+        return {"ordered": pid}
+
+@module(imports=[CacheModule.for_root()], providers=[Products], controllers=[ProductController])
+class AppModule:
+    pass
+```
+
+Concurrent misses share one computation, `cache.invalidate_tags(...)` evicts in
+O(1) without scanning keys, and a cached response never replays a `Set-Cookie`.
+Every stateful feature runs on one `Store`: `StoresModule.for_root(default=...)`
+plus `SessionConfig(store=...)` share a single backend.
 
 ## Configuration
 

@@ -144,6 +144,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Signed-cookie sessions: `sessions=SessionConfig(...)`, `session: Session` injection, pluggable `SessionStore` (in-memory, stateless cookie, Redis), secure-by-default cookies, `regenerate_id()` / `invalidate()`, and startup-validated config.
 
+-   :material-database-clock: [__Stores & Caching__](caching.md)
+
+    ---
+    One async key-value `Store` (bounded `MemoryStore` in core) behind sessions, the `Cache` service (`get_or_set` with single-flight, tags, stale-while-revalidate), `@cache_response` with correct-by-default rules, `@idempotent` idempotency keys and `Lock`.
+
 -   :material-tune-variant: [__Typed Configuration__](configuration.md)
 
     ---

@@ -35,6 +35,9 @@ Core capabilities
 * Standalone contexts (``LaurenFactory.create_context``) and DI-aware
   ``@command`` methods run with ``python -m lauren exec`` — the app's graph
   and lifecycle without HTTP.
+* Stores & caching: one async key-value ``Store`` protocol (bounded
+  ``MemoryStore`` in core) behind sessions, the ``Cache`` service,
+  ``@cache_response`` and ``@idempotent``.
 * OpenAPI 3.1 generation from return annotations and ``response_model``
   (any of the supported model kinds).
 * Auto-serialization: return dicts, models, dataclasses, or
@@ -306,6 +309,8 @@ from .scheduling import (
     interval,
     run_once,
 )
+from .cache import Cache, CacheModule, cache_response, idempotent
+from .stores import Lock, MemoryStore, Store, StoreRegistry, StoresModule
 from .sessions import (
     InMemoryRevocationStore,
     InMemorySessionStore,
@@ -447,6 +452,16 @@ __all__ = [
     "JobCompleted",
     "JobFailed",
     "JobSkipped",
+    # stores & caching (the rest lives in lauren.stores / lauren.cache)
+    "Store",
+    "MemoryStore",
+    "StoresModule",
+    "StoreRegistry",
+    "Lock",
+    "Cache",
+    "CacheModule",
+    "cache_response",
+    "idempotent",
     # sessions
     "Session",
     "SessionConfig",

@@ -164,3 +164,28 @@
 "lauren.signals.JobCompleted" = ["name", "duration_s", "scheduled_at"]
 "lauren.signals.JobFailed" = ["name", "error", "duration_s", "scheduled_at"]
 "lauren.signals.JobSkipped" = ["name", "reason", "scheduled_at"]
+"lauren.stores.Store" = [
+    "get", "set", "delete", "exists", "expire", "ttl", "incr", "set_if_absent", "delete_if_equal", "namespace",
+]
+"lauren.stores.MemoryStore" = [
+    "get", "set", "delete", "exists", "expire", "ttl", "incr", "set_if_absent", "delete_if_equal", "namespace",
+    "max_entries", "sweep",
+]
+"lauren.stores.PrefixedStore" = ["prefix", "base", "namespace"]
+"lauren.stores.StoresModule" = ["for_root"]
+"lauren.stores.StoreToken" = ["store_name"]
+"lauren.stores.StoreRegistry" = ["get", "names"]
+"lauren.stores.Lock" = ["acquire", "release", "locked", "key", "name"]
+"lauren.stores.StoreSessionStore" = ["store", "load", "save", "delete", "new_id"]
+"lauren.stores.StoreRevocationStore" = ["store", "revoke_token", "is_token_revoked", "revoke_user", "user_cutoff"]
+"lauren.cache.CacheModule" = ["for_root"]
+"lauren.cache.Cache" = [
+    "get", "set", "delete", "get_or_set", "invalidate_tags", "typed", "aclose", "store", "default_ttl", "codec",
+]
+"lauren.cache.TypedCache" = ["get", "set", "delete", "get_or_set", "type"]
+"lauren.cache.JsonCacheCodec" = ["encode", "decode", "encoder"]
+"lauren.cache.CachePolicy" = [
+    "ttl", "vary", "key", "tags", "methods", "statuses", "debug_header", "respect_client_no_cache",
+    "query", "allow_authenticated", "per_caller",
+]
+"lauren.cache.IdempotencyPolicy" = ["ttl", "header", "required", "scope", "lock_ttl"]

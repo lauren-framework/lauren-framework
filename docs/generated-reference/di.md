@@ -203,7 +203,7 @@ Example::
 ### `DIContainer`
 
 ```python
-class DIContainer(overrides: OverridePlan | None = None)
+class DIContainer(overrides: OverridePlan | None = None, strict_request_scope: bool = False)
 ```
 
 Compiled DI container; immutable after :meth:`compile`.
@@ -250,6 +250,33 @@ Multi-binding registrations don't pre-populate the singleton
 cache because that cache is keyed by token — two providers for
 the same token would race each other. The factory still runs
 on resolve, so the value still bypasses any user-construction.
+
+#### `DIContainer.register_instance`
+
+```python
+def register_instance(self, token: Any, instance: Any, owning_module: type | None = None) -> Provider
+```
+
+Register a pre-built singleton whose lifecycle hooks run with the app.
+
+Unlike :meth:`register_value` (``use_value``), the hooks declared on
+``type(instance)`` — ``@post_construct`` / ``@pre_destruct``, or else
+``startup()`` / ``aclose()`` methods — run at ``app.startup()`` /
+``app.shutdown()``. They run once per object: registering the same
+object under a second token (or adopting it again) adds no hooks.
+A build-time override of ``token`` (``lauren.testing``) wins.
+
+#### `DIContainer.adopt_lifecycle`
+
+```python
+def adopt_lifecycle(self, instance: Any) -> None
+```
+
+Run ``instance``'s lifecycle hooks with the app without exposing it as a token.
+
+Used for objects the framework holds directly — a store handed to
+``SessionConfig(store=...)`` or the backend behind a store adapter.
+A no-op when the object declares no hooks or already has them run.
 
 #### `DIContainer.register_class`
 

@@ -210,7 +210,7 @@ Build a :class:`StreamReader` bound to the request's receive loop.
 ### `StreamReader`
 
 ```python
-class StreamReader(request: Any, inner_type: Any, format: str, field_name: str)
+class StreamReader(request: Any, inner_type: Any, format: str, field_name: str, plan: Any = None)
 ```
 
 Async iterator producing validated ``T`` values from a streaming body.
@@ -220,5 +220,7 @@ Not directly constructed by user code — lauren creates one for each
 callable and the handler's ``async for`` loop: every inbound message is
 buffered into a line accumulator, complete lines are decoded using the
 negotiated wire format, and each decoded payload is validated against
-``T`` (supporting both plain Pydantic models and ``Annotated[Union[...],
-Field(discriminator=...)]`` tagged unions via :class:`pydantic.TypeAdapter`).
+``T`` with the item plan the app compiled at startup (the same validator
+an HTTP body or a WebSocket frame of that type uses). Failures raise
+:class:`~lauren.exceptions.ExtractorError` whose ``issues`` are rooted at
+``("item", n)``.

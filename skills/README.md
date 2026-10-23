@@ -18,6 +18,8 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 | [building-lauren-scheduling](building-lauren-scheduling/) | `@hosted_service` loops, `@interval` / `@cron` / `@run_once` jobs, `ScheduleModule`, `SchedulerRegistry`, `SchedulerLock`, `ManualClock` |
 | [building-lauren-commands](building-lauren-commands/) | The app without HTTP: `LaurenFactory.create_context`, `ctx.scope()`, `@command` + `Opt` + `CommandContext`, `python -m lauren exec` / `commands` / `console`, `ctx.run_command` in tests, workers, `strict_request_scope` |
 | [building-lauren-sessions](building-lauren-sessions/) | `sessions=SessionConfig(...)`, `session: Session` injection, `SessionStore` backends, signed cookies, `regenerate_id()`/`invalidate()` |
+| [building-lauren-caching](building-lauren-caching/) | Stores & caching: the `Store` protocol, bounded `MemoryStore`, `StoresModule`, `Lock`, sessions on a store, `CacheModule` / `Cache.get_or_set` (single-flight, tags, stale-while-revalidate), `@cache_response`, `@idempotent` |
+| [redis-caching](redis-caching/) | A `Store` over `redis.asyncio` so the cache, response caching, idempotency keys and sessions share Redis across workers |
 | [building-lauren-config](building-lauren-config/) | Typed settings validated in `LaurenFactory.create`: `ConfigModule.for_root`/`for_feature`, `.env`/TOML/environment sources, profiles, `Secret[T]`, `load_settings`, `ConfigValidationError` |
 | [health-check-probes](health-check-probes/) | Liveness / readiness / startup probes: `HealthModule.for_root()`, `@health_check`, details policy, `app.lifecycle_state`, `begin_draining()`, Kubernetes manifests |
 | [testing-lauren-apps](testing-lauren-apps/) | Lifespan-managed `TestClient` / `AsyncTestClient`, cookies & sessions, uploads, streams, `Test.create_testing_module` overrides, pytest plugin, startup-failure assertions |
@@ -40,6 +42,7 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 | `LifecycleConfigError` (scheduling) | [building-lauren-scheduling](building-lauren-scheduling/) §Startup errors |
 | `DIScopeViolationError` (`no_active_scope`) | [building-lauren-commands](building-lauren-commands/) §Testing |
 | `DuplicateBindingError` (`duplicate_command_name`) | [building-lauren-commands](building-lauren-commands/) §Startup errors |
+| `StartupError` (`reason="cache_module_missing"`) | [building-lauren-caching](building-lauren-caching/) §Rules that bite |
 
 ## See also
 

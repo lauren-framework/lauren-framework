@@ -13,7 +13,7 @@ Produces :class:`LaurenApp` instances via the 7-phase pipeline.
 #### `LaurenFactory.create`
 
 ```python
-def create(root_module: type, strict_lifecycle: bool = True, global_middlewares: Iterable[type] | None = None, global_guards: Iterable[type] | None = None, global_interceptors: Iterable[type] | None = None, global_exception_handlers: Iterable[Any] | None = None, global_providers: Iterable[Any] | None = None, global_ws_guards: Iterable[type] | None = None, global_ws_interceptors: Iterable[type] | None = None, max_body_size: int = 1048576, app_state: AppState | None = None, logger: Logger | None = None, openapi_info: dict[str, Any] | None = None, openapi_servers: list[dict[str, Any]] | None = None, openapi_security_schemes: dict[str, Any] | None = None, openapi_url: str | None = None, docs_url: str | None = None, redoc_url: str | None = None, arena: RequestArena | None = None, arena_capacity: int | None = None, json_encoder: JSONEncoder | None = None, signals: SignalBus | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, sessions: SessionConfig | None = None, content: ContentConfig | None = None, problem_type_base: str | None = None, debug: bool | DebugConfig = False, lazy_startup: bool = True, hosted_services: bool = True, scheduler: bool = True) -> LaurenApp
+def create(root_module: type, strict_lifecycle: bool = True, global_middlewares: Iterable[type] | None = None, global_guards: Iterable[type] | None = None, global_interceptors: Iterable[type] | None = None, global_exception_handlers: Iterable[Any] | None = None, global_providers: Iterable[Any] | None = None, global_ws_guards: Iterable[type] | None = None, global_ws_interceptors: Iterable[type] | None = None, max_body_size: int = 1048576, app_state: AppState | None = None, logger: Logger | None = None, openapi_info: dict[str, Any] | None = None, openapi_servers: list[dict[str, Any]] | None = None, openapi_security_schemes: dict[str, Any] | None = None, openapi_url: str | None = None, docs_url: str | None = None, redoc_url: str | None = None, arena: RequestArena | None = None, arena_capacity: int | None = None, json_encoder: JSONEncoder | None = None, signals: SignalBus | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, sessions: SessionConfig | None = None, content: ContentConfig | None = None, problem_type_base: str | None = None, debug: bool | DebugConfig = False, lazy_startup: bool = True, hosted_services: bool = True, scheduler: bool = True, validation: ValidationPolicy | None = None, strict_request_scope: bool = False) -> LaurenApp
 ```
 
 Build a :class:`LaurenApp` from a root ``@module`` class.
@@ -65,10 +65,39 @@ classes but does not start them; ``scheduler=False`` does the same for
 scheduled jobs (``SchedulerRegistry.trigger`` still works). Tests and
 one-off commands use them to build the full app without background work.
 
+``validation`` (a :class:`~lauren.validation.ValidationPolicy`) sets how
+request values are validated: the stdlib-model mode (``"warn"`` by
+default in 1.x), JSON strictness, unknown keys, input echo and the
+issue cap. Every extractor, WebSocket payload and stream item type is
+compiled once here by the app's type compiler (``app.type_compiler``).
+
+``strict_request_scope=True`` makes resolving a ``Scope.REQUEST``
+provider outside any request, WebSocket connection or ``app.scope()``
+raise :class:`~lauren.exceptions.DIScopeViolationError`
+(``reason="no_active_scope"``). The default keeps the 1.x fallback — a
+new, never torn down instance per resolution — and logs a warning once
+per provider.
+
+#### `LaurenFactory.create_context`
+
+```python
+def create_context(root_module: type, hosted_services: bool = False, scheduler: bool = False, drain_timeout: float = 10.0, create_kwargs: Any = {}) -> ApplicationContext
+```
+
+Build the app with :meth:`create` and wrap it in an :class:`~lauren.context.ApplicationContext`.
+
+The graph is the server's — every phase runs, routes included, so if
+a command or script boots, the server boots — but nothing is served.
+``async with LaurenFactory.create_context(AppModule) as ctx:`` runs
+``startup()`` on enter and ``shutdown(drain_timeout=...)`` on exit.
+Hosted services and the scheduler are **off** by default (pass
+``hosted_services=True`` for a worker); ``create_kwargs`` go to
+:meth:`create` unchanged.
+
 ### `Lauren`
 
 ```python
-class Lauren(title: str = 'lauren application', version: str = '1.0.0', description: str | None = None, openapi_url: str | None = '/openapi.json', docs_url: str | None = '/docs', redoc_url: str | None = '/redoc', servers: list[dict[str, Any]] | None = None, security_schemes: dict[str, Any] | None = None, debug: bool | DebugConfig = False, max_body_size: int = 1048576, strict_lifecycle: bool = True, app_state: AppState | None = None, logger: Any | None = None, global_middlewares: list[type] | None = None, global_guards: list[type] | None = None, global_interceptors: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, sessions: Any | None = None, content: Any | None = None, json_encoder: Any | None = None, error_format: str = 'default', problem_type_base: str | None = None, root_path: str = '', mounts: dict[str, Any] | None = None, signals: Any | None = None, arena: Any | None = None, arena_capacity: int | None = None, lazy_startup: bool = True, hosted_services: bool = True, scheduler: bool = True)
+class Lauren(title: str = 'lauren application', version: str = '1.0.0', description: str | None = None, openapi_url: str | None = '/openapi.json', docs_url: str | None = '/docs', redoc_url: str | None = '/redoc', servers: list[dict[str, Any]] | None = None, security_schemes: dict[str, Any] | None = None, debug: bool | DebugConfig = False, max_body_size: int = 1048576, strict_lifecycle: bool = True, app_state: AppState | None = None, logger: Any | None = None, global_middlewares: list[type] | None = None, global_guards: list[type] | None = None, global_interceptors: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, sessions: Any | None = None, content: Any | None = None, json_encoder: Any | None = None, error_format: str = 'default', problem_type_base: str | None = None, root_path: str = '', mounts: dict[str, Any] | None = None, signals: Any | None = None, arena: Any | None = None, arena_capacity: int | None = None, lazy_startup: bool = True, hosted_services: bool = True, scheduler: bool = True, validation: Any | None = None, strict_request_scope: bool = False)
 ```
 
 A FastAPI-inspired ASGI application over lauren's module pipeline.
@@ -228,13 +257,13 @@ calling it afterwards raises :class:`LifecycleViolationError`.
 def on_startup(self, fn: Callable[[], Any]) -> Callable[[], Any]
 ```
 
-Register a callable to run when the application compiles.
+Register a callable to run when the application starts.
 
-Accepts both sync and async callables. Hooks run right after
-``LaurenFactory.create`` has built the app — the DI graph is
-compiled, but singletons are not instantiated yet, so
-``@post_construct`` hooks (which run in ``LaurenApp.startup()``)
-have **not** fired — and before any request is dispatched.
+Accepts both sync and async callables. Hooks run in registration order
+inside ``LaurenApp.startup()`` (the ASGI lifespan, ``TestClient``, an
+``ApplicationContext``) after all ``@post_construct`` hooks have fired
+and before hosted services start or any request is dispatched. A
+failing hook aborts startup with a :class:`StartupError`.
 
 #### `Lauren.on_shutdown`
 
@@ -253,14 +282,14 @@ Executes after in-flight requests drain and before
 def startup(self) -> Any
 ```
 
-Compile the application and run its ``on_startup`` hooks.
+Compile the application without starting it.
 
 Safe to call multiple times — later calls return the already-compiled
 :class:`LaurenApp`. Starting the app (building singletons, running
-``@post_construct``) is the ASGI lifespan's job;
-:class:`~lauren.testing.TestClient` compiles and starts the app on its
-first request. Returns the underlying :class:`LaurenApp` so tests can
-introspect it.
+``@post_construct`` and then ``on_startup`` hooks) is the ASGI
+lifespan's job; :class:`~lauren.testing.TestClient` compiles and
+starts the app on its first request. Returns the underlying
+:class:`LaurenApp` so tests can introspect it.
 
 #### `Lauren.shutdown`
 
@@ -308,15 +337,39 @@ Open an :class:`~lauren.context.OperationScope` on the compiled app.
 Same as :meth:`LaurenApp.scope`. Raises
 :class:`LifecycleViolationError` before the app has compiled.
 
+#### `Lauren.begin_draining`
+
+```python
+def begin_draining(self, reason: str = '') -> bool
+```
+
+Same as :meth:`LaurenApp.begin_draining`; ``False`` before the app has compiled.
+
 ### `LaurenApp`
 
 ```python
-class LaurenApp(router: Router, container: DIContainer, module_graph: ModuleGraph, lifecycle: LifecycleScheduler, compiled_handlers: dict[tuple[str, str], CompiledHandler], global_middlewares: list[type], app_state: AppState, strict_lifecycle: bool = True, max_body_size: int = 1048576, logger: Logger | None = None, ws_router: Router | None = None, ws_gateways: dict[str, Any] | None = None, arena: RequestArena | None = None, signals: SignalBus | None = None, error_format: str = 'default', global_guards: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_interceptors: list[type] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, strict_content_type: bool | str = False, problem_type_base: str | None = None, debug: DebugConfig | None = None, guard_denials: dict[type, Any] | None = None, lazy_startup: bool = True)
+class LaurenApp(router: Router, container: DIContainer, module_graph: ModuleGraph, lifecycle: LifecycleScheduler, compiled_handlers: dict[tuple[str, str], CompiledHandler], global_middlewares: list[type], app_state: AppState, strict_lifecycle: bool = True, max_body_size: int = 1048576, logger: Logger | None = None, ws_router: Router | None = None, ws_gateways: dict[str, Any] | None = None, arena: RequestArena | None = None, signals: SignalBus | None = None, error_format: str = 'default', global_guards: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_interceptors: list[type] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, strict_content_type: bool | str = False, problem_type_base: str | None = None, debug: DebugConfig | None = None, guard_denials: dict[type, Any] | None = None, lazy_startup: bool = True, validation: ValidationRuntime | None = None)
 ```
 
 A compiled, ready-to-serve ASGI application.
 
 Instances of this class are produced exclusively by :meth:`LaurenFactory.create`.
+
+#### `LaurenApp.begin_draining`
+
+```python
+def begin_draining(self, reason: str = '') -> bool
+```
+
+Announce termination: move ``READY → DRAINING`` so readiness probes fail.
+
+Requests are still served normally; the drain itself is
+:meth:`shutdown`'s job. Call it before the server stops accepting
+connections (a ``preStop`` window, a signal handler —
+:func:`~lauren.signals.install_signal_handlers` does) so load
+balancers polling readiness take the instance out of rotation first.
+Synchronous and idempotent: returns ``True`` when it changed the
+state, ``False`` in any state other than ``READY``.
 
 #### `LaurenApp.routes`
 
@@ -394,6 +447,20 @@ receive as-is. Use it while the app is running (after
     async with app.scope("backfill") as scope:
         db = await scope.resolve(DbSession)
 
+#### `LaurenApp.context`
+
+```python
+def context(self, hosted_services: bool = False, scheduler: bool = False, drain_timeout: float = 10.0) -> ApplicationContext
+```
+
+Wrap this built, not yet started app in an :class:`~lauren.context.ApplicationContext`.
+
+For tooling that only knows ``main:app``; ``async with app.context() as ctx:``
+starts the app without serving HTTP and shuts it down on exit. Hosted
+services and the scheduler stay off unless enabled here (and on the
+app). Raises :class:`~lauren.exceptions.LifecycleViolationError` when
+the app was already started: one lifecycle has one owner.
+
 #### `LaurenApp.startup`
 
 ```python
@@ -410,7 +477,8 @@ Gracefully stop the application.
 
 Steps (each logged as an event):
 
-1. Mark the app not-running — no new request scheduling; the
+1. Mark the app not-running — no new request scheduling — and move
+   ``READY → DRAINING`` (a no-op after :meth:`begin_draining`); the
    scheduler stops firing (hosted services keep running).
 2. Drain in-flight requests (up to ``drain_timeout`` seconds).
 3. Await in-flight scheduled runs (``ScheduleModule`` ``job_drain_timeout``,
@@ -422,6 +490,7 @@ Steps (each logged as an event):
 6. Invoke user-registered ``on_shutdown`` callbacks in reverse order.
 7. Run ``@pre_destruct`` hooks in reverse topological order.
 
+The app ends ``STOPPED`` (a ``FAILED`` app stays ``FAILED``).
 Idempotent: concurrent or repeated calls return as soon as the first
 shutdown has completed.
 

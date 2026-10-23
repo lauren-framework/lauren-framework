@@ -242,6 +242,20 @@ class ExtractorError
 
 A request value could not be extracted or validated.
 
+#### `ExtractorError.from_issues`
+
+```python
+def from_issues(cls, issues: Iterable[Any], field: str | None = None, message: str | None = None, include_input: bool = False, detail: Mapping[str, Any] | None = None) -> Self
+```
+
+Build a 422 from validation issues (``ValidationIssue`` objects or ``{loc, type, msg}`` dicts).
+
+``detail["issues"]`` holds the issues as ``{"loc", "type", "msg", "ctx"?}``
+dicts (``"input"`` only with ``include_input``). The 1.x keys stay
+alongside: ``detail["field"]`` names the first failing parameter and
+``detail["errors"]`` lists ``"loc: msg"`` strings. The message is the
+single issue's text, or ``"N validation errors"``.
+
 ### `ExtractorFieldError`
 
 ```python

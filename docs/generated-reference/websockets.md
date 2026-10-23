@@ -481,6 +481,19 @@ Raised from the typed dispatcher; the runtime catches it, sends a
 structured error frame back to the client, and continues the
 connection (mismatched frames should not terminate the session).
 
+#### `WebSocketValidationError.from_issues`
+
+```python
+def from_issues(cls, issues: Any, event: str | None = None, errors: list[Any] | None = None, message: str = 'validation error', include_input: bool = False) -> Self
+```
+
+Build the error frame for validation issues: ``detail = {"event", "issues", "errors"}``.
+
+``issues`` are ``{"loc", "type", "msg", "ctx"?}`` dicts — the same shape
+as an HTTP 422, with ``loc`` rooted at ``"frame"``. ``errors`` keeps the
+1.x content (``"loc: msg"`` strings unless the caller passes the legacy
+list).
+
 ### `WebSocketRouteNotFoundError`
 
 ```python

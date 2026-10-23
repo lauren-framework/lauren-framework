@@ -15,6 +15,11 @@ from ..exceptions import (
 from ..types import Scope
 
 
+def _token_name(token: object) -> str:
+    """Name a provider token in messages — tokens need not be classes."""
+    return getattr(token, "__name__", None) or repr(token)
+
+
 @dataclass
 class _Node:
     provider: Provider
@@ -68,6 +73,15 @@ class LifecycleScheduler:
 
         for p in providers:
             visit(p)
+        # Pre-built instances (value providers: a store handed to StoresModule /
+        # SessionConfig / CacheModule, ``use_value`` rows) have no dependencies,
+        # so moving them to the front keeps the order topological — and makes a
+        # store's ``startup()`` run before any constructed provider's
+        # ``@post_construct`` can use it, however the two are wired (shutdown,
+        # in reverse, stops them last).
+        order = [p for p in order if p.provider_kind == "value"] + [
+            p for p in order if p.provider_kind != "value"
+        ]
         self._order = order
         return order
 
@@ -143,15 +157,15 @@ class LifecycleScheduler:
                     except asyncio.TimeoutError:
                         errors.append(
                             DestructTimeoutError(
-                                f"pre_destruct on {provider.cls.__name__} timed out after {timeout}s",
-                                detail={"class": provider.cls.__name__, "timeout": timeout},
+                                f"pre_destruct on {_token_name(provider.cls)} timed out after {timeout}s",
+                                detail={"class": _token_name(provider.cls), "timeout": timeout},
                             )
                         )
                 except Exception as e:
                     errors.append(
                         DestructError(
-                            f"pre_destruct on {provider.cls.__name__} failed: {e}",
-                            detail={"class": provider.cls.__name__, "cause": str(e)},
+                            f"pre_destruct on {_token_name(provider.cls)} failed: {e}",
+                            detail={"class": _token_name(provider.cls), "cause": str(e)},
                         )
                     )
 

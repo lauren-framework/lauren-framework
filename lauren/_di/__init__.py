@@ -92,6 +92,7 @@ from ._overrides import OverridePlan, ProviderOverride
 from .custom import (
     CustomProvider,
     OptionalDep,
+    Token,
     _InjectMarker,
 )
 
@@ -320,6 +321,10 @@ class DIContainer:
         self._strict_request_scope = strict_request_scope
         #: Request-scoped providers already warned about (lax mode warns once each).
         self._unscoped_warned: set[Any] = set()
+        #: id -> object for pre-built instances whose lifecycle hooks this
+        #: container runs (see :meth:`register_instance`). Holding the object
+        #: keeps the id stable; one entry per object, whatever its tokens.
+        self._lifecycle_owners: dict[int, Any] = {}
 
     # -- Registration ------------------------------------------------------
 
@@ -682,6 +687,59 @@ class DIContainer:
         self._singletons[singleton_key] = value
         self._singletons_initialized.add(singleton_key)
         return provider
+
+    def register_instance(
+        self,
+        token: Any,
+        instance: Any,
+        *,
+        owning_module: type | None = None,
+    ) -> Provider:
+        """Register a pre-built singleton whose lifecycle hooks run with the app.
+
+        Unlike :meth:`register_value` (``use_value``), the hooks declared on
+        ``type(instance)`` — ``@post_construct`` / ``@pre_destruct``, or else
+        ``startup()`` / ``aclose()`` methods — run at ``app.startup()`` /
+        ``app.shutdown()``. They run once per object: registering the same
+        object under a second token (or adopting it again) adds no hooks.
+        A build-time override of ``token`` (``lauren.testing``) wins.
+        """
+        if self._overrides is not None:
+            override = self._overrides.get(token)
+            if override is not None:
+                return self._register_override(
+                    token,
+                    override,
+                    owning_module=owning_module,
+                    target_scope=Scope.SINGLETON,
+                    provides=(),
+                    multi=False,
+                )
+        provider = self.register_value(token, instance, owning_module=owning_module)
+        if id(instance) not in self._lifecycle_owners:
+            post, pre = instance_lifecycle_hooks(type(instance))
+            if post or pre:
+                self._lifecycle_owners[id(instance)] = instance
+                provider.post_construct = post[0] if post else None
+                provider.pre_destruct = pre[0] if pre else None
+                provider.post_construct_hooks = post
+                provider.pre_destruct_hooks = pre
+        return provider
+
+    def adopt_lifecycle(self, instance: Any) -> None:
+        """Run ``instance``'s lifecycle hooks with the app without exposing it as a token.
+
+        Used for objects the framework holds directly — a store handed to
+        ``SessionConfig(store=...)`` or the backend behind a store adapter.
+        A no-op when the object declares no hooks or already has them run.
+        """
+        if id(instance) in self._lifecycle_owners:
+            return
+        post, pre = instance_lifecycle_hooks(type(instance))
+        if not post and not pre:
+            return
+        name = getattr(type(instance), "__qualname__", type(instance).__name__)
+        self.register_instance(Token(f"lauren.lifecycle:{name}"), instance)
 
     def register_class(
         self,
@@ -1585,6 +1643,33 @@ def _find_lifecycle_hooks(
                 seen.add(key)
                 hooks.append(attr)
     return tuple(hooks)
+
+
+def instance_lifecycle_hooks(
+    cls: type,
+) -> tuple[tuple[Callable[..., Any], ...], tuple[Callable[..., Any], ...]]:
+    """Return ``(startup_hooks, shutdown_hooks)`` for a pre-built instance of ``cls``.
+
+    Every ``@post_construct`` / ``@pre_destruct`` hook wins, in run order;
+    otherwise ``startup()`` / ``aclose()`` methods (the store convention)
+    are used.
+    """
+    post = _find_lifecycle_hooks(cls, "__lauren_post_construct__")
+    pre = _find_lifecycle_hooks(cls, "__lauren_pre_destruct__", subclass_first=True)
+    if not post:
+        startup = _named_hook(cls, "startup")
+        post = (startup,) if startup is not None else ()
+    if not pre:
+        aclose = _named_hook(cls, "aclose")
+        pre = (aclose,) if aclose is not None else ()
+    return post, pre
+
+
+def _named_hook(cls: type, name: str) -> Callable[..., Any] | None:
+    attr = getattr(cls, name, None)
+    if attr is None or not callable(attr) or getattr(attr, "__name__", None) != name:
+        return None
+    return attr  # type: ignore[no-any-return]
 
 
 async def _invoke_hook(instance: Any, hook: Callable[..., Any]) -> None:
