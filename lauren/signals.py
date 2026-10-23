@@ -42,7 +42,8 @@ Five built-in events are fired by the framework:
   or a graceful-shutdown signal was received.
 
 :class:`LifecycleStateChanged` accompanies every transition of
-``app.lifecycle_state`` (:class:`AppLifecycleState`).
+``app.lifecycle_state`` (:class:`AppLifecycleState`), and
+:class:`HealthChanged` every status change of a ``lauren.health`` check.
 Background tasks add :class:`BackgroundTaskStarted` /
 :class:`BackgroundTaskComplete` / :class:`BackgroundTaskFailed`, and the
 application event bus (:mod:`lauren.events`) adds
@@ -72,6 +73,7 @@ from .logging import Logger
 
 if TYPE_CHECKING:
     from ._asgi import LaurenApp
+    from ._health._types import HealthStatus
 
 
 DEFAULT_SIGNALS: tuple[int, ...] = (
@@ -232,6 +234,25 @@ class LifecycleStateChanged(LifecycleEvent):
     current: AppLifecycleState | None = None
     #: Free-form cause, e.g. ``"signal SIGTERM"`` from ``begin_draining(reason=...)``.
     reason: str = ""
+
+
+@dataclass
+class HealthChanged(LifecycleEvent):
+    """Emitted when a health check's status, or the full report's aggregate status, changes.
+
+    Fired by ``lauren.health`` whenever a check runs and its
+    :class:`~lauren.health.HealthStatus` differs from the previous run
+    (``previous`` is ``None`` the first time a check runs), and when a full
+    report's aggregate status changes (``name`` is ``None``).
+    """
+
+    app: Any = None
+    #: The check's name; ``None`` for the aggregate status of the full report.
+    name: str | None = None
+    previous: HealthStatus | None = None
+    current: HealthStatus | None = None
+    #: The check's details (including ``error`` / ``reason`` when it is down).
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -636,6 +657,7 @@ __all__ = [
     # Lifecycle event types
     "LifecycleEvent",
     "LifecycleStateChanged",
+    "HealthChanged",
     "StartupBegin",
     "StartupComplete",
     "RequestReceived",

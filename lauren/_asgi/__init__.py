@@ -21,6 +21,7 @@ from .._di._scope import finalize_scope
 from .._di.custom import CustomProvider
 from .._discovery import DiscoveryIndex, build_discovery_index, registered_markers
 from .._events import EventBus, compile_events, install_events
+from .._health._module import compile_health, install_health
 from ..serialization import (
     JSONEncoder,
     StdlibJSONEncoder,
@@ -2997,6 +2998,9 @@ class LaurenFactory:
         # One EventBus per app (global value provider) and the request-scoped
         # EventPublisher; handlers are compiled after discovery (Phase 6a).
         events_bus = install_events(graph, container)
+        # Health probes (lauren.health): one runtime per app when a
+        # HealthModule is imported; checks are compiled after discovery.
+        health_runtime = install_health(graph, container)
 
         # Install per-module visible-token sets. A module sees its own
         # providers, its own controllers, and anything re-exported by a
@@ -3289,6 +3293,7 @@ class LaurenFactory:
         t0 = time.perf_counter()
         discovery = build_discovery_index(container, registered_markers())
         compile_events(events_bus, discovery, container, logger=_log)
+        compile_health(health_runtime, discovery, container, logger=_log)
         _log.verbose(
             f"Phase 6a provider discovery: {sum(map(len, discovery.methods.values()))} method(s), "
             f"{sum(map(len, discovery.classes.values()))} class(es) "
@@ -3370,6 +3375,8 @@ class LaurenFactory:
         app._discovery = discovery
         app._events = events_bus
         events_bus._bind(app)
+        if health_runtime is not None:
+            health_runtime._bind(app)
         app._config_pending = config_pending
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via

@@ -34,21 +34,22 @@ common mistakes.
 23. [OpenAPI 3.1 Generation](#openapi-31-generation)
 24. [Logging](#logging)
 25. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
-26. [Application Events](#application-events)
-27. [WebSockets](#websockets)
-28. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
-29. [Typed Streaming](#typed-streaming)
-30. [Socket.IO Compatibility](#socketio-compatibility)
-31. [Sessions](#sessions)
-32. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
-33. [Configuration](#configuration)
-34. [Static Files](#static-files)
-35. [Request Arena](#request-arena)
-36. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
-37. [AI Documentation Access](#ai-documentation-access)
-38. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-39. [Companion Packages](#companion-packages)
-40. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
+26. [Health & Readiness](#health--readiness)
+27. [Application Events](#application-events)
+28. [WebSockets](#websockets)
+29. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
+30. [Typed Streaming](#typed-streaming)
+31. [Socket.IO Compatibility](#socketio-compatibility)
+32. [Sessions](#sessions)
+33. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
+34. [Configuration](#configuration)
+35. [Static Files](#static-files)
+36. [Request Arena](#request-arena)
+37. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+38. [AI Documentation Access](#ai-documentation-access)
+39. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+40. [Companion Packages](#companion-packages)
+41. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -1076,6 +1077,12 @@ class RoleGuard:
 @set_metadata("required_role", "admin")
 async def purge(self) -> dict: ...
 ```
+
+`PUBLIC_METADATA_KEY` (`"lauren.public"`) is the well-known key for public
+routes: `@set_metadata(PUBLIC_METADATA_KEY, True)` marks one, and a global
+authentication guard honours it with `if ctx.get_metadata(PUBLIC_METADATA_KEY,
+False): return True`. The framework never skips a guard by itself; the
+`HealthModule` probe routes carry the key (see [Health & Readiness](#health--readiness)).
 
 ### Middleware (`MiddlewareProtocol`)
 
@@ -2145,10 +2152,146 @@ Full event hierarchy:
 | `BackgroundTaskFailed` | Background task raises |
 | `EventHandlerFailed` | An `@on_event` handler raised or was cancelled at shutdown (`event_type`, `handler`, `error`, `mode`, `event`) |
 | `LifecycleStateChanged` | `app.lifecycle_state` changed (`app`, `previous`, `current`, `reason`) |
+| `HealthChanged` | A health check's status, or the report's aggregate (`name=None`), changed (`app`, `name`, `previous`, `current`, `details`) — see [Health & Readiness](#health--readiness) |
 
 `LifecycleEvent` is the common base class for all events above. Domain
 events do not belong here: publish them on the application `EventBus`
 ([Application Events](#application-events)).
+
+---
+
+## Health & Readiness
+
+Liveness, readiness and startup probes plus a full report, driven by the
+application lifecycle state and by `@health_check` methods on singleton
+providers. Public names live in `lauren.health` (`HealthModule`,
+`health_check`, `HealthResult`, `HealthStatus`); `HealthModule`,
+`HealthChanged` and `PUBLIC_METADATA_KEY` are also exported from `lauren`.
+
+```python run
+from lauren import LaurenFactory, Scope, injectable, module
+from lauren.health import HealthModule, HealthResult, HealthStatus, health_check
+from lauren.testing import TestClient
+
+
+@injectable(scope=Scope.SINGLETON)
+class HcDatabase:
+    def __init__(self) -> None:
+        self.reachable = True
+
+    @health_check("database", timeout=2.0, cache_ttl=5.0)   # tags=("ready",), critical=True
+    async def ping(self) -> bool:
+        return self.reachable                                 # e.g. await pool.execute("SELECT 1")
+
+
+@injectable(scope=Scope.SINGLETON)
+class HcSearch:
+    @health_check("search", critical=False, timeout=1.0)     # down/degraded => report degraded
+    def ping(self) -> HealthResult:                           # sync: runs in a worker thread
+        return HealthResult.degraded(latency_ms=612.0, reason="slow")
+
+
+@module(imports=[HealthModule.for_root(details="always", version="1.4.2")], providers=[HcDatabase, HcSearch])
+class HcAppModule: ...
+
+
+hc_app = LaurenFactory.create(HcAppModule)
+hc_client = TestClient(hc_app)                                # runs startup(): READY
+assert hc_client.get("/health/live").json() == {"status": "up"}
+assert hc_client.get("/health/ready").json() == {"status": "degraded"}   # 200 (degraded_status)
+report = hc_client.get("/health").json()
+assert (report["status"], report["lifecycle"], report["version"]) == ("degraded", "ready", "1.4.2")
+assert report["checks"]["search"]["reason"] == "slow"
+hc_app.begin_draining(reason="preStop")
+assert hc_client.get("/health/ready").status_code == 503     # out of rotation...
+assert hc_client.get("/health/live").status_code == 200      # ...but never restarted for it
+assert HealthResult.down(error="x").status is HealthStatus.DOWN
+```
+
+### `HealthModule.for_root(*, path="/health", details="never", details_guard=None, format="lauren", event_loop_lag_ms=None, disk_paths=None, max_rss_bytes=None, version=None, report_status_code=True, degraded_status=200)`
+
+Returns a generated module; import it into the root module. Routes (GET,
+`include_in_schema=False`, metadata `PUBLIC_METADATA_KEY=True`):
+
+| Endpoint | 200 when | 503 when |
+|---|---|---|
+| `{path}/live` | state not `FAILED`/`STOPPED` and no `"live"` check down | otherwise |
+| `{path}/startup` | state `READY`/`DRAINING` and no `"startup"` check down | `CREATED`, `STARTING`, `FAILED`, `STOPPED` |
+| `{path}/ready` | state `READY` and no **critical** `"ready"` check down | any other state or a critical check down |
+| `{path}` | aggregate up or degraded | aggregate down (unless `report_status_code=False`) |
+
+* Probes answer `{"status": "up" | "degraded" | "down"}` only (never details);
+  a degraded answer uses `degraded_status`. All responses send
+  `Cache-Control: no-store`.
+* Aggregate: any critical check down → `down`; else any down or degraded →
+  `degraded`; else `up`. In the report the lifecycle state is a critical input
+  that is up only in `READY`; checks run only in `READY` / `DRAINING`
+  (otherwise `"checks": {}`).
+* Report: `{"status", "lifecycle", "checks": {name: {...}}, "version"?}`.
+  Names and statuses always; `critical`, `latency_ms`, the result's details,
+  `reason` (`"timeout"`), `error` (`"Type: message"` for a raising check) and
+  `cached: true` only when details are allowed: `details="never"` (default),
+  `"always"`, or `"when_authorized"` with `details_guard` — a guard class
+  (`can_activate(ctx)`) resolved through DI with the request's
+  `ExecutionContext`; a denial (falsy, or an `HTTPError` raised) hides the
+  details and never turns into a 403.
+* `format="ietf"`: `application/health+json`, statuses `pass`/`warn`/`fail`,
+  each check a one-element list, `error` → `output`.
+* Built-in indicators (off by default; names reserved): `event_loop_lag_ms` →
+  `event_loop` (`live` + `ready`; p99 lag over 10 s sampled every 0.5 s while
+  `READY`; degraded above half), `disk_paths={path: min_free_bytes}` →
+  `disk:<path>` (`ready`), `max_rss_bytes` → `memory` (`ready`; current RSS on
+  Linux, peak RSS elsewhere on POSIX; `DecoratorUsageError` on Windows).
+* One `HealthModule` per app: different options → `StartupError`
+  (`reason="conflicting_health_options"`); two at the same path →
+  `RouterConflictError`. Invalid options → `DecoratorUsageError`
+  (`detail["helper"] == "HealthModule.for_root"`); details-guard mistakes →
+  `GuardConfigError` (`reason` `missing_details_guard` / `invalid_details_guard`
+  / `unused_details_guard`).
+
+### `@health_check(name, *, critical=True, timeout=2.0, cache_ttl=0.0, tags=("ready",))`
+
+* On a method of a `Scope.SINGLETON` provider (else `LifecycleConfigError`,
+  `detail = {"check", "provider", "method", "scope", "reason"}`); discovered
+  app-wide at startup, resolved through the provider's own module — no export
+  needed. Must be called with a name; stacking registers several checks.
+  Static/class methods work. Validated even without `HealthModule`.
+* Returns `None`/`True` (up), `False` (down) or a `HealthResult`
+  (`HealthResult.up(**details)` / `.degraded(...)` / `.down(...)`; frozen,
+  `status: HealthStatus`, `details: dict`); raising → down with `error`.
+* Parameters: only dependencies the provider's module can resolve
+  (request-scoped ones get a fresh `app.scope("health:<name>")` per run);
+  anything else → `UnresolvableParameterError` at startup.
+* `tags` ⊆ `{"live", "ready", "startup"}` (`()` = report only); names unique
+  per app (`DuplicateBindingError`, `detail["providers"]` lists both; also for
+  the reserved `lifecycle`, `event_loop`, `memory`, `disk:*`).
+* Execution: concurrent, each run bounded by `timeout` (down,
+  `reason="timeout"`), single-flight across concurrent probes, result reused
+  for `cache_ttl` seconds (`cached: true`). Sync checks run in a worker thread
+  the timeout abandons; while that thread is still busy later runs fail fast
+  (`error="the previous run is still running"`).
+* Status changes emit `HealthChanged(app, name, previous, current, details)` on
+  the app's `SignalBus` (`previous=None` on a check's first run; `name=None`
+  for the report's aggregate).
+
+### Draining before the socket closes
+
+Uvicorn stops listening before it sends `lifespan.shutdown`, so readiness must
+fail earlier: a Kubernetes `preStop` sleep (Kubernetes removes the pod from its
+endpoints itself), `install_signal_handlers(app, shutdown_delay=10)` (drains on
+SIGTERM, keeps serving, then shuts down), or a custom runner calling
+`app.begin_draining()` before triggering the server's graceful shutdown.
+
+**Rules:**
+
+* Liveness must not check dependencies: a database outage takes pods out of
+  rotation (readiness) but must not restart them. Tag a check `"live"` only
+  when its failure means this process is broken.
+* Never hand-roll a `{"status": "ok"}` endpoint: it answers "ok" before
+  startup, during shutdown and while dependencies are down. Use
+  `HealthModule.for_root()`, or at least answer from `app.lifecycle_state`.
+* A global auth guard should let `ctx.get_metadata(PUBLIC_METADATA_KEY, False)`
+  routes through; Lauren never skips a guard on its own.
 
 ---
 
@@ -3463,6 +3606,22 @@ class EventController:
         asyncio.get_running_loop().call_soon_threadsafe(_queue.put_nowait, body)
 ```
 
+### Anti-pattern: a hand-rolled `{"status": "ok"}` health endpoint
+
+```python
+# Don't: "ok" before startup, during shutdown and while the database is down.
+@get("/health")
+async def health(self) -> dict:
+    return {"status": "ok"}
+
+# Do: probes that follow the lifecycle state and real checks.
+@module(imports=[HealthModule.for_root()], providers=[Database])   # Database has @health_check("database")
+class AppModule: ...
+```
+
+Point `livenessProbe` at `/health/live` (no dependency checks) and
+`readinessProbe` at `/health/ready`.
+
 ### Anti-pattern: building `Response.json(...)` manually for every handler
 
 ```python
@@ -3595,6 +3754,8 @@ request.
 | Attach a singleton explicitly | `app.container.set_singleton(MyCls, instance)` |
 | Run post-construct hook | `@post_construct` on an `async def` method of an `@injectable` |
 | Fail readiness before the server stops accepting traffic | `app.begin_draining()`, or `install_signal_handlers(app, shutdown_delay=10)` |
+| Expose liveness / readiness / startup probes | `@module(imports=[HealthModule.for_root()])` + `@health_check("db")` on a singleton method |
+| Let a global guard skip public routes | `if ctx.get_metadata(PUBLIC_METADATA_KEY, False): return True` |
 | Serve a file (auto MIME, streamed) | `return await Response.file("/path/to/file.pdf")` |
 | Serve a file with custom name | `return await Response.file(path, filename="report.pdf")` |
 | Serve a file inline (browser preview) | `return await Response.file(path, inline=True)` |

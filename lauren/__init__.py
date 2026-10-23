@@ -29,8 +29,9 @@ Core capabilities
 * WebSocket gateways, Server-Sent Events, typed streaming and sessions.
 * Typed application events: ``@on_event`` handlers on providers, validated at
   startup, published through ``EventBus`` / the request-scoped ``EventPublisher``.
-* A public lifecycle state (``app.lifecycle_state``, ``app.begin_draining()``,
-  ``LifecycleStateChanged``) for correct readiness probes.
+* A public lifecycle state (``app.lifecycle_state``, ``app.begin_draining()``)
+  and Kubernetes-style health probes: ``HealthModule.for_root()`` plus
+  ``@health_check`` methods (``lauren.health``).
 * OpenAPI 3.1 generation from return annotations and ``response_model``
   (any of the supported model kinds).
 * Auto-serialization: return dicts, models, dataclasses, or
@@ -120,6 +121,7 @@ from .decorators import (
     use_middlewares,
     propagate_metadata,
     OpenAPISecurityMeta,
+    PUBLIC_METADATA_KEY,
 )
 from .exceptions import (
     BadRequestError,
@@ -200,6 +202,7 @@ from .signals import (
     BackgroundTaskFailed,
     BackgroundTaskStarted,
     EventHandlerFailed,
+    HealthChanged,
     LifecycleEvent,
     LifecycleStateChanged,
     RequestComplete,
@@ -278,6 +281,7 @@ from .reflect import (
     error_catalog,
 )
 from ._staticfiles import StaticFilesModule
+from .health import HealthModule
 from .config import ConfigModule, Secret
 from .sessions import (
     InMemoryRevocationStore,
@@ -337,9 +341,11 @@ __all__ = [
     "LaurenFactory",
     "DIContainer",
     "OperationScope",
-    # lifecycle state
+    # lifecycle state and health probes (the rest lives in lauren.health)
     "AppLifecycleState",
     "LifecycleStateChanged",
+    "HealthChanged",
+    "HealthModule",
     # Custom providers (NestJS-style)
     "Token",
     "Inject",
@@ -384,6 +390,7 @@ __all__ = [
     "exception_handler",
     "use_exception_handlers",
     "set_metadata",
+    "PUBLIC_METADATA_KEY",
     "propagate_metadata",
     "openapi_security",
     "OpenAPISecurityMeta",
