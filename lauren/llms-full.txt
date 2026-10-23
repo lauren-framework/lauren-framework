@@ -337,7 +337,7 @@ class Db:
     async def disconnect(self) -> None: ...
 ```
 
-- `@post_construct` — runs after DI construction, in topological order (deps first). Singletons are built and their hooks run in `LaurenApp.startup()` (the ASGI lifespan `startup` event), not in `LaurenFactory.create`. A sync hook runs inline on the event loop and there is no timeout. Declare at most one `@post_construct` and one `@pre_destruct` per class — only the first found is honoured.
+- `@post_construct` — runs after DI construction, in topological order (deps first). Singletons are built and their hooks run in `LaurenApp.startup()` (the ASGI lifespan `startup` event), not in `LaurenFactory.create`. A sync hook runs inline on the event loop and there is no timeout. A class may declare several hooks of each kind and all of them run: `@post_construct` base class first, then definition order; `@pre_destruct` subclass first, then definition order. An override without the decorator is no longer a hook.
 - `@pre_destruct` — runs at shutdown in reverse-topological order, with a per-hook timeout (default 10 s). Both sync and async hooks are supported:
   - **Async hooks** are cancelled via `asyncio.wait_for` if they exceed the timeout.
   - **Sync hooks** run in a thread pool via `asyncio.to_thread` — they never block the event loop and receive the same timeout protection as async hooks. A sync hook that never returns is cancelled at the timeout boundary.

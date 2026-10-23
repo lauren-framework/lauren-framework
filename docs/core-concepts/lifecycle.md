@@ -18,7 +18,7 @@ class Db:
         await self.pool.close()
 ```
 
-Hooks may be `async def` or plain `def`. A sync `@post_construct` runs inline on the event loop (keep it quick, or make it `async`); a sync `@pre_destruct` is offloaded to a worker thread so blocking teardown work cannot freeze the loop. Declare at most one `@post_construct` and one `@pre_destruct` per class — only the first one found is honoured.
+Hooks may be `async def` or plain `def`. A sync `@post_construct` runs inline on the event loop (keep it quick, or make it `async`); a sync `@pre_destruct` is offloaded to a worker thread so blocking teardown work cannot freeze the loop. A class may declare several hooks of each kind and every one runs: `@post_construct` hooks run base class first, then in definition order within a class; `@pre_destruct` hooks run subclass first, then in definition order (so `flush` declared before `close` still runs first). Hooks follow the method-decorator inheritance rule: an override **without** the decorator stops being a hook, and a decorated override runs once, in its own class's position.
 
 ## When they run
 

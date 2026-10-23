@@ -208,6 +208,9 @@ class Provider:
     provides: tuple[type, ...]
     multi: bool
     deps: tuple[tuple[str, Any], ...]
+    #: The first ``@post_construct`` / ``@pre_destruct`` hook (kept for
+    #: readers of a single hook); :attr:`post_construct_hooks` /
+    #: :attr:`pre_destruct_hooks` hold every hook in run order.
     post_construct: Callable[..., Any] | None = None
     pre_destruct: Callable[..., Any] | None = None
     #: Module class that declared this provider. ``None`` means the provider
@@ -253,6 +256,27 @@ class Provider:
     #: rather than by keyword — supporting raw lambdas where parameter
     #: names are arbitrary placeholders.
     positional_arg_names: tuple[str, ...] = ()
+    #: Every ``@post_construct`` hook in run order: base classes first,
+    #: definition order within a class. Empty means "use
+    #: :attr:`post_construct`" (providers built by hand).
+    post_construct_hooks: tuple[Callable[..., Any], ...] = ()
+    #: Every ``@pre_destruct`` hook in run order: subclasses first,
+    #: definition order within a class.
+    pre_destruct_hooks: tuple[Callable[..., Any], ...] = ()
+
+    @property
+    def post_construct_chain(self) -> tuple[Callable[..., Any], ...]:
+        """The ``@post_construct`` hooks to run, in order (empty when none)."""
+        if self.post_construct_hooks:
+            return self.post_construct_hooks
+        return (self.post_construct,) if self.post_construct is not None else ()
+
+    @property
+    def pre_destruct_chain(self) -> tuple[Callable[..., Any], ...]:
+        """The ``@pre_destruct`` hooks to run, in order (empty when none)."""
+        if self.pre_destruct_hooks:
+            return self.pre_destruct_hooks
+        return (self.pre_destruct,) if self.pre_destruct is not None else ()
 
 
 class DIContainer:
@@ -356,20 +380,22 @@ class DIContainer:
         # all three.
         deps = _inspect_class_deps(cls)
 
-        post = _find_lifecycle_hook(cls, "__lauren_post_construct__")
-        pre = _find_lifecycle_hook(cls, "__lauren_pre_destruct__")
+        post = _find_lifecycle_hooks(cls, "__lauren_post_construct__")
+        pre = _find_lifecycle_hooks(cls, "__lauren_pre_destruct__", subclass_first=True)
         provider = Provider(
             cls=cls,
             scope=meta.scope,
             provides=tuple(meta.provides),
             multi=meta.multi,
             deps=tuple(deps),
-            post_construct=post,
-            pre_destruct=pre,
+            post_construct=post[0] if post else None,
+            pre_destruct=pre[0] if pre else None,
             owning_module=owning_module,
             factory=cls,
             field_deps=tuple(field_deps),
             is_function_provider=False,
+            post_construct_hooks=post,
+            pre_destruct_hooks=pre,
         )
         self._providers[cls] = provider
         self._bind_token(cls, provider)
@@ -493,6 +519,8 @@ class DIContainer:
         # ``__call__`` overrides instead of demanding ``__init__``
         # parameters that may never run.
         deps = _inspect_class_deps(cls)
+        post = _find_lifecycle_hooks(cls, "__lauren_post_construct__")
+        pre = _find_lifecycle_hooks(cls, "__lauren_pre_destruct__", subclass_first=True)
         provider = Provider(
             cls=token,  # type: ignore[arg-type]
             scope=scope,
@@ -504,8 +532,10 @@ class DIContainer:
             field_deps=tuple(field_deps),
             is_function_provider=False,
             provider_kind="class",
-            post_construct=_find_lifecycle_hook(cls, "__lauren_post_construct__"),
-            pre_destruct=_find_lifecycle_hook(cls, "__lauren_pre_destruct__"),
+            post_construct=post[0] if post else None,
+            pre_destruct=pre[0] if pre else None,
+            post_construct_hooks=post,
+            pre_destruct_hooks=pre,
         )
         self._providers[token] = provider
         self._bind_token(token, provider)
@@ -1225,12 +1255,11 @@ class DIContainer:
         # other sensible place to invoke the hook. Singleton hooks are fired
         # exactly once by :class:`LifecycleScheduler` in topological order
         # during Phase 6; firing them here would cause a double-invoke.
-        if provider.post_construct is not None and provider.scope in (
-            Scope.REQUEST,
-            Scope.TRANSIENT,
-        ):
+        hooks = provider.post_construct_chain
+        if hooks and provider.scope in (Scope.REQUEST, Scope.TRANSIENT):
             resolved_instance = instance.value if isinstance(instance, _GeneratorContextWrapper) else instance
-            await _invoke_hook(resolved_instance, provider.post_construct)
+            for hook in hooks:
+                await _invoke_hook(resolved_instance, hook)
 
         return instance.value if isinstance(instance, _GeneratorContextWrapper) else instance
 
@@ -1283,15 +1312,42 @@ def _get_injectable_meta(target: Any) -> InjectableMeta | None:
     return None
 
 
-def _find_lifecycle_hook(cls: type, marker: str) -> Callable[..., Any] | None:
-    for attr_name in dir(cls):
-        try:
-            attr = getattr(cls, attr_name)
-        except AttributeError:
-            continue
-        if callable(attr) and getattr(attr, marker, False):
-            return attr
-    return None
+def _find_lifecycle_hooks(
+    cls: type, marker: str, *, subclass_first: bool = False
+) -> tuple[Callable[..., Any], ...]:
+    """Every method of ``cls`` carrying ``marker``, in run order.
+
+    Method decorators propagate through the MRO, and an attribute's *first*
+    MRO definition wins, so an override without the decorator drops the
+    base hook (the route rule). Hooks are ordered by the class that defines
+    them — base classes first, or subclasses first when ``subclass_first``
+    (teardown) — and by definition order within a class. One function
+    reachable under two names runs once.
+    """
+    owners: dict[str, type] = {}
+    for klass in cls.__mro__:
+        for attr_name in klass.__dict__:
+            owners.setdefault(attr_name, klass)
+    classes = [k for k in cls.__mro__ if k is not object]
+    if not subclass_first:
+        classes.reverse()
+    hooks: list[Callable[..., Any]] = []
+    seen: set[int] = set()
+    for klass in classes:
+        for attr_name in klass.__dict__:
+            if owners[attr_name] is not klass:
+                continue
+            try:
+                attr = getattr(cls, attr_name)
+            except AttributeError:
+                continue
+            if not (callable(attr) and getattr(attr, marker, False)):
+                continue
+            key = id(getattr(attr, "__func__", attr))
+            if key not in seen:
+                seen.add(key)
+                hooks.append(attr)
+    return tuple(hooks)
 
 
 async def _invoke_hook(instance: Any, hook: Callable[..., Any]) -> None:

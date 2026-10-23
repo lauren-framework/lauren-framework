@@ -91,8 +91,8 @@ class LifecycleScheduler:
             if provider.scope != Scope.SINGLETON:
                 continue
             instance = await self._container.resolve(provider.cls)
-            hook = provider.post_construct
-            if hook is not None:
+            # Every hook of the class, base classes first, then definition order.
+            for hook in provider.post_construct_chain:
                 bound = getattr(instance, hook.__name__)
                 result = bound()
                 if inspect.isawaitable(result):
@@ -120,37 +120,40 @@ class LifecycleScheduler:
         errors: list[Exception] = []
         singletons = self._container.singletons()
         for provider in reversed(self._order):
-            hook = provider.pre_destruct
-            if hook is None:
+            hooks = provider.pre_destruct_chain
+            if not hooks:
                 continue
             instance = singletons.get(provider.cls)
             if instance is None:
                 continue
-            try:
-                bound = getattr(instance, hook.__name__)
-                if inspect.iscoroutinefunction(bound):
-                    # Async hook — call to get the coroutine, then wait with timeout.
-                    coro = bound()
-                else:
-                    # Sync hook — run in a thread so the event loop stays live
-                    # and asyncio.wait_for can cancel if it takes too long.
-                    coro = asyncio.to_thread(bound)
+            # Every hook runs (subclasses first, then definition order), each
+            # with its own timeout; a failing hook does not skip the next one.
+            for hook in hooks:
                 try:
-                    await asyncio.wait_for(coro, timeout=timeout)
-                except asyncio.TimeoutError:
+                    bound = getattr(instance, hook.__name__)
+                    if inspect.iscoroutinefunction(bound):
+                        # Async hook — call to get the coroutine, then wait with timeout.
+                        coro = bound()
+                    else:
+                        # Sync hook — run in a thread so the event loop stays live
+                        # and asyncio.wait_for can cancel if it takes too long.
+                        coro = asyncio.to_thread(bound)
+                    try:
+                        await asyncio.wait_for(coro, timeout=timeout)
+                    except asyncio.TimeoutError:
+                        errors.append(
+                            DestructTimeoutError(
+                                f"pre_destruct on {provider.cls.__name__} timed out after {timeout}s",
+                                detail={"class": provider.cls.__name__, "timeout": timeout},
+                            )
+                        )
+                except Exception as e:
                     errors.append(
-                        DestructTimeoutError(
-                            f"pre_destruct on {provider.cls.__name__} timed out after {timeout}s",
-                            detail={"class": provider.cls.__name__, "timeout": timeout},
+                        DestructError(
+                            f"pre_destruct on {provider.cls.__name__} failed: {e}",
+                            detail={"class": provider.cls.__name__, "cause": str(e)},
                         )
                     )
-            except Exception as e:
-                errors.append(
-                    DestructError(
-                        f"pre_destruct on {provider.cls.__name__} failed: {e}",
-                        detail={"class": provider.cls.__name__, "cause": str(e)},
-                    )
-                )
 
         # Second pass: run teardown (code after yield) for SINGLETON generator providers.
         # The wrapper stored in the singletons cache exposes aclose() which advances
