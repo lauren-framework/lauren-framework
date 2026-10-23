@@ -1289,8 +1289,7 @@ class ModelNode(Node):
         except ValidationFailed as exc:
             raise _Invalid(list(exc.issues)) from None
         except (ValueError, TypeError, AssertionError) as exc:
-            text = str(exc) or type(exc).__name__
-            raise invalid("value_error", MISSING, {"error": text}) from None
+            raise _constructor_error(exc) from None
 
     def project(self, value: Any) -> Any:
         out: dict[str, Any] = {}
@@ -1335,6 +1334,11 @@ class ModelNode(Node):
         return self.cls.__name__
 
 
+def _constructor_error(exc: BaseException) -> _Invalid:
+    """A ``__post_init__`` / ``__init__`` failure as a ``value_error`` at the model's ``loc``."""
+    return invalid("value_error", MISSING, {"error": str(exc) or type(exc).__name__})
+
+
 def _is_json_literal(value: Any) -> bool:
     return value is None or isinstance(value, (str, bool, int, float))
 
@@ -1347,9 +1351,16 @@ class DataclassNode(ModelNode):
         self.exact_types = (cls,)
 
     def validate(self, value: Any) -> Any:
-        if isinstance(value, self.cls):
+        cls = self.cls
+        if isinstance(value, cls):
             return value
-        return self._construct(self._collect(value))
+        kwargs = self._collect(value)
+        try:
+            return cls(**kwargs)
+        except ValidationFailed as exc:
+            raise _Invalid(list(exc.issues)) from None
+        except (ValueError, TypeError, AssertionError) as exc:
+            raise _constructor_error(exc) from None
 
 
 class TypedDictNode(ModelNode):
