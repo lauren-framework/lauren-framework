@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-23
+
 ### Security
 
 - **WebSocket message-level guards are enforced.** `@use_guards` on an
@@ -167,6 +169,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   handled by the route's exception handlers.
 - `RequestComplete` and the request log line now fire for these requests too.
 
+## [1.9.0] - 2026-10-13
+
 ### Fixed — Pooled `Request` no longer leaks attributes across requests
 
 - `Request.reset()` now clears the instance's **entire** `__dict__` before
@@ -186,6 +190,39 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Docs (`docs/core-concepts/request-response.md`, `llms-full.txt`, `CLAUDE.md`)
   now state the pooling contract: don't retain a `Request`, use `request.state`
   for request-scoped data.
+
+## [1.8.1] - 2026-06-29
+
+### Added
+
+- **Revocation (opt-in)** — pass `SessionConfig(revocation_store=...)` to make
+  even the stateless `SignedCookieSessionStore` revocable. `invalidate()` /
+  `regenerate_id()` deny-list the prior cookie token (a replayed cookie is
+  rejected), and an injectable `RevocationStore.revoke_user(user_id)` provides
+  "log out everywhere" / force-logout-on-password-change across the cookie store
+  and server-side stores alike. `InMemoryRevocationStore` is the dev default;
+  revocation stays off (and the cookie store truly stateless) unless enabled, and
+  requires a finite `max_age`.
+- New public symbols: `RevocationStore`, `InMemoryRevocationStore`.
+
+### Changed
+
+- **Stacked `@exception_handler` now accumulates** exception types instead of
+  silently keeping only the outermost decorator's. `@exception_handler(A)`
+  over `@exception_handler(B)` registers a handler for both `A` and `B`
+  (de-duplicated, top-first), exactly like the single-call
+  `@exception_handler(A, B)` form — aligning it with every other metadata
+  decorator (route verbs, `@use_*`), which already accumulate when stacked.
+  This is a behaviour change from the prior overwrite semantics (which
+  dropped the inner types with no error).
+
+### Fixed
+
+- `@exception_handler` decorators stacked on one handler no longer silently
+  discard all but the top one — the previous behaviour meant a handler
+  written for, e.g., both `UnauthorizedError` and `ForbiddenError` only ever
+  caught one of them. Reading the target's own metadata preserves the strict
+  inheritance rule for class-form handlers. (Reported against 1.7.0.)
 
 ## [1.8.0] - 2026-06-27
 
@@ -216,38 +253,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   (`SameSite=None` without `Secure`, missing secret, prefix misuse,
   non-positive lifetimes, or a `Session` injected with sessions disabled)
   are rejected inside `LaurenFactory.create` — at startup, never at runtime.
-- **Revocation (opt-in)** — pass `SessionConfig(revocation_store=...)` to make
-  even the stateless `SignedCookieSessionStore` revocable. `invalidate()` /
-  `regenerate_id()` deny-list the prior cookie token (a replayed cookie is
-  rejected), and an injectable `RevocationStore.revoke_user(user_id)` provides
-  "log out everywhere" / force-logout-on-password-change across the cookie store
-  and server-side stores alike. `InMemoryRevocationStore` is the dev default;
-  revocation stays off (and the cookie store truly stateless) unless enabled, and
-  requires a finite `max_age`.
 - New public symbols: `Session`, `SessionConfig`, `SessionStore`,
-  `InMemorySessionStore`, `SignedCookieSessionStore`, `SessionSerializer`,
-  `RevocationStore`, `InMemoryRevocationStore`.
+  `InMemorySessionStore`, `SignedCookieSessionStore`, `SessionSerializer`.
 
 ### Changed
 
 - Error catalog grows to 29 user-facing classes with `SessionConfigError`
   (a `StartupError` subclass), joining the existing `*ConfigError` family.
-- **Stacked `@exception_handler` now accumulates** exception types instead of
-  silently keeping only the outermost decorator's. `@exception_handler(A)`
-  over `@exception_handler(B)` registers a handler for both `A` and `B`
-  (de-duplicated, top-first), exactly like the single-call
-  `@exception_handler(A, B)` form — aligning it with every other metadata
-  decorator (route verbs, `@use_*`), which already accumulate when stacked.
-  This is a behaviour change from the prior overwrite semantics (which
-  dropped the inner types with no error).
-
-### Fixed
-
-- `@exception_handler` decorators stacked on one handler no longer silently
-  discard all but the top one — the previous behaviour meant a handler
-  written for, e.g., both `UnauthorizedError` and `ForbiddenError` only ever
-  caught one of them. Reading the target's own metadata preserves the strict
-  inheritance rule for class-form handlers. (Reported against 1.7.0.)
 
 ## [1.7.0] - 2026-06-10
 
@@ -780,7 +792,13 @@ Seven framework source files migrated from direct pydantic calls to
   complete reference) shipped inside the wheel.
 - **`TestClient` / `WsTestClient`** — in-process ASGI test clients.
 
-[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.10.0
+[1.9.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.9.0
+[1.8.1]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.8.1
+[1.8.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.8.0
+[1.7.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.7.0
+[1.6.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.6.0
 [1.5.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.5.0
 [1.4.2]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.4.2
 [1.4.1]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.4.1
