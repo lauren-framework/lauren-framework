@@ -15,41 +15,42 @@ common mistakes.
 4. [Decorators](#decorators)
 5. [Types (Request / Response / State / Headers)](#types-request--response--state--headers)
 6. [Extractors](#extractors)
-7. [Pipes](#pipes)
-8. [Custom Extractors (plugin API)](#custom-extractors-plugin-api)
-9. [Dependency Injection](#dependency-injection)
-10. [Custom Providers](#custom-providers)
-11. [Modules](#modules)
-12. [Guards & Middleware](#guards--middleware)
-13. [Interceptors](#interceptors)
-14. [Exception Handlers](#exception-handlers)
-15. [`@propagate_metadata` — copy Lauren decorator metadata between objects](#propagate_metadata--copy-lauren-decorator-metadata-between-objects)
-16. [Auto-Serialization](#auto-serialization)
-17. [Sync vs Async Handlers](#sync-vs-async-handlers)
-18. [Background Tasks](#background-tasks)
-19. [Hosted Services & Scheduling](#hosted-services--scheduling)
-20. [Error Catalog](#error-catalog)
-21. [Debug Error Pages](#debug-error-pages)
-22. [Testing](#testing)
-23. [Strict Decorator Inheritance](#strict-decorator-inheritance)
-24. [OpenAPI 3.1 Generation](#openapi-31-generation)
-25. [Logging](#logging)
-26. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
-27. [Application Events](#application-events)
-28. [WebSockets](#websockets)
-29. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
-30. [Typed Streaming](#typed-streaming)
-31. [Socket.IO Compatibility](#socketio-compatibility)
-32. [Sessions](#sessions)
-33. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
-34. [Configuration](#configuration)
-35. [Static Files](#static-files)
-36. [Request Arena](#request-arena)
-37. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
-38. [AI Documentation Access](#ai-documentation-access)
-39. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-40. [Companion Packages](#companion-packages)
-41. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
+7. [Validation](#validation)
+8. [Pipes](#pipes)
+9. [Custom Extractors (plugin API)](#custom-extractors-plugin-api)
+10. [Dependency Injection](#dependency-injection)
+11. [Custom Providers](#custom-providers)
+12. [Modules](#modules)
+13. [Guards & Middleware](#guards--middleware)
+14. [Interceptors](#interceptors)
+15. [Exception Handlers](#exception-handlers)
+16. [`@propagate_metadata` — copy Lauren decorator metadata between objects](#propagate_metadata--copy-lauren-decorator-metadata-between-objects)
+17. [Auto-Serialization](#auto-serialization)
+18. [Sync vs Async Handlers](#sync-vs-async-handlers)
+19. [Background Tasks](#background-tasks)
+20. [Hosted Services & Scheduling](#hosted-services--scheduling)
+21. [Error Catalog](#error-catalog)
+22. [Debug Error Pages](#debug-error-pages)
+23. [Testing](#testing)
+24. [Strict Decorator Inheritance](#strict-decorator-inheritance)
+25. [OpenAPI 3.1 Generation](#openapi-31-generation)
+26. [Logging](#logging)
+27. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
+28. [Application Events](#application-events)
+29. [WebSockets](#websockets)
+30. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
+31. [Typed Streaming](#typed-streaming)
+32. [Socket.IO Compatibility](#socketio-compatibility)
+33. [Sessions](#sessions)
+34. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
+35. [Configuration](#configuration)
+36. [Static Files](#static-files)
+37. [Request Arena](#request-arena)
+38. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+39. [AI Documentation Access](#ai-documentation-access)
+40. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+41. [Companion Packages](#companion-packages)
+42. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -114,7 +115,7 @@ assert client.post("/users/", json={"name": "Ada", "age": 36}).status_code == 20
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, problem_type_base=None, debug=False, lazy_startup=True, hosted_services=True, scheduler=True)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, problem_type_base=None, debug=False, lazy_startup=True, hosted_services=True, scheduler=True, validation=None)`
 
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
@@ -122,7 +123,7 @@ Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven ph
 2. **Provider collection** — gather every `@injectable` from the graph; then (Phase 2b) load and validate every `ConfigModule` settings class, raising one `ConfigValidationError` for all problems (see [Configuration](#configuration)).
 3. **Protocol binding** — resolve `provides=[Protocol]` declarations.
 4. **DI graph compilation** — detect circular deps, scope violations, protocol ambiguities.
-5. **Router compilation** — walk controllers, compile handler signatures into extraction plans, insert into the radix tree.
+5. **Router compilation** — walk controllers, compile handler signatures into extraction plans (every path / query / header / cookie / body / form / stream parameter and WebSocket payload type is compiled into a validator by the app's type compiler — see [Validation](#validation)), insert into the radix tree.
 6. **Lifecycle order computation** — build the topological `@post_construct` / `@pre_destruct` schedule. Just before it (Phase 6a) one discovery pass indexes provider methods and classes carrying feature markers; hosted services and scheduled jobs are validated there (singleton scope, unique names, `ScheduleModule` imported — see [Hosted Services & Scheduling](#hosted-services--scheduling)).
 7. **Readiness** — build the `LaurenApp` object. `startup()` (singleton construction, `@post_construct` hooks, `StartupComplete`) runs on the ASGI lifespan `startup` event. When the driver sends no lifespan events — e.g. `httpx.ASGITransport` — the app starts itself on its first HTTP or WebSocket request (once, behind a single-flight latch, with a logged warning) unless built with `lazy_startup=False`; `lauren.testing.TestClient` starts it explicitly.
 
@@ -164,6 +165,7 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `lazy_startup` | `bool` | `True` | Run `startup()` on the first HTTP / WebSocket request when the ASGI server never sent lifespan events (logs a warning); `False` keeps such an app cold until `await app.startup()` |
 | `hosted_services` | `bool` | `True` | `False` discovers and validates `@hosted_service` classes but does not start them (tests, one-off commands) |
 | `scheduler` | `bool` | `True` | `False` keeps scheduled jobs discovered and validated (and `SchedulerRegistry.trigger` working) but fires nothing |
+| `validation` | `ValidationPolicy` | `None` | Validation policy: `ValidationPolicy(stdlib_models="warn", json_mode="lax", extra="ignore", include_input=None, max_issues=50)` (see [Validation](#validation); `StartupError` with `reason="invalid_validation_policy"` for anything else) |
 
 ### `Lauren` (imperative API)
 
@@ -222,6 +224,8 @@ Attributes & methods:
 - `await app(scope, receive, send)` — standard ASGI callable (HTTP + lifespan).
 - `app.mount(path, app)` — mount a sub-ASGI application at a path prefix.
 - `app.scope(name="operation", *, values=None)` — open an `OperationScope` for request-scoped providers outside a request (see [Operation scopes](#operation-scopes-appscope)).
+- `app.type_compiler: TypeCompiler` — the type compiler `create()` used; `app.type_compiler.compile(T)` gives services the HTTP layer's validation (see [Validation](#validation)).
+- `app.validation_policy: ValidationPolicy` — the app's validation policy.
 
 ### Mounting Sub-Applications
 
@@ -479,7 +483,7 @@ Extractors convert request data into typed Python values. Built-in:
 | `Query[T]` | query string | no |
 | `Header[T]` | request header | no |
 | `Cookie[T]` | cookie | no |
-| `Json[T]` | JSON body, validated | yes |
+| `Json[T]` | JSON body, validated (see [Validation](#validation)) | yes |
 | `Json[Discriminated[A \| B, "key"]]` | discriminated union body | yes |
 | `Form[T]` | form-urlencoded body | yes |
 | `Bytes` | raw body bytes (buffered) | yes |
@@ -515,6 +519,13 @@ async def search(
 ```
 
 Supported constraints: `ge`, `le`, `gt`, `lt`, `min_length`, `max_length`, `pattern`, `alias`, `default`.
+They are lowered onto the validation engine's checks, so a violation is a
+`less_than_equal` / `string_too_short` / … issue (see [Validation](#validation)).
+As before, length and pattern checks apply to strings and numeric bounds to
+numbers; one that cannot apply is dropped with a startup warning
+(`UnresolvableParameterError` under `ValidationPolicy(stdlib_models="enforce")`).
+Constraint markers work on parameters too:
+`q: Query[str, MinLen(2)]`, `size: Annotated[int, Le(100)] = 10`.
 
 ### JSON body with Pydantic
 
@@ -528,7 +539,11 @@ async def create(self, body: Json[CreatePost]) -> tuple[dict, int]:
     return body.model_dump(), 201
 ```
 
-Validation errors are raised as `ExtractorError` and mapped to HTTP 422.
+Validation errors are raised as `ExtractorError` and mapped to HTTP 422. Every
+422 carries `detail["issues"]` — a list of `{"loc", "type", "msg", "ctx"?}`
+(pydantic errors translated field for field, `url` dropped) — next to the 1.x
+`detail.field` / `detail.errors` keys, and all failing parameters of a request
+are reported in one response (see [Validation](#validation)).
 
 ### Discriminated union body
 
@@ -558,9 +573,13 @@ async def create(body: Json[Animal]) -> dict:
     return {"type": type(body).__name__, "name": body.name}
 ```
 
-- **Missing discriminator field** → `422` with message `"missing discriminator field 'kind'"`
-- **Unknown tag value** → `422` with message `"unknown discriminator value 'fish'"`
-- **Non-dict payload** → `422` with message `"expected a JSON object"`
+- **Missing discriminator field** → `422`, issue `union_tag_not_found` (1.x
+  `detail.errors` text: `"missing discriminator field 'kind'"`)
+- **Unknown tag value** → `422`, issue `union_tag_invalid`
+  (`"unknown discriminator value 'fish'"`)
+- **Non-dict payload** → `422`, issue `model_type` (`"expected a JSON object"`)
+- **Invalid variant fields** → the variant's issues, nested under the tag:
+  `["body", "cat", "lives"]`
 - **OpenAPI output**: `oneOf` array + `discriminator.propertyName` + `discriminator.mapping`
 
 Auto-promotion: a bare `body: Animal` parameter (no `Json[…]`) is also
@@ -582,10 +601,9 @@ async def ingest(self, stream: ByteStream) -> dict:
     return {"bytes_received": total}
 ```
 
-The body is bounded by `max_body_size` (default 1 MB). An oversize
-`ByteStream` raises `RequestBodyTooLarge` (413). For `Json[T]` and `Bytes`
-parameters the extractor currently wraps the overflow, so the client sees a
-422 `extractor_error` instead.
+The body is bounded by `max_body_size` (default 1 MB). An oversize body raises
+`RequestBodyTooLarge` (413) — for `ByteStream`, `Json[T]`, `Bytes` and form
+parameters alike.
 
 ### File uploads
 
@@ -604,6 +622,220 @@ async def upload(self, file: UploadFile) -> dict:
 provides `.filename`, `.content_type`, `.headers`, `.name` (the form field),
 `.size`, `async .read()` and `.read_sync()`. There is no `.file` handle and no
 `.write()`; spool to disk yourself if you need to.
+
+---
+
+## Validation
+
+Lauren validates request data natively — no pydantic needed. Dataclasses
+(nested, defaults, `default_factory`, `__post_init__`, `InitVar`, frozen),
+`TypedDict` (`total`, `Required` / `NotRequired`), `NamedTuple`, `Enum`,
+`Literal`, `int` / `float` / `bool` / `str` / `bytes` / `complex`, `Decimal`,
+`UUID`, `datetime` / `date` / `time` / `timedelta`, paths, `list` / `tuple` /
+`set` / `frozenset` / `dict`, `X | None`, unions, `Discriminated[...]`,
+recursive types and `Any` are compiled into validators at startup by the app's
+`TypeCompiler`. Pydantic models (and pydantic dataclasses /
+`Field(discriminator=)` unions) are validated by pydantic, `msgspec.Struct` by
+msgspec — chosen per type at compile time, so a dataclass validates the same
+whether or not pydantic is installed, over HTTP, WebSocket frames and
+`Stream[T]` items. Public names live in `lauren.validation`; `ValidationPolicy`,
+`ValidationIssue` and `validation_config` are also exported from `lauren`.
+
+```python run
+from dataclasses import dataclass, field
+from typing import Annotated
+
+from lauren import Json, LaurenFactory, Query, QueryField, controller, get, module, post
+from lauren.testing import TestClient
+from lauren.validation import Ge, Le, MaxLen, Pattern, ValidationPolicy, validation_config
+
+
+@dataclass
+class Address:
+    city: Annotated[str, MaxLen(80)]
+    zip: Annotated[str, Pattern(r"^\d{5}$")]
+
+
+@validation_config(extra="forbid")
+@dataclass
+class CreateUser:
+    email: Annotated[str, Pattern(r"^[^@\s]+@[^@\s]+$"), MaxLen(254)]
+    age: Annotated[int, Ge(13), Le(130)]
+    tags: Annotated[list[str], MaxLen(10)] = field(default_factory=list)
+    address: Address | None = None
+
+    def __post_init__(self) -> None:          # invariants → a value_error issue
+        if "admin" in self.tags:
+            raise ValueError("tag 'admin' is reserved")
+
+
+@controller("/users")
+class UserController:
+    @post("/")
+    async def create(self, body: Json[CreateUser]) -> dict:
+        return {"age": body.age, "city": body.address.city if body.address else None}
+
+    @get("/")
+    async def search(self, page: int, size: int = QueryField(default=10, le=100)) -> dict:
+        return {"page": page, "size": size}
+
+
+@module(controllers=[UserController])
+class UsersAppModule:
+    pass
+
+
+client = TestClient(LaurenFactory.create(UsersAppModule, validation=ValidationPolicy(stdlib_models="enforce")))
+
+ok = client.post("/users/", json={"email": "a@b.co", "age": "30", "address": {"city": "Lyon", "zip": "69001"}})
+assert ok.json() == {"age": 30, "city": "Lyon"}     # "30" coerced; address is an Address
+
+bad = client.get("/users/?page=abc&size=1000").json()["error"]
+assert bad["code"] == "extractor_error" and bad["message"] == "2 validation errors"
+assert bad["detail"]["issues"] == [
+    {"loc": ["query", "page"], "type": "int_parsing",
+     "msg": "Input should be a valid integer, unable to parse string as an integer"},
+    {"loc": ["query", "size"], "type": "less_than_equal",
+     "msg": "Input should be less than or equal to 100", "ctx": {"le": 100}},
+]
+assert bad["detail"]["field"] == "page"              # 1.x keys kept until 2.0
+```
+
+### Coercion
+
+Path / query / header / cookie / urlencoded-form values are strings and are
+always parsed laxly. JSON bodies, WebSocket frames and stream items follow
+`ValidationPolicy(json_mode="lax" | "strict")`; `Strict()` on a field or
+`@validation_config(strict=True)` on a model forces strict.
+
+* `int`: lax accepts `"12"` and `12.0` (not `True`, not `"12.0"`); strict only `int`.
+* `float`: `int` / `float`; lax adds numeric strings. `bool`: lax accepts
+  `true/false/1/0/yes/no/on/off` (any case) and `0` / `1`; **`"maybe"` is
+  `bool_parsing`**.
+* `Decimal`, `UUID` (strict: canonical form), `datetime` / `date` / `time`
+  (ISO 8601 only — no Unix timestamps), `timedelta` (ISO 8601 duration; lax
+  also seconds), `bytes` (UTF-8 `str`), `Enum` (member value; lax also its
+  string form), `Literal` (exact; lax also the string form of `int` / `bool`).
+* Collections from JSON arrays; from the query string or a form they read
+  **repeated keys** (`?tag=a&tag=b`). `Path[list[int]]` / `Header[list[str]]`
+  split one value on commas.
+* `X | None`: an empty query/form value (`?n=`) is `None` when `X` is not `str`.
+* Unions: JSON values match an exact type first, then members strictly, then
+  laxly; query values try members laxly left to right (`int | str` reads
+  `"5"` as `5`). Failing members report their issues under the member name.
+* Models: `missing`, `extra_forbidden` (with `extra="forbid"`), `model_type`;
+  a dataclass is built by calling it, so `__post_init__` runs — a
+  `ValueError` / `TypeError` / `AssertionError` becomes `value_error` at the
+  model's `loc`. Query and form models (`Query[Filters]`, `Form[Signup]`) read
+  one key per field.
+
+### Constraints and per-type settings
+
+Markers in `Annotated` metadata (model fields and parameters): `Ge(n)`, `Gt(n)`,
+`Le(n)`, `Lt(n)`, `MultipleOf(n)` (numbers), `MinLen(n)`, `MaxLen(n)` (strings,
+bytes, collections, mappings), `Pattern(regex)` (strings, `re.search`),
+`Strict()`, `Alias("wireName")`. Any metadata exposing the annotated-types
+attribute names (`ge`, `le`, `min_length`, `pattern`, …) works, e.g.
+`annotated_types.Len(1, 10)`.
+
+`@validation_config(extra="ignore" | "forbid", strict=None, rename=None | "camel")`
+attaches `__lauren_validation__` to a dataclass / TypedDict / NamedTuple and
+returns it unchanged; it is not inherited (re-decorate subclasses), stacking
+merges, and bare `@validation_config` raises `DecoratorUsageError`.
+`rename="camel"` maps `first_name` ↔ `firstName`; an `Alias` wins.
+
+Startup checks raise `UnresolvableParameterError` with `detail = {"class",
+"handler", "param", "type", "reason", "field"?}` and `reason` in
+`"unsupported_type"` | `"bad_constraint"` | `"bad_pattern"`: a constraint that
+does not apply (`Ge` on `str`), an invalid regex, `MinLen > MaxLen`, an unknown
+field type. Outside `stdlib_models="enforce"` an unknown field type is a startup
+warning and that parameter keeps the 1.x behaviour.
+
+### The 422 payload
+
+`ExtractorError` / `ExtractorFieldError` carry `issues` (a tuple of
+`ValidationIssue`) and `detail["issues"]`: dicts `{"loc", "type", "msg",
+"ctx"?, "input"?}`. `loc` roots: `["path", name]`, `["query", name]`,
+`["header", name]`, `["cookie", name]`, `["body", ...]`, `["form", ...]`,
+`["frame", "data", ...]` (WebSocket), `["item", n, ...]` (`Stream[T]`). `input`
+is echoed only with `debug=True` or `ValidationPolicy(include_input=True)`.
+
+* Every failing parameter of a request is collected into one 422 (capped by
+  `max_issues`, default 50). Several failures → `code="extractor_error"`,
+  `message="N validation errors"`. A single failing parameter keeps its 1.x
+  code (`extractor_field_error` for path / query / header / cookie), message
+  and `detail` keys, with `issues` added.
+* Non-validation errors still short-circuit (a custom extractor's
+  `UnauthorizedError` → 401, `RequestBodyTooLarge` → 413). A pipe failure is
+  a `value_error` issue at the parameter's `loc`.
+* `detail.field` and `detail.errors` (`"loc: msg"` strings) are kept until 2.0
+  — read `detail.issues`. `error_format="rfc9457"` turns the issues into the
+  problem `errors` array; `"rfc7807"` carries them as `errors.issues`.
+* Build the same shape yourself with `ExtractorError.from_issues(issues, *,
+  field=None, message=None, include_input=False, detail=None)` or
+  `WebSocketValidationError.from_issues(issues, *, event=None, errors=None,
+  message="validation error", include_input=False)`.
+* msgspec messages (``Expected `int`, got `str` - at `$.age` ``) are parsed for
+  the path and expected type (unknown ones → `value_error` with the original
+  text). A `msgspec.Struct` body is decoded and validated in one
+  `msgspec.json.decode` call.
+
+### `ValidationPolicy`
+
+`ValidationPolicy(*, stdlib_models="warn", json_mode="lax", extra="ignore",
+include_input=None, max_issues=50)` — a frozen dataclass passed as
+`LaurenFactory.create(validation=...)` / `Lauren(validation=...)`; invalid
+values raise `StartupError(reason="invalid_validation_policy")`.
+
+| `stdlib_models` | Dataclass / TypedDict / NamedTuple bodies, query & form models, typed scalars |
+|---|---|
+| `"legacy"` | the shallow 1.x behaviour (escape hatch) |
+| `"warn"` (1.x default) | the native validator runs; a would-be rejection logs one warning per (route, issue type) — never the input — and the request continues with the 1.x value |
+| `"enforce"` (2.0 default) | native results (real nested instances, `UUID` path params, `?on=maybe` → 422, `?n=` → `None` for `int \| None`) and 422s |
+
+Pydantic and msgspec types, and any type using validation markers /
+`@validation_config`, are validated natively in every mode. Under `"warn"` a
+dataclass body's `__post_init__` may run twice per request.
+
+### Programmatic use
+
+```python run
+from dataclasses import dataclass
+
+from lauren.validation import TypeCompiler, ValidationFailed, validate
+
+
+@dataclass
+class Job:
+    name: str
+    retries: int = 3
+
+
+job_type = TypeCompiler().compile(Job)       # app.type_compiler inside an app
+assert job_type.validate({"name": "sync", "retries": "5"}) == Job("sync", 5)
+assert job_type.project(Job("sync", 5)) == {"name": "sync", "retries": 5}
+assert job_type.json_schema()["$defs"]["Job"]["required"] == ["name"]
+try:
+    validate(Job, {"retries": "x"}, mode="lax")  # compiles on every call
+except ValidationFailed as exc:
+    assert [i.type for i in exc.issues] == ["missing", "int_parsing"]
+```
+
+* `TypeCompiler(policy=None)` — per-instance cache (no global state);
+  `.compile(tp, *, mode=None) -> CompiledType` (`mode` "lax" / "strict",
+  default the policy's `json_mode`).
+* `CompiledType.validate(value, *, loc=())` → value or `ValidationFailed`;
+  `.project(value)` → JSON builtins with only the declared fields under their
+  wire names (response filtering; `validate(project(x))` round-trips);
+  `.json_schema(*, dialect="2020-12" | "openapi-3.1", components=None)` →
+  JSON Schema 2020-12 (`$defs`) or an OpenAPI 3.1 schema whose definitions go
+  into `components`; `.explicit` — the type uses validation metadata.
+* `validate(tp, value, *, mode="lax", policy=None)` — one-off convenience.
+* `ValidationFailed(ValueError)` — `.issues: tuple[ValidationIssue, ...]`,
+  `.errors(*, include_input=False) -> list[dict]`.
+* `ValidationIssue(loc, type, msg, input=MISSING, ctx=None)` — frozen;
+  `.to_dict(*, include_input=False)`, `.prefixed(*keys)`; `str(issue)` is
+  `"loc.path: msg"`.
 
 ---
 
@@ -2920,7 +3152,9 @@ Errors related to WebSockets:
 
 * `WebSocketError` — base class.
 * `WebSocketDisconnect(close_code=...)` — the peer closed.
-* `WebSocketValidationError` — frame failed Pydantic validation.
+* `WebSocketValidationError` — a frame failed validation (the same compiled
+  validator as an HTTP body of that type); `detail = {"event", "issues",
+  "errors"}` with issue locations rooted at `["frame", "data"]`.
 * `WebSocketRouteNotFoundError` — no gateway matched the path.
 * `SocketIOError` (code `socketio_error`) — a Socket.IO-layer misuse, e.g.
   emitting on a closed connection (raised in-process, never sent).
@@ -3030,7 +3264,9 @@ Negotiation rules:
 | missing, `*/*`, or anything else     | JSON Lines (default)    |
 
 The `Stream` extractor and `StreamReader[T]` consumer give the same
-typed-iteration story for *receiving* a stream from the client.
+typed-iteration story for *receiving* a stream from the client. Each inbound
+item is validated by the app's compiled validator for `T`; a bad item raises
+`ExtractorError` whose issues are rooted at `["item", <index>]`.
 
 ---
 

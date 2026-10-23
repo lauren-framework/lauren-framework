@@ -1,4 +1,14 @@
-"""Provider-agnostic type detection and validation helpers.
+"""Provider-agnostic type detection and the pre-engine validation helpers.
+
+The native validation engine lives in :mod:`lauren._schema` (public surface:
+:mod:`lauren.validation`); request parameters, WebSocket payloads and stream
+items are compiled by the app's :class:`~lauren.validation.TypeCompiler`.
+This module keeps the type detectors the engine and the factory share, and
+:func:`validate_as` — the shallow 1.x validator that
+``ValidationPolicy(stdlib_models="legacy")`` / ``"warn"`` still answer with and
+that the configuration loader uses to build settings from already-coerced
+values. :func:`json_schema_for` remains the OpenAPI generator's schema source
+until the OpenAPI work moves to ``CompiledType.json_schema``.
 
 All third-party imports are deferred to function bodies so that neither
 pydantic nor msgspec is required at module import time.

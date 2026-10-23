@@ -98,8 +98,10 @@ lauren/                      — framework package
 ├── _modules/                — module graph & visibility
 ├── _routing/                — radix-tree HTTP router
 ├── _scheduling/             — hosted-service supervisor, scheduler, cron parser, clocks, ScheduleModule (private)
+├── _schema/                 — native validation engine: type compiler, validator nodes, issues,
+│                              pydantic/msgspec backends, JSON-Schema emitter, request/frame/item plans
 ├── _typing/                 — ForwardRef / PEP 563 resolver (private)
-├── _validation.py           — provider-agnostic type detection & validation (pydantic, msgspec, dataclass, TypedDict)
+├── _validation.py           — provider-agnostic type detection + the 1.x shallow `validate_as` (legacy/warn modes, config loader)
 ├── _ws_runtime.py           — WebSocket dispatch engine + WsConnectionContext / WsUpgradeRequest
 ├── _socketio.py             — Engine.IO/Socket.IO adapter (private)
 ├── reflect/                 — public sub-package: full metadata introspection API
@@ -125,6 +127,7 @@ lauren/                      — framework package
 ├── socketio.py              — public Socket.IO controller surface
 ├── testing/                 — TestClient / AsyncTestClient, Test.create_testing_module, pytest_plugin
 ├── types.py                 — Request, Response, State, Headers, Scope, Discriminated, …
+├── validation.py            — public validation surface: markers, ValidationPolicy, ValidationIssue, TypeCompiler, validate
 ├── websockets.py            — @ws_controller, @on_message, WebSocket, BroadcastGroup
 ├── docs.py                  — programmatic access to llms.txt / llms-full.txt
 ├── llms.txt                 — short overview (llmstxt.org)
@@ -172,17 +175,14 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
    `from __future__ import annotations`. When you need to inspect
    annotations, always route through `lauren._typing.resolve_type_hints`
    — never call `typing.get_type_hints` directly in framework code.
-   *Known exception, scheduled for removal:* the dataclass branch of form
-   coercion in `extractors.py` still calls it at request time. Do not add
-   more.
 
 5. **No global state.** Singletons live inside a `DIContainer`, which
    is itself owned by a `LaurenApp`. Multiple apps must be able to
    coexist in one process (tests rely on this). *Known exceptions,
    scheduled for removal:* the pipe / extractor instance caches in
-   `extractors.py`, the validation-adapter cache in `streaming.py`, and
-   `_add_ws_route` temporarily widening `Router.HTTP_METHODS`. Do not add
-   more. The import-time declaration registries (`lauren._discovery`
+   `extractors.py` and `_add_ws_route` temporarily widening
+   `Router.HTTP_METHODS`. Do not add more. (Validators are compiled by the
+   app-owned `TypeCompiler` — `app.type_compiler`; there is no global cache.) The import-time declaration registries (`lauren._discovery`
    markers, `lauren._di._scope.register_framework_value`) are not
    exceptions: they record which framework decorators and context types
    exist, append-only, and never hold per-app data.
@@ -249,6 +249,9 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Persist state across requests for one client | Sessions (`sessions=SessionConfig(...)`; inject `session: Session`) |
 | Read typed configuration | `ConfigModule.for_root(Settings)` (or `for_feature`) + inject `Settings`; `load_settings` for factory kwargs |
 | Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
+| Constrain a field or parameter (bounds, length, regex) | `Annotated[int, Ge(1)]` markers from `lauren.validation` (`QueryField(...)` also works) |
+| Reject unknown keys / rename fields on a stdlib model | `@validation_config(extra="forbid", rename="camel")` |
+| Validate a payload outside a request (service, job, command) | `app.type_compiler.compile(T).validate(data)` |
 | Copy Lauren metadata (guards, interceptors, …) to another class/fn | `@propagate_metadata(source)` |
 | Read all routes declared on a controller | `reflect_routes(cls)` → `tuple[ReflectedRoute, ...]` |
 | Replace a provider / guard / middleware in a test | `Test.create_testing_module(AppModule).override_provider(X).use_value(fake).compile()` |
@@ -614,6 +617,18 @@ exit).
   factory warns whenever they are on, and a production `Profile` from the typed
   configuration module makes `debug=` a `StartupError`
   (`reason="debug_in_production"`).
+- ❌ Assuming dataclass / `TypedDict` bodies are type-checked under the 1.x
+  default — `ValidationPolicy(stdlib_models="warn")` only *logs* what the native
+  engine would reject and keeps the shallow value. Pass
+  `validation=ValidationPolicy(stdlib_models="enforce")` (the 2.0 default). A
+  model that uses `lauren.validation` markers or `@validation_config` is always
+  enforced; pydantic and msgspec types are always validated by their library.
+- ❌ Parsing `detail.errors` strings or `detail.field` of a 422 — read
+  `detail.issues` (`[{"loc", "type", "msg", "ctx"?}]`, every failing parameter
+  at once). The 1.x keys are removed in 2.0.
+- ❌ Calling `TypeCompiler().compile(T)` (or `validate(T, ...)`) on a hot path —
+  compiling walks the type; hold one compiler (or use `app.type_compiler`) and
+  reuse the `CompiledType`.
 - ❌ Expecting `call_handler.handle()` to return the raw handler value (dict,
   Pydantic model, tuple, etc.) inside an interceptor — as of v1.4.2
   `handle()` always returns a coerced `Response`.  Interceptors can safely call
@@ -711,6 +726,10 @@ exit).
 - `lauren/serialization.py` — JSON encoders: `StdlibJSONEncoder`,
   `OrjsonEncoder`, `MsgspecEncoder`, `PydanticEncoder`.
 - `lauren/extractors.py` — typed extractors, pipes, `ExtractionMarker`.
+- `lauren/_schema/` — the validation engine: `_compiler.py` (`TypeCompiler`,
+  annotations → nodes), `_nodes.py` (validate / project / schema per type kind),
+  `_params.py` (per-parameter plans, warn/enforce strategies, 422 aggregation),
+  `_backends.py` (pydantic / msgspec + error translation), `_jsonschema.py`.
 - `llms-full.txt` — machine-readable reference, the source of truth
   for what the public API is supposed to do.
 - `docs/` — long-form prose explanations and conceptual articles.

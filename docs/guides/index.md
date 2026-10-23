@@ -19,6 +19,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Path params, query params, and JSON bodies auto-detected from type annotations — no `Path[…]`/`Query[…]`/`Json[…]` boilerplate unless you need it.
 
+-   :material-check-decagram: [__Validation__](validation.md)
+
+    ---
+    Native validation of dataclasses, `TypedDict` and `NamedTuple` (no pydantic needed), `Annotated` constraints, the structured `issues` 422 payload, `ValidationPolicy` and `TypeCompiler`.
+
 -   :material-magnify-plus: [__Custom Extractors__](custom-extractors.md)
 
     ---

@@ -12,9 +12,13 @@ field declares. It has two modes:
   no native file representation (dates, durations, paths, UUIDs,
   decimals, enums, bytes) are still parsed from strings.
 
-The table matches the lax table the native validation engine (F02)
-standardises for query strings; when that engine lands this module
-delegates to it so there is a single implementation. Nothing here
+The boolean tokens and the ISO 8601 duration grammar come from the native
+validation engine (:mod:`lauren._schema._scalars`), so ``"on"`` or ``"PT5M"``
+mean the same thing in a setting, a query string and a JSON body. The rest of
+the table stays here because configuration has needs request validation does
+not: comma-separated lists in one environment variable, JSON-array strings,
+``Secret``, paths, enum member names and the strict mode for already-typed
+file values, each with the error reasons the loader reports. Nothing here
 imports pydantic or msgspec.
 """
 
@@ -26,11 +30,13 @@ import decimal
 import enum
 import json
 import pathlib
-import re
 import types
 import uuid
 from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
+from .._schema._scalars import BOOL_FALSE as _FALSE
+from .._schema._scalars import BOOL_TRUE as _TRUE
+from .._schema._scalars import parse_iso_duration
 from ._secret import Secret
 
 
@@ -47,13 +53,6 @@ class UnsupportedTypeError(CoercionError):
     """The declared type is not in the coercion table."""
 
 
-_TRUE = frozenset({"1", "true", "yes", "on"})
-_FALSE = frozenset({"0", "false", "no", "off"})
-_NUM = r"(\d+(?:\.\d+)?)"
-_ISO_DURATION = re.compile(
-    rf"^(?P<sign>[-+])?P(?:{_NUM}W)?(?:{_NUM}D)?(?:T(?:{_NUM}H)?(?:{_NUM}M)?(?:{_NUM}S)?)?$",
-    re.IGNORECASE,
-)
 _UNION_TYPES: tuple[Any, ...] = (Union, types.UnionType)
 _SEQUENCE_ORIGINS: dict[Any, type] = {
     list: list,
@@ -331,11 +330,9 @@ def _coerce_timedelta(value: Any) -> datetime.timedelta:
             return datetime.timedelta(seconds=float(text))
         except ValueError:
             pass
-        match = _ISO_DURATION.match(text)
-        if match is not None and any(match.groups()[1:]):
-            weeks, days, hours, minutes, seconds = (float(g) if g else 0.0 for g in match.groups()[1:])
-            delta = datetime.timedelta(weeks=weeks, days=days, hours=hours, minutes=minutes, seconds=seconds)
-            return -delta if match.group("sign") == "-" else delta
+        delta = parse_iso_duration(text)
+        if delta is not None:
+            return delta
         raise CoercionError("timedelta", "expected seconds or an ISO 8601 duration such as PT5M")
     raise CoercionError("timedelta")
 

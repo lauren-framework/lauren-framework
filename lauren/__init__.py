@@ -324,6 +324,7 @@ from .types import (
     ServerInfo,
     State,
 )
+from .validation import ValidationIssue, ValidationPolicy, validation_config
 
 try:
     from importlib.metadata import PackageNotFoundError, version as _pkg_version
@@ -443,6 +444,9 @@ __all__ = [
     "ServerInfo",
     "ContentConfig",
     "DebugConfig",
+    "ValidationPolicy",
+    "ValidationIssue",
+    "validation_config",
     "CallNext",
     "CallHandler",
     "MiddlewareProtocol",

@@ -37,6 +37,8 @@ from lauren import (
     QueryField, HeaderField, CookieField, PathField,
     # Types
     Request, Response, Headers, ExecutionContext,
+    # Validation (markers, TypeCompiler and validate live in lauren.validation)
+    ValidationPolicy, ValidationIssue, validation_config,
     # Routing
     Router, RouteEntry,
     # Streaming / SSE / WS

@@ -121,7 +121,9 @@ core ideas:
   auto-detected from type annotations. Write `id: int`, `q: str`,
   `body: MyModel` without boilerplate unless you need the explicit form.
   `Query[T]` and `Json[T]` support Pydantic models, `msgspec.Struct`,
-  Python `dataclass`, and `TypedDict` types.
+  Python `dataclass`, and `TypedDict` types — stdlib models are validated
+  natively without pydantic (nested models, `Annotated[int, Ge(13)]`
+  constraints), and a 422 lists every failing field as structured `issues`.
 * **Pydantic-free discriminated unions** — `Discriminated[Cat | Dog, "kind"]`
   routes tagged-union JSON bodies to the correct variant class using only
   stdlib. Works with `@dataclass`, `TypedDict`, `msgspec.Struct`, and

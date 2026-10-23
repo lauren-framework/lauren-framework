@@ -23,6 +23,8 @@ FastAPI and Lauren share the "type-annotations-first" philosophy but differ in a
 | `HTTPException(status_code=404)` | `raise NotFoundError("msg")` | built-in HTTP errors (`BadRequestError`, `NotFoundError`, `ConflictError`, `TooManyRequestsError`, …) importable from `lauren` |
 | `HTTPException(401, headers={"WWW-Authenticate": "Bearer"})` | `raise UnauthorizedError("msg", challenge="Bearer")` | every error takes `headers=`; `retry_after=` on 429/503/504 |
 | `Annotated[str, Query()]` | `q: Query[str]` (or bare `q: str`) | Extractors are type aliases, not annotations |
+| `Annotated[int, Query(le=100)]` / `Field(ge=13)` | `size: Annotated[int, Le(100)] = 10`, `age: Annotated[int, Ge(13)]` | Markers from `lauren.validation`; annotated-types objects work too |
+| `RequestValidationError` (422 `detail: [{loc, msg, type, input, ctx}]`) | `ExtractorError` (422 `error.detail.issues: [{loc, type, msg, ctx}]`) | Same `loc` roots (`["query", "page"]`, `["body", "age"]`); every failing parameter in one response |
 | `response_model=` | Return the Pydantic model directly | Auto-serialized; declare return type for OpenAPI |
 | `Depends(get_db)` for request-scoped deps | `@injectable(scope=Scope.REQUEST)` | Scope is on the provider class, not the injection site |
 
@@ -177,3 +179,12 @@ table in `docs/reference/errors.md`. FastAPI's `HTTPException(status_code=...,
 headers=...)` maps to the matching class with `headers=` (or
 `HTTPError("...", status_code=418, code="teapot")` for a one-off status).
 `error_format="rfc9457"` emits RFC 9457 problem details.
+
+**Validation errors.** FastAPI's `RequestValidationError` body
+`{"detail": [{"loc", "msg", "type", "input", "ctx"}]}` becomes
+`{"error": {"code": "extractor_error", "message": ..., "detail": {"issues": [{"loc", "type", "msg", "ctx"}]}}}`:
+the same `loc` / `type` vocabulary (pydantic errors are translated field for
+field), with `input` echoed only when `debug` is on. Point a FastAPI client at
+`error.detail.issues` instead of `detail`. Dataclass and `TypedDict` bodies are
+validated natively too — pass `validation=ValidationPolicy(stdlib_models="enforce")`
+to `LaurenFactory.create` to reject bad ones (1.x default `"warn"` only logs).

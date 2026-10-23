@@ -58,6 +58,7 @@ from ..decorators import (
 )
 from ..exceptions import (
     ExceptionHandlerConfigError,
+    ExtractorError,
     ForbiddenError,
     GuardConfigError,
     HTTPError,
@@ -79,6 +80,14 @@ from ..extractors import (
     parse_extractor_hint,
 )
 from .._validation import is_json_body_type as _is_json_body_type
+from .._schema._compiler import TypeCompiler
+from .._schema._markers import ValidationPolicy
+from .._schema._params import (
+    ValidationRuntime,
+    build_param_plan,
+    failure_weight as _failure_weight,
+    merge_failures as _merge_failures,
+)
 from .._discriminated import is_native_discriminated_union as _is_native_discriminated_union
 from ..streaming import (
     FORMAT_TO_MEDIA_TYPE,
@@ -173,6 +182,9 @@ class CompiledHandler:
     #: dispatcher consults this field to pick the streaming serializer
     #: path; the OpenAPI generator consults it to emit ``x-streaming``.
     streaming_item_type: Any = None
+    #: Serializer for streamed items, built once at startup from
+    #: ``streaming_item_type`` (``None`` when items go straight to the encoder).
+    streaming_adapter: Any = None
     #: Binding style that tells the dispatcher how to invoke ``handler_fn``.
     #: One of ``"instance"`` (normal method, pass ``controller`` first),
     #: ``"classmethod"`` (pass ``controller_cls`` first), or ``"static"``
@@ -258,6 +270,9 @@ def _compile_handler_signature(
     container: DIContainer,
     path_param_names: set[str] | None = None,
     owning_module: type | None = None,
+    *,
+    validation: ValidationRuntime | None = None,
+    route: str = "",
 ) -> tuple[tuple[Extraction, ...], list[str]]:
     """Introspect a handler and produce its extraction plan.
 
@@ -272,12 +287,17 @@ def _compile_handler_signature(
 
     Annotation-side pipes run before default-side pipes (so the ordering
     in source code matches left-to-right visual reading).
+
+    With ``validation`` (the app's validation runtime) every path / query /
+    header / cookie / JSON / form-model / stream parameter also gets its
+    compiled validation plan (``Extraction.compiled``).
     """
     sig = inspect.signature(fn)
     hints = _safe_type_hints(fn)
     path_param_names = path_param_names or set()
     extractions: list[Extraction] = []
     param_names: list[str] = []
+    annotations: dict[str, Any] = {}
     # Classmethod handlers have ``cls`` as their first argument — skip it
     # along with ``self`` so the DI plan starts at the first user
     # parameter regardless of binding style.
@@ -290,6 +310,7 @@ def _compile_handler_signature(
         ):
             continue
         ann = hints.get(name, param.annotation)
+        annotations[name] = ann
         source, inner, reads_body, marker_cls, ann_fd, ann_pipes = parse_extractor_hint(ann)
         default = param.default
         has_default = default is not inspect.Parameter.empty
@@ -341,7 +362,7 @@ def _compile_handler_signature(
 
         # Auto-promote bare parameters whose name matches a path variable.
         if source is None and name in path_param_names:
-            inner_type = ann if ann is not inspect.Parameter.empty else str
+            inner_type = _strip_param_annotated(ann) if ann is not inspect.Parameter.empty else str
             extractions.append(
                 Extraction(
                     name=name,
@@ -509,7 +530,7 @@ def _compile_handler_signature(
                 param_names.append(name)
                 continue
             if _is_implicit_query_type(ann):
-                inner_type = ann
+                inner_type = _strip_param_annotated(ann)
                 extractions.append(
                     Extraction(
                         name=name,
@@ -549,7 +570,32 @@ def _compile_handler_signature(
         # No startup restriction on instance-method extractors: both
         # @injectable (DI-resolved) and plain (no-arg cache) forms are valid.
         param_names.append(name)
+    if validation is not None:
+        for ext in extractions:
+            ext.compiled = build_param_plan(
+                ext,
+                annotations.get(ext.name),
+                validation,
+                route=route,
+                owner=controller_cls.__name__,
+                handler=getattr(fn, "__name__", "?"),
+            )
     return tuple(extractions), param_names
+
+
+def _strip_param_annotated(tp: Any) -> Any:
+    """``Annotated[int, Le(100)]`` → ``int`` (keeping ``| None``).
+
+    The extraction plan reads the markers from the original annotation; the
+    pre-engine coercer works on the plain type.
+    """
+    import typing as _typing
+
+    peeled, optional = _peel_optional(tp)
+    if _typing.get_origin(peeled) is _typing.Annotated:
+        base = _typing.get_args(peeled)[0]
+        return base | None if optional else base
+    return tp
 
 
 def _has_unresolved_hints(hints: dict[str, Any]) -> bool:
@@ -780,6 +826,7 @@ class LaurenApp:
         debug: DebugConfig | None = None,
         guard_denials: dict[type, Any] | None = None,
         lazy_startup: bool = True,
+        validation: ValidationRuntime | None = None,
     ) -> None:
         self._router = router
         self._container = container
@@ -876,6 +923,12 @@ class LaurenApp:
         #: Guard class → its compiled denial (an ``HTTPError`` subclass or a
         #: zero-argument factory), read from ``deny_error`` at startup.
         self._guard_denials: dict[type, Any] = dict(guard_denials or {})
+        #: App-owned validation state (type compiler, policy, warn memory).
+        self._validation: ValidationRuntime = validation or ValidationRuntime(
+            TypeCompiler(), include_input=False, logger=self._logger
+        )
+        #: ``ValidationPolicy.max_issues`` — stop extracting once reached.
+        self._max_issues: int = self._validation.max_issues
         # Mounted sub-applications, ordered by descending prefix length so the
         # most-specific prefix wins when multiple prefixes could match.
         self._mounts: list[tuple[str, Any]] = []
@@ -937,6 +990,20 @@ class LaurenApp:
         :class:`LaurenApp` owns its own bus.
         """
         return self._signals
+
+    @property
+    def type_compiler(self) -> TypeCompiler:
+        """The :class:`~lauren.validation.TypeCompiler` ``LaurenFactory.create`` built.
+
+        Compile service-side payloads with it to get exactly the validation the
+        HTTP and WebSocket layers apply (``app.type_compiler.compile(T)``).
+        """
+        return self._validation.compiler
+
+    @property
+    def validation_policy(self) -> ValidationPolicy:
+        """The app's :class:`~lauren.validation.ValidationPolicy`."""
+        return self._validation.policy
 
     @property
     def error_format(self) -> str:
@@ -1768,6 +1835,10 @@ class LaurenApp:
                             # content defensively in case a middleware populated
                             # the scratch earlier in the chain.
                             kwargs_dict.clear()
+                            # Every failing parameter is collected into one 422;
+                            # the list is allocated on the first failure only.
+                            failures: list[tuple[Extraction, ExtractorError]] | None = None
+                            reported = 0
                             for ext in compiled.extractions:
                                 if ext.source == "request":
                                     kwargs_dict[ext.name] = req2
@@ -1788,14 +1859,24 @@ class LaurenApp:
                                     # present whenever a handler injects Session.
                                     kwargs_dict[ext.name] = req2.state.session
                                 else:
-                                    kwargs_dict[ext.name] = await extract_parameter(
-                                        req2,
-                                        ext,
-                                        container=self._container,
-                                        request_cache=request_cache,
-                                        owning_module=owning_module,
-                                        execution_context=ctx,
-                                    )
+                                    try:
+                                        kwargs_dict[ext.name] = await extract_parameter(
+                                            req2,
+                                            ext,
+                                            container=self._container,
+                                            request_cache=request_cache,
+                                            owning_module=owning_module,
+                                            execution_context=ctx,
+                                        )
+                                    except ExtractorError as extraction_error:
+                                        if failures is None:
+                                            failures = []
+                                        failures.append((ext, extraction_error))
+                                        reported += _failure_weight(extraction_error)
+                                        if reported >= self._max_issues:
+                                            break
+                            if failures is not None:
+                                raise _merge_failures(failures, self._validation)
                             # ``kwargs`` below re-aliases the same pooled dict so
                             # the existing dispatch branches stay identical.
                             kwargs = kwargs_dict
@@ -1849,6 +1930,7 @@ class LaurenApp:
                                     item_type=_captured_streaming_item_type,
                                     request=_captured_req2,
                                     encoder=_captured_effective_encoder,
+                                    adapter=compiled.streaming_adapter,
                                 )
                             return _coerce_to_response(raw, encoder=_captured_effective_encoder)
 
@@ -2400,12 +2482,17 @@ def _coerce_to_response(value: Any, *, encoder: JSONEncoder | None = None) -> Re
     return Response.json(value, encoder=encoder)
 
 
+#: Default of ``_coerce_streaming_response(adapter=...)``: build the serializer now.
+_BUILD_ADAPTER: Any = object()
+
+
 async def _coerce_streaming_response(
     iterable: Any,
     *,
     item_type: Any,
     request: Request,
     encoder: JSONEncoder | None = None,
+    adapter: Any = _BUILD_ADAPTER,
 ) -> Response:
     """Serialize an async iterable of ``item_type`` as a typed stream.
 
@@ -2439,7 +2526,9 @@ async def _coerce_streaming_response(
     accept = request.headers.get("accept") or ""
     fmt = negotiate_stream_format(accept, default="jsonlines")
     media_type = FORMAT_TO_MEDIA_TYPE[fmt]
-    adapter = _build_adapter(item_type)
+    if adapter is _BUILD_ADAPTER:
+        # Direct callers (tests) without a startup-built serializer.
+        adapter = _build_adapter(item_type)
     # Capture the encoder once so every framed item hits the same
     # reference — matters for the ``msgspec`` backend which bakes
     # its options into a reusable Encoder instance.
@@ -2733,6 +2822,7 @@ class LaurenFactory:
         lazy_startup: bool = True,
         hosted_services: bool = True,
         scheduler: bool = True,
+        validation: ValidationPolicy | None = None,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -2782,6 +2872,12 @@ class LaurenFactory:
         classes but does not start them; ``scheduler=False`` does the same for
         scheduled jobs (``SchedulerRegistry.trigger`` still works). Tests and
         one-off commands use them to build the full app without background work.
+
+        ``validation`` (a :class:`~lauren.validation.ValidationPolicy`) sets how
+        request values are validated: the stdlib-model mode (``"warn"`` by
+        default in 1.x), JSON strictness, unknown keys, input echo and the
+        issue cap. Every extractor, WebSocket payload and stream item type is
+        compiled once here by the app's type compiler (``app.type_compiler``).
         """
         _log: Logger = logger or NullLogger()
         if problem_type_base is not None and (
@@ -2811,6 +2907,19 @@ class LaurenFactory:
             )
         effective_strict_content_type: bool | str = (
             declared_strict if declared_strict is not None else ("warn" if sessions is not None else False)
+        )
+        policy = validation if validation is not None else ValidationPolicy()
+        if not isinstance(policy, ValidationPolicy):
+            raise StartupError(
+                f"validation= expects a ValidationPolicy, got {type(validation).__name__}",
+                detail={"reason": "invalid_validation_policy", "got": type(validation).__name__},
+            )
+        validation_runtime = ValidationRuntime(
+            TypeCompiler(policy),
+            include_input=policy.include_input
+            if policy.include_input is not None
+            else debug_config is not None,
+            logger=_log,
         )
 
         effective_global_middlewares = list(global_middlewares or [])
@@ -3125,11 +3234,16 @@ class LaurenFactory:
                         container,
                         path_param_names=set(entry.param_names),
                         owning_module=ctrl_owning_module,
+                        validation=validation_runtime,
+                        route=f"{rmeta.method} {entry.path_template}",
                     )
                     # Resolve the handler's return annotation once at
                     # startup so the request path stays reflection-free.
                     return_hint = _safe_type_hints(fn).get("return", inspect.Parameter.empty)
                     streaming_item = extract_streaming_item_type(return_hint)
+                    # The streamed-response serializer is built once here (no
+                    # process-wide adapter cache).
+                    streaming_adapter = _build_adapter(streaming_item) if streaming_item is not None else None
                     compiled = CompiledHandler(
                         controller_cls=ctrl_cls,
                         handler_fn=fn,
@@ -3149,6 +3263,7 @@ class LaurenFactory:
                         metadata={**ctrl_extra_meta, **fn_meta},
                         owning_module=ctrl_owning_module,
                         streaming_item_type=streaming_item,
+                        streaming_adapter=streaming_adapter,
                         binding=binding,
                         is_coroutine=inspect.iscoroutinefunction(fn),
                         raw_descriptor=raw,
@@ -3238,8 +3353,15 @@ class LaurenFactory:
         from .._ws_runtime import compile_gateways
 
         ws_router = Router()
-        ws_gateways = compile_gateways(graph, container, ws_router=ws_router, logger=_log)
+        ws_gateways = compile_gateways(
+            graph, container, ws_router=ws_router, logger=_log, validation=validation_runtime
+        )
         ws_router.freeze()
+        # Startup notes from the type compiler (FieldDescriptor constraints that
+        # do not apply, parameters left on the legacy path) — logged once.
+        for note in dict.fromkeys(validation_runtime.compiler.warnings):
+            logging.getLogger("lauren").warning(note)
+            _log.warn(note, context="Validation")
 
         # Guard denials: read each guard's ``deny_error`` once, here, so a bad
         # value fails startup (GuardConfigError) and dispatch reads a dict.
@@ -3356,6 +3478,7 @@ class LaurenFactory:
             debug=debug_config,
             guard_denials=guard_denials,
             lazy_startup=lazy_startup,
+            validation=validation_runtime,
         )
         # The immutable Phase 6a index; feature consumers read their markers.
         app._discovery = discovery

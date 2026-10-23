@@ -94,6 +94,7 @@ class Lauren:
         lazy_startup: bool = True,
         hosted_services: bool = True,
         scheduler: bool = True,
+        validation: Any | None = None,
     ) -> None:
         self._title = title
         self._version = version
@@ -132,6 +133,7 @@ class Lauren:
         self._lazy_startup = lazy_startup
         self._hosted_services = hosted_services
         self._scheduler = scheduler
+        self._validation = validation
         self._startup_handlers: list[Callable[[], Any]] = []
         self._shutdown_handlers: list[Callable[[], Any]] = []
 
@@ -469,6 +471,7 @@ class Lauren:
             lazy_startup=self._lazy_startup,
             hosted_services=self._hosted_services,
             scheduler=self._scheduler,
+            validation=self._validation,
         )
         # --- Run user-provided startup hooks now that DI is live ---------
         for hook in self._startup_handlers:

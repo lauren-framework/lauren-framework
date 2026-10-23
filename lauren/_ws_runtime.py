@@ -32,7 +32,7 @@ import inspect as _inspect
 import json as _jsonlib
 import logging as _stdlib_logging
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Iterable
+from typing import Annotated, Any, Awaitable, Callable, Iterable, get_args, get_origin
 
 from ._di import DIContainer, INJECTABLE_META, InjectableMeta
 from ._di._scope import finalize_scope
@@ -292,6 +292,7 @@ def compile_gateways(
     *,
     ws_router: Router,
     logger: Any,
+    validation: Any = None,
 ) -> dict[str, CompiledGateway]:
     """Walk ``module_graph``, build :class:`CompiledGateway` for every
     class that has its OWN ``@ws_controller`` marker.
@@ -306,6 +307,11 @@ def compile_gateways(
     :class:`MetadataInheritanceError` if a class in
     ``module_graph.iter_controllers()`` inherits the ``@ws_controller``
     marker without re-declaring it explicitly on the subclass.
+
+    ``validation`` is the app's validation runtime
+    (:class:`lauren._schema._params.ValidationRuntime`); with it, every typed
+    payload and every path / query / header / cookie parameter is compiled
+    with the same type compiler HTTP handlers use.
     """
     from .reflect._reader import (  # noqa: PLC0415
         reflect_guards,
@@ -355,6 +361,8 @@ def compile_gateways(
                 path_param_names=set(param_names),
                 owning_module=owning_module,
                 is_message_handler=False,
+                validation=validation,
+                route=f"WEBSOCKET {path}",
             )
         on_disconnect_ext: tuple[Extraction, ...] = ()
         if hooks["on_disconnect"] is not None:
@@ -365,6 +373,8 @@ def compile_gateways(
                 path_param_names=set(param_names),
                 owning_module=owning_module,
                 is_message_handler=False,
+                validation=validation,
+                route=f"WEBSOCKET {path}",
             )
 
         # Compile @on_error if declared. Its signature is the same as
@@ -401,9 +411,14 @@ def compile_gateways(
                 owning_module=owning_module,
                 is_message_handler=True,
                 is_binary_handler=(event == BINARY_EVENT),
+                validation=validation,
+                route=f"WEBSOCKET {path} #{event}",
             )
             payload_param, payload_adapter = _find_payload_adapter(
-                extractions, binary=(event == BINARY_EVENT)
+                extractions,
+                binary=(event == BINARY_EVENT),
+                validation=validation,
+                route=f"WEBSOCKET {path} #{event}",
             )
             messages[event] = CompiledMessage(
                 event=event,
@@ -654,6 +669,8 @@ def _compile_ws_signature(
     is_message_handler: bool,
     is_error_handler: bool = False,
     is_binary_handler: bool = False,
+    validation: Any = None,
+    route: str = "WEBSOCKET",
 ) -> tuple[Extraction, ...]:
     """Build the extraction plan for a WebSocket hook method.
 
@@ -769,33 +786,34 @@ def _compile_ws_signature(
         # need to remember the marker just to read a path var.
         if source is None and name in path_param_names:
             inner_type = ann if ann is not _inspect.Parameter.empty else str
-            extractions.append(
-                Extraction(
-                    name=name,
-                    source="path",
-                    inner_type=inner_type,
-                    field_descriptor=fd,
-                    default=default,
-                    has_default=has_default,
-                )
+            path_ext = Extraction(
+                name=name,
+                source="path",
+                inner_type=_strip_param_annotated(inner_type),
+                field_descriptor=fd,
+                default=default,
+                has_default=has_default,
             )
+            _attach_ws_plan(path_ext, ann, validation, controller_cls, fn, route)
+            extractions.append(path_ext)
             continue
 
         # Rule 4: declared extractor marker — trust the parser.
         if source is not None:
-            extractions.append(
-                Extraction(
-                    name=name,
-                    source=source,
-                    inner_type=inner,
-                    field_descriptor=fd,
-                    default=default,
-                    has_default=has_default,
-                    reads_body=reads_body,
-                    marker_cls=marker_cls,
-                    pipes=tuple(pipes),
-                )
+            marker_ext = Extraction(
+                name=name,
+                source=source,
+                inner_type=inner,
+                field_descriptor=fd,
+                default=default,
+                has_default=has_default,
+                reads_body=reads_body,
+                marker_cls=marker_cls,
+                pipes=tuple(pipes),
             )
+            if source in ("path", "query", "header", "cookie"):
+                _attach_ws_plan(marker_ext, ann, validation, controller_cls, fn, route)
+            extractions.append(marker_ext)
             continue
 
         # Rule 5: DI fallback — accept both class tokens and function
@@ -828,24 +846,67 @@ def _compile_ws_signature(
     return tuple(extractions)
 
 
+def _attach_ws_plan(
+    ext: Extraction,
+    annotation: Any,
+    validation: Any,
+    controller_cls: type,
+    fn: Callable[..., Any],
+    route: str,
+) -> None:
+    """Compile a handshake parameter (path / query / header / cookie) with the app compiler."""
+    if validation is None:
+        return
+    from ._schema._params import build_param_plan  # noqa: PLC0415
+
+    ext.compiled = build_param_plan(
+        ext,
+        annotation,
+        validation,
+        route=route,
+        owner=controller_cls.__name__,
+        handler=getattr(fn, "__name__", "?"),
+    )
+
+
+def _strip_param_annotated(tp: Any) -> Any:
+    """``Annotated[int, Ge(1)]`` → ``int`` (keeping ``| None``) for the pre-engine coercer."""
+    from .extractors import _peel_optional  # noqa: PLC0415
+
+    peeled, optional = _peel_optional(tp)
+    if get_origin(peeled) is Annotated:
+        base = get_args(peeled)[0]
+        return base | None if optional else base
+    return tp
+
+
 def _find_payload_adapter(
     extractions: tuple[Extraction, ...],
     *,
     binary: bool,
+    validation: Any = None,
+    route: str = "WEBSOCKET",
 ) -> tuple[str | None, Any]:
     """Pick the parameter that receives the inbound frame payload.
 
     For text/JSON frames (the common case) we look for a ``Json[...]``
-    extractor and build a :class:`pydantic.TypeAdapter` from its inner
-    type so validation supports both plain models and discriminated
-    unions. For binary frames (``@on_message("__binary__")``) we look
-    for a parameter of source ``"ws_binary"`` (a plain ``body: bytes``
-    annotation in the handler, picked up by the WS signature compiler).
+    extractor and compile its inner type with the app's type compiler (an
+    :class:`~lauren._schema._params.ItemPlan`), so a frame validates exactly
+    like an HTTP body of the same type. Without a validation runtime (direct
+    calls from tests) the pre-engine adapter is used. For binary frames
+    (``@on_message("__binary__")``) we look for a parameter of source
+    ``"ws_binary"`` (a plain ``body: bytes`` annotation in the handler,
+    picked up by the WS signature compiler).
     """
     for ext in extractions:
         if binary and ext.source in ("ws_binary", "bytes"):
             return ext.name, None  # no adapter — bytes are passed as-is
         if (not binary) and ext.source == "json":
+            if validation is not None:
+                from ._schema._params import build_item_plan  # noqa: PLC0415
+
+                where = {"class": "?", "handler": "?", "param": ext.name, "route": route}
+                return ext.name, build_item_plan(ext.inner_type, validation, route=route, where=where)
             adapter = _build_adapter(ext.inner_type)
             return ext.name, adapter
     return None, None
@@ -1296,9 +1357,23 @@ async def _dispatch_text(
     # ``data`` is the conventional payload key; we fall back to the
     # full frame so callers who embed their discriminator fields at
     # the top level don't have to wrap everything in ``data``.
-    if compiled.payload_adapter is not None:
+    validator = compiled.payload_adapter
+    if validator is not None and hasattr(validator, "strategy"):
+        from ._schema._params import ItemFailure  # noqa: PLC0415
+
         try:
-            payload = compiled.payload_adapter.validate_python(payload if event != payload else frame)
+            payload = validator.validate(payload)
+        except ItemFailure as failure:
+            root: tuple[str, ...] = ("frame", "data") if "data" in frame else ("frame",)
+            raise WebSocketValidationError.from_issues(
+                [issue.prefixed(*root) for issue in failure.issues],
+                event=event,
+                errors=failure.errors,
+                include_input=validator.runtime.include_input,
+            ) from failure.cause
+    elif validator is not None:
+        try:
+            payload = validator.validate_python(payload if event != payload else frame)
         except Exception as exc:
             _errors = getattr(exc, "errors", None)
             raise WebSocketValidationError(

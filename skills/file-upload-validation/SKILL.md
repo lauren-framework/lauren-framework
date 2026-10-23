@@ -97,7 +97,10 @@ def validate(self, data: bytes, ...) -> dict:
 ## Notes
 
 - `Bytes` extracts the raw request body as `bytes`.
-- For multipart form uploads use `Form[T]` or parse `multipart/form-data` with
-  a dedicated library (e.g. `python-multipart`).
+- For multipart file parts use `UploadFile` / `list[UploadFile]`; for
+  urlencoded form fields use `Form[Model]` — a dataclass / `TypedDict` model is
+  validated natively, one key per field, and failures are 422 issues at
+  `["form", "<field>"]` (`ValidationPolicy(stdlib_models="enforce")`). Typed
+  multipart form models (files and fields in one model) are planned.
 - Add `Content-Type` header validation as a second check on top of magic bytes
   to prevent header spoofing.

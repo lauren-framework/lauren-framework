@@ -7,6 +7,9 @@ type has its own constructor contract, which affects whether the container
 can build it automatically or whether you need to provide the instance
 yourself.
 
+Validating request *bodies* typed as these models is a separate story — see
+[Validation](validation.md).
+
 ---
 
 ## The one rule that governs everything
