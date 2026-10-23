@@ -56,6 +56,23 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   errors — loopback-only by default, redacted, announced at startup, and refused
   when the configuration profile is production.
 - `lauren.reflect.error_catalog()` and `ReflectedError`.
+- **Application event bus** (`lauren.events`): typed in-process domain events.
+  `@on_event(event_type=None, *, mode="inline" | "concurrent" | "background",
+  priority=0, errors="propagate" | "isolate", enabled=True)` on any provider
+  method; the event class can be inferred from the annotation and base-class
+  handlers receive subclasses. Handlers are discovered and validated in
+  `LaurenFactory.create` (`UnresolvableParameterError` with `detail["reason"]`).
+- `EventBus` (per-app singleton) and the request-scoped `EventPublisher` — inline
+  handlers share the request's or WebSocket connection's DI scope, `background`
+  handlers run after the response — plus `EmitResult`, `EventContext`,
+  `emit(wait=True)`, `EventPublisher.emit_threadsafe()` and
+  `EventPublisher.emit(after=TransactionPhase.COMMIT)` with the `UnitOfWork`
+  protocol.
+- `EventsModule.for_root(max_depth=16, drain_timeout=None)`; shutdown awaits, then
+  cancels, running handler tasks after the request drain; emitting after shutdown
+  raises `LifecycleViolationError`.
+- `EventHandlerFailed` lifecycle signal, and test aids `bus.recording()`,
+  `bus.drain()`, `bus.disabled()` and `bus.handlers_for()`.
 
 ### Changed
 
