@@ -170,6 +170,8 @@ PAGES: dict[str, list[str | tuple[str, str]]] = {
         "lauren.OptionalDep",
         ("## Container", ""),
         "lauren.DIContainer",
+        ("## Operation scopes", ""),
+        "lauren.OperationScope",
     ],
     "exceptions.md": [
         (

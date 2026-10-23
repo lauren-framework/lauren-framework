@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Iterable
 
@@ -32,6 +33,7 @@ from ..signals import (
     get_default_bus,
 )
 from ..background import BackgroundTasks as _BackgroundTasks, _BG_TASKS_ATTR
+from ..context import OperationScope
 from .._lifecycle import LifecycleScheduler
 from .._modules import ModuleGraph
 from .._routing import RouteEntry, Router
@@ -974,6 +976,24 @@ class LaurenApp:
     def mounts(self) -> list[tuple[str, Any]]:
         """Read-only snapshot of ``(path_prefix, sub_app)`` pairs."""
         return list(self._mounts)
+
+    # -- Operation scopes --------------------------------------------------
+
+    def scope(self, name: str = "operation", *, values: Mapping[Any, Any] | None = None) -> OperationScope:
+        """Open a DI scope for work outside an HTTP request or WebSocket connection.
+
+        Returns a single-use :class:`~lauren.context.OperationScope` to use as
+        an async context manager. ``Scope.REQUEST`` providers resolved through
+        it get one instance per scope, torn down on exit (``@pre_destruct``,
+        then ``aclose()``, newest first). ``values`` seeds framework values
+        (``{JobContext: ctx}``) that constructors and :meth:`OperationScope.resolve`
+        receive as-is. Use it while the app is running (after
+        :meth:`startup`), so singletons have had their ``@post_construct``::
+
+            async with app.scope("backfill") as scope:
+                db = await scope.resolve(DbSession)
+        """
+        return OperationScope(self._container, name, values=values)
 
     # -- Startup / Shutdown ------------------------------------------------
 

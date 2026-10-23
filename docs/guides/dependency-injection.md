@@ -682,7 +682,7 @@ class AppModule: ...
 | Scope | Lifetime | Key constraint |
 |---|---|---|
 | `SINGLETON` (default) | One per app | Cannot depend on `REQUEST` or `TRANSIENT` |
-| `REQUEST` | One per HTTP request | Can depend on `SINGLETON` or `REQUEST` |
+| `REQUEST` | One per HTTP request, WebSocket connection or [`app.scope()`](#part-g-scopes-outside-requests-appscope) | Can depend on `SINGLETON` or `REQUEST` |
 | `TRANSIENT` | New on every resolve | Can depend on anything |
 
 Violations raise `DIScopeViolationError` at startup.
@@ -691,6 +691,90 @@ Violations raise `DIScopeViolationError` at startup.
 
 The scope you pass to `use_class(scope=…)` or `use_factory(scope=…)` overrides
 the default. If omitted, `SINGLETON` is assumed.
+
+---
+
+## Part G — Scopes outside requests (`app.scope()`)
+
+Scripts, scheduled work and other code that is not handling an HTTP request
+still need request-scoped providers — a database session, a unit of work.
+`app.scope()` opens an `OperationScope`: the request scope without a request.
+
+<!-- docs-contract: run -->
+```python
+import asyncio
+
+from lauren import LaurenFactory, Scope, injectable, module, pre_destruct
+
+
+@injectable(scope=Scope.REQUEST)
+class DbSession:
+    def __init__(self) -> None:
+        self.closed = False
+
+    @pre_destruct
+    async def close(self) -> None:
+        self.closed = True
+
+
+@injectable()
+class UserService:
+    async def backfill(self, db: DbSession) -> int:
+        return 3
+
+
+@module(providers=[DbSession, UserService])
+class UsersModule:
+    pass
+
+
+async def main() -> None:
+    app = LaurenFactory.create(UsersModule)
+    await app.startup()
+    async with app.scope("backfill") as scope:
+        db = await scope.resolve(DbSession)  # REQUEST: one instance per scope
+        assert db is await scope.resolve(DbSession)
+        users = await scope.resolve(UserService)  # SINGLETON: shared as usual
+        assert await users.backfill(db) == 3
+    assert db.closed  # torn down when the block exits
+    assert scope.teardown_errors == ()
+    await app.shutdown()
+
+
+asyncio.run(main())
+```
+
+What a scope does:
+
+| Topic | Behaviour |
+|---|---|
+| `Scope.REQUEST` providers | One instance per scope, cached in a fresh dict (the same structure an HTTP request uses) |
+| `Scope.SINGLETON` providers | Come from the container, shared with every request and scope |
+| `Scope.TRANSIENT` providers | New on every resolution and not tracked, so not torn down |
+| Exit | Every request-scoped instance is torn down newest first: its `@pre_destruct` hook, then `aclose()` (a generator provider's teardown). This is the same finaliser HTTP requests and WebSocket connections use |
+| Teardown errors | Logged on the `lauren` logger and collected in `scope.teardown_errors` (`DestructError` entries, `__cause__` set); never raised. An exception from the block propagates unchanged after teardown |
+| `values=` | `app.scope("job", values={JobContext: ctx})` seeds framework values: `scope.resolve(JobContext)` and any provider constructor parameter of that type receive `ctx` |
+| Visibility | `scope.resolve(token)` resolves globally; `scope.resolve(token, owning_module=SomeModule)` only sees what `SomeModule` can see |
+| Lifetime | Single use: `resolve()` outside the `async with` block, or entering twice, raises `LifecycleViolationError`. Scopes do not nest or inherit |
+| Concurrency | Several coroutines of one operation may share a scope. As within one HTTP request, two of them resolving the same request-scoped token for the first time concurrently may each build an instance |
+
+Open scopes while the app is running (after `await app.startup()`), so
+singletons have run their `@post_construct`. `Lauren()` apps have the same
+`app.scope()` once compiled.
+
+A constructor parameter typed as a framework value must still pass startup
+validation, which only knows registered providers. Framework features declare
+their context types (a job or command context) so that it does. Your own
+types need a provider, or a default value on the parameter.
+
+### Request-scoped providers resolved outside any scope
+
+Resolving a `Scope.REQUEST` provider through the container directly
+(`await app.container.resolve(DbSession)`), outside a request, a WebSocket
+connection or `app.scope()`, falls back to **transient** behaviour: a new
+instance on every call that is **never torn down** (no `@pre_destruct`, no
+generator teardown). Use `app.scope()` instead whenever you resolve
+request-scoped providers in scripts or background work.
 
 ---
 
@@ -714,6 +798,7 @@ the default. If omitted, `SINGLETON` is assumed.
 | Inject into middleware (with deps) | `@middleware()` + `@injectable()` |
 | Reference a function provider | `Depends[factory_fn]` |
 | Non-class token | `Token("X")` + `Inject(TOKEN)` in `Annotated[T, Inject(TOKEN)]` |
+| Use request-scoped providers outside a request | `async with app.scope("name") as scope:` + `await scope.resolve(T)` |
 
 ---
 

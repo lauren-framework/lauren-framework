@@ -359,6 +359,31 @@ def get_provider(self, token: Any, owning_module: type | None = None) -> Provide
 def all_providers(self) -> list[Provider]
 ```
 
+#### `DIContainer.registered_providers`
+
+```python
+def registered_providers(self) -> tuple[Provider, ...]
+```
+
+Return every provider in registration order.
+
+Includes each multi-bound sibling, which :meth:`all_providers` (keyed
+by token) collapses to the last one registered.
+
+#### `DIContainer.instance_index`
+
+```python
+def instance_index(self) -> Mapping[Any, Provider]
+```
+
+Map each instance-cache key to the provider that produced it.
+
+A request-scoped instance is cached under ``provider.cls`` — or under
+``id(provider)`` for multi-bound providers, which share their token.
+The scope finaliser uses this map to find an instance's
+``@pre_destruct`` hook. It is built by :meth:`compile` and rebuilt on
+first use after a late registration.
+
 #### `DIContainer.resolve`
 
 ```python
@@ -396,3 +421,45 @@ Record that a singleton's ``@post_construct`` has already run.
 Called by :class:`LifecycleScheduler` after it invokes the hook in
 topological order during startup so that subsequent ``resolve()``
 calls don't re-fire the hook.
+
+## Operation scopes
+
+### `OperationScope`
+
+```python
+class OperationScope(container: DIContainer, name: str = 'operation', values: Mapping[Any, Any] | None = None)
+```
+
+A named DI scope whose ``Scope.REQUEST`` providers live as long as the scope.
+
+Obtain one from :meth:`LaurenApp.scope() <lauren.LaurenApp.scope>` and use it
+as an async context manager; it is single-use.
+
+* ``Scope.REQUEST`` instances are cached per scope; singletons come from the
+  container; transients are new on every resolution and are not tracked.
+* ``values`` seeds the scope's framework values: a token found there is
+  returned as-is, both from :meth:`resolve` and for a provider's constructor
+  parameter of that type.
+* On exit, every request-scoped instance is torn down in reverse creation
+  order — its ``@pre_destruct`` hook, then ``aclose()`` (generator
+  providers' teardown) — with the same finaliser HTTP requests use.
+  Teardown errors are logged and collected in :attr:`teardown_errors`;
+  they are never raised, and an exception from the ``async with`` body
+  propagates unchanged.
+
+Several coroutines of one operation may share a scope. As within one HTTP
+request, two of them resolving the same request-scoped token for the
+first time concurrently may each construct an instance.
+
+#### `OperationScope.resolve`
+
+```python
+def resolve(self, token: Any, owning_module: type | None = None) -> Any
+```
+
+Resolve ``token`` within this scope.
+
+Visibility is global by default (``owning_module=None``); pass a module
+class to resolve only what that module can see, as its own providers
+would. Raises :class:`~lauren.exceptions.LifecycleViolationError`
+outside the ``async with`` block.

@@ -70,6 +70,7 @@ from .background import BackgroundTasks, TaskHandle
 from ._app import Lauren
 from ._arena import RequestAllocation, RequestArena
 from ._asgi import LaurenApp, LaurenFactory
+from .context import OperationScope
 from ._di import DIContainer
 from ._di.custom import (
     Inject,
@@ -305,6 +306,7 @@ __all__ = [
     "LaurenApp",
     "LaurenFactory",
     "DIContainer",
+    "OperationScope",
     # Custom providers (NestJS-style)
     "Token",
     "Inject",
