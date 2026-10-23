@@ -910,6 +910,8 @@ async def handle_websocket(
     )
 
     request_cache: dict[type, Any] = {}
+    # EventPublisher (lauren.events) joins this connection's DI scope through it.
+    ws._lauren_request_cache = request_cache  # type: ignore[attr-defined]
     container = app._container
     owning_module = gateway.owning_module
 

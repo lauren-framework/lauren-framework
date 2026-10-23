@@ -29,6 +29,15 @@
     "startup", "shutdown", "on_shutdown", "mount", "mounts", "scope",
 ]
 "lauren.OperationScope" = ["name", "values", "active", "teardown_errors", "resolve"]
+"lauren.events.EventBus" = ["emit", "recording", "drain", "disabled", "handlers_for"]
+"lauren.events.EventPublisher" = ["emit", "emit_threadsafe", "in_request"]
+"lauren.events.EmitResult" = ["event", "handled", "scheduled", "errors", "ok"]
+"lauren.events.EventContext" = ["event_id", "emitted_at", "depth", "mode", "in_request", "log"]
+"lauren.events.EventRecording" = ["events", "calls", "failures", "of", "handler_calls"]
+"lauren.events.EventsModule" = ["for_root"]
+"lauren.events.TransactionPhase" = ["COMMIT"]
+"lauren.events.UnitOfWork" = ["on_commit", "on_rollback"]
+"lauren.signals.EventHandlerFailed" = ["event_type", "handler", "error", "mode", "event", "timestamp"]
 "lauren.websockets.BroadcastGroup" = [
     "subscribe", "unsubscribe", "unsubscribe_all", "broadcast", "groups", "members", "member_count",
 ]

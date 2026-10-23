@@ -33,20 +33,21 @@ common mistakes.
 22. [OpenAPI 3.1 Generation](#openapi-31-generation)
 23. [Logging](#logging)
 24. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
-25. [WebSockets](#websockets)
-26. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
-27. [Typed Streaming](#typed-streaming)
-28. [Socket.IO Compatibility](#socketio-compatibility)
-29. [Sessions](#sessions)
-30. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
-31. [Configuration](#configuration)
-32. [Static Files](#static-files)
-33. [Request Arena](#request-arena)
-34. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
-35. [AI Documentation Access](#ai-documentation-access)
-36. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-37. [Companion Packages](#companion-packages)
-38. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
+25. [Application Events](#application-events)
+26. [WebSockets](#websockets)
+27. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
+28. [Typed Streaming](#typed-streaming)
+29. [Socket.IO Compatibility](#socketio-compatibility)
+30. [Sessions](#sessions)
+31. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
+32. [Configuration](#configuration)
+33. [Static Files](#static-files)
+34. [Request Arena](#request-arena)
+35. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+36. [AI Documentation Access](#ai-documentation-access)
+37. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+38. [Companion Packages](#companion-packages)
+39. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -1809,7 +1810,9 @@ error/verbose`` sugar methods.
 ``LaurenApp.shutdown()`` is the canonical teardown path. It:
 
 1. Flips the ``_running`` flag so no new work is scheduled.
-2. Drains in-flight requests (up to ``drain_timeout`` seconds).
+2. Drains in-flight requests (up to ``drain_timeout`` seconds), then awaits
+   running ``@on_event`` handler tasks with what is left of the budget and
+   cancels the rest (see [Application Events](#application-events)).
 3. Runs any ``on_shutdown`` callbacks the user registered (LIFO).
 4. Runs ``@pre_destruct`` hooks in reverse topological order.
 
@@ -1873,8 +1876,218 @@ Full event hierarchy:
 | `BackgroundTaskStarted` | Background task begins |
 | `BackgroundTaskComplete` | Background task finishes successfully |
 | `BackgroundTaskFailed` | Background task raises |
+| `EventHandlerFailed` | An `@on_event` handler raised or was cancelled at shutdown (`event_type`, `handler`, `error`, `mode`, `event`) |
 
-`LifecycleEvent` is the common base class for all events above.
+`LifecycleEvent` is the common base class for all events above. Domain
+events do not belong here: publish them on the application `EventBus`
+([Application Events](#application-events)).
+
+---
+
+## Application Events
+
+Typed, in-process domain events: one module announces that something happened
+(`UserRegistered`) and other modules react with `@on_event` handlers, without
+the publisher importing them or widening its module's `imports`. Public names
+live in `lauren.events` (`EventBus`, `EventPublisher`, `on_event`,
+`EventContext`, `EmitResult` and `EventHandlerFailed` are also exported from
+`lauren`). Handlers are discovered on every provider and validated inside
+`LaurenFactory.create`; an emission is a lookup in a compiled per-app table.
+
+```python run
+from dataclasses import dataclass
+
+from lauren import LaurenFactory, Scope, controller, injectable, module, post
+from lauren.events import EventBus, EventContext, EventPublisher, on_event
+from lauren.testing import TestClient
+
+
+@dataclass(frozen=True)
+class EvDomainEvent:                      # optional common base: its handlers see every subclass
+    pass
+
+
+@dataclass(frozen=True)
+class EvUserRegistered(EvDomainEvent):
+    user_id: str
+    email: str
+
+
+@injectable(scope=Scope.REQUEST)
+class EvDbSession:                        # one per request (or per operation scope)
+    def __init__(self) -> None:
+        self.rows: list[str] = []
+
+
+@injectable()
+class EvAuditTrail:                       # lives in its own module in a real app
+    @on_event(priority=100)               # class inferred from the annotation; mode="inline"
+    async def record(self, event: EvDomainEvent, db: EvDbSession, ctx: EventContext) -> None:
+        db.rows.append(f"audit {type(event).__name__} {ctx.event_id}")
+
+
+@injectable()
+class EvWelcomeMailer:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    @on_event(EvUserRegistered, mode="background")   # after the HTTP response
+    async def send_welcome(self, event: EvUserRegistered) -> None:
+        self.sent.append(event.email)
+
+
+@controller("/ev-users")
+class EvUserController:
+    @post("/")
+    async def register(self, events: EventPublisher, db: EvDbSession) -> dict:
+        db.rows.append("insert u1")
+        await events.emit(EvUserRegistered("u1", "ada@example.com"))   # inline handlers share `db`
+        return {"rows": len(db.rows)}
+
+
+@module(controllers=[EvUserController], providers=[EvDbSession, EvAuditTrail, EvWelcomeMailer])
+class EvAppModule: ...
+
+
+ev_app = LaurenFactory.create(EvAppModule)
+await ev_app.startup()
+response = await TestClient(ev_app).arequest("POST", "/ev-users/")
+assert response.json() == {"rows": 2}                     # the audit row joined the request's session
+assert (await ev_app.container.resolve(EvWelcomeMailer)).sent == ["ada@example.com"]
+
+bus = await ev_app.container.resolve(EventBus)            # the per-app singleton bus
+with bus.recording() as rec:
+    result = await bus.emit(EvUserRegistered("u2", "bob@example.com"), wait=True)
+assert (result.handled, result.scheduled, result.ok) == (2, 1, True)
+assert rec.handler_calls("EvWelcomeMailer.send_welcome") == 1
+assert bus.handlers_for(EvUserRegistered) == ("EvAuditTrail.record", "EvWelcomeMailer.send_welcome")
+await ev_app.shutdown()
+```
+
+### `@on_event(event_type=None, *, mode="inline", priority=0, errors=None, enabled=True)`
+
+* Decorates a method of any provider (`@injectable`, controller, any scope);
+  must be called with parentheses. Stacking subscribes one method to several
+  classes. Returns the method unchanged (metadata in `__lauren_on_event__`).
+* `event_type=None` infers the class from the annotation of the first
+  parameter after `self` (a union subscribes to each member, `None` ignored).
+  With an explicit class, that annotation must be the class or a base of it
+  (or absent / `object` / `Any`).
+* A handler on a base class receives every subclass. A method subscribed
+  along an event's MRO runs once, under its most specific subscription.
+* Other parameters: `EventContext` (any name) and dependencies resolvable from
+  the provider's own module. `Request` is never injectable into a handler.
+* `priority`: higher runs first; ties keep discovery order (provider
+  registration order, then method order).
+* `errors`: `"propagate"` (default for inline) re-raises from `emit()`;
+  `"isolate"` (default and only option for deferred modes) logs the error,
+  signals `EventHandlerFailed` and lists it in `EmitResult.errors`.
+* `enabled=False`: validated at startup, never called.
+* Sync (`def`) handlers run in a worker thread; method-level MRO propagation
+  applies (an undecorated override removes the handler).
+
+| `mode` | When it runs | Request-scoped deps through `EventPublisher` | through `EventBus` |
+|---|---|---|---|
+| `"inline"` | inside `emit()`, sequentially | the request's (or connection's) DI scope | one `OperationScope` per `emit()`, shared by its inline handlers |
+| `"concurrent"` | tracked task, started after every inline handler succeeded | a fresh `OperationScope` per call | same |
+| `"background"` | in an HTTP request: after the response, on its `BackgroundTasks` queue; elsewhere (WebSocket, `EventBus`): like `"concurrent"` | a fresh `OperationScope` per call | same |
+
+### Publishing
+
+| Injectable | Scope | Use in |
+|---|---|---|
+| `EventBus` | singleton, one per app (always registered) | services, jobs, commands, `@post_construct` |
+| `EventPublisher` | request (framework factory) | route handlers, WebSocket hooks, request-scoped providers, `@on_event` handlers |
+
+`await events.emit(event, *, wait=False) -> EmitResult`:
+
+1. Handlers for `type(event)` and its bases, ordered by `(-priority, discovery index)`.
+2. Inline handlers run one by one. A `"propagate"` failure stops the rest,
+   schedules **no** deferred handler and re-raises.
+3. Then deferred handlers are scheduled. `wait=True` also awaits the tasks
+   this call started (not request-queued background handlers).
+4. `EmitResult(event, handled, scheduled, errors)`; `.ok` is `not errors`.
+
+Also on `EventPublisher`:
+
+* `emit(event, after=TransactionPhase.COMMIT)` defers the whole emission
+  until the request's `UnitOfWork` commits (dropped on rollback), then
+  delivers it like `EventBus.emit`. `UnitOfWork` is a runtime-checkable
+  protocol (`on_commit(cb)`, `on_rollback(cb)`, callbacks are async) that a
+  database integration provides; without one the call raises
+  `LifecycleViolationError` (`reason="no_unit_of_work"`).
+* `emit_threadsafe(event) -> concurrent.futures.Future[EmitResult]` for sync
+  handlers running in a worker thread; call `.result()` before returning.
+* `in_request` — `True` inside an HTTP request or WebSocket connection.
+
+Resolving `EventPublisher` outside a request, a connection or an `@on_event`
+handler (a job, `app.scope()`) raises `LifecycleViolationError`
+(`reason="no_request_scope"`); a singleton depending on it fails startup with
+`DIScopeViolationError`.
+
+### `EventContext`
+
+Frozen; fields: `event_id` (hex, unique per `emit()`), `emitted_at` (UTC
+`datetime`), `depth` (0 top-level, +1 per re-emission), `mode`, `in_request`,
+`log` (app logger with `context="Event:<EventType>"`). It never exposes the
+`Request`: requests are pooled and deferred handlers outlive them.
+
+### Startup validation and lifecycle
+
+* Wiring errors fail `LaurenFactory.create` with `UnresolvableParameterError`,
+  `detail = {"handler": "Class.method", "param": ..., "reason": ...}`, reasons
+  `"event_type_mismatch"` (annotation narrower than the subscribed class),
+  `"missing_event_parameter"` (no event parameter, or nothing to infer
+  from), `"invalid_event_type"` (annotation is not a class) and
+  `"unresolvable_dependency"`. Bad decorator arguments (including
+  `errors="propagate"` with a deferred mode) raise `DecoratorUsageError`.
+* During `startup()` inline handlers only reach singletons whose
+  `@post_construct` already ran (otherwise `LifecycleViolationError`,
+  `reason="app_not_ready"`); deferred handlers wait until the app is ready.
+* `shutdown()` awaits running handler tasks after the request drain, with what
+  is left of `drain_timeout`, then cancels the rest (each reported as
+  `EventHandlerFailed` with a `CancelledError`). After shutdown `emit()`
+  raises `LifecycleViolationError` (`reason="app_stopped"`).
+* Handlers re-emitting deeper than `max_depth` (default 16) raise
+  `RecursionError` naming the chain of event classes.
+* `EventsModule.for_root(max_depth=16, drain_timeout=None)` is optional tuning;
+  `drain_timeout=None` means "the rest of the shutdown budget".
+
+### Testing
+
+* `with bus.recording() as rec:` captures `rec.events`, `rec.calls`
+  (`"Class.method"` per finished call), `rec.failures`; `rec.of(Type)`,
+  `rec.handler_calls(Class.method | "Class.method")`.
+* `await bus.drain(timeout=None)` waits for running deferred handlers
+  (`TimeoutError` past the timeout).
+* `with bus.disabled(Mailer.send_welcome):` mutes handlers.
+* `bus.handlers_for(Type)` lists handler names in dispatch order.
+* A bare `EventBus()` has no handlers: a recording stand-in for unit tests.
+* The synchronous `TestClient` runs each request in its own event loop, so
+  `"concurrent"` handlers started by a request are cancelled with it: use
+  `wait=True`, `"background"`, or an async test (`await client.arequest(...)`
+  then `await bus.drain()`).
+
+### `SignalBus` vs `EventBus`
+
+| | `SignalBus` | `EventBus` |
+|---|---|---|
+| Purpose | framework lifecycle telemetry | application domain events |
+| Event types | `LifecycleEvent` subclasses | any class |
+| Listeners | plain callables, imperative or a process-global default bus | DI-discovered methods, startup-validated |
+| Errors | always logged and swallowed | `propagate` (inline default) or `isolate` |
+| Modes | sequential inline | inline / concurrent / background |
+| Scope | default bus copied into every app | per app only |
+
+**Rules:**
+
+* Inline handlers are part of the publisher's unit of work; deferred handlers
+  run only if every inline handler succeeded.
+* Never put the `Request` (or a request-scoped instance) inside an event;
+  copy the values a handler needs.
+* Use `SignalBus` for telemetry about the framework, `EventBus` for domain
+  events; never subclass `LifecycleEvent` for domain events.
+* Events are in-process and non-durable; deferred work is lost on a crash.
 
 ---
 
