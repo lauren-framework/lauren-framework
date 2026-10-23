@@ -198,7 +198,16 @@ def test_request_summary_redacts_by_substring_case_insensitively() -> None:
     ] in summary["headers"]
 
 
-def test_production_profile_is_none_without_the_config_module() -> None:
+def test_production_profile_is_none_without_the_config_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_import = _debug.importlib.import_module
+
+    def _import(name: str, *args: Any) -> Any:
+        if name == "lauren.config":
+            raise ImportError(name)
+        return real_import(name, *args)
+
+    monkeypatch.setattr(_debug.importlib, "import_module", _import)
+
     class _Container:
         def singletons(self) -> dict[Any, Any]:
             raise AssertionError("must not be consulted")
