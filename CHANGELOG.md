@@ -7,6 +7,30 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- `OperationScope` and `app.scope(name="operation", *, values=None)` (also on
+  `Lauren`): the request scope without a request, for scripts and background
+  work. `Scope.REQUEST` providers get one instance per scope and are torn down on
+  exit (`@pre_destruct`, then generator teardown, newest first); `values=` seeds
+  framework values; teardown errors are collected on `scope.teardown_errors` and
+  never raised.
+
+### Changed
+
+- HTTP requests, WebSocket connections and operation scopes share one
+  request-scope finaliser built on a provider index computed once at startup,
+  instead of a provider map rebuilt on every request. Teardown error log messages
+  now name the scope kind.
+
+### Fixed
+
+- Module providers are registered in declaration order (imported modules first).
+  The order used to follow set iteration, so `list[T]` multi-binding order and the
+  lifecycle order of independent providers could change between runs.
+- `@pre_destruct` now runs for multi-bound (`multi=True`) request-scoped providers
+  at the end of a request or WebSocket connection.
+
 ## [1.10.0] - 2026-10-23
 
 ### Security
