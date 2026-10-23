@@ -399,16 +399,177 @@ def _build_request_body(ext: Extraction, components: dict[str, Any]) -> dict[str
     return None
 
 
+def _effective_model_schema(effective_model: Any, components: dict[str, Any]) -> dict[str, Any]:
+    """Schema of a response body type (the historical ``response_model`` rendering)."""
+    if is_native_discriminated_union(effective_model):
+        return openapi_schema_for_discriminated(effective_model, components["schemas"])
+    if is_discriminated_union(effective_model):
+        return _schema_for_discriminated_union(effective_model, components)
+    if isinstance(effective_model, type) and (
+        is_pydantic_model(effective_model)
+        or is_msgspec_struct(effective_model)
+        or is_dataclass(effective_model)
+        or is_typeddict(effective_model)
+    ):
+        return {"$ref": _ensure_component(components, effective_model)}
+    if get_origin(effective_model) in (list, tuple):
+        item_args = get_args(effective_model)
+        if (
+            item_args
+            and isinstance(item_args[0], type)
+            and (
+                is_pydantic_model(item_args[0])
+                or is_msgspec_struct(item_args[0])
+                or is_dataclass(item_args[0])
+                or is_typeddict(item_args[0])
+            )
+        ):
+            ref = _ensure_component(components, item_args[0])
+            return {"type": "array", "items": {"$ref": ref}}
+        return _python_type_to_schema(effective_model)
+    return _python_type_to_schema(effective_model)
+
+
+def _is_model_type(tp: Any) -> bool:
+    return isinstance(tp, type) and (
+        is_pydantic_model(tp) or is_msgspec_struct(tp) or is_dataclass(tp) or is_typeddict(tp)
+    )
+
+
+def _response_body_schema(body: Any, components: dict[str, Any]) -> dict[str, Any]:
+    """Schema of a declared response body: models by ``$ref``, containers and unions recursively."""
+    from .._schema._compiler import split_annotated
+
+    if is_native_discriminated_union(body) or is_discriminated_union(body):
+        return _effective_model_schema(body, components)
+    base, _ = split_annotated(body)
+    if base is not body:
+        return _response_body_schema(base, components)
+    if base is dict:
+        return {"type": "object"}
+    if base is list:
+        return {"type": "array"}
+    if is_native_discriminated_union(base) or is_discriminated_union(base) or _is_model_type(base):
+        return _effective_model_schema(base, components)
+    origin = get_origin(base)
+    args = get_args(base)
+    if origin in (list, set, frozenset) and args:
+        return {"type": "array", "items": _response_body_schema(args[0], components)}
+    if origin is dict and len(args) == 2:
+        return {"type": "object", "additionalProperties": _response_body_schema(args[1], components)}
+    if origin in _union_origins() and args:
+        non_none = [a for a in args if a is not type(None)]
+        members = [_response_body_schema(a, components) for a in non_none]
+        if type(None) in args:
+            members.append({"type": "null"})
+        return members[0] if len(members) == 1 else {"anyOf": members}
+    return _effective_model_schema(base, components)
+
+
+def _union_origins() -> tuple[Any, ...]:
+    import types as _types  # noqa: PLC0415
+    from typing import Union  # noqa: PLC0415
+
+    return (Union, _types.UnionType)
+
+
+#: Documented ``Location`` header of a ``Created`` / ``Accepted`` response.
+_LOCATION_HEADER: dict[str, Any] = {
+    "description": "URL of the resource the response refers to",
+    "schema": {"type": "string", "format": "uri-reference"},
+}
+
+#: Error envelope components referenced by ``@raises`` responses, per ``error_format``.
+_ERROR_COMPONENTS: dict[str, tuple[str, str, dict[str, Any]]] = {
+    "default": (
+        "LaurenErrorEnvelope",
+        "application/json",
+        {
+            "type": "object",
+            "title": "LaurenErrorEnvelope",
+            "required": ["error"],
+            "properties": {
+                "error": {
+                    "type": "object",
+                    "required": ["code", "message"],
+                    "properties": {
+                        "code": {"type": "string"},
+                        "message": {"type": "string"},
+                        "detail": {"type": "object"},
+                    },
+                }
+            },
+        },
+    ),
+    "problem": (
+        "LaurenProblemDetails",
+        "application/problem+json",
+        {
+            "type": "object",
+            "title": "LaurenProblemDetails",
+            "properties": {
+                "type": {"type": "string"},
+                "title": {"type": "string"},
+                "status": {"type": "integer"},
+                "detail": {"type": "string"},
+                "instance": {"type": "string"},
+                "code": {"type": "string"},
+            },
+        },
+    ),
+}
+
+
+def _error_summary(exc_type: type) -> str:
+    doc = (exc_type.__dict__.get("__doc__") or "").strip()
+    if doc:
+        return doc.split("\n")[0].strip()
+    from ._contracts import describe_status  # noqa: PLC0415
+
+    return describe_status(int(exc_type.status_code))  # type: ignore[attr-defined]
+
+
+def _add_raises(
+    responses: dict[str, Any], raises: Any, components: dict[str, Any], error_format: str
+) -> None:
+    """One response per declared error status, referencing the error envelope."""
+    by_status: dict[int, list[Any]] = {}
+    for spec in raises:
+        by_status.setdefault(spec.status_code, []).append(spec)
+    if not by_status:
+        return
+    name, media, schema = _ERROR_COMPONENTS["default" if error_format == "default" else "problem"]
+    components["schemas"].setdefault(name, schema)
+    for status in sorted(by_status):
+        specs = by_status[status]
+        description = "; ".join(dict.fromkeys(s.description or _error_summary(s.exc_type) for s in specs))
+        entry = responses.setdefault(str(status), {"description": description})
+        entry.setdefault("content", {}).setdefault(
+            media, {"schema": {"$ref": f"#/components/schemas/{name}"}}
+        )
+        codes = entry.setdefault("x-lauren-error-codes", [])
+        for spec in specs:
+            if spec.code not in codes:
+                codes.append(spec.code)
+
+
 def _build_responses(
     rmeta: RouteMeta,
     components: dict[str, Any],
     *,
     streaming_item_type: Any = None,
     return_annotation: Any = None,
+    table: Any = None,
+    raises: Any = (),
+    error_format: str = "default",
 ) -> dict[str, Any]:
     responses: dict[str, Any] = {}
     for code, v in (rmeta.responses or {}).items():
         responses[str(code)] = dict(v) if isinstance(v, dict) else {"description": str(v)}
+    if table is not None:
+        _add_declared_responses(responses, table, rmeta, components, manual=bool(responses))
+        _add_raises(responses, raises, components, error_format)
+        return responses
     if not responses:
         responses["200"] = {"description": "Success"}
 
@@ -420,36 +581,7 @@ def _build_responses(
         effective_model = return_annotation
 
     if effective_model is not None:
-        if is_native_discriminated_union(effective_model):
-            schema: dict[str, Any] = openapi_schema_for_discriminated(effective_model, components["schemas"])
-        elif is_discriminated_union(effective_model):
-            schema = _schema_for_discriminated_union(effective_model, components)
-        elif isinstance(effective_model, type) and (
-            is_pydantic_model(effective_model)
-            or is_msgspec_struct(effective_model)
-            or is_dataclass(effective_model)
-            or is_typeddict(effective_model)
-        ):
-            schema = {"$ref": _ensure_component(components, effective_model)}
-        elif get_origin(effective_model) in (list, tuple):
-            item_args = get_args(effective_model)
-            if (
-                item_args
-                and isinstance(item_args[0], type)
-                and (
-                    is_pydantic_model(item_args[0])
-                    or is_msgspec_struct(item_args[0])
-                    or is_dataclass(item_args[0])
-                    or is_typeddict(item_args[0])
-                )
-            ):
-                ref = _ensure_component(components, item_args[0])
-                schema = {"type": "array", "items": {"$ref": ref}}
-            else:
-                schema = _python_type_to_schema(effective_model)
-        else:
-            schema = _python_type_to_schema(effective_model)
-
+        schema = _effective_model_schema(effective_model, components)
         ok = responses.setdefault("200", {"description": "Success"})
         ok.setdefault("content", {})
         # StreamingResponse[T] — declare all three negotiable content types.
@@ -467,6 +599,42 @@ def _build_responses(
         for media in FORMAT_TO_MEDIA_TYPE.values():
             ok["content"][media] = {"schema": item_schema}
     return responses
+
+
+def _add_declared_responses(
+    responses: dict[str, Any], table: Any, rmeta: RouteMeta, components: dict[str, Any], *, manual: bool
+) -> None:
+    """Document the route's declared success responses (status → body) from its response table."""
+    from ._contracts import NO_BODY, OPAQUE, UNTYPED, describe_status  # noqa: PLC0415
+
+    for member in table.members:
+        # An annotation that could not be resolved stays undescribed.
+        described = member.body not in (NO_BODY, OPAQUE, UNTYPED) and not isinstance(
+            member.body, (str, ForwardRef)
+        )
+        if manual and not described and not table.status_declared and str(member.status) not in responses:
+            continue  # an undeclared default next to hand-written responses stays undocumented
+        entry = responses.setdefault(
+            str(member.status), {"description": member.description or describe_status(member.status)}
+        )
+        if table.stream_item is not None:
+            item_schema = _resolve_item_schema(table.stream_item, components)
+            content = entry.setdefault("content", {})
+            for media in FORMAT_TO_MEDIA_TYPE.values():
+                content[media] = {"schema": item_schema}
+        elif described:
+            schema = _response_body_schema(member.body, components)
+            entry.setdefault("content", {})["application/json"] = {"schema": schema}
+        if member.location:
+            entry.setdefault("headers", {}).setdefault("Location", dict(_LOCATION_HEADER))
+    if rmeta.response_headers:
+        primary = table.bare.status if table.bare is not None else table.members[0].status
+        entry = responses.setdefault(str(primary), {"description": describe_status(primary)})
+        headers = entry.setdefault("headers", {})
+        for name, spec in rmeta.response_headers.items():
+            headers[name] = (
+                {"description": spec, "schema": {"type": "string"}} if isinstance(spec, str) else dict(spec)
+            )
 
 
 def _resolve_item_schema(item_type: Any, components: dict[str, Any]) -> dict[str, Any]:
@@ -603,7 +771,8 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             op["requestBody"] = request_body
         # Extract return annotation from the handler function for response schema inference.
         return_annotation: Any = None
-        if compiled is not None:
+        table = getattr(compiled, "response_table", None) if compiled is not None else None
+        if compiled is not None and table is None:
             try:
                 hints = resolve_type_hints(compiled.handler_fn, include_extras=False)
                 ret = hints.get("return", _inspect.Parameter.empty)
@@ -619,6 +788,9 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             components,
             streaming_item_type=streaming_item,
             return_annotation=return_annotation,
+            table=table,
+            raises=getattr(compiled, "raises", ()) if compiled is not None else (),
+            error_format=getattr(app, "_error_format", "default"),
         )
         if streaming_item is not None:
             # Feature 7 — vendor extension telling OpenAPI tooling this

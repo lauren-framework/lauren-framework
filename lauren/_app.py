@@ -95,6 +95,8 @@ class Lauren:
         hosted_services: bool = True,
         scheduler: bool = True,
         validation: Any | None = None,
+        response_validation: str = "off",
+        json_fallback: str = "warn",
     ) -> None:
         self._title = title
         self._version = version
@@ -134,6 +136,8 @@ class Lauren:
         self._hosted_services = hosted_services
         self._scheduler = scheduler
         self._validation = validation
+        self._response_validation = response_validation
+        self._json_fallback = json_fallback
         self._startup_handlers: list[Callable[[], Any]] = []
         self._shutdown_handlers: list[Callable[[], Any]] = []
 
@@ -185,6 +189,10 @@ class Lauren:
 
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             self._assert_not_compiled("register a route")
+            # Route options fail here, at decoration time, like ``@get(...)``.
+            from .decorators import _validate_route_options
+
+            _validate_route_options(f"app.{method.lower()}", fn, kwargs)
             self._route_buffer.append(_PendingRoute(method=method, path=path, fn=fn, kwargs=kwargs))
             return fn
 
@@ -472,6 +480,8 @@ class Lauren:
             hosted_services=self._hosted_services,
             scheduler=self._scheduler,
             validation=self._validation,
+            response_validation=self._response_validation,
+            json_fallback=self._json_fallback,
         )
         # --- Run user-provided startup hooks now that DI is live ---------
         for hook in self._startup_handlers:
@@ -662,6 +672,7 @@ def _wrap_function_as_method(fn: Callable[..., Any]) -> Callable[..., Any]:
         "__lauren_use_exception_handlers__",
         "__lauren_use_encoder__",
         "__lauren_metadata__",
+        "__lauren_raises__",
     ):
         if hasattr(fn, marker):
             setattr(method, marker, getattr(fn, marker))

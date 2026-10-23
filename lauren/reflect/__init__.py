@@ -79,6 +79,7 @@ from ._types import (
     ReflectedController,
     ReflectedError,
     ReflectedModule,
+    ReflectedResponse,
     ReflectedRoute,
     ReflectedWsGateway,
     ReflectedWsMessage,
@@ -114,6 +115,7 @@ __all__ = [
     "get_route_metadata",
     # Result types
     "ReflectedRoute",
+    "ReflectedResponse",
     "ReflectedWsMessage",
     "ReflectedController",
     "ReflectedModule",

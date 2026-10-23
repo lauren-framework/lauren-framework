@@ -33,6 +33,9 @@ Core capabilities
   (any of the supported model kinds).
 * Auto-serialization: return dicts, models, dataclasses, or
   ``(body, status)`` tuples; lauren builds the Response.
+* Response contracts: ``status_code=`` and typed results (``Ok``,
+  ``Created``, ``Accepted``, ``NoContent``) declare a route's statuses;
+  ``response_validation="filter"`` keeps undeclared fields off the wire.
 * Strict inheritance: subclasses are controllers / injectables only when
   re-decorated explicitly.
 
@@ -110,6 +113,7 @@ from .decorators import (
     post_construct,
     pre_destruct,
     put,
+    raises,
     set_metadata,
     use_encoder,
     use_exception_handlers,
@@ -271,6 +275,7 @@ from .reflect import (
     get_all_ws_gateways,
     get_route_metadata,
     # result types
+    ReflectedResponse,
     ReflectedRoute,
     ReflectedWsMessage,
     ReflectedController,
@@ -281,6 +286,7 @@ from .reflect import (
     error_catalog,
 )
 from ._staticfiles import StaticFilesModule
+from .responses import Accepted, Created, NoContent, Ok, Status
 from .config import ConfigModule, Secret
 from .scheduling import (
     CronExpression,
@@ -400,6 +406,13 @@ __all__ = [
     "propagate_metadata",
     "openapi_security",
     "OpenAPISecurityMeta",
+    # responses
+    "Ok",
+    "Created",
+    "Accepted",
+    "NoContent",
+    "Status",
+    "raises",
     # static files
     "StaticFilesModule",
     # typed configuration (the rest lives in lauren.config)
@@ -531,6 +544,7 @@ __all__ = [
     "get_route_metadata",
     # reflect — result types
     "ReflectedRoute",
+    "ReflectedResponse",
     "ReflectedWsMessage",
     "ReflectedController",
     "ReflectedModule",

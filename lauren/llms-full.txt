@@ -26,31 +26,32 @@ common mistakes.
 15. [Exception Handlers](#exception-handlers)
 16. [`@propagate_metadata` — copy Lauren decorator metadata between objects](#propagate_metadata--copy-lauren-decorator-metadata-between-objects)
 17. [Auto-Serialization](#auto-serialization)
-18. [Sync vs Async Handlers](#sync-vs-async-handlers)
-19. [Background Tasks](#background-tasks)
-20. [Hosted Services & Scheduling](#hosted-services--scheduling)
-21. [Error Catalog](#error-catalog)
-22. [Debug Error Pages](#debug-error-pages)
-23. [Testing](#testing)
-24. [Strict Decorator Inheritance](#strict-decorator-inheritance)
-25. [OpenAPI 3.1 Generation](#openapi-31-generation)
-26. [Logging](#logging)
-27. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
-28. [Application Events](#application-events)
-29. [WebSockets](#websockets)
-30. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
-31. [Typed Streaming](#typed-streaming)
-32. [Socket.IO Compatibility](#socketio-compatibility)
-33. [Sessions](#sessions)
-34. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
-35. [Configuration](#configuration)
-36. [Static Files](#static-files)
-37. [Request Arena](#request-arena)
-38. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
-39. [AI Documentation Access](#ai-documentation-access)
-40. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-41. [Companion Packages](#companion-packages)
-42. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
+18. [Response Contracts](#response-contracts)
+19. [Sync vs Async Handlers](#sync-vs-async-handlers)
+20. [Background Tasks](#background-tasks)
+21. [Hosted Services & Scheduling](#hosted-services--scheduling)
+22. [Error Catalog](#error-catalog)
+23. [Debug Error Pages](#debug-error-pages)
+24. [Testing](#testing)
+25. [Strict Decorator Inheritance](#strict-decorator-inheritance)
+26. [OpenAPI 3.1 Generation](#openapi-31-generation)
+27. [Logging](#logging)
+28. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
+29. [Application Events](#application-events)
+30. [WebSockets](#websockets)
+31. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
+32. [Typed Streaming](#typed-streaming)
+33. [Socket.IO Compatibility](#socketio-compatibility)
+34. [Sessions](#sessions)
+35. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
+36. [Configuration](#configuration)
+37. [Static Files](#static-files)
+38. [Request Arena](#request-arena)
+39. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+40. [AI Documentation Access](#ai-documentation-access)
+41. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+42. [Companion Packages](#companion-packages)
+43. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -90,10 +91,9 @@ class UserController:
     async def get_user(self, id: Path[int]) -> dict:
         return {"id": id, "found": True}
 
-    @post("/")
-    async def create(self, body: Json[CreateUser]):
-        # tuple form: (body, status); lauren builds the 201 Response.
-        return body.model_dump(), 201
+    @post("/", status_code=201)      # the declared success status (documented in OpenAPI)
+    async def create(self, body: Json[CreateUser]) -> dict:
+        return body.model_dump()
 
 @module(controllers=[UserController])
 class AppModule:
@@ -115,7 +115,7 @@ assert client.post("/users/", json={"name": "Ada", "age": 36}).status_code == 20
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, problem_type_base=None, debug=False, lazy_startup=True, hosted_services=True, scheduler=True, validation=None)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, problem_type_base=None, debug=False, lazy_startup=True, hosted_services=True, scheduler=True, validation=None, response_validation="off", json_fallback="warn")`
 
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
@@ -123,7 +123,7 @@ Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven ph
 2. **Provider collection** — gather every `@injectable` from the graph; then (Phase 2b) load and validate every `ConfigModule` settings class, raising one `ConfigValidationError` for all problems (see [Configuration](#configuration)).
 3. **Protocol binding** — resolve `provides=[Protocol]` declarations.
 4. **DI graph compilation** — detect circular deps, scope violations, protocol ambiguities.
-5. **Router compilation** — walk controllers, compile handler signatures into extraction plans (every path / query / header / cookie / body / form / stream parameter and WebSocket payload type is compiled into a validator by the app's type compiler — see [Validation](#validation)), insert into the radix tree.
+5. **Router compilation** — walk controllers, compile handler signatures into extraction plans (every path / query / header / cookie / body / form / stream parameter and WebSocket payload type is compiled into a validator by the app's type compiler — see [Validation](#validation)), insert into the radix tree. Each route's declared responses (`status_code=`, typed results such as `Created[T]`, `Annotated[T, Status(206)]`, `response_model=`) are read here — contradictions raise `DecoratorUsageError` — and routes that enforce a response contract get their projector compiled (see [Response Contracts](#response-contracts)).
 6. **Lifecycle order computation** — build the topological `@post_construct` / `@pre_destruct` schedule. Just before it (Phase 6a) one discovery pass indexes provider methods and classes carrying feature markers; hosted services and scheduled jobs are validated there (singleton scope, unique names, `ScheduleModule` imported — see [Hosted Services & Scheduling](#hosted-services--scheduling)).
 7. **Readiness** — build the `LaurenApp` object. `startup()` (singleton construction, `@post_construct` hooks, `StartupComplete`) runs on the ASGI lifespan `startup` event. When the driver sends no lifespan events — e.g. `httpx.ASGITransport` — the app starts itself on its first HTTP or WebSocket request (once, behind a single-flight latch, with a logged warning) unless built with `lazy_startup=False`; `lauren.testing.TestClient` starts it explicitly.
 
@@ -166,6 +166,8 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `hosted_services` | `bool` | `True` | `False` discovers and validates `@hosted_service` classes but does not start them (tests, one-off commands) |
 | `scheduler` | `bool` | `True` | `False` keeps scheduled jobs discovered and validated (and `SchedulerRegistry.trigger` working) but fires nothing |
 | `validation` | `ValidationPolicy` | `None` | Validation policy: `ValidationPolicy(stdlib_models="warn", json_mode="lax", extra="ignore", include_input=None, max_issues=50)` (see [Validation](#validation); `StartupError` with `reason="invalid_validation_policy"` for anything else) |
+| `response_validation` | `str` | `"off"` | Default response contract of every route: `"off"`, `"filter"` (undeclared fields never leave) or `"strict"` (also validates) — see [Response Contracts](#response-contracts); `StartupError` with `reason="invalid_response_validation"` for anything else |
+| `json_fallback` | `str` | `"warn"` | What encoders do with an object no rule covers: `"dict"` (public attributes), `"warn"` (same, logged once per type) or `"error"` (500) — see [Response Contracts](#response-contracts); `StartupError` with `reason="invalid_json_fallback"` |
 
 ### `Lauren` (imperative API)
 
@@ -187,9 +189,9 @@ app = Lauren()
 async def health() -> dict:
     return {"status": "ok"}
 
-@app.post("/users")
-async def create_user(body: Json[CreateUser]) -> tuple[dict, int]:
-    return asdict(body), 201
+@app.post("/users", status_code=201)
+async def create_user(body: Json[CreateUser]) -> dict:
+    return asdict(body)
 
 # `app` itself is the ASGI callable (`uvicorn main:app`); it compiles lazily.
 client = TestClient(app)
@@ -226,6 +228,8 @@ Attributes & methods:
 - `app.scope(name="operation", *, values=None)` — open an `OperationScope` for request-scoped providers outside a request (see [Operation scopes](#operation-scopes-appscope)).
 - `app.type_compiler: TypeCompiler` — the type compiler `create()` used; `app.type_compiler.compile(T)` gives services the HTTP layer's validation (see [Validation](#validation)).
 - `app.validation_policy: ValidationPolicy` — the app's validation policy.
+- `app.response_validation: str` — the default response contract (`"off"` / `"filter"` / `"strict"`).
+- `app.json_fallback: str` — the `json_fallback` policy (`"dict"` / `"warn"` / `"error"`).
 
 ### Mounting Sub-Applications
 
@@ -322,10 +326,19 @@ class UserController:
 
 ### Route decorators
 
-- `@get(path="", *, summary=None, description=None, response_model=None, responses=None, deprecated=False, operation_id=None, include_in_schema=True, tags=None)`
+- `@get(path="", *, summary=None, description=None, response_model=None, responses=None, deprecated=False, operation_id=None, include_in_schema=True, tags=None, status_code=None, response_validation=None, response_headers=None)`
 - `@post(...)`, `@put(...)`, `@patch(...)`, `@delete(...)`, `@head(...)`, `@options(...)`
 
 Each decorator attaches a `RouteMeta` to the method. Multiple route decorators on the same method register multiple routes.
+
+- `status_code` — the declared success status (int, 100–599): plain return values are sent with it, `None` sends it with an empty body, and OpenAPI documents it.
+- `response_validation` — `"off"` / `"filter"` / `"strict"` for this route; `None` follows the app's `response_validation=` (see [Response Contracts](#response-contracts)).
+- `response_headers` — documentation-only success-response headers: `{"Location": "URL of the user"}` (a description or an OpenAPI Header Object dict).
+- `response_model` — the declared body type (any model kind, or a container of them); it wins over the return annotation for OpenAPI and for the response contract.
+
+Invalid option values fail at decoration time with `DecoratorUsageError`
+(`detail = {"decorator", "target", "option", "reason"}`, e.g. `reason="invalid_status_code"`).
+`@raises(*http_errors, description=None)` declares the `HTTPError` subclasses a route (or, on a class, every route of the controller) raises — see [Response Contracts](#response-contracts).
 
 ```python run
 @controller("/p")
@@ -534,9 +547,9 @@ class CreatePost(BaseModel):
     title: str
     body: str
 
-@post("/posts")
-async def create(self, body: Json[CreatePost]) -> tuple[dict, int]:
-    return body.model_dump(), 201
+@post("/posts", status_code=201)
+async def create(self, body: Json[CreatePost]) -> dict:
+    return body.model_dump()
 ```
 
 Validation errors are raised as `ExtractorError` and mapped to HTTP 422. Every
@@ -1576,7 +1589,7 @@ async def r3(self) -> None:
 
 @post("/r4")
 async def r4(self):
-    return {"id": 42}, 201                  # -> JSON, 201 (tuple form)
+    return {"id": 42}, 201                  # -> JSON, 201 (tuple form; undeclared to OpenAPI)
 
 @post("/r5")
 async def r5(self):
@@ -1593,7 +1606,21 @@ async def r7(self) -> list[BaseModel]:
 @get("/r8")
 async def r8(self):
     return Response.html("<h1>hi</h1>")     # raw Response is honored
+
+@post("/r9", status_code=201)
+async def r9(self) -> dict:
+    return {"id": 42}                       # -> JSON, 201 (declared: documented in OpenAPI)
+
+@post("/r10")
+async def r10(self) -> Created[dict]:
+    return Created({"id": 42}, location="/r/42")  # -> JSON, 201 + Location (typed result)
 ```
+
+A status set by `status_code=` or a typed result (`Ok`, `Created`, `Accepted`,
+`NoContent`, `Annotated[T, Status(206)]`) is **declared**: OpenAPI documents it.
+The tuple form is **undeclared** (chosen at runtime, invisible to OpenAPI). A
+dataclass or model is dumped by its *runtime* type unless the route enforces a
+response contract — see [Response Contracts](#response-contracts).
 
 ### JSON Serialisation
 
@@ -1614,6 +1641,12 @@ frame.  Pass it once at factory time and every output path honours it.
 | `MsgspecEncoder` | `msgspec` | Fastest when returning `msgspec.Struct` directly |
 | `PydanticEncoder` | `pydantic` (v2) | Pydantic-heavy APIs; honours all `@field_serializer` / `model_config` rules; skips the intermediate `model_dump()` dict |
 | `JSONEncoder` | — | Protocol — implement `encode(obj) -> bytes` and `encode_compact(obj) -> bytes` |
+
+The built-in encoders accept `fallback="dict" | "warn" | "error"` (e.g.
+`StdlibJSONEncoder(fallback="error")`) to pin the `json_fallback` policy for
+objects no rule covers; without it they follow the app's
+`LaurenFactory.create(json_fallback=...)` (default `"warn"`), and `"dict"`
+outside an app.
 
 ```python run
 from lauren import LaurenFactory, PydanticEncoder, auto_encoder
@@ -1666,6 +1699,148 @@ handler is in scope at those points.
 never bare `@use_encoder`.  Passing a class instead of an instance
 (`@use_encoder(OrjsonEncoder)`) is rejected at decoration time with a clear
 error.
+
+---
+
+## Response Contracts
+
+A route declares its output like its input — by types. `status_code=` and typed
+results declare the statuses, the return annotation (or `response_model=`)
+declares the body, and `response_validation=` decides whether the wire honours
+it. Everything is read in `LaurenFactory.create`; the request path runs prebuilt
+closures.
+
+```python run
+from dataclasses import dataclass
+
+from lauren import (
+    Created, LaurenFactory, NoContent, NotFoundError, Ok, controller, delete, get, module, post, put, raises,
+)
+from lauren.testing import TestClient
+
+
+@dataclass
+class UserOut:
+    id: int
+    name: str
+
+
+@dataclass
+class UserInDB(UserOut):
+    password_hash: str
+
+
+USERS = {1: UserInDB(1, "ada", "bcrypt$...")}
+
+
+@controller("/accounts")
+class AccountController:
+    @get("/{id}")
+    @raises(NotFoundError, description="No account with that id")
+    async def show(self, id: int) -> UserOut:
+        if id not in USERS:
+            raise NotFoundError(f"no account {id}")
+        return USERS[id]                       # internal record: filtered to UserOut
+
+    @post("/", status_code=201)
+    async def create(self) -> UserOut:
+        return USERS[1]
+
+    @put("/{id}")
+    async def upsert(self, id: int) -> Ok[UserOut] | Created[UserOut]:
+        if id in USERS:
+            return Ok(USERS[id])
+        return Created(UserOut(id, "new"), location=f"/accounts/{id}")
+
+    @delete("/{id}")
+    async def remove(self, id: int) -> NoContent:
+        return NoContent()
+
+
+@module(controllers=[AccountController])
+class AccountsModule:
+    pass
+
+
+app = LaurenFactory.create(AccountsModule, response_validation="filter")
+client = TestClient(app)
+assert client.get("/accounts/1").json() == {"id": 1, "name": "ada"}   # no password_hash
+assert client.post("/accounts/").status_code == 201
+assert client.put("/accounts/9").header("location") == "/accounts/9"
+assert client.delete("/accounts/1").status_code == 204
+responses = app.openapi()["paths"]["/accounts/{id}"]["put"]["responses"]
+assert sorted(responses) == ["200", "201"]
+```
+
+### Typed results — `Ok[T]`, `Created[T]`, `Accepted[T]`, `NoContent`, `Status`
+
+Frozen generic dataclasses (`from lauren import Ok, Created, Accepted, NoContent, Status`):
+
+| Class | Status | Fields |
+|---|---|---|
+| `Ok(value, headers=None)` | 200 | |
+| `Created(value, location=None, headers=None)` | 201 | `location` → `Location` header |
+| `Accepted(value=None, location=None, headers=None)` | 202 | `location` → `Location` header |
+| `NoContent(headers=None)` | 204 | empty body |
+| `Status(code, description=None)` | — | `Annotated` metadata: `-> Annotated[Chunk, Status(206)]` |
+
+The wrapper's class picks the status (`.status` class attribute); `headers` are
+added and `location` wins over a `Location` entry in them; a `None` value sends
+an empty body. The value is serialized with the route's encoder (`@use_encoder`
+→ app `json_encoder`) — use `Created(user)` rather than `Response.created(user)`,
+which uses the process-wide default encoder. A union of results documents one
+response per member; at runtime the returned instance's class picks it, and a
+plain value maps to the route's `status_code=` (default 200). Typed results also
+work on unannotated routes (`return Created(x)` replaces `return x, 201`).
+
+Startup checks (`DecoratorUsageError`, `detail = {"decorator": "route", "target", "reason"}`):
+`status_code` 204/304 with a body type (`reason="body_not_allowed"`; allowed:
+`None`, `NoContent`, no annotation, `Response`), `status_code=` contradicting a
+result or `Status` (`"status_conflict"`), one status declared twice
+(`Ok[A] | Ok[B]` → `"duplicate_status"`; write `Ok[A | B]`), plain types with
+different `Status` codes (`"ambiguous_status"`), an invalid `Status` code
+(`"invalid_status_code"`).
+
+### `response_validation="off" | "filter" | "strict"`
+
+Set app-wide (`LaurenFactory.create(response_validation=...)`, `Lauren(...)`) and
+per route (`@get(..., response_validation="strict")`). The declared body type is
+`response_model=` when set, else the return annotation (each typed result's `T`).
+
+| Mode | Instance (or subclass) of the declared type | Mapping | Other object (ORM row) | Wrong leaf types |
+|---|---|---|---|---|
+| `"off"` (1.x default) | dumped by its runtime type (subclass fields leak) | as is | `__dict__` fallback | not checked |
+| `"filter"` | declared fields only | undeclared keys dropped, recursively | declared attributes read | passed through |
+| `"strict"` | projected + validated | projected + validated | read + validated | 500 |
+
+- Models emit declared fields under their wire names (`Alias`, `rename="camel"`, pydantic aliases), as the OpenAPI schema documents them.
+- A missing required field, a scalar where a model or list is declared, or a value no union member produces is a violation in both modes → 500 `{"error": {"code": "response_validation_error", ...}}`. The body never contains the payload; the violation is logged at ERROR with `issues` (`{"loc": ["response", "name"], "type": "missing", "msg": ...}`); with `debug=` the issues are also in `detail.issues`. Exception handlers do not see violations; interceptors see the exception.
+- Pydantic models and `msgspec.Struct` types use their library (the declared type's serializer drops a subclass's fields); non-instances are converted with `from_attributes=True`, so an unconvertible value is a violation in `filter` too.
+- `StreamingResponse[T]` items are projected one by one: a bad first item → 500, a later one → a `response_validation_error` error frame, then the stream ends.
+- Untyped routes and returned `Response` objects are never enforced. An unsupported declared type under `filter` / `strict` fails startup with `UnresolvableParameterError` (`detail["reason"] == "unsupported_response_type"`, `detail["param"] == "<return>"`).
+- `response_model=` with the contract `"off"` only documents: `create()` logs one warning listing those routes. lauren 2.0 makes `"filter"` the default.
+
+### `@raises(*http_errors, description=None)`
+
+Declares the `HTTPError` subclasses a route raises (metadata only — runtime
+behaviour is unchanged). On a method it propagates like `@get`; on a controller
+it covers the class's own routes (not a subclass's). Stacking accumulates. Feeds
+OpenAPI (one response per status with the error envelope schema —
+`LaurenErrorEnvelope`, or `LaurenProblemDetails` under `error_format="rfc9457"`
+— and the codes in `x-lauren-error-codes`) and `ReflectedRoute.raises`. Each
+argument must be an `HTTPError` subclass with an integer `status_code`; bare
+`@raises` / `@raises()` are rejected (`DecoratorUsageError`). With `debug=` on, a
+route that declares `@raises` logs one warning per undeclared `HTTPError` class
+its handler raises.
+
+### `json_fallback="dict" | "warn" | "error"`
+
+An object no encoder rule covers (not a dict, list, model, dataclass, struct,
+date, enum, …) used to ship its public attributes. `"dict"` keeps that, `"warn"`
+(the default) also logs one warning per type and app, `"error"` raises
+`TypeError` → 500 `internal_error`. `StdlibJSONEncoder(fallback=...)` (and the
+other built-in encoders) pin their own policy; outside an app the fallback stays
+`"dict"`. lauren 2.0 makes `"error"` the default.
 
 ---
 
@@ -2546,7 +2721,7 @@ Method-level decorators (`@get`, `@post`, etc.) DO propagate through inheritance
 - Controller `@controller(prefix=..., tags=..., summary=..., description=..., deprecated=..., security=...)`
 - Handler `@get(..., summary=..., description=..., response_model=..., responses=..., deprecated=..., operation_id=..., include_in_schema=..., tags=...)`
 
-The response schema comes from `response_model=` or, when omitted, from the handler's return annotation (`-> UserOut`, `-> list[UserOut]`, `-> tuple[UserOut, int]`). Pydantic models, msgspec structs, dataclasses, `TypedDict`s and `Discriminated[...]` unions are all supported; a type that cannot be described degrades to a generic object schema.
+The response schema comes from `response_model=` or, when omitted, from the handler's return annotation (`-> UserOut`, `-> list[UserOut]`, `-> tuple[UserOut, int]`). The status is the declared one — `status_code=`, each member of a typed-result union (`Ok[A] | Created[A]` → `"200"` and `"201"`, with a `Location` header for `Created` / `Accepted`), `Annotated[T, Status(206)]` — and `-> None` / `-> NoContent` are documented as `"204"` without content. `@raises(...)` adds one response per error status; `response_headers=` documents headers on the success response. Pydantic models, msgspec structs, dataclasses, `TypedDict`s and `Discriminated[...]` unions are all supported; a type that cannot be described degrades to a generic object schema.
 
 ```python run
 class UserOut(BaseModel):
@@ -2565,7 +2740,7 @@ spec = LaurenFactory.create(OpenApiModule).openapi()
 assert spec["paths"]["/users/{id}"]["get"]["operationId"] == "getUser"
 ```
 
-Schemas are emitted under `components.schemas` and referenced from the path operation's `responses.200.content["application/json"].schema`.
+Schemas are emitted under `components.schemas` and referenced from the path operation's `responses.<status>.content["application/json"].schema`.
 
 ### OpenAPI Security
 
@@ -3887,7 +4062,8 @@ route = get_route_metadata(app, "GET", "/users/{id}")  # ReflectedRoute | None
 
 | Type | Key fields |
 |---|---|
-| `ReflectedRoute` | `method`, `path`, `full_path`, `summary`, `response_model`, `tags`, `deprecated`, `handler` |
+| `ReflectedRoute` | `method`, `path`, `full_path`, `summary`, `response_model`, `tags`, `deprecated`, `handler`, `status_code` (effective success status), `responses_typed`, `raises` |
+| `ReflectedResponse` | `status`, `body_type` (`None`: no body), `description`, `source` (`"declared"` / `"raises"` / `"manual"`) — the entries of `ReflectedRoute.responses_typed` |
 | `ReflectedWsMessage` | `event`, `payload_model` (reserved — always `None` today), `summary`, `handler` |
 | `ReflectedController` | `cls`, `meta`, `guards`, `interceptors`, `middlewares`, `exception_handlers`, `routes` |
 | `ReflectedModule` | `cls`, `meta` |
@@ -3977,14 +4153,21 @@ class MeController:
 
 Better than threading an AuthContext through the controller constructor — the dependency is visible per-route.
 
-### Pattern: return tuple for non-default status
+### Pattern: declare the success status
 
-```python
-@post("/")
-async def create(self, body: Json[CreateUser]):
+```python fragment
+@post("/", status_code=201)
+async def create(self, body: Json[CreateUser]) -> UserOut:
+    return await self._repo.create(body)
+
+@post("/with-location")
+async def create_with_location(self, body: Json[CreateUser]) -> Created[UserOut]:
     user = await self._repo.create(body)
-    return user, 201, {"location": f"/users/{user.id}"}
+    return Created(user, location=f"/users/{user.id}")
 ```
+
+The tuple form (`return user, 201, {"location": ...}`) still works but is
+invisible to OpenAPI.
 
 ### Anti-pattern: subclassing to "inherit" routes
 
@@ -4186,7 +4369,9 @@ request.
 | Extract URL param | `id: Path[int]` |
 | Extract query param | `q: Query[str] = QueryField(default="", ge=..., le=...)` |
 | Extract JSON body | `body: Json[MyPydanticModel]` |
-| Raise 404 in handler | `raise NotFoundError("...")` (built in); for a domain code, `class UserNotFound(NotFoundError): code = "user_not_found"` |
+| Raise 404 in handler | `raise NotFoundError("...")` (built in); for a domain code, `class UserNotFound(NotFoundError): code = "user_not_found"`; declare it with `@raises(NotFoundError)` for OpenAPI |
+| Declare a success status | `@post("/", status_code=201)` or `-> Created[UserOut]` + `return Created(user, location=...)` |
+| Keep internal fields off the wire | annotate the public type and set `response_validation="filter"` (app or route) |
 | Add a guard to one route | `@use_guards(MyGuard)` on the method |
 | Add a guard to all routes on a controller | `@use_guards(MyGuard)` on the class |
 | Override JSON encoder for one route | `@use_encoder(OrjsonEncoder())` on the method |
