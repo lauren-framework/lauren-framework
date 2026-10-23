@@ -87,7 +87,7 @@ class ModuleExportViolation(StartupError):
 
 
 class LifecycleConfigError(StartupError):
-    """``@post_construct`` / ``@pre_destruct`` decorates something other than a method."""
+    """A lifecycle-bound declaration is misused (a hook on a non-method, a hosted service or job on a non-singleton, …)."""
 
     code = "lifecycle_config"
 

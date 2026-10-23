@@ -91,6 +91,8 @@ class Lauren:
         signals: Any | None = None,
         arena: Any | None = None,
         arena_capacity: int | None = None,
+        hosted_services: bool = True,
+        scheduler: bool = True,
     ) -> None:
         self._title = title
         self._version = version
@@ -125,6 +127,8 @@ class Lauren:
         self._signals = signals
         self._arena = arena
         self._arena_capacity = arena_capacity
+        self._hosted_services = hosted_services
+        self._scheduler = scheduler
         if debug:
             # Reserved until debug error pages land; say so rather than
             # silently accepting a flag that changes nothing.
@@ -460,6 +464,8 @@ class Lauren:
             signals=self._signals,
             arena=self._arena,
             arena_capacity=self._arena_capacity,
+            hosted_services=self._hosted_services,
+            scheduler=self._scheduler,
         )
         # --- Run user-provided startup hooks now that DI is live ---------
         for hook in self._startup_handlers:

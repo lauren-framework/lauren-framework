@@ -20,6 +20,7 @@ from .._di import INJECTABLE_META, DIContainer, InjectableMeta
 from .._di._scope import finalize_scope
 from .._di.custom import CustomProvider
 from .._discovery import DiscoveryIndex, build_discovery_index, registered_markers
+from .._scheduling._module import SchedulingRuntime, compile_scheduling, prepare_scheduling
 from ..serialization import (
     JSONEncoder,
     StdlibJSONEncoder,
@@ -857,6 +858,9 @@ class LaurenApp:
         self._mounts: list[tuple[str, Any]] = []
         # Provider-discovery index (Phase 6a of LaurenFactory.create).
         self._discovery: DiscoveryIndex = DiscoveryIndex.empty()
+        # Hosted services + scheduler (``lauren.scheduling``); ``None`` when
+        # the app declares none, so startup/shutdown pay nothing.
+        self._scheduling: SchedulingRuntime | None = None
 
     # -- Introspection -----------------------------------------------------
 
@@ -1020,6 +1024,10 @@ class LaurenApp:
         await self._signals.emit(StartupBegin(app=self))
         self._logger.log("Running @post_construct hooks", context="Lifecycle")
         await self._lifecycle.run_post_construct()
+        if self._scheduling is not None:
+            # Hosted services start in dependency order, then the scheduler
+            # is armed; nothing fires before StartupComplete.
+            await self._scheduling.start()
         self._app_state.seal()
         self._started = True
         self._running = True
@@ -1031,16 +1039,22 @@ class LaurenApp:
         )
         # StartupComplete marks the app as ready for traffic.
         await self._signals.emit(StartupComplete(app=self, duration_s=duration))
+        if self._scheduling is not None:
+            self._scheduling.begin_firing()  # READY: run_once / initial_delay count from here
 
     async def shutdown(self, *, drain_timeout: float = 10.0) -> None:
         """Gracefully stop the application.
 
         Steps (each logged as an event):
 
-        1. Mark the app not-running — no new request scheduling.
+        1. Mark the app not-running — no new request scheduling; the
+           scheduler stops firing (hosted services keep running).
         2. Drain in-flight requests (up to ``drain_timeout`` seconds).
-        3. Invoke user-registered ``on_shutdown`` callbacks in reverse order.
-        4. Run ``@pre_destruct`` hooks in reverse topological order.
+        3. Await in-flight scheduled runs (``ScheduleModule`` ``job_drain_timeout``,
+           default what is left of ``drain_timeout``), then cancel them.
+        4. Stop hosted services in reverse start order.
+        5. Invoke user-registered ``on_shutdown`` callbacks in reverse order.
+        6. Run ``@pre_destruct`` hooks in reverse topological order.
 
         Idempotent: concurrent or repeated calls return as soon as the first
         shutdown has completed.
@@ -1059,6 +1073,9 @@ class LaurenApp:
         # Fire ShutdownBegin early so listeners can observe the
         # transition before the drain / pre_destruct machinery runs.
         await self._signals.emit(ShutdownBegin(app=self))
+        if self._scheduling is not None:
+            self._scheduling.stop_firing()
+        drain_t0 = time.perf_counter()
         # 1. Drain in-flight requests.
         if self._in_flight:
             self._logger.log(
@@ -1079,6 +1096,10 @@ class LaurenApp:
                     context="Shutdown",
                     in_flight=len(self._in_flight),
                 )
+        # Scheduled runs, then hosted services (reverse start order) — before
+        # on_shutdown and @pre_destruct, so their dependencies are still alive.
+        if self._scheduling is not None:
+            await self._scheduling.stop(remaining=drain_timeout - (time.perf_counter() - drain_t0))
         # 2. User callbacks (reverse registration order).
         if self._on_shutdown_callbacks:
             self._logger.log(
@@ -2484,6 +2505,8 @@ class LaurenFactory:
         mounts: dict[str, Any] | None = None,
         sessions: SessionConfig | None = None,
         content: ContentConfig | None = None,
+        hosted_services: bool = True,
+        scheduler: bool = True,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -2509,6 +2532,11 @@ class LaurenFactory:
         (:class:`~lauren.types.ContentConfig`). Left unset, apps with
         ``sessions=`` log mismatched JSON ``Content-Type`` values ("warn")
         and other apps do not check them.
+
+        ``hosted_services=False`` discovers and validates ``@hosted_service``
+        classes but does not start them; ``scheduler=False`` does the same for
+        scheduled jobs (``SchedulerRegistry.trigger`` still works). Tests and
+        one-off commands use them to build the full app without background work.
         """
         _log: Logger = logger or NullLogger()
         content_config = content if content is not None else ContentConfig()
@@ -2687,6 +2715,10 @@ class LaurenFactory:
         # Load and validate every ConfigModule spec in the graph (one
         # aggregated ConfigValidationError) and register the settings.
         config_pending = install_config(graph, container, logger=_log)
+        # ---- Phase 2c: Scheduling ----
+        # ScheduleModule.for_root() makes the app's SchedulerRegistry a global
+        # provider (before the DI compile, so constructors can depend on it).
+        scheduling_setup = prepare_scheduling(graph, container)
 
         # Install per-module visible-token sets. A module sees its own
         # providers, its own controllers, and anything re-exported by a
@@ -2964,6 +2996,8 @@ class LaurenFactory:
         # See ``lauren/_discovery.py`` for the rules.
         t0 = time.perf_counter()
         discovery = build_discovery_index(container, registered_markers())
+        # Hosted services and scheduled jobs: scope, names, ScheduleModule.
+        scheduling = compile_scheduling(discovery, scheduling_setup)
         _log.verbose(
             f"Phase 6a provider discovery: {sum(map(len, discovery.methods.values()))} method(s), "
             f"{sum(map(len, discovery.classes.values()))} class(es) "
@@ -3018,6 +3052,9 @@ class LaurenFactory:
         )
         # The immutable Phase 6a index; feature consumers read their markers.
         app._discovery = discovery
+        app._scheduling = scheduling.build(
+            app, order=lifecycle._order, hosted_services=hosted_services, scheduler=scheduler
+        )
         app._config_pending = config_pending
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via

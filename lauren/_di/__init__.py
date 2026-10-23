@@ -1335,8 +1335,8 @@ def _find_lifecycle_hooks(
     seen: set[int] = set()
     for klass in classes:
         for attr_name in klass.__dict__:
-            if owners[attr_name] is not klass:
-                continue
+            if owners[attr_name] is not klass or (attr_name.startswith("__") and attr_name.endswith("__")):
+                continue  # dunders are never hooks (and may be deprecated class attributes)
             try:
                 attr = getattr(cls, attr_name)
             except AttributeError:

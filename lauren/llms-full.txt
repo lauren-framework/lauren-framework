@@ -27,26 +27,27 @@ common mistakes.
 16. [Auto-Serialization](#auto-serialization)
 17. [Sync vs Async Handlers](#sync-vs-async-handlers)
 18. [Background Tasks](#background-tasks)
-19. [Error Catalog](#error-catalog)
-20. [Testing](#testing)
-21. [Strict Decorator Inheritance](#strict-decorator-inheritance)
-22. [OpenAPI 3.1 Generation](#openapi-31-generation)
-23. [Logging](#logging)
-24. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
-25. [WebSockets](#websockets)
-26. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
-27. [Typed Streaming](#typed-streaming)
-28. [Socket.IO Compatibility](#socketio-compatibility)
-29. [Sessions](#sessions)
-30. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
-31. [Configuration](#configuration)
-32. [Static Files](#static-files)
-33. [Request Arena](#request-arena)
-34. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
-35. [AI Documentation Access](#ai-documentation-access)
-36. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-37. [Companion Packages](#companion-packages)
-38. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
+19. [Hosted Services & Scheduling](#hosted-services--scheduling)
+20. [Error Catalog](#error-catalog)
+21. [Testing](#testing)
+22. [Strict Decorator Inheritance](#strict-decorator-inheritance)
+23. [OpenAPI 3.1 Generation](#openapi-31-generation)
+24. [Logging](#logging)
+25. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
+26. [WebSockets](#websockets)
+27. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
+28. [Typed Streaming](#typed-streaming)
+29. [Socket.IO Compatibility](#socketio-compatibility)
+30. [Sessions](#sessions)
+31. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
+32. [Configuration](#configuration)
+33. [Static Files](#static-files)
+34. [Request Arena](#request-arena)
+35. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+36. [AI Documentation Access](#ai-documentation-access)
+37. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+38. [Companion Packages](#companion-packages)
+39. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -111,7 +112,7 @@ assert client.post("/users/", json={"name": "Ada", "age": 36}).status_code == 20
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, hosted_services=True, scheduler=True)`
 
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
@@ -120,7 +121,7 @@ Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven ph
 3. **Protocol binding** — resolve `provides=[Protocol]` declarations.
 4. **DI graph compilation** — detect circular deps, scope violations, protocol ambiguities.
 5. **Router compilation** — walk controllers, compile handler signatures into extraction plans, insert into the radix tree.
-6. **Lifecycle order computation** — build the topological `@post_construct` / `@pre_destruct` schedule.
+6. **Lifecycle order computation** — build the topological `@post_construct` / `@pre_destruct` schedule. Just before it (Phase 6a) one discovery pass indexes provider methods and classes carrying feature markers; hosted services and scheduled jobs are validated there (singleton scope, unique names, `ScheduleModule` imported — see [Hosted Services & Scheduling](#hosted-services--scheduling)).
 7. **Readiness** — build the `LaurenApp` object. `startup()` (singleton construction, `@post_construct` hooks, `StartupComplete`) runs on the ASGI lifespan `startup` event. When you drive the app without lifespan support — e.g. `httpx.ASGITransport` — call `await app.startup()` yourself; `lauren.testing.TestClient` does it for you.
 
 Failures in phases 1–6 raise a `StartupError` subclass immediately — the app never begins serving traffic with an invalid graph.
@@ -156,6 +157,8 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `mounts` | `dict[str, Any]` | `None` | Sub-applications mounted at path prefixes |
 | `sessions` | `SessionConfig` | `None` | Enable signed-cookie sessions (see [Sessions](#sessions)) |
 | `content` | `ContentConfig` | `None` | Request-body content policy: `ContentConfig(strict_content_type=None \| False \| "warn" \| True)` (see [Content-type policy](#content-type-policy-contentconfig)) |
+| `hosted_services` | `bool` | `True` | `False` discovers and validates `@hosted_service` classes but does not start them (tests, one-off commands) |
+| `scheduler` | `bool` | `True` | `False` keeps scheduled jobs discovered and validated (and `SchedulerRegistry.trigger` working) but fires nothing |
 
 ### `Lauren` (imperative API)
 
@@ -208,8 +211,8 @@ Attributes & methods:
 - `app.app_state: AppState` — sealed, read-only app-level state.
 - `app.routes()` — list of `RouteEntry` objects.
 - `app.openapi()` — OpenAPI 3.1 schema dict.
-- `await app.startup()` — builds singletons and runs `@post_construct` hooks. Invoked by the ASGI lifespan protocol (uvicorn, hypercorn); call it yourself when there is no lifespan (e.g. `httpx.ASGITransport`) — `TestClient` does. A second call raises `LifecycleViolationError` unless the app was built with `strict_lifecycle=False`.
-- `await app.shutdown(drain_timeout=10.0)` — runs `@pre_destruct` hooks, awaits in-flight requests.
+- `await app.startup()` — builds singletons, runs `@post_construct` hooks, starts hosted services and arms the scheduler (jobs fire after `StartupComplete`). Invoked by the ASGI lifespan protocol (uvicorn, hypercorn); call it yourself when there is no lifespan (e.g. `httpx.ASGITransport`) — `TestClient` does. A second call raises `LifecycleViolationError` unless the app was built with `strict_lifecycle=False`.
+- `await app.shutdown(drain_timeout=10.0)` — stops the scheduler firing, awaits in-flight requests and job runs, stops hosted services (reverse start order), runs `on_shutdown` callbacks, then `@pre_destruct` hooks.
 - `await app(scope, receive, send)` — standard ASGI callable (HTTP + lifespan).
 - `app.mount(path, app)` — mount a sub-ASGI application at a path prefix.
 - `app.scope(name="operation", *, values=None)` — open an `OperationScope` for request-scoped providers outside a request (see [Operation scopes](#operation-scopes-appscope)).
@@ -1523,6 +1526,260 @@ Three `LifecycleEvent` subclasses are emitted on the shared `SignalBus`:
 
 ---
 
+## Hosted Services & Scheduling
+
+Work that is not a request lives in `lauren.scheduling` (key names are also
+exported from `lauren`). **Hosted services** are classes whose `run(ctx)` the
+framework starts after startup, supervises and stops during shutdown;
+**scheduled methods** (`@interval`, `@cron`, `@run_once`) run on singleton
+injectables. Everything is discovered and validated in `LaurenFactory.create`
+(Phase 6a); nothing reflects at run time. Time flows through a `Clock`, so
+tests use `ManualClock` and never wait on wall-clock time.
+
+```python run
+import asyncio
+
+from lauren import LaurenFactory, Scope, injectable, module
+from lauren.scheduling import (
+    JobContext, ManualClock, ScheduleModule, ServiceContext, cron, hosted_service, interval, run_once,
+)
+
+
+@injectable(scope=Scope.REQUEST)
+class JobDbSession:                       # one instance per job run, torn down after it
+    async def aclose(self) -> None: ...
+
+
+@injectable()
+class JobStats:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+
+@hosted_service(restart="on-failure", stop_timeout=10.0)
+class HeartbeatService:
+    def __init__(self, stats: JobStats) -> None:
+        self._stats = stats
+
+    async def run(self, ctx: ServiceContext) -> None:
+        while await ctx.sleep(30):     # False as soon as stop is requested
+            self._stats.events.append("beat")
+
+
+@injectable()
+class MaintenanceJobs:
+    def __init__(self, stats: JobStats) -> None:
+        self._stats = stats
+
+    @interval(seconds=60, initial_delay=5, jitter=5)
+    async def warm_cache(self) -> None:
+        self._stats.events.append("warm")
+
+    @cron("0 3 * * *", tz="UTC", name="purge-sessions", timeout=300, exclusive=True)
+    async def purge(self, ctx: JobContext, db: JobDbSession) -> None:
+        self._stats.events.append(f"purge {ctx.scheduled_at:%H:%M}")
+
+    @run_once(delay=10)
+    async def prime(self) -> None:
+        self._stats.events.append("prime")
+
+
+jobs_clock = ManualClock()   # production: omit clock= for the real clock
+
+
+@module(imports=[ScheduleModule.for_root(clock=jobs_clock)], providers=[JobStats, HeartbeatService, MaintenanceJobs, JobDbSession])
+class JobsAppModule: ...
+
+
+async def run_jobs_demo() -> list[str]:
+    app = LaurenFactory.create(JobsAppModule)
+    await app.startup()
+    await jobs_clock.advance(hours=3, seconds=10)
+    await app.shutdown()
+    return app.container.singletons()[JobStats].events
+
+
+job_events = asyncio.run(run_jobs_demo())
+assert "purge 03:00" in job_events and job_events.count("prime") == 1 and "beat" in job_events
+```
+
+### `@hosted_service(*, name=None, restart="on-failure", max_restarts=5, restart_window=300.0, backoff=(1.0, 30.0), on_exhausted="fail_readiness", wait_ready=False, start_timeout=30.0, stop_timeout=10.0, enabled=True)`
+
+- Must be called with parentheses. The class must define `run(self, ctx)` —
+  `async def` (recommended) or plain `def` (runs on its own daemon thread and
+  must poll `ctx.stop_requested`; a thread past `stop_timeout` is abandoned).
+  A missing or malformed `run` raises `LifecycleConfigError` at decoration.
+- Stores `HostedServiceMeta` on the class's own `__dict__` and marks the class
+  `@injectable(scope=SINGLETON)` unless it has its own `@injectable`. List it in
+  a module's `providers`. A registered subclass that is not re-decorated raises
+  `MetadataInheritanceError`.
+- `name` defaults to the class name (unique app-wide, else
+  `DuplicateBindingError`). `restart`: `"never"` / `"on-failure"` / `"always"`
+  (also after a normal return); at most `max_restarts` restarts within
+  `restart_window` seconds; the n-th restart waits `uniform(0, min(cap, base * 2**n))`
+  (`backoff=(base, cap)`). When restarts run out: `on_exhausted="fail_readiness"`
+  sets `HostedServiceInfo.healthy=False`, `"log"` only logs.
+- `wait_ready=True`: `startup()` waits up to `start_timeout` real seconds for
+  `ctx.mark_ready()`; a timeout (or an early exit) stops the services already
+  started and raises `LifecycleError`.
+- Services do **not** require `ScheduleModule`; with it they share its clock.
+
+`ServiceContext`: `stop_requested` (thread-safe), `await sleep(seconds) -> bool`
+(`False` when interrupted by stop), `await wait_stopped(timeout=None) -> bool`,
+`mark_ready()` / `ready` (reset on restart), `name`, `restart_count`, `log`
+(bound `context="Service:<name>"`), and `scope(name=None)` — a new
+`OperationScope` (seeded with the context) for one iteration's request-scoped
+dependencies: `async with ctx.scope() as scope: db = await scope.resolve(DbSession)`.
+
+### `@interval(seconds, *, initial_delay=0, mode="fixed_rate", ...)`, `@cron(expression, *, tz=None, ...)`, `@run_once(delay=0, ...)`
+
+- `@interval`: `"fixed_rate"` fires on a grid anchored at `READY + initial_delay`
+  (the first run is `initial_delay` seconds after startup); `"fixed_delay"`
+  waits `seconds` after each run completes. `@cron`: next fire computed in `tz`
+  (default: the `ScheduleModule` timezone). `@run_once`: once, `delay` seconds
+  after `READY`.
+- Common options and defaults: `name=None` (→ `Class.method`; stacked schedules
+  on one method → `Class.method#1`, `#2`), `overlap="skip"` (`"skip"` |
+  `"queue"` — one run right after the current one | `"allow"`),
+  `max_instances=1` (3 with `"allow"`), `timeout=None` (cancel →
+  `JobFailed(error=TimeoutError)`), `jitter=0` (random `0..jitter` s per fire,
+  no drift), `misfire="coalesce"` (woke later than `misfire_grace`: run once now
+  for the latest missed fire; `"skip"` → `JobSkipped(reason="misfire")`),
+  `misfire_grace=None` (→ `min(60, period)`), `exclusive=False` (take the
+  `SchedulerLock` per fire), `enabled=True`. Seconds options accept `timedelta`.
+- Bad arguments (non-positive `seconds`, malformed cron, unknown `tz`, bare
+  `@interval`) raise `DecoratorUsageError` at decoration. The marker
+  `__lauren_schedule__` is a list: stacking accumulates.
+- Method rules (startup): the provider must be `Scope.SINGLETON`
+  (`LifecycleConfigError`); parameters are `self`, an optional `JobContext`
+  (matched by annotation) and dependencies visible from the provider's module
+  (`UnresolvableParameterError` otherwise), resolved per run in a fresh
+  `OperationScope` — `Scope.REQUEST` providers get one instance per run, torn
+  down after it, and may take a `JobContext` constructor parameter. Sync
+  methods run in a worker thread. Inherited methods count; an undecorated
+  override removes the schedule.
+- Scheduled methods without `ScheduleModule.for_root()` → `LifecycleConfigError`
+  (`detail["reason"] == "scheduling_not_enabled"`); importing it twice →
+  `LifecycleConfigError` (`"duplicate_schedule_module"`).
+
+`JobContext`: `name`, `scheduled_at` (nominal fire time, aware, job time zone),
+`fired_at`, `attempt` (always 1), `log` (bound `context="Job:<name>"`),
+`cancelled` (set on timeout / shutdown; sync jobs poll it), `scope` (the run's
+`OperationScope` when the method takes dependencies, else `None`).
+
+### `ScheduleModule.for_root(*, timezone="UTC", lock=None, enabled=True, clock=None, job_drain_timeout=None)`
+
+Returns a module for `@module(imports=[...])`. `lock` backs `exclusive=True`
+(default: per-process `InMemorySchedulerLock`); `enabled=False` keeps
+discovery, validation and `trigger()` but fires nothing; `clock` (pass a fresh
+`ManualClock` per app in tests); `job_drain_timeout` bounds how long shutdown
+waits for in-flight runs (default: what is left of `drain_timeout`). Importing
+it registers the app's `SchedulerRegistry` as a global provider.
+
+### `SchedulerRegistry`
+
+Inject it anywhere (one per app). `jobs() -> tuple[JobInfo, ...]`, `job(name)`,
+`services() -> tuple[HostedServiceInfo, ...]`, `await trigger(name) -> JobRun`
+(runs now, respects `overlap` and `exclusive`; works with firing disabled;
+`LifecycleViolationError` before `startup()` or during shutdown), `pause(name)`,
+`resume(name)`, `remove(name)`, `add_interval(name, fn, *, seconds, ...)`,
+`add_cron(name, fn, expression, *, tz=None, ...)`. Dynamic jobs call `fn()` or
+`fn(ctx)` — no DI — and a name collision raises `DuplicateBindingError`.
+Unknown names raise `KeyError`.
+
+- `JobInfo` (frozen; `as_dict()` is JSON-friendly): `name`, `kind`
+  (`"interval"` | `"cron"` | `"once"`), `schedule`, `next_run_at`,
+  `last_run_at`, `last_status` (`"completed"` | `"failed"` | `"cancelled"`),
+  `last_error`, `last_duration_s`, `running`, `paused`, `enabled`, `dynamic`,
+  `runs`, `failures`, `skips`. Bounded: no history.
+- `JobRun`: `name`, `status` (`"completed"` | `"failed"` | `"skipped"`),
+  `scheduled_at`, `duration_s`, `error`, `reason`.
+- `HostedServiceInfo`: `name`, `state` (`"pending"` | `"disabled"` |
+  `"running"` | `"restarting"` | `"stopping"` | `"stopped"` | `"failed"`),
+  `ready`, `restart_count`, `last_error`, `healthy`; `as_dict()`.
+
+### `CronExpression(expression, *, tz=None)`
+
+Five fields `minute hour day-of-month month day-of-week` or six with a
+**leading seconds** field; `*`, `a,b`, `a-b`, `*/n`, `a-b/n`, `a/n`,
+`JAN`-`DEC`, `SUN`-`SAT` (0 and 7 = Sunday), macros `@yearly` / `@annually`,
+`@monthly`, `@weekly`, `@daily` / `@midnight`, `@hourly`. Both day fields
+restricted → either matches (POSIX). `L`, `W`, `#`, `?`, `@reboot` and
+never-firing expressions are rejected with `DecoratorUsageError`
+(`detail`: `field`, `value`, `allowed`, `reason`). Methods: `next_after(dt)`,
+`iter_from(dt)` (strictly after `dt`, increasing), `matches(dt)`,
+`with_tz(tz)`; properties `expression`, `tz`, `has_seconds`. DST: a local time
+in a spring-forward gap fires once at the first valid instant after it; an
+ambiguous fall-back time fires once, at its first occurrence. Interval jobs
+use the monotonic clock.
+
+```python run
+from datetime import datetime, timezone
+from itertools import islice
+
+from lauren import CronExpression
+
+nightly = CronExpression("0 3 * * MON-FRI", tz="UTC")
+friday_noon = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+assert [d.day for d in islice(nightly.iter_from(friday_noon), 3)] == [26, 27, 28]
+```
+
+### `SchedulerLock` (Protocol), `InMemorySchedulerLock(*, clock=None)`
+
+`async acquire(key, *, ttl) -> bool` / `async release(key)`. For each fire of
+an `exclusive=True` job the scheduler acquires
+`"lauren:job:{name}:{fire_time_iso}"` with `ttl` = the job's `timeout`, else
+`min(period, 3600)`; a lost race emits `JobSkipped(reason="locked")`. The claim
+is held until the TTL expires (not released after the run), so a late worker
+cannot re-run the fire. The in-memory default is per process (one INFO log at
+startup says so); share a Redis / database lock across workers, or run
+scheduled work in one process.
+
+### Clocks: `Clock` (Protocol), `SystemClock`, `ManualClock(start=None)`
+
+`Clock`: `monotonic()`, `now()` (aware UTC), `async sleep(seconds)`.
+`ManualClock` starts at `2000-01-01T00:00:00Z` (or `start`): `await
+advance(seconds=0, *, minutes=0, hours=0, days=0)` wakes every sleeper due in
+the window in order and lets the loop settle (sync jobs on threads included);
+`await jump(...)` moves time without waking anything on the way (simulates a
+suspended process — misfire tests); `sleepers` counts pending sleeps. Fire
+times, jitter, misfire, per-run timeouts, restart backoff and
+`ServiceContext.sleep` follow the clock; `start_timeout`, `stop_timeout` and
+the job drain stay in real time.
+
+### Lifecycle order
+
+Startup: `StartupBegin` → `@post_construct` (topological) → hosted services
+start (dependency order; `wait_ready` awaited) → scheduler armed →
+`StartupComplete` → scheduler fires (`run_once` / `initial_delay` count from
+here). Shutdown: `ShutdownBegin` + scheduler stops firing → requests drain →
+in-flight job runs awaited, then cancelled → hosted services stop (reverse
+order) → `on_shutdown` → `@pre_destruct`.
+
+### Testing
+
+`ScheduleModule.for_root(clock=ManualClock())` + `await clock.advance(...)`;
+`ScheduleModule.for_root(enabled=False)` or `LaurenFactory.create(...,
+scheduler=False)` + `await registry.trigger("name")`;
+`LaurenFactory.create(..., hosted_services=False)`. Drive `await app.startup()`
+/ `await app.shutdown()` in one event loop: today's `TestClient` runs
+`startup()` in a short-lived loop that ends hosted services and the scheduler
+loop (a warning is logged), though requests — including `trigger()` calls —
+still work.
+
+**Rules:**
+
+- Never `asyncio.create_task(...)` from `@post_construct` for a background
+  loop; use `@hosted_service`.
+- Scheduled jobs require `ScheduleModule.for_root()` (or
+  `ScheduleModule.for_root(enabled=False)` to disable them explicitly).
+- With several workers every job runs in each one: use `exclusive=True` with a
+  shared `SchedulerLock`, or a dedicated scheduler process.
+- Durable, retried jobs are out of scope: runs missed while the process was
+  down are not replayed (beyond `misfire_grace`).
+
+---
+
 ## Error Catalog
 
 All exceptions live in `lauren.exceptions` and inherit from `LaurenError`.
@@ -1542,7 +1799,7 @@ by `LaurenFactory.create` or at decoration time and are never HTTP-mapped;
 | `MissingProviderError` | `StartupError` | — | `missing_provider` | No provider is registered for a requested token. |
 | `ProtocolAmbiguityError` | `StartupError` | — | `protocol_ambiguity` | A protocol has multiple providers but `multi=False` was requested. |
 | `ModuleExportViolation` | `StartupError` | — | `module_export_violation` | A module exports a provider it neither declares nor imports. |
-| `LifecycleConfigError` | `StartupError` | — | `lifecycle_config` | `@post_construct` / `@pre_destruct` decorates something other than a method. |
+| `LifecycleConfigError` | `StartupError` | — | `lifecycle_config` | A lifecycle-bound declaration is misused (a hook on a non-method, a hosted service or job on a non-singleton, …). |
 | `MetadataInheritanceError` | `StartupError` | — | `metadata_inheritance` | Injectable metadata was inherited from a base class (forbidden). |
 | `DuplicateBindingError` | `StartupError` | — | `duplicate_binding` | The same class or token is registered twice in one container. |
 | `UnresolvableParameterError` | `StartupError` | — | `unresolvable_parameter` | A handler or provider parameter cannot be resolved to an extractor or dep. |
@@ -1808,12 +2065,17 @@ error/verbose`` sugar methods.
 
 ``LaurenApp.shutdown()`` is the canonical teardown path. It:
 
-1. Flips the ``_running`` flag so no new work is scheduled.
+1. Flips the ``_running`` flag so no new work is scheduled; the scheduler
+   stops firing (hosted services keep running).
 2. Drains in-flight requests (up to ``drain_timeout`` seconds).
-3. Runs any ``on_shutdown`` callbacks the user registered (LIFO).
-4. Runs ``@pre_destruct`` hooks in reverse topological order.
+3. Awaits in-flight scheduled job runs (``job_drain_timeout``, default what is
+   left of ``drain_timeout``), then cancels them.
+4. Stops hosted services in reverse start order (each gets its
+   ``stop_timeout``, then is cancelled).
+5. Runs any ``on_shutdown`` callbacks the user registered (LIFO).
+6. Runs ``@pre_destruct`` hooks in reverse topological order.
 
-All four steps are logged through the installed logger. Calls are
+All steps are logged through the installed logger. Calls are
 idempotent: concurrent or repeated ``shutdown()`` invocations return once
 the first shutdown has finished.
 
@@ -1873,6 +2135,8 @@ Full event hierarchy:
 | `BackgroundTaskStarted` | Background task begins |
 | `BackgroundTaskComplete` | Background task finishes successfully |
 | `BackgroundTaskFailed` | Background task raises |
+| `HostedServiceStarted` / `HostedServiceStopped` / `HostedServiceFailed` | A hosted service starts (each restart too), ends for good, raises (see [Hosted Services & Scheduling](#hosted-services--scheduling)) |
+| `JobStarted` / `JobCompleted` / `JobFailed` / `JobSkipped` | A scheduled job run starts, completes, fails (timeouts, cancellation) or is skipped |
 
 `LifecycleEvent` is the common base class for all events above.
 
@@ -2961,6 +3225,26 @@ class ProxyController:
         return resp.json()
 ```
 
+### Anti-pattern: starting a background loop in `@post_construct`
+
+```python
+@injectable()
+class Bad:
+    @post_construct
+    async def start(self) -> None:
+        asyncio.create_task(self.loop())   # unsupervised, outlives its dependencies, dies under TestClient
+```
+
+Use a hosted service instead — supervised, stopped before `@pre_destruct`:
+
+```python fragment
+@hosted_service()
+class Good:
+    async def run(self, ctx: ServiceContext) -> None:
+        while await ctx.sleep(5.0):
+            await self.tick()
+```
+
 ### Anti-pattern: calling asyncio primitives from a sync handler
 
 ```python
@@ -3110,6 +3394,9 @@ request.
 | Read per-route metadata in a guard | `ctx.get_metadata("key", default)` |
 | Attach a singleton explicitly | `app.container.set_singleton(MyCls, instance)` |
 | Run post-construct hook | `@post_construct` on an `async def` method of an `@injectable` |
+| Run a long-lived loop for the app's lifetime | `@hosted_service()` class with `async def run(self, ctx)`; list it in `providers` |
+| Run code on a schedule | `@interval(seconds=60)` / `@cron("0 3 * * *")` on a singleton method + `ScheduleModule.for_root()` |
+| Run one job now (admin endpoint, test) | `await registry.trigger("name")` with `registry: SchedulerRegistry` |
 | Serve a file (auto MIME, streamed) | `return await Response.file("/path/to/file.pdf")` |
 | Serve a file with custom name | `return await Response.file(path, filename="report.pdf")` |
 | Serve a file inline (browser preview) | `return await Response.file(path, inline=True)` |

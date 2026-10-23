@@ -81,7 +81,7 @@ best-effort, so they are collected rather than aborting shutdown.
 | `MissingProviderError` | `StartupError` | — | `missing_provider` | No provider is registered for a requested token. |
 | `ProtocolAmbiguityError` | `StartupError` | — | `protocol_ambiguity` | A protocol has multiple providers but `multi=False` was requested. |
 | `ModuleExportViolation` | `StartupError` | — | `module_export_violation` | A module exports a provider it neither declares nor imports. |
-| `LifecycleConfigError` | `StartupError` | — | `lifecycle_config` | `@post_construct` / `@pre_destruct` decorates something other than a method. |
+| `LifecycleConfigError` | `StartupError` | — | `lifecycle_config` | A lifecycle-bound declaration is misused (a hook on a non-method, a hosted service or job on a non-singleton, …). |
 | `MetadataInheritanceError` | `StartupError` | — | `metadata_inheritance` | Injectable metadata was inherited from a base class (forbidden). |
 | `DuplicateBindingError` | `StartupError` | — | `duplicate_binding` | The same class or token is registered twice in one container. |
 | `UnresolvableParameterError` | `StartupError` | — | `unresolvable_parameter` | A handler or provider parameter cannot be resolved to an extractor or dep. |
