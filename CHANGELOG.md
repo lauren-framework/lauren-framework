@@ -33,6 +33,29 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - `load_settings(...)` / `aload_settings(...)` for values needed before the
   factory runs; `Env("NAME", ...)` field aliases; `overrides=` and `environ=` for
   tests. New optional extra `lauren[yaml]`.
+- **Built-in HTTP errors:** `BadRequestError` (400), `NotFoundError` (404),
+  `NotAcceptableError` (406), `ConflictError` (409), `GoneError` (410),
+  `PreconditionFailedError` (412), `TooManyRequestsError` (429),
+  `ServiceUnavailableError` (503) and `RequestTimeoutError` (504, code
+  `request_timeout`). `RouteNotFoundError` now subclasses `NotFoundError`.
+- Errors carry response headers: `headers=` on every error,
+  `UnauthorizedError(challenge=...)` (`WWW-Authenticate`), `retry_after=` on
+  429/503/504 (seconds, `timedelta` or an aware `datetime`), and
+  `MethodNotAllowedError(allow=...)` sends `Allow` wherever it is raised. Invalid
+  headers are rejected when the error is constructed.
+- `HTTPError(..., status_code=, code=)` instance overrides; the `problem_type` and
+  `problem_title` class attributes are documented.
+- `error_format="rfc9457"`: RFC 9457 problem details with an `about:blank` default
+  type, `instance`, `context` and a validation `errors` array with JSON Pointers,
+  plus `problem_type_base=` on the factory and `Lauren`.
+- Guard `deny_error` (an `HTTPError` subclass or a zero-argument factory),
+  validated at startup; WebSocket denials use it for the error frame and as the
+  1008 close reason. `apply_guards(on_denied=)`.
+- **Debug error pages:** `LaurenFactory.create(debug=True | DebugConfig(...))` and
+  `Lauren(debug=...)` render an HTML page or a JSON `debug` member for unhandled
+  errors — loopback-only by default, redacted, announced at startup, and refused
+  when the configuration profile is production.
+- `lauren.reflect.error_catalog()` and `ReflectedError`.
 
 ### Changed
 
@@ -44,6 +67,15 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   them).
 - Settings that list an `AsyncSource` finish loading at the start of
   `LaurenApp.startup()`, before `@post_construct`.
+- `Lauren(debug=True)` is no longer a reserved no-op; it is forwarded to the
+  factory.
+- The warning for an unknown `error_format` now says it will become a
+  `StartupError` in 2.0.
+
+### Deprecated
+
+- `detail.type` on `internal_error` responses and `detail.guard` on guard denials:
+  from 2.0 they are sent only when debug pages are enabled.
 
 ### Fixed
 
@@ -52,6 +84,11 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   lifecycle order of independent providers could change between runs.
 - `@pre_destruct` now runs for multi-bound (`multi=True`) request-scoped providers
   at the end of a request or WebSocket connection.
+- `MethodNotAllowedError` raised from a handler now sends `Allow`.
+- `SocketIOError` has its own `socketio_error` code instead of inheriting
+  `lauren_error`.
+- Docs, skills and the tutorial no longer re-declare `NotFoundError` and friends or
+  reference error classes that do not exist.
 
 ## [1.10.0] - 2026-10-23
 
