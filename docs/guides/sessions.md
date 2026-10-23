@@ -132,9 +132,13 @@ class SessionStore(Protocol):
 
 ### `InMemorySessionStore`
 
-Process-local dict guarded by an `asyncio.Lock`, with lazy TTL expiry. The
-default. Fine for development and single-worker deployments — **not** for
-multi-worker production (each worker has its own dict).
+The default: process-local and **bounded**. Sessions expire after `max_age`
+(checked on load and swept proactively, so a session written once and never
+revisited — an anonymous visitor, a bot — does not linger), and at most
+`max_entries` (default 100 000) are kept, least recently used dropped first.
+`InMemorySessionStore(max_entries=..., sweep_interval=60.0, clock=None)`; the
+`clock` exists for tests. Fine for development and single-worker deployments —
+**not** for multi-worker production (each worker has its own map).
 
 ### `SignedCookieSessionStore`
 
@@ -160,46 +164,60 @@ app = LaurenFactory.create(
 ### A Redis backend (recipe)
 
 Implement the same Protocol and pass an **instance** via
-`SessionConfig(store=...)`. Lauren registers that instance as a value provider,
-so DI lifecycle hooks (`@post_construct` / `@pre_destruct`) never run on it:
-create the client in `__init__` (redis-py connects lazily, on first command)
-and close it from an `on_shutdown` callback.
+`SessionConfig(store=...)`. Lauren registers that instance as a
+lifecycle-managed singleton, so its hooks run with the app: `@post_construct`
+at `app.startup()` and `@pre_destruct` at `app.shutdown()` (a store without
+those markers may define `async def startup(self)` / `async def aclose(self)`
+instead). Open the connection there:
 
 ```python
 from typing import Any, ClassVar
+import json
+import secrets
+
 import redis.asyncio as redis
+
+from lauren import post_construct, pre_destruct
+
 
 class RedisSessionStore:
     requires_secret: ClassVar[bool] = True
     client_side: ClassVar[bool] = False
 
     def __init__(self, url: str = "redis://localhost:6379") -> None:
-        self._r = redis.from_url(url)          # no connection is opened yet
+        self._url = url
+        self._r: redis.Redis | None = None
 
-    async def close(self) -> None:
-        await self._r.aclose()
+    @post_construct
+    async def connect(self) -> None:          # runs at app.startup()
+        self._r = redis.from_url(self._url)
+        await self._r.ping()
+
+    @pre_destruct
+    async def close(self) -> None:            # runs at app.shutdown()
+        if self._r is not None:
+            await self._r.aclose()
 
     def new_id(self) -> str:
-        import secrets
         return secrets.token_urlsafe(32)
 
     async def load(self, session_id: str) -> dict[str, Any] | None:
         raw = await self._r.get(f"sess:{session_id}")
-        import json
         return json.loads(raw) if raw else None
 
     async def save(self, session_id: str, data: dict[str, Any], *, max_age: int | None) -> None:
-        import json
         await self._r.set(f"sess:{session_id}", json.dumps(data), ex=max_age)
 
     async def delete(self, session_id: str) -> None:
         await self._r.delete(f"sess:{session_id}")
 
 
-store = RedisSessionStore()
-app = LaurenFactory.create(AppModule, sessions=SessionConfig(secret=SECRET, store=store))
-app.on_shutdown(store.close)
+app = LaurenFactory.create(AppModule, sessions=SessionConfig(secret=SECRET, store=RedisSessionStore()))
 ```
+
+The same rule applies to `revocation_store=`. Each object's hooks run once, even
+if you also register it elsewhere. (A plain `use_value(provide=..., value=...)`
+registration still never runs hooks.)
 
 Because the store is registered as a global provider, any service can inject
 `store: SessionStore` directly — for example an admin endpoint that revokes a
@@ -281,7 +299,10 @@ async def logout_everywhere(self, session: Session, revocation: RevocationStore)
     return {"ok": True}
 ```
 
-The default `InMemoryRevocationStore` is dev/single-worker (TTL-pruned). For
+The default `InMemoryRevocationStore` is dev/single-worker: TTL-pruned and
+bounded by `max_entries` (default 100 000). An entry evicted to make room is no
+longer enforced — size `max_entries` above the revocations you expect within
+one `max_age`; a warning is logged the first time a live entry is evicted. For
 multi-worker production implement the `RevocationStore` Protocol over Redis (a
 shared blocklist is the whole point). Revocation requires a finite `max_age` (or
 `idle_timeout`) so entries can self-prune — `SessionConfigError` at startup

@@ -2902,17 +2902,20 @@ class SessionStore(Protocol):
     def new_id(self) -> str: ...
 ```
 
-- `InMemorySessionStore` — process-local dict under an `asyncio.Lock`, lazy
-  TTL expiry. Dev / single-worker only.
+- `InMemorySessionStore(*, max_entries=100_000, sweep_interval=60.0, clock=None)`
+  — process-local and bounded: sessions expire after `max_age` (checked on
+  load and swept proactively, so write-once sessions do not linger) and the
+  least recently used are evicted beyond `max_entries`. Values are kept as
+  Python objects. Dev / single-worker only.
 - `SignedCookieSessionStore(*, max_bytes=4096)` — stateless: the whole
   (signed) payload rides in the cookie, no server row. Signed ≠ encrypted —
   never put confidential data here; an over-size payload raises `ValueError`.
 - Production multi-worker: implement the Protocol over Redis/DB and pass an
-  instance via `SessionConfig(store=...)`. The instance is registered as a
-  **value** provider (also injectable as `store: SessionStore`), so DI
-  lifecycle hooks never run on it — `@post_construct` / `@pre_destruct` on the
-  store class are ignored. Open the connection pool lazily on first use (or
-  before passing the store in) and close it from `app.on_shutdown(...)`.
+  instance via `SessionConfig(store=...)`. The store is injectable as
+  `store: SessionStore` and is registered as a lifecycle-managed singleton:
+  its `@post_construct` / `@pre_destruct` (or `startup()` / `aclose()`) hooks
+  run at `app.startup()` / `app.shutdown()`, so a store may open its
+  connection pool in `@post_construct`.
 
 ### `SessionSerializer` (Protocol)
 
@@ -2961,8 +2964,11 @@ Two mechanisms, both automatic once enabled:
   force-logout-on-password-change. Any session minted before the cutoff is
   rejected (works for the cookie store *and* server-side stores).
 
-`InMemoryRevocationStore` is the dev default (TTL-pruned). The store is
-registered as a global provider, so handlers can inject it directly.
+`InMemoryRevocationStore(*, max_entries=100_000, sweep_interval=60.0, clock=None)`
+is the dev default: TTL-pruned and bounded (an entry evicted beyond
+`max_entries` is no longer enforced; a warning is logged the first time).
+The store is registered as a global provider (with its lifecycle hooks), so
+handlers can inject it directly.
 
 **Rule:** revocation requires a finite `max_age` (or `idle_timeout`) so
 deny-list entries can self-prune — `SessionConfigError` at startup
