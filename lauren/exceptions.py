@@ -172,6 +172,12 @@ class SessionConfigError(StartupError):
     code = "session_config"
 
 
+class ConfigValidationError(StartupError):
+    """One or more settings classes failed to load or validate."""
+
+    code = "config_validation"
+
+
 class OpenAPISchemaError(StartupError):
     """Reserved for strict OpenAPI generation — not raised yet.
 
@@ -343,6 +349,7 @@ __all__ = [
     "InterceptorConfigError",
     "ExceptionHandlerConfigError",
     "SessionConfigError",
+    "ConfigValidationError",
     "OpenAPISchemaError",
     "DecoratorUsageError",
     "ExtractorError",

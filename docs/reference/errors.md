@@ -36,6 +36,7 @@ LaurenError
 │   ├── InterceptorConfigError
 │   ├── ExceptionHandlerConfigError
 │   ├── SessionConfigError
+│   ├── ConfigValidationError
 │   ├── OpenAPISchemaError
 │   └── DecoratorUsageError
 ├── HTTPError  → 500  code=http_error
@@ -90,6 +91,7 @@ best-effort, so they are collected rather than aborting shutdown.
 | `InterceptorConfigError` | `StartupError` | — | `interceptor_config` | An interceptor lacks `intercept(ctx, call_handler)`, or `@use_interceptors` cannot run where placed. |
 | `ExceptionHandlerConfigError` | `StartupError` | — | `exception_handler_config` | An `@exception_handler` / `@use_exception_handlers` was misused. |
 | `SessionConfigError` | `StartupError` | — | `session_config` | A `SessionConfig` was invalid, or a `Session` was injected into a handler in an app that did not enable sessions. |
+| `ConfigValidationError` | `StartupError` | — | `config_validation` | One or more settings classes failed to load or validate. |
 | `OpenAPISchemaError` | `StartupError` | — | `openapi_schema` | Reserved for strict OpenAPI generation — not raised yet. |
 | `DecoratorUsageError` | `StartupError` | — | `decorator_usage` | A decorator or provider helper was used incorrectly — most often without parentheses. |
 | `HTTPError` | `LaurenError` | 500 | `http_error` | Base class for errors mapped to HTTP responses. |

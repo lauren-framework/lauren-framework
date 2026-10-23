@@ -118,6 +118,7 @@ from .decorators import (
 from .exceptions import (
     CircularDependencyError,
     CircularModuleError,
+    ConfigValidationError,
     DecoratorUsageError,
     DestructError,
     DestructTimeoutError,
@@ -493,6 +494,7 @@ __all__ = [
     "InterceptorConfigError",
     "ExceptionHandlerConfigError",
     "SessionConfigError",
+    "ConfigValidationError",
     "OpenAPISchemaError",
     "ExtractorError",
     "ExtractorFieldError",
