@@ -175,6 +175,13 @@ core ideas:
   with ETag caching, `Cache-Control`, path-traversal protection, and dotfiles
   (`.env`, `.git/`) hidden by default (`/.well-known/` still served).
 * **Socket.IO** — Engine.IO v4 / Socket.IO v5 adapter via `@socketio_controller`.
+* **Stable error contract** — A closed error catalog with stable `code`s and
+  the everyday HTTP errors built in (`NotFoundError`, `ConflictError`,
+  `TooManyRequestsError`, `ServiceUnavailableError`, …). Errors carry headers
+  (`UnauthorizedError(challenge=...)`, `retry_after=`), render as Lauren's
+  `{"error": {...}}` envelope or RFC 9457 problem details
+  (`error_format="rfc9457"`), and `debug=True` serves development error pages
+  with the traceback and route chain.
 * **OpenAPI 3.1** — Automatic schema generation from Pydantic models,
   dataclasses, `TypedDict`, and `Discriminated` unions. Swagger UI and ReDoc
   served out of the box.

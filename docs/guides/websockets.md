@@ -680,7 +680,9 @@ they run depends on where they are declared:
 | an `@on_message` method | **for every frame** routed to that handler | only that handler |
 
 Connection-level guards run *before* accepting the connection — rejected
-clients never complete the handshake (close code `1008`).
+clients never complete the handshake (close code `1008`, with the guard's
+`deny_error` code — `"forbidden"` by default — as the close reason; see
+[Custom Guards](custom-guards.md#choosing-the-denial-error)).
 
 ```python
 from lauren import (
@@ -764,8 +766,10 @@ stays open, exactly like a validation error:
            "detail": {"guard": "ModeratorOnly", "event": "room.kick"}}}
 ```
 
-A guard may raise an `HTTPError` (for example `UnauthorizedError("token expired")`)
-to answer with that error's envelope instead. Any other exception is treated
+A guard that declares `deny_error` (e.g. `deny_error = UnauthorizedError`)
+answers with that error's code instead of `forbidden`. A guard may also raise an
+`HTTPError` (for example `UnauthorizedError("token expired")`) to answer with
+that error's envelope. Any other exception is treated
 like a handler error (`@on_error`, or an `internal error` frame) — the handler
 still does not run. Unlike HTTP, a WS interceptor's `call_handler.handle()`
 returns the handler's raw return value: a WebSocket has no `Response`.

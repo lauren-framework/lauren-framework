@@ -118,6 +118,19 @@ Require a started `LaurenApp` (return empty / `None` before startup).
 
 ::: lauren.ReflectedWsGateway
 
+### `ReflectedError`
+
+::: lauren.ReflectedError
+
+---
+
+## Error catalog
+
+Enumerate every error class — lauren's own and the application's — without
+hard-coding the list. See [Error Catalog](errors.md#programmatic-discovery).
+
+::: lauren.error_catalog
+
 ---
 
 ## Composing utilities

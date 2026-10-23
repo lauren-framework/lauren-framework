@@ -87,7 +87,7 @@ small on purpose; cross-cutting concerns live next door.
 lauren/                      — framework package
 ├── _app.py                  — high-level orchestration (Lauren class)
 ├── _arena/                  — per-request allocation arena (private)
-├── _asgi/                   — ASGI adapter, OpenAPI, docs
+├── _asgi/                   — ASGI adapter, OpenAPI, docs, RFC 9457 rendering (_problem.py), debug pages (_debug.py)
 ├── _di/                     — dependency injection container + custom providers
 ├── _discriminated.py        — Discriminated[A|B,"key"] runtime (detection, validation, OpenAPI)
 ├── _encoders/               — optional encoder backends (pydantic)
@@ -187,15 +187,18 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
    feature that genuinely needs it is used without it.
 
 8. **The error catalog is closed.** Adding a new error class is a
-   public-API change; new runtime conditions should subclass an existing
+   public-API change that happens only through a justified design proposal
+   (the HTTP family — 400/404/406/409/410/412/415/429/503/504 — was the last
+   such growth); new runtime conditions should subclass an existing
    category (`StartupError`, `HTTPError`, `LifecycleError`) rather than
-   creating a parallel hierarchy. The complete, generated table lives in
-   `docs/reference/errors.md` — never write the count in prose. A new class
-   needs a one-line docstring (it becomes the table's "Meaning"), entries in
-   `lauren.exceptions.__all__` and `lauren.__all__`, then
-   `python scripts/sync_doc_facts.py`. (`UnsupportedMediaTypeError`, an
-   `HTTPError` (415) raised by `ContentConfig(strict_content_type=True)`,
-   is the most recent addition.)
+   creating a parallel hierarchy, and framework code that needs an HTTP
+   status raises the built-in class (with `headers=` / `retry_after=` /
+   `challenge=` / `allow=` as needed) instead of hand-building a response.
+   The complete, generated table lives in `docs/reference/errors.md` and
+   `lauren.reflect.error_catalog()` returns it as data — never write the
+   count in prose. A new class needs a one-line docstring (it becomes the
+   table's "Meaning"), entries in `lauren.exceptions.__all__` and
+   `lauren.__all__`, then `python scripts/sync_doc_facts.py`.
 
 → *See `skills/building-lauren-apps/` for the complete `LaurenFactory` bootstrap pattern and module wiring.*
 
@@ -234,6 +237,12 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Read all routes declared on a controller | `reflect_routes(cls)` → `tuple[ReflectedRoute, ...]` |
 | Query the compiled route table of a running app | `get_all_routes(app)`, `get_route_metadata(app, method, path)` |
 | Read any `@use_*` metadata from a class without `__dict__` access | `reflect_guards`, `reflect_interceptors`, `reflect_exception_handlers`, … |
+| Answer with a standard HTTP error (400/404/409/429/503/…) | Raise the built-in (`NotFoundError`, `ConflictError`, `TooManyRequestsError(retry_after=…)`, …); subclass it for a domain `code` |
+| Send `WWW-Authenticate` / `Retry-After` / `Allow` / any header with an error | `UnauthorizedError(challenge=…)`, `retry_after=`, `MethodNotAllowedError(allow=…)`, `headers=` on any error |
+| Make a guard's `False` answer 401 instead of 403 | `deny_error = UnauthorizedError` class attribute on the guard |
+| Emit RFC 9457 problem details | `LaurenFactory.create(..., error_format="rfc9457", problem_type_base=…)` |
+| See tracebacks for unhandled errors while developing | `LaurenFactory.create(..., debug=True)` (or `DebugConfig(...)`) |
+| List every error class (framework + app) as data | `error_catalog()` → `tuple[ReflectedError, ...]` |
 
 See `docs/concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md` for detailed trade-offs.
 
@@ -485,6 +494,27 @@ deterministic).
   outside any route, so only `global_exception_handlers` apply. An `HTTPError`
   raised by middleware at any level still renders its own status; anything
   unclaimed becomes a logged `500 internal_error`.
+- ❌ Defining your own `NotFoundError(HTTPError)` (or `ConflictError`,
+  `BadRequestError`, …) — the everyday HTTP errors are built in. Subclass
+  `lauren.NotFoundError` to keep the shared status and set a domain `code`
+  (`class UserNotFound(NotFoundError): code = "user_not_found"`); a handler for
+  `NotFoundError` then claims it too.
+- ❌ Returning `False` from an **authentication** guard without
+  `deny_error = UnauthorizedError` — the denial is a 403 instead of a 401. For a
+  challenge header use a zero-argument factory
+  (`deny_error = staticmethod(lambda: UnauthorizedError("…", challenge="Bearer"))`).
+  An invalid `deny_error` raises `GuardConfigError` at startup.
+- ❌ Hand-building a 401/405/429/503 `Response` to add `WWW-Authenticate`,
+  `Allow` or `Retry-After` — raise the error with `challenge=` / `allow=` /
+  `retry_after=` (or `headers=`) instead; the headers are sent in every
+  `error_format`. An `@exception_handler` that returns its own `Response` does
+  **not** inherit `exc.headers`.
+- ❌ Enabling `debug=` outside development, or deriving it from an environment
+  variable without care — debug pages show source code and request data. They
+  are loopback-only by default (not a boundary behind a same-host proxy), the
+  factory warns whenever they are on, and a production `Profile` from the typed
+  configuration module makes `debug=` a `StartupError`
+  (`reason="debug_in_production"`).
 - ❌ Expecting `call_handler.handle()` to return the raw handler value (dict,
   Pydantic model, tuple, etc.) inside an interceptor — as of v1.4.2
   `handle()` always returns a coerced `Response`.  Interceptors can safely call

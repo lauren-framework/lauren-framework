@@ -284,13 +284,11 @@ We're going to be honest. Lauren is **not** the right pick for:
 
     ```python
     from lauren import (
-        LaurenFactory, controller, get, module, injectable, Path,
+        LaurenFactory, NotFoundError, controller, get, module, injectable, Path,
     )
-    from lauren.exceptions import HTTPError
     from lauren.logging import Logger
 
-    class UserNotFound(HTTPError):
-        status_code = 404
+    class UserNotFound(NotFoundError):   # built-in 404, domain code
         code = "user_not_found"
 
     @injectable()
