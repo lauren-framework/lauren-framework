@@ -162,6 +162,12 @@ core ideas:
   response is sent. `TaskHandle` exposes `status`, `done`, `cancel()` (before
   the task starts) and `await result()` (from another coroutine). Signals
   notify on start, complete, and failure.
+* **Application events** — typed domain events between modules: `@on_event`
+  handlers on any provider, discovered and validated at startup; publish with
+  the singleton `EventBus` or the request-scoped `EventPublisher` (inline
+  handlers share the request's DI scope). Inline, concurrent or
+  after-the-response delivery, priorities, `propagate` / `isolate` error
+  policies, shutdown draining, and `recording()` / `drain()` for tests.
 * **Sessions** — first-class signed-cookie sessions via
   `LaurenFactory.create(..., sessions=SessionConfig(...))`. A mutable
   `session: Session` is injected into handlers at zero per-request cost; the

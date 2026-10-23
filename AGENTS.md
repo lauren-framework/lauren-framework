@@ -106,6 +106,8 @@ nox -s ver_dec -- --patch
 | `lauren/_di/_scope.py`            | Shared request-scope finaliser (`finalize_scope`) used by HTTP, WebSocket and `OperationScope`; `register_framework_value` |
 | `lauren/_discovery.py`            | Startup discovery pass (Phase 6a): marker registry, `DiscoveryIndex`, compiled `CallPlan`s for provider methods |
 | `lauren/context.py`               | `OperationScope` (public; built by `app.scope()`) |
+| `lauren/events.py`                | Public application-event surface (`EventBus`, `EventPublisher`, `on_event`, `EventContext`, `EmitResult`, `EventsModule`, `TransactionPhase`, `UnitOfWork`) |
+| `lauren/_events/`                 | Event bus internals: `@on_event` marker (`_meta`), handler validation + dispatch table (`_plan`), `EventBus` / `EventPublisher`, task tracking, shutdown drain, factory hooks (`_bus`) |
 | `lauren/_discriminated.py`        | `Discriminated[A\|B,"key"]` — detection, validation, OpenAPI schema |
 | `lauren/_encoders/`               | Optional encoder backends (e.g. `pydantic.py`) |
 | `lauren/_routing/__init__.py`     | Radix-tree router                            |
@@ -280,6 +282,7 @@ Welcome aboard.
 | Serve static files | `lauren/_staticfiles.py` | `skills/building-lauren-apps/` §Static files |
 | Write unit or integration tests | `tests/integration/test_di.py` | `skills/testing-lauren-apps/` |
 | Add a background task | `lauren/background.py` | `skills/building-lauren-background-tasks/` |
+| Decouple modules with domain events | `lauren/events.py` | `skills/building-lauren-events/` |
 | Add session state | `lauren/sessions.py` | `skills/building-lauren-sessions/` |
 | Read typed configuration / secrets | `lauren/config.py` | `skills/building-lauren-config/` |
 | Debug a startup error | `lauren/exceptions.py` | **Common Errors** section below |
@@ -297,6 +300,7 @@ Welcome aboard.
 | Guards, interceptors, middleware | `skills/building-lauren-guards/` |
 | SSE, WebSocket gateways, `StreamingResponse` | `skills/building-lauren-streaming/` |
 | `BackgroundTasks`, `TaskHandle` | `skills/building-lauren-background-tasks/` |
+| Domain events: `@on_event`, `EventBus`, `EventPublisher` | `skills/building-lauren-events/` |
 | Sessions: signed cookies, `Session` injection, pluggable store | `skills/building-lauren-sessions/` |
 | Typed configuration: `ConfigModule`, sources, profiles, `Secret[T]` | `skills/building-lauren-config/` |
 | `TestClient`, async tests, mock providers | `skills/testing-lauren-apps/` |
@@ -323,6 +327,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | Enumerating all HTTP routes / WS gateways at runtime | `get_all_routes`, `get_all_ws_gateways` in `lauren.reflect` |
 | SSE / streaming | `docs/guides/sse.md` |
 | Session management | `docs/guides/sessions.md` |
+| Domain events between modules | `docs/guides/events.md` |
 | Typed configuration | `docs/guides/configuration.md` |
 | Custom response subclasses and response factories | `docs/guides/custom-responses.md` / `docs/guides/file-responses.md` |
 | Testing playbook | `skills/testing-lauren-apps/SKILL.md` |

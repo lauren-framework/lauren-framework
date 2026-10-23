@@ -182,6 +182,7 @@ nav:
     - Server-Sent Events: guides/server-sent-events.md
     - Typed Streaming: guides/typed-streaming.md
     - Signals & Lifecycle Events: guides/signals.md
+    - Application Events: guides/events.md
     - Socket.IO: guides/socketio.md
     - Circular Module Imports: guides/circular-module-imports.md
     - OpenAPI Security from Guards: guides/openapi-security.md
@@ -213,6 +214,7 @@ nav:
     - Sessions: reference/sessions.md
     - Configuration: reference/config.md
     - Signals: reference/signals.md
+    - Events: reference/events.md
     - Testing: reference/testing.md
     - Cheat Sheet: reference/cheat-sheet.md
     - Error Catalog: reference/errors.md

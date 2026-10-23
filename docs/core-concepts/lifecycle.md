@@ -69,6 +69,7 @@ Inside the four-phase shutdown:
 | Phase | Bounded by | What runs |
 |---|---|---|
 | Drain | `drain_timeout` | In-flight requests get a chance to finish. |
+| Event handler drain | what is left of `drain_timeout` (or `EventsModule.for_root(drain_timeout=...)`) | Running [`@on_event`](../guides/events.md) handler tasks finish; the rest are cancelled and reported as `EventHandlerFailed`. |
 | `on_shutdown` callbacks | — (no timeout; keep them short) | User hooks registered via `app.on_shutdown(fn)` (LIFO order). |
 | `@pre_destruct` hooks | per-hook timeout | Provider teardown in reverse topological order. |
 | Goodbye | — | Final log line confirming clean shutdown. |

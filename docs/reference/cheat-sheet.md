@@ -445,6 +445,43 @@ async def alert(event: BackgroundTaskFailed) -> None:
     await pagerduty.trigger(str(event.error))
 ```
 
+## Application events
+
+```python
+from dataclasses import dataclass
+from lauren.events import EventBus, EventContext, EventPublisher, EventsModule, TransactionPhase, on_event
+
+@dataclass(frozen=True)
+class UserRegistered:
+    user_id: str
+    email: str
+
+@injectable()
+class Mailer:
+    @on_event(mode="background")                   # class from the annotation; after the response
+    async def welcome(self, event: UserRegistered) -> None: ...
+
+    @on_event(UserRegistered, priority=10, errors="isolate")   # inline, isolated failures
+    async def audit(self, event: object, db: DbSession, ctx: EventContext) -> None: ...
+
+# Publish from a service (singleton) …
+result = await bus.emit(UserRegistered("u1", "a@b.c"), wait=True)   # EmitResult(handled, scheduled, errors)
+# … or from a request: inline handlers share the request's DI scope
+await publisher.emit(UserRegistered("u1", "a@b.c"))
+await publisher.emit(UserRegistered("u1", "a@b.c"), after=TransactionPhase.COMMIT)
+
+# Tests
+with bus.recording() as rec:
+    ...
+    await bus.drain()
+rec.of(UserRegistered); rec.handler_calls(Mailer.welcome)
+with bus.disabled(Mailer.welcome): ...
+
+# Optional tuning
+@module(imports=[EventsModule.for_root(max_depth=16, drain_timeout=None)])
+class AppModule: ...
+```
+
 ## Logging
 
 ```python

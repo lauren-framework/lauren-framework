@@ -25,3 +25,7 @@ POSIX signal integration and application shutdown hooks.
 ::: lauren.BackgroundTaskComplete
 
 ::: lauren.BackgroundTaskFailed
+
+## Event bus events
+
+::: lauren.EventHandlerFailed

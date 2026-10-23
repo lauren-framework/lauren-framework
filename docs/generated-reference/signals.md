@@ -207,3 +207,20 @@ Listeners are typically used to flush buffers, close external
 connections, or emit a final heartbeat. The event does NOT
 block shutdown — listeners run concurrently with the framework's
 own ``@pre_destruct`` machinery.
+
+## Event bus events
+
+### `EventHandlerFailed`
+
+```python
+class EventHandlerFailed(timestamp: float = time.monotonic(), event_type: Any = None, handler: str = '', error: BaseException | None = None, mode: str = '', event: Any = None)
+```
+
+Emitted when an ``@on_event`` handler raises, or is cancelled at shutdown.
+
+Fired by the application :class:`~lauren.events.EventBus` for every
+handler failure, whatever the handler's error policy: ``"isolate"``
+failures are also logged and returned in
+:attr:`EmitResult.errors <lauren.events.EmitResult.errors>`,
+``"propagate"`` failures re-raise from ``emit()``. A deferred handler
+cancelled by the shutdown drain carries an :class:`asyncio.CancelledError`.
