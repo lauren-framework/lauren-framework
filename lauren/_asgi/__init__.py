@@ -18,6 +18,7 @@ from .._arena import RequestArena
 from .._di import INJECTABLE_META, DIContainer, InjectableMeta
 from .._di._scope import finalize_scope
 from .._di.custom import CustomProvider
+from .._discovery import DiscoveryIndex, build_discovery_index, registered_markers
 from ..serialization import (
     JSONEncoder,
     StdlibJSONEncoder,
@@ -850,6 +851,8 @@ class LaurenApp:
         # Mounted sub-applications, ordered by descending prefix length so the
         # most-specific prefix wins when multiple prefixes could match.
         self._mounts: list[tuple[str, Any]] = []
+        # Provider-discovery index (Phase 6a of LaurenFactory.create).
+        self._discovery: DiscoveryIndex = DiscoveryIndex.empty()
 
     # -- Introspection -----------------------------------------------------
 
@@ -2941,6 +2944,21 @@ class LaurenFactory:
             ws_gateways=len(ws_gateways),
         )
 
+        # ---- Phase 6a: Provider discovery ----
+        # One scan over every registered provider for the markers features
+        # registered (scheduled jobs, health checks, event handlers, …). Runs
+        # after the final DI compile so every provider is in the container,
+        # and before the lifecycle order so consumers can rely on the index.
+        # See ``lauren/_discovery.py`` for the rules.
+        t0 = time.perf_counter()
+        discovery = build_discovery_index(container, registered_markers())
+        _log.verbose(
+            f"Phase 6a provider discovery: {sum(map(len, discovery.methods.values()))} method(s), "
+            f"{sum(map(len, discovery.classes.values()))} class(es) "
+            f"({format_duration_ms(time.perf_counter() - t0)})",
+            context="Discovery",
+        )
+
         # ---- Phase 6: Lifecycle execution ----
         lifecycle = LifecycleScheduler(container)
         lifecycle.compute_order()
@@ -2986,6 +3004,8 @@ class LaurenFactory:
             global_ws_interceptors=effective_global_ws_interceptors or None,
             strict_content_type=effective_strict_content_type,
         )
+        # The immutable Phase 6a index; feature consumers read their markers.
+        app._discovery = discovery
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via
         # ``lauren.serialization.set_active_encoder``). Pinning the
