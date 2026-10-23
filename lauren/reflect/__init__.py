@@ -17,6 +17,8 @@ This module provides:
 * **Composing utilities** — :func:`apply_guards` and :func:`apply_interceptors`
   are used internally by Lauren's WS runtime and are also public for extension
   authors.
+* **Error catalog** — :func:`error_catalog` lists every error class (framework
+  and application) as :class:`ReflectedError` entries.
 
 Typical usage::
 
@@ -49,6 +51,7 @@ Typical usage::
 from __future__ import annotations
 
 from ._app_reader import get_all_routes, get_all_ws_gateways, get_route_metadata
+from ._catalog import error_catalog
 from ._composer import apply_guards, apply_interceptors
 from ._context import WsConnectionContext, WsMessageContext, WsUpgradeRequest
 from ._reader import (
@@ -74,6 +77,7 @@ from ._reader import (
 )
 from ._types import (
     ReflectedController,
+    ReflectedError,
     ReflectedModule,
     ReflectedRoute,
     ReflectedWsGateway,
@@ -114,6 +118,9 @@ __all__ = [
     "ReflectedController",
     "ReflectedModule",
     "ReflectedWsGateway",
+    "ReflectedError",
+    # Error catalog
+    "error_catalog",
     # Composing utilities
     "apply_guards",
     "apply_interceptors",

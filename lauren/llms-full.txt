@@ -28,24 +28,25 @@ common mistakes.
 17. [Sync vs Async Handlers](#sync-vs-async-handlers)
 18. [Background Tasks](#background-tasks)
 19. [Error Catalog](#error-catalog)
-20. [Testing](#testing)
-21. [Strict Decorator Inheritance](#strict-decorator-inheritance)
-22. [OpenAPI 3.1 Generation](#openapi-31-generation)
-23. [Logging](#logging)
-24. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
-25. [WebSockets](#websockets)
-26. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
-27. [Typed Streaming](#typed-streaming)
-28. [Socket.IO Compatibility](#socketio-compatibility)
-29. [Sessions](#sessions)
-30. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
-31. [Static Files](#static-files)
-32. [Request Arena](#request-arena)
-33. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
-34. [AI Documentation Access](#ai-documentation-access)
-35. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-36. [Companion Packages](#companion-packages)
-37. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
+20. [Debug Error Pages](#debug-error-pages)
+21. [Testing](#testing)
+22. [Strict Decorator Inheritance](#strict-decorator-inheritance)
+23. [OpenAPI 3.1 Generation](#openapi-31-generation)
+24. [Logging](#logging)
+25. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
+26. [WebSockets](#websockets)
+27. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
+28. [Typed Streaming](#typed-streaming)
+29. [Socket.IO Compatibility](#socketio-compatibility)
+30. [Sessions](#sessions)
+31. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
+32. [Static Files](#static-files)
+33. [Request Arena](#request-arena)
+34. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+35. [AI Documentation Access](#ai-documentation-access)
+36. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+37. [Companion Packages](#companion-packages)
+38. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -110,7 +111,7 @@ assert client.post("/users/", json={"name": "Ada", "age": 36}).status_code == 20
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, problem_type_base=None, debug=False)`
 
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
@@ -150,11 +151,13 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `arena_capacity` | `int` | `None` | Override arena pool capacity |
 | `json_encoder` | `JSONEncoder` | `None` | Encoder for all JSON output (responses, errors, SSE, WS) |
 | `signals` | `SignalBus` | `None` | Shared signal bus for lifecycle events |
-| `error_format` | `str` | `"default"` | Error response format (`"default"` or `"rfc7807"`) |
+| `error_format` | `str` | `"default"` | Error response format: `"default"`, `"rfc9457"` (RFC 9457 problem details) or `"rfc7807"` (legacy problem details) — see [Error Catalog](#error-catalog) |
 | `root_path` | `str` | `""` | ASGI root path for reverse proxy prefix stripping |
 | `mounts` | `dict[str, Any]` | `None` | Sub-applications mounted at path prefixes |
 | `sessions` | `SessionConfig` | `None` | Enable signed-cookie sessions (see [Sessions](#sessions)) |
 | `content` | `ContentConfig` | `None` | Request-body content policy: `ContentConfig(strict_content_type=None \| False \| "warn" \| True)` (see [Content-type policy](#content-type-policy-contentconfig)) |
+| `problem_type_base` | `str` | `None` | Problem-details `type` prefix: `type = base + code` for errors without a `problem_type` (`StartupError` if not a non-empty string) |
+| `debug` | `bool \| DebugConfig` | `False` | Development error pages for unhandled errors (see [Debug Error Pages](#debug-error-pages)); never enabled implicitly |
 
 ### `Lauren` (imperative API)
 
@@ -189,9 +192,10 @@ assert client.post("/users", json={"name": "ada"}).status_code == 201
 under friendlier names (`title` / `version` / `description` → `openapi_info`,
 `servers` → `openapi_servers`, `security_schemes` →
 `openapi_security_schemes`) — and differs in defaults: `/docs`, `/redoc` and
-`/openapi.json` are enabled. `debug` is reserved and has no effect yet (passing
-`True` logs a warning). It internally creates a root module from the registered
-routes and modules. Mutators — `include_module`, `add_middleware`,
+`/openapi.json` are enabled. `debug=True` (or a `DebugConfig`) is forwarded to
+the factory when the app compiles — see [Debug Error Pages](#debug-error-pages);
+`app.debug` reports whether it is on. It internally creates a root module from
+the registered routes and modules. Mutators — `include_module`, `add_middleware`,
 `add_guard`, `add_interceptor`, `add_exception_handler`, `add_provider`,
 `mount(path, asgi_app)` and the route decorators — must run before the app
 compiles (first request or `await app.startup()`); afterwards they raise
@@ -944,6 +948,36 @@ Resolution rules:
 ### Guards (`GuardProtocol`)
 
 Guards authorize a request by returning `bool` (or raising an `HTTPError`).
+A falsy return raises `ForbiddenError` (403, `detail={"guard": "<Name>"}`)
+unless the guard class declares `deny_error` — an `HTTPError` subclass, called
+as `deny_error("guard <Name> denied the request", detail={"guard": "<Name>"})`,
+or a zero-argument factory returning an `HTTPError` instance. Authentication
+guards should declare `deny_error = UnauthorizedError` so a denial is a 401.
+`LaurenFactory.create` validates it (`GuardConfigError`,
+`detail["reason"] == "invalid_deny_error"`); subclasses inherit it like any
+class attribute. On WebSocket gateways a connect-time denial closes with 1008
+and the error's `code` as the close reason; a per-message denial answers with
+its error frame.
+
+```python run
+from typing import ClassVar
+
+from lauren import ExecutionContext, HTTPError, UnauthorizedError
+
+class ApiKeyGuard:
+    deny_error: ClassVar[type[HTTPError]] = UnauthorizedError   # 401 instead of 403
+
+    async def can_activate(self, ctx: ExecutionContext) -> bool:
+        return ctx.request.headers.get("x-api-key") == "secret"
+
+class BasicAuthGuard:
+    @staticmethod
+    def deny_error() -> HTTPError:                                # factory: adds a challenge
+        return UnauthorizedError("login required", challenge='Basic realm="admin"')
+
+    async def can_activate(self, ctx: ExecutionContext) -> bool:
+        return ctx.request.headers.get("authorization") == "Basic YWRtaW46cHc="
+```
 
 ```python run
 from lauren import ExecutionContext
@@ -1078,19 +1112,12 @@ Three attachment scopes — global, per-controller, per-route.
 ### Class form
 
 ```python run
-from lauren import HTTPError, LaurenFactory, controller, exception_handler, get, module
+from lauren import ConflictError, LaurenFactory, NotFoundError, controller, exception_handler, get, module
 from lauren.logging import Logger, NullLogger
 from lauren.testing import TestClient
 from lauren.types import Request, Response
 
-class NotFoundError(HTTPError):      # domain errors: subclass HTTPError
-    status_code = 404
-    code = "not_found"
-
-class ConflictError(HTTPError):
-    status_code = 409
-    code = "conflict"
-
+# NotFoundError / ConflictError are built in; the handler also claims subclasses.
 @exception_handler(NotFoundError, ConflictError)
 class DomainErrors:
     def __init__(self, log: Logger) -> None:
@@ -1179,6 +1206,9 @@ whose declared types match (`isinstance(exc, declared)`) wins.
   it was handling (`origin="exception_handler"`, `handler`, `cause`).
 * Errors raised by a **global** middleware (or the session engine) are
   outside any route, so only **global** handlers can claim them.
+* A handler that returns its own `Response` owns it: the error's `headers`
+  (`WWW-Authenticate`, `Retry-After`, …) are **not** merged — copy them from
+  `exc.headers` if needed.
 
 ---
 
@@ -1522,18 +1552,136 @@ All HTTP errors serialize as:
 {"error": {"code": "...", "message": "...", "detail": { ... }}}
 ```
 
-To surface a custom domain error with a specific status, subclass `HTTPError`:
+### Built-in HTTP errors
 
-```python
-from lauren.exceptions import HTTPError
+Raise the everyday statuses directly — never re-declare them:
+`BadRequestError` (400), `UnauthorizedError` (401), `ForbiddenError` (403),
+`NotFoundError` (404; routing misses raise its subclass `RouteNotFoundError`),
+`MethodNotAllowedError` (405), `NotAcceptableError` (406), `ConflictError`
+(409), `GoneError` (410), `PreconditionFailedError` (412), `RequestBodyTooLarge`
+(413), `UnsupportedMediaTypeError` (415), `ExtractorError` (422),
+`TooManyRequestsError` (429), `ServiceUnavailableError` (503),
+`RequestTimeoutError` (504 — a *server-side* deadline, code `request_timeout`;
+not HTTP 408). For a domain code, subclass the matching built-in (it keeps the
+status, and `@exception_handler(NotFoundError)` claims it too):
 
-class NotFoundError(HTTPError):
-    status_code = 404
-    code = "not_found"
+```python run
+from datetime import datetime, timezone
 
-# In a handler:
-raise NotFoundError("user not found", detail={"id": user_id})
+from lauren import (
+    ConflictError,
+    HTTPError,
+    LaurenFactory,
+    MethodNotAllowedError,
+    NotFoundError,
+    ServiceUnavailableError,
+    TooManyRequestsError,
+    UnauthorizedError,
+    controller,
+    get,
+    module,
+)
+from lauren.testing import TestClient
+
+class UserNotFound(NotFoundError):
+    code = "user_not_found"
+
+class EmailTaken(ConflictError):
+    code = "email_taken"
+
+# headers= on every error (mapping, or (name, value) pairs to repeat a name);
+# typed sugar for the headers HTTP requires:
+UnauthorizedError("bad token", challenge='Bearer realm="api"')     # WWW-Authenticate
+TooManyRequestsError("slow down", retry_after=30)                  # Retry-After: 30
+ServiceUnavailableError("draining", retry_after=datetime(2026, 10, 23, 18, 0, tzinfo=timezone.utc))
+                                                                   # Retry-After: Fri, 23 Oct 2026 18:00:00 GMT
+MethodNotAllowedError("use PUT", allow=["PUT"])                    # Allow: PUT (wherever raised)
+NotFoundError("gone", headers={"cache-control": "no-store"})
+# Instance overrides (escape hatch; subclass for stable codes):
+HTTPError("I'm a teapot", status_code=418, code="teapot")
+
+@controller("/users")
+class UserController:
+    @get("/{user_id}")
+    async def show(self, user_id: int) -> dict:
+        raise UserNotFound("user does not exist", detail={"id": user_id})
+
+@module(controllers=[UserController])
+class UsersModule: ...
+
+r = TestClient(LaurenFactory.create(UsersModule)).get("/users/7")
+assert r.status_code == 404
+assert r.json() == {"error": {"code": "user_not_found", "message": "user does not exist", "detail": {"id": 7}}}
 ```
+
+Rules: header names are lower-cased (`err.headers` is a tuple of pairs); CR /
+LF / NUL, non-latin-1 values and `content-type` / `content-length` raise
+`ValueError` at construction. `challenge=` (str or list of str) is
+`UnauthorizedError`-only; `retry_after=` (seconds, `timedelta`, or an aware
+`datetime` — naive raises `ValueError`) is accepted by `TooManyRequestsError`,
+`ServiceUnavailableError` and `RequestTimeoutError`. Instance `status_code=`
+must be 400–599 and `code=` non-empty. The headers are sent in every
+`error_format`, from handlers, guards, extractors and global middleware alike.
+
+### Problem details (`error_format="rfc9457"`)
+
+```python run
+app = LaurenFactory.create(
+    UsersModule,
+    error_format="rfc9457",                           # "default" | "rfc9457" | "rfc7807"
+    problem_type_base="https://errors.example.com/",  # optional
+)
+r = TestClient(app).get("/users/7")
+assert r.header("content-type") == "application/problem+json"
+assert r.json() == {
+    "type": "https://errors.example.com/user_not_found",
+    "title": "Not Found",
+    "status": 404,
+    "detail": "user does not exist",
+    "instance": "/users/7",
+    "code": "user_not_found",
+    "context": {"id": 7},
+}
+```
+
+* `type`: the class's `problem_type`, else `problem_type_base + code`, else
+  `"about:blank"`. `title`: the class's `problem_title`, else the status phrase.
+* `detail`: the message (the title when empty). `instance`: the request path.
+  `code`: Lauren's stable code. `context`: the error's `detail` dict (omitted
+  when empty).
+* `errors`: an **array**, for validation failures only — each entry has
+  `detail`, plus `pointer` (RFC 6901 JSON Pointer into the body, e.g.
+  `"#/address/city"`) or `in` + `parameter`, and `code` when known. Built from an
+  `issues` list of `{"loc", "type", "msg"}` in the error's `detail`, or one entry
+  per message of an `ExtractorError` that names a `field`.
+* Class-level `problem_type` / `problem_title` attributes on any `HTTPError`
+  subclass set `type` / `title`.
+* `error_format="rfc7807"` is the **legacy** shape, byte-identical to earlier
+  releases (`urn:ietf:rfc:7231:<status>` default `type`, no `instance`, detail
+  dict in an object-valued `errors`). Unknown values fall back to `"default"`
+  with a warning (a `StartupError` in 2.0).
+
+### Error catalog as data
+
+`lauren.reflect.error_catalog(*, include_user=True) -> tuple[ReflectedError, ...]`
+walks `LaurenError` and its subclasses at call time (depth-first);
+`include_user=False` keeps lauren's own public classes. `ReflectedError` (frozen)
+fields: `cls`, `code`, `status_code` (`None` outside `HTTPError`), `category`
+(`"startup" | "http" | "lifecycle" | "websocket" | "other"`), `problem_type`,
+`problem_title`, `summary` (first docstring paragraph). Startup / tooling only —
+never on the request path.
+
+```python run
+from lauren import error_catalog
+
+entry = next(e for e in error_catalog() if e.cls is UserNotFound)
+assert (entry.code, entry.status_code, entry.category) == ("user_not_found", 404, "http")
+assert all(e.cls.__module__.startswith("lauren") for e in error_catalog(include_user=False))
+```
+
+**Deprecation notice:** `detail.type` on `internal_error` 500s and
+`detail.guard` on guard denials expose class names; they stay in 1.x and will
+be emitted only with debug pages enabled in 2.0. Match on `code`, not on them.
 
 ### Errors: Decorator & Interceptor
 
@@ -1554,6 +1702,62 @@ class Fine: ...
 `InterceptorConfigError` is raised when an interceptor class is
 misconfigured at startup (e.g. no `intercept` method, wrong signature,
 or applied without parentheses).
+
+---
+
+## Debug Error Pages
+
+`LaurenFactory.create(..., debug=True)` (or `debug=DebugConfig(...)`; also
+`Lauren(debug=...)`) replaces the `500 internal_error` of an **unhandled**
+exception with a read-only report for allowed clients: exception type, message
+and `__cause__` / `__context__` chain; traceback frames with source context;
+the matched route (template, handler, controller, owning module), the effective
+middleware → guard → interceptor chain, exception handlers and parameter
+sources; a redacted request summary; Lauren / Python versions and
+`error_format`. Clients whose `Accept` prefers `text/html` get a
+self-contained HTML page (inline CSS, no JS, all strings escaped); others get
+the normal envelope plus a top-level `debug` member. Both send
+`Cache-Control: no-store`.
+
+```python run
+from lauren import DebugConfig, LaurenFactory, controller, get, module
+from lauren.testing import TestClient
+
+@controller("/orders")
+class OrderController:
+    @get("/{order_id}")
+    async def show(self, order_id: int) -> dict:
+        return {"total": {}[order_id]}          # KeyError — a bug
+
+@module(controllers=[OrderController])
+class OrdersModule: ...
+
+client = TestClient(LaurenFactory.create(OrdersModule, debug=True))   # TestClient is 127.0.0.1
+report = client.get("/orders/7", headers={"accept": "application/json"}).json()
+assert report["error"]["code"] == "internal_error"
+assert report["debug"]["exception"]["type"] == "KeyError"
+assert report["debug"]["route"]["path_template"] == "/orders/{order_id}"
+assert "KeyError" in client.get("/orders/7", headers={"accept": "text/html"}).text
+assert DebugConfig().allow_remote is False
+```
+
+`DebugConfig(include_4xx=False, allow_remote=False, redact_headers=("authorization", "cookie", "set-cookie", "proxy-authorization", "x-api-key"), redact_query_keys=("token", "password", "secret", "api_key"), source_context=5, max_frames=40, include_locals=False)`:
+
+| Field | Effect |
+|---|---|
+| `include_4xx` | Rendered `HTTPError` responses (any status) also get `debug.raised_at` + `debug.traceback` |
+| `allow_remote` | Serve every client; by default only loopback (`127.0.0.0/8`, `::1`) — **not** a boundary behind a same-host proxy |
+| `redact_headers` / `redact_query_keys` | Values replaced by `[redacted]` when the name *contains* an entry (case-insensitive); query keys also redact frame locals |
+| `source_context` / `max_frames` | Source lines around each frame / innermost frames kept |
+| `include_locals` | Show frame locals (`repr`, truncated); off because locals hold secrets |
+
+Safety: never inferred from the environment; `create()` logs a WARN
+("Debug error pages enabled — never use in production"); with the typed
+configuration module, a production `Profile` makes `debug=` a
+`StartupError(detail={"reason": "debug_in_production", ...})`; invalid values
+raise `StartupError(detail={"reason": "invalid_debug_config", ...})`; a failing
+renderer falls back to the plain 500 and logs `origin="debug_renderer"`. When
+debug is off the renderer is never imported.
 
 ---
 
@@ -2040,6 +2244,8 @@ Errors related to WebSockets:
 * `WebSocketDisconnect(close_code=...)` — the peer closed.
 * `WebSocketValidationError` — frame failed Pydantic validation.
 * `WebSocketRouteNotFoundError` — no gateway matched the path.
+* `SocketIOError` (code `socketio_error`) — a Socket.IO-layer misuse, e.g.
+  emitting on a closed connection (raised in-process, never sent).
 
 ### Testing
 
@@ -2588,6 +2794,7 @@ route = get_route_metadata(app, "GET", "/users/{id}")  # ReflectedRoute | None
 | `ReflectedController` | `cls`, `meta`, `guards`, `interceptors`, `middlewares`, `exception_handlers`, `routes` |
 | `ReflectedModule` | `cls`, `meta` |
 | `ReflectedWsGateway` | `cls`, `path_template`, `meta`, `guards`, `interceptors`, `middlewares`, `messages`, `owning_module` |
+| `ReflectedError` | `cls`, `code`, `status_code`, `category`, `problem_type`, `problem_title`, `summary` — from `error_catalog(include_user=True)` (see [Error catalog as data](#error-catalog-as-data)) |
 
 ### `reflect` module
 
@@ -2861,7 +3068,7 @@ request.
 | Extract URL param | `id: Path[int]` |
 | Extract query param | `q: Query[str] = QueryField(default="", ge=..., le=...)` |
 | Extract JSON body | `body: Json[MyPydanticModel]` |
-| Raise 404 in handler | define `class NotFound(HTTPError): status_code = 404; code = "not_found"`, then `raise NotFound("...")` |
+| Raise 404 in handler | `raise NotFoundError("...")` (built in); for a domain code, `class UserNotFound(NotFoundError): code = "user_not_found"` |
 | Add a guard to one route | `@use_guards(MyGuard)` on the method |
 | Add a guard to all routes on a controller | `@use_guards(MyGuard)` on the class |
 | Override JSON encoder for one route | `@use_encoder(OrjsonEncoder())` on the method |

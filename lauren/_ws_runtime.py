@@ -47,7 +47,6 @@ from .decorators import (
 from .exceptions import (
     DecoratorUsageError,
     ExceptionHandlerConfigError,
-    ForbiddenError,
     GuardConfigError,
     HTTPError,
     InterceptorConfigError,
@@ -533,6 +532,17 @@ def _reject_unsupported_hook_policies(cls: type, hooks: dict[str, Any]) -> None:
             )
 
 
+def _denial_reason(app: Any, guard_cls: type) -> str:
+    """The close reason for a connection a guard denied: its ``deny_error`` code."""
+    try:
+        return str(app._guard_denial(guard_cls, message="", detail={}).code)
+    except Exception:  # a broken deny_error factory must not keep the socket open
+        _stdlib_logging.getLogger("lauren").exception(
+            "deny_error of WebSocket guard %s failed; closing without a reason", guard_cls.__name__
+        )
+        return ""
+
+
 def _register_policy_providers(container: DIContainer, classes: Iterable[type]) -> None:
     """Register guard and interceptor classes with the container.
 
@@ -990,9 +1000,9 @@ async def handle_websocket(
     ) -> Any:
         """Run one frame through its handler's guards, then interceptors, then the handler.
 
-        A guard returning a falsy value answers with a ``forbidden`` error
-        frame; a guard raising an :class:`HTTPError` answers with that
-        error's envelope. Either way the handler does not run and the
+        A guard returning a falsy value answers with an error frame built
+        from its ``deny_error`` (``forbidden`` by default); a guard raising
+        an :class:`HTTPError` answers with that error's envelope. Either way the handler does not run and the
         connection stays open. Any other exception propagates to the
         frame loop like a handler error.
         """
@@ -1021,8 +1031,9 @@ async def handle_websocket(
             if not allowed:
                 await _emit_error_frame(
                     ws,
-                    ForbiddenError(
-                        f"guard {guard_cls.__name__} denied the message",
+                    app._guard_denial(
+                        guard_cls,
+                        message=f"guard {guard_cls.__name__} denied the message",
                         detail={"guard": guard_cls.__name__, "event": event},
                     ),
                 )
@@ -1085,6 +1096,7 @@ async def handle_websocket(
     try:
         # --- Guard check (before accepting the connection) ---
         if _effective_guards:
+            _denied_by: list[type] = []
             _allowed = await apply_guards(
                 _effective_guards,
                 _ws_ctx,
@@ -1092,13 +1104,19 @@ async def handle_websocket(
                 request_cache=request_cache,
                 framework_values=_fv,
                 owning_module=owning_module,
+                on_denied=_denied_by.append,
             )
             if not _allowed:
                 # A guard may already have closed with its own code
                 # (``await ctx.connection.close(4401)``); never send a
-                # second close frame.
+                # second close frame. WebSocket closes carry no HTTP
+                # status: the denying guard's ``deny_error`` code becomes
+                # the close reason.
                 if ws.connection_state != ws.STATE_CLOSED:
-                    await send({"type": "websocket.close", "code": 1008})
+                    close_frame: dict[str, Any] = {"type": "websocket.close", "code": 1008}
+                    if _denied_by:
+                        close_frame["reason"] = _denial_reason(app, _denied_by[0])
+                    await send(close_frame)
                 await _finalize_scope(container, request_cache)
                 return
 

@@ -263,6 +263,9 @@ from .reflect import (
     ReflectedController,
     ReflectedModule,
     ReflectedWsGateway,
+    ReflectedError,
+    # error catalog
+    error_catalog,
 )
 from ._staticfiles import StaticFilesModule
 from .sessions import (
@@ -281,6 +284,7 @@ from .types import (
     CallNext,
     ClientInfo,
     ContentConfig,
+    DebugConfig,
     Discriminated,
     ExecutionContext,
     GuardProtocol,
@@ -383,6 +387,7 @@ __all__ = [
     "ClientInfo",
     "ServerInfo",
     "ContentConfig",
+    "DebugConfig",
     "CallNext",
     "CallHandler",
     "MiddlewareProtocol",
@@ -471,6 +476,9 @@ __all__ = [
     "ReflectedController",
     "ReflectedModule",
     "ReflectedWsGateway",
+    "ReflectedError",
+    # reflect — error catalog
+    "error_catalog",
     "BroadcastGroup",
     "WebSocketError",
     "WebSocketDisconnect",

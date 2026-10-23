@@ -277,6 +277,53 @@ class ContentConfig:
     strict_content_type: bool | Literal["warn"] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DebugConfig:
+    """Development error pages, enabled with ``LaurenFactory.create(..., debug=...)``.
+
+    ``debug=True`` is shorthand for ``debug=DebugConfig()``. When an exception
+    reaches the framework unhandled (a 500), an allowed client gets a
+    read-only report — exception chain, traceback with source context, the
+    matched route and its middleware / guard / interceptor chain, the
+    extraction plan and a redacted request summary. Clients whose ``Accept``
+    prefers ``text/html`` get a self-contained HTML page; others get the
+    normal error envelope plus a top-level ``debug`` member.
+
+    * ``include_4xx`` — also attach ``debug.raised_at`` (where the error was
+      raised, plus a short traceback) to rendered :class:`~lauren.HTTPError`
+      responses of any status.
+    * ``allow_remote`` — serve debug output to every client. By default only
+      loopback clients (``127.0.0.0/8``, ``::1``) get it; behind a reverse
+      proxy on the same host every request looks like loopback, so this is
+      **not** a security boundary.
+    * ``redact_headers`` / ``redact_query_keys`` — header names and query
+      keys whose values are replaced with ``[redacted]``; a name matches when
+      it contains one of the entries (case-insensitive).
+    * ``source_context`` — source lines shown around each frame's line.
+    * ``max_frames`` — innermost frames kept per traceback.
+    * ``include_locals`` — show each frame's local variables (``repr``,
+      truncated; names matching ``redact_query_keys`` are redacted). Off by
+      default because locals routinely hold secrets.
+
+    Never enable debug pages in production: ``create()`` logs a warning
+    whenever they are on.
+    """
+
+    include_4xx: bool = False
+    allow_remote: bool = False
+    redact_headers: tuple[str, ...] = (
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "proxy-authorization",
+        "x-api-key",
+    )
+    redact_query_keys: tuple[str, ...] = ("token", "password", "secret", "api_key")
+    source_context: int = 5
+    max_frames: int = 40
+    include_locals: bool = False
+
+
 class Request:
     """Incoming HTTP request.
 
