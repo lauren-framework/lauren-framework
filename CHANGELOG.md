@@ -144,6 +144,21 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Marker constraints on bare parameters (`size: Annotated[int, Le(100)] = 10`) and
   unified `Query[Model]` / `Form[Model]` for dataclass, `TypedDict` and
   `NamedTuple` models.
+- **Application lifecycle state:** `app.lifecycle_state` (`AppLifecycleState`:
+  `CREATED`, `STARTING`, `READY`, `DRAINING`, `STOPPED`, `FAILED`), the
+  `LifecycleStateChanged` signal and `app.begin_draining(reason=...)`, which fails
+  readiness before the server stops accepting connections (also on `Lauren`).
+- `install_signal_handlers(..., shutdown_delay=)`: SIGTERM/SIGINT call
+  `begin_draining()`, keep serving for the delay, then shut down.
+- **Health probes** (`lauren.health`): `HealthModule.for_root()` serves
+  `/health/live`, `/health/ready`, `/health/startup` and a full report;
+  `@health_check` methods on singletons are discovered and validated at startup
+  and run concurrently with per-check timeouts, single-flight and `cache_ttl`;
+  details policy (`never` / `always` / `when_authorized` plus a guard),
+  `format="ietf"` (`application/health+json`), event-loop-lag, disk and memory
+  indicators, and the `HealthChanged` signal.
+- `PUBLIC_METADATA_KEY`: the well-known metadata key for public routes (set on the
+  probe routes) that global guards can honour.
 
 ### Changed
 
@@ -178,6 +193,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - pydantic and msgspec `Query[Model]` / `Form[Model]` list fields read every
   repeated key; `FieldDescriptor` constraints that cannot apply log a startup
   warning.
+- `startup()` called while startup is already running, or once shutdown has begun,
+  raises `LifecycleViolationError` (with `detail["lifecycle_state"]`); retrying
+  after a failed startup still works. A hosted service that fails to start marks
+  the app `FAILED`.
+- The application event bus follows `app.lifecycle_state` instead of keeping its
+  own copy.
 
 ### Deprecated
 
@@ -208,6 +229,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - A bare `Discriminated[...]` parameter no longer crashes at startup, and
   `TypedDict` `Required` / `NotRequired` are honoured under
   `from __future__ import annotations`.
+- Docs: sync `@post_construct` hooks run inline on the event loop, not in a worker
+  thread.
 
 ## [1.10.0] - 2026-10-23
 
