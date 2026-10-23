@@ -93,6 +93,7 @@ lauren/                      — framework package
 ├── _discovery.py            — startup discovery pass over provider methods/classes (Phase 6a, private)
 ├── _discriminated.py        — Discriminated[A|B,"key"] runtime (detection, validation, OpenAPI)
 ├── _encoders/               — optional encoder backends (pydantic)
+├── _events/                 — application event bus: @on_event marker, handler plans + dispatch table, EventBus/EventPublisher
 ├── _lifecycle/              — post_construct / pre_destruct machinery
 ├── _modules/                — module graph & visibility
 ├── _routing/                — radix-tree HTTP router
@@ -115,6 +116,7 @@ lauren/                      — framework package
 ├── background.py            — BackgroundTasks, TaskHandle (fire-and-forget after response)
 ├── config.py                — ConfigModule, Secret, sources, Profile, load_settings (typed configuration)
 ├── context.py               — OperationScope (request scope outside HTTP, via app.scope())
+├── events.py                — EventBus, EventPublisher, @on_event, EventContext, EmitResult (domain events)
 ├── signals.py               — POSIX signal integration + on_shutdown hooks
 ├── streaming.py             — StreamingResponse[T], Stream, StreamReader
 ├── sse.py                   — EventStream, ServerSentEvent, last_event_id
@@ -238,6 +240,7 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Inject a typed value into a handler parameter | Custom `Extractor` (`extractors.py`) |
 | Share state across a single request | `Scope.REQUEST` injectable |
 | Share state for the app lifetime | `Scope.SINGLETON` injectable |
+| Decouple modules with domain events | `EventBus` / `EventPublisher` + `@on_event` (`lauren.events`) |
 | Use request-scoped providers outside a request (script, job, worker) | `async with app.scope("name") as scope:` + `await scope.resolve(T)` |
 | Persist state across requests for one client | Sessions (`sessions=SessionConfig(...)`; inject `session: Session`) |
 | Read typed configuration | `ConfigModule.for_root(Settings)` (or `for_feature`) + inject `Settings`; `load_settings` for factory kwargs |
@@ -472,6 +475,21 @@ deterministic).
   in a script or job). It silently falls back to transient: a new instance per
   call that is never torn down (no `@pre_destruct`, no generator teardown).
   Use `async with app.scope("job") as scope: await scope.resolve(DbSession)`.
+- ❌ Using `SignalBus` (or a `LifecycleEvent` subclass) for domain events. Its
+  listeners cannot receive dependencies and their errors are swallowed; publish
+  on the application `EventBus` / `EventPublisher` and handle with `@on_event`
+  methods, which are DI-aware and validated at startup.
+- ❌ Putting the `Request` (or any request-scoped instance) inside an event.
+  Requests are pooled and request scopes close before deferred handlers run;
+  copy the values a handler needs into the event.
+- ❌ Injecting `EventPublisher` into a singleton, a job or an `app.scope()`
+  block — it joins the current request / connection / handler scope and
+  raises elsewhere. Inject `EventBus` there (one operation scope per emission).
+- ❌ Asserting on a `"concurrent"` `@on_event` handler driven through the
+  synchronous `TestClient` — each sync request runs in its own event loop,
+  which cancels the handler's task when it closes. Use `wait=True`, an async
+  test (`await client.arequest(...)` then `await bus.drain()`) or
+  `"background"`.
 - ❌ Writing another request-scope teardown loop. HTTP, WebSocket and
   `OperationScope` all call `lauren._di._scope.finalize_scope`, which finds
   providers through the container's precomputed `instance_index()`.
@@ -622,6 +640,10 @@ deterministic).
 - `lauren/_di/_scope.py` — `finalize_scope` (the one request-scope teardown)
   and `register_framework_value`.
 - `lauren/context.py` — `OperationScope`; `LaurenApp.scope()` builds one.
+- `lauren/events.py` / `lauren/_events/` — the application event bus:
+  `@on_event` (a discovery marker), handler plans and the per-app dispatch
+  table (`_plan.py`), `EventBus` / `EventPublisher`, task tracking and the
+  shutdown drain (`_bus.py`).
 - `lauren/_discovery.py` — Phase 6a discovery: `register_marker`,
   `MarkerSpec`, `DiscoveryIndex`, `DiscoveredMethod`, `CallPlan`.
 - `lauren/_ws_runtime.py` — `WsConnectionContext`, `WsUpgradeRequest`, `CompiledGateway`, `handle_websocket`.

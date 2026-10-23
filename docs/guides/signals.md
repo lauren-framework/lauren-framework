@@ -5,6 +5,16 @@
 > without touching framework internals. Listeners are sync or async, error-isolated,
 > and dispatched in MRO order so a base-class listener is a firehose of every event.
 
+!!! note "Signals vs events"
+    `SignalBus` carries telemetry **about the framework** (startup, requests,
+    background tasks). For **domain events** between your own modules
+    (`UserRegistered`, `OrderPlaced`) use the application
+    [`EventBus`](events.md): its `@on_event` handlers are DI components
+    validated at startup, inline handlers can fail the publishing operation,
+    and deferred handlers run concurrently or after the response. Never
+    subclass `LifecycleEvent` for a domain event. Handler failures on the
+    event bus are reported here, as the `EventHandlerFailed` signal.
+
 ---
 
 ## Two surfaces, one module
@@ -69,6 +79,12 @@ Three additional events relate to background tasks:
 | `BackgroundTaskStarted` | Just before a background task executes | `task_id`, `func` |
 | `BackgroundTaskComplete` | After successful completion | `task_id`, `func`, `duration_s` |
 | `BackgroundTaskFailed` | After an exception is raised | `task_id`, `func`, `error` |
+
+The [application event bus](events.md) adds one more:
+
+| Event | When fired | Key fields |
+|---|---|---|
+| `EventHandlerFailed` | An `@on_event` handler raised, or was cancelled at shutdown | `event_type`, `handler`, `error`, `mode`, `event` |
 
 All events inherit from `LifecycleEvent` which carries a `timestamp: float` (monotonic)
 so listeners can compute deltas without recording wall-clock time themselves.
@@ -494,5 +510,6 @@ shutdown sequence.
 
 * [WebSockets](websockets.md) — the gateway, `EventForwarder`, and token service from the real-world example above.
 * [Background Tasks](background-tasks.md) — `BackgroundTaskStarted/Complete/Failed` signals.
+* [Application Events](events.md) — the domain event bus (`@on_event`, `EventBus`, `EventPublisher`) and its `EventHandlerFailed` signal.
 * [Lifecycle Hooks](../core-concepts/lifecycle.md) — `@post_construct` / `@pre_destruct` and shutdown phases.
 * [Reference → Cheat Sheet](../reference/cheat-sheet.md) — one-line signal patterns.

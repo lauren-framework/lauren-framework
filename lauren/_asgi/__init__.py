@@ -20,6 +20,7 @@ from .._di import INJECTABLE_META, DIContainer, InjectableMeta
 from .._di._scope import finalize_scope
 from .._di.custom import CustomProvider
 from .._discovery import DiscoveryIndex, build_discovery_index, registered_markers
+from .._events import EventBus, compile_events, install_events
 from ..serialization import (
     JSONEncoder,
     StdlibJSONEncoder,
@@ -870,6 +871,8 @@ class LaurenApp:
         self._mounts: list[tuple[str, Any]] = []
         # Provider-discovery index (Phase 6a of LaurenFactory.create).
         self._discovery: DiscoveryIndex = DiscoveryIndex.empty()
+        # The application event bus (``lauren.events``); set by the factory.
+        self._events: EventBus | None = None
 
     # -- Introspection -----------------------------------------------------
 
@@ -1031,11 +1034,15 @@ class LaurenApp:
         # bus contract is that listener errors never propagate, so a
         # misbehaving observer cannot prevent startup.
         await self._signals.emit(StartupBegin(app=self))
+        if self._events is not None:
+            self._events._on_startup()
         self._logger.log("Running @post_construct hooks", context="Lifecycle")
         await self._lifecycle.run_post_construct()
         self._app_state.seal()
         self._started = True
         self._running = True
+        if self._events is not None:
+            self._events._on_ready()  # deferred event handlers queued during startup start now
         duration = time.perf_counter() - t0
         self._logger.log(
             f"Application ready ({format_duration_ms(duration)})",
@@ -1051,7 +1058,8 @@ class LaurenApp:
         Steps (each logged as an event):
 
         1. Mark the app not-running — no new request scheduling.
-        2. Drain in-flight requests (up to ``drain_timeout`` seconds).
+        2. Drain in-flight requests (up to ``drain_timeout`` seconds), then
+           running ``@on_event`` handler tasks (with what is left of it).
         3. Invoke user-registered ``on_shutdown`` callbacks in reverse order.
         4. Run ``@pre_destruct`` hooks in reverse topological order.
 
@@ -1061,6 +1069,7 @@ class LaurenApp:
         if self._shutdown_running:
             await self._shutdown_complete.wait()
             return
+        shutdown_t0 = time.perf_counter()
         self._shutdown_running = True
         self._running = False
         self._logger.log(
@@ -1092,6 +1101,10 @@ class LaurenApp:
                     context="Shutdown",
                     in_flight=len(self._in_flight),
                 )
+        # 1b. Event handler tasks: await them with what is left of the
+        # budget (or EventsModule's drain_timeout), then cancel the rest.
+        if self._events is not None:
+            await self._events._on_drain(max(0.0, drain_timeout - (time.perf_counter() - shutdown_t0)))
         # 2. User callbacks (reverse registration order).
         if self._on_shutdown_callbacks:
             self._logger.log(
@@ -1118,6 +1131,8 @@ class LaurenApp:
                 context="Shutdown",
                 error=type(err).__name__,
             )
+        if self._events is not None:
+            await self._events._on_stopped()  # cancel stragglers; emit() raises from now on
         self._logger.log("Shutdown complete. Goodbye.", context="Shutdown")
         self._shutdown_complete.set()
 
@@ -1598,6 +1613,8 @@ class LaurenApp:
                 framework_values = alloc.framework_values
                 framework_values[Request] = request
                 framework_values[type(request)] = request
+                # EventPublisher joins this request's DI scope through the lease.
+                request._lauren_lease = alloc  # type: ignore[attr-defined]
                 kwargs_dict = alloc.kwargs
 
                 async def _route_and_run(req: Request) -> Response:
@@ -2887,6 +2904,11 @@ class LaurenFactory:
         # aggregated ConfigValidationError) and register the settings.
         config_pending = install_config(graph, container, logger=_log)
 
+        # ---- Phase 2c: Application events ----
+        # One EventBus per app (global value provider) and the request-scoped
+        # EventPublisher; handlers are compiled after discovery (Phase 6a).
+        events_bus = install_events(graph, container)
+
         # Install per-module visible-token sets. A module sees its own
         # providers, its own controllers, and anything re-exported by a
         # module it imports (transitively).
@@ -3177,6 +3199,7 @@ class LaurenFactory:
         # See ``lauren/_discovery.py`` for the rules.
         t0 = time.perf_counter()
         discovery = build_discovery_index(container, registered_markers())
+        compile_events(events_bus, discovery, container, logger=_log)
         _log.verbose(
             f"Phase 6a provider discovery: {sum(map(len, discovery.methods.values()))} method(s), "
             f"{sum(map(len, discovery.classes.values()))} class(es) "
@@ -3256,6 +3279,8 @@ class LaurenFactory:
         )
         # The immutable Phase 6a index; feature consumers read their markers.
         app._discovery = discovery
+        app._events = events_bus
+        events_bus._bind(app)
         app._config_pending = config_pending
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via

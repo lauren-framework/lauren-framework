@@ -89,6 +89,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     `SignalBus` for typed pub/sub: `RequestComplete`, `StartupComplete`, background-task signals. MRO dispatch, error isolation, metrics/tracing patterns.
 
+-   :material-bullhorn: [__Application Events__](events.md)
+
+    ---
+    Typed domain events between modules: `@on_event` handlers discovered and validated at startup, `EventBus` / request-scoped `EventPublisher`, inline / concurrent / background delivery, priorities, error policies, after-commit emission, testing aids.
+
 -   :material-puzzle: [__Socket.IO__](socketio.md)
 
     ---

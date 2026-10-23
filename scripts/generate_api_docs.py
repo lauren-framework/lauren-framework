@@ -258,6 +258,29 @@ PAGES: dict[str, list[str | tuple[str, str]]] = {
         "lauren.RequestReceived",
         "lauren.RequestComplete",
         "lauren.ShutdownBegin",
+        ("## Event bus events", ""),
+        "lauren.EventHandlerFailed",
+    ],
+    "events.md": [
+        (
+            "# Events\n\nTyped application events: `@on_event` handlers, the per-app `EventBus` "
+            "and the request-scoped `EventPublisher`.",
+            "",
+        ),
+        ("## Handlers", ""),
+        "lauren.events.on_event",
+        "lauren.events.EventContext",
+        ("## Publishing", ""),
+        "lauren.events.EventBus",
+        "lauren.events.EventPublisher",
+        "lauren.events.EmitResult",
+        ("## After-commit delivery", ""),
+        "lauren.events.TransactionPhase",
+        "lauren.events.UnitOfWork",
+        ("## Testing", ""),
+        "lauren.events.EventRecording",
+        ("## Configuration", ""),
+        "lauren.events.EventsModule",
     ],
     "testing.md": [
         (

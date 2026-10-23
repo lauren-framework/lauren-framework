@@ -41,6 +41,13 @@ Five built-in events are fired by the framework:
 * :class:`ShutdownBegin` — a ``lifespan.shutdown`` message arrived
   or a graceful-shutdown signal was received.
 
+Background tasks add :class:`BackgroundTaskStarted` /
+:class:`BackgroundTaskComplete` / :class:`BackgroundTaskFailed`, and the
+application event bus (:mod:`lauren.events`) adds
+:class:`EventHandlerFailed`. Domain events themselves do **not** go through
+this bus: they are delivered by :class:`~lauren.events.EventBus` to DI-aware
+``@on_event`` handlers.
+
 User code registers listeners via :meth:`SignalBus.on` (also
 available as :func:`on` for convenience) and the framework emits
 events via :meth:`SignalBus.emit` during the request lifecycle.
@@ -205,6 +212,29 @@ class BackgroundTaskFailed(LifecycleEvent):
     task_id: str = ""
     func: Any = None
     error: BaseException | None = None
+
+
+@dataclass
+class EventHandlerFailed(LifecycleEvent):
+    """Emitted when an ``@on_event`` handler raises, or is cancelled at shutdown.
+
+    Fired by the application :class:`~lauren.events.EventBus` for every
+    handler failure, whatever the handler's error policy: ``"isolate"``
+    failures are also logged and returned in
+    :attr:`EmitResult.errors <lauren.events.EmitResult.errors>`,
+    ``"propagate"`` failures re-raise from ``emit()``. A deferred handler
+    cancelled by the shutdown drain carries an :class:`asyncio.CancelledError`.
+    """
+
+    #: The class of the event being delivered.
+    event_type: Any = None
+    #: ``"Class.method"`` of the handler.
+    handler: str = ""
+    error: BaseException | None = None
+    #: The handler's delivery mode: ``"inline"``, ``"concurrent"`` or ``"background"``.
+    mode: str = ""
+    #: The event instance itself.
+    event: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -542,6 +572,7 @@ __all__ = [
     "BackgroundTaskStarted",
     "BackgroundTaskComplete",
     "BackgroundTaskFailed",
+    "EventHandlerFailed",
     # Bus
     "SignalBus",
     "on",

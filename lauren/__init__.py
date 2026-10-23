@@ -27,6 +27,8 @@ Core capabilities
 * Middleware (onion model), guards, interceptors and exception handlers,
   attachable globally, to controllers, or to routes.
 * WebSocket gateways, Server-Sent Events, typed streaming and sessions.
+* Typed application events: ``@on_event`` handlers on providers, validated at
+  startup, published through ``EventBus`` / the request-scoped ``EventPublisher``.
 * OpenAPI 3.1 generation from return annotations and ``response_model``
   (any of the supported model kinds).
 * Auto-serialization: return dicts, models, dataclasses, or
@@ -71,6 +73,7 @@ from ._app import Lauren
 from ._arena import RequestAllocation, RequestArena
 from ._asgi import LaurenApp, LaurenFactory
 from .context import OperationScope
+from .events import EmitResult, EventBus, EventContext, EventPublisher, on_event
 from ._di import DIContainer
 from ._di.custom import (
     Inject,
@@ -193,6 +196,7 @@ from .signals import (
     BackgroundTaskComplete,
     BackgroundTaskFailed,
     BackgroundTaskStarted,
+    EventHandlerFailed,
     LifecycleEvent,
     RequestComplete,
     RequestReceived,
@@ -316,6 +320,13 @@ __all__ = [
     "BackgroundTaskStarted",
     "BackgroundTaskComplete",
     "BackgroundTaskFailed",
+    # application events (the rest lives in lauren.events)
+    "EventBus",
+    "EventPublisher",
+    "on_event",
+    "EventContext",
+    "EmitResult",
+    "EventHandlerFailed",
     # app
     "Lauren",
     "LaurenApp",
