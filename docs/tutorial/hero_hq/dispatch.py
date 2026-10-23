@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-from lauren import Json, Path, controller, get, post, use_guards
-from lauren.exceptions import HTTPError
+from lauren import Json, NotFoundError, Path, controller, get, post, use_guards
 
 from .models import CreateHero, HeroOut
 from .roster import HeroRepository
 from .security import BadgeGuard
 
 
-class HeroNotFoundError(HTTPError):
-    """Raised when someone asks for a hero who isn't on the roster."""
+class HeroNotFoundError(NotFoundError):
+    """Raised when someone asks for a hero who isn't on the roster (404)."""
 
-    status_code = 404
     code = "hero_not_found"
 
 

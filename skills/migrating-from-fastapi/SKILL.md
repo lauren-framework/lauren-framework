@@ -20,7 +20,8 @@ FastAPI and Lauren share the "type-annotations-first" philosophy but differ in a
 | `Depends(fn)` | Constructor injection via `@injectable` | Services declared as class attributes / constructor params |
 | `@app.middleware("http")` | `@middleware()` class with `dispatch(req, call_next)` | Class-based, DI-aware |
 | `@app.on_event("startup")` | `@post_construct` on an `@injectable` | Lifecycle tied to individual services, not the whole app |
-| `HTTPException(status_code=404)` | `raise NotFound("msg")` with `class NotFound(HTTPError): status_code = 404; code = "not_found"` | subclass `HTTPError`; built-ins in `lauren/exceptions.py` |
+| `HTTPException(status_code=404)` | `raise NotFoundError("msg")` | built-in HTTP errors (`BadRequestError`, `NotFoundError`, `ConflictError`, `TooManyRequestsError`, …) importable from `lauren` |
+| `HTTPException(401, headers={"WWW-Authenticate": "Bearer"})` | `raise UnauthorizedError("msg", challenge="Bearer")` | every error takes `headers=`; `retry_after=` on 429/503/504 |
 | `Annotated[str, Query()]` | `q: Query[str]` (or bare `q: str`) | Extractors are type aliases, not annotations |
 | `response_model=` | Return the Pydantic model directly | Auto-serialized; declare return type for OpenAPI |
 | `Depends(get_db)` for request-scoped deps | `@injectable(scope=Scope.REQUEST)` | Scope is on the provider class, not the injection site |
@@ -150,22 +151,29 @@ async def get_item(id: int):
 
 **Lauren:**
 ```python
-from lauren.exceptions import HTTPError
+from lauren import NotFoundError, TooManyRequestsError, UnauthorizedError
 
-class NotFoundError(HTTPError):       # declare once, reuse everywhere
-    status_code = 404
-    code = "not_found"
+class ItemNotFound(NotFoundError):     # optional: a domain code, same 404
+    code = "item_not_found"
 
 @get("/{id}")
 async def get_item(self, id: int) -> dict:
     if not found:
-        raise NotFoundError("Item not found")  # → 404 JSON response
+        raise ItemNotFound("Item not found")  # → 404 JSON response
+    if over_quota:
+        raise TooManyRequestsError("slow down", retry_after=30)          # Retry-After: 30
+    if not token:
+        raise UnauthorizedError("missing token", challenge="Bearer")     # WWW-Authenticate
 ```
 
-Built-in HTTP-mapped classes include `UnauthorizedError` (401),
-`ForbiddenError` (403), `RouteNotFoundError` (404, for unmatched routes),
-`MethodNotAllowedError` (405), `RequestBodyTooLarge` (413),
-`UnsupportedMediaTypeError` (415) and `ExtractorError` / `ExtractorFieldError`
-(422) — full generated table in `docs/reference/errors.md`. There is no generic
-`NotFoundError` / `BadRequestError` / `ConflictError`: subclass `HTTPError` with
-your own `status_code` and `code`, as above.
+Built-in HTTP-mapped classes: `BadRequestError` (400), `UnauthorizedError`
+(401), `ForbiddenError` (403), `NotFoundError` (404; `RouteNotFoundError` for
+unmatched routes), `MethodNotAllowedError` (405), `NotAcceptableError` (406),
+`ConflictError` (409), `GoneError` (410), `PreconditionFailedError` (412),
+`RequestBodyTooLarge` (413), `UnsupportedMediaTypeError` (415),
+`ExtractorError` / `ExtractorFieldError` (422), `TooManyRequestsError` (429),
+`ServiceUnavailableError` (503) and `RequestTimeoutError` (504) — full generated
+table in `docs/reference/errors.md`. FastAPI's `HTTPException(status_code=...,
+headers=...)` maps to the matching class with `headers=` (or
+`HTTPError("...", status_code=418, code="teapot")` for a one-off status).
+`error_format="rfc9457"` emits RFC 9457 problem details.

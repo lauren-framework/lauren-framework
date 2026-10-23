@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 # --8<-- [start:code]
-from lauren import ExecutionContext, Scope, injectable
-from lauren.exceptions import HTTPError
+from lauren import ExecutionContext, ForbiddenError, Scope, injectable
 
 # In production, load valid badges from the environment or a secrets manager —
 # never hardcode them. This is a tutorial; the Bouncer is on a budget.
 VALID_BADGES = frozenset({"hq-badge-007"})
 
 
-class VillainDetectedError(HTTPError):
+class VillainDetectedError(ForbiddenError):
     """403 — someone without a valid HQ badge tried to get in."""
 
-    status_code = 403
     code = "villain_detected"
 
 

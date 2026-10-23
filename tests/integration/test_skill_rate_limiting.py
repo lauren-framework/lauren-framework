@@ -7,13 +7,13 @@ import time
 from lauren import (
     LaurenFactory,
     Scope,
+    TooManyRequestsError,
     controller,
     get,
     injectable,
     module,
     use_guards,
 )
-from lauren.exceptions import HTTPError
 from lauren.testing import TestClient
 from lauren.types import ExecutionContext
 
@@ -23,8 +23,7 @@ from lauren.types import ExecutionContext
 # ---------------------------------------------------------------------------
 
 
-class RateLimitError(HTTPError):
-    status_code = 429
+class RateLimitError(TooManyRequestsError):
     code = "rate_limit_exceeded"
 
 
@@ -82,7 +81,7 @@ class RateLimitGuard:
     async def can_activate(self, ctx: ExecutionContext) -> bool:
         client_ip = ctx.request.headers.get("x-forwarded-for", "127.0.0.1")
         if not self._limiter.consume(client_ip):
-            raise RateLimitError("Rate limit exceeded")
+            raise RateLimitError("Rate limit exceeded", retry_after=1)
         return True
 
 
@@ -176,7 +175,7 @@ class TestRateLimitGuardIntegration:
 
             async def can_activate(self, ctx: ExecutionContext) -> bool:
                 if not self._limiter.consume("test-client"):
-                    raise RateLimitError("Rate limit exceeded")
+                    raise RateLimitError("Rate limit exceeded", retry_after=1)
                 return True
 
         @use_guards(TinyGuard)
@@ -216,7 +215,7 @@ class TestRateLimitGuardIntegration:
             async def can_activate(self, ctx: ExecutionContext) -> bool:
                 ip = ctx.request.headers.get("x-forwarded-for", "127.0.0.1")
                 if not self._limiter.consume(ip):
-                    raise RateLimitError("Rate limit exceeded")
+                    raise RateLimitError("Rate limit exceeded", retry_after=1)
                 return True
 
         @use_guards(SmallGuard)

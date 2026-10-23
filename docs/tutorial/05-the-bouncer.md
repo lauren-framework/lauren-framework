@@ -39,7 +39,7 @@ data, so we guard just that route with `@use_guards`:
 
 <!-- docs-contract: fragment -->
 ```python title="hero_hq/dispatch.py" hl_lines="1 5 12"
-from lauren import Json, Path, controller, get, post, use_guards
+from lauren import Json, NotFoundError, Path, controller, get, post, use_guards
 
 from .models import CreateHero, HeroOut
 from .roster import HeroRepository

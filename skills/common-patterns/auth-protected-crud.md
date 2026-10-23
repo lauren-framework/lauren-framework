@@ -50,17 +50,11 @@ class ItemService:
 
 ```python
 # app/items/item_controller.py
-from lauren import controller, get, post, delete, use_guards, Json
-from lauren.exceptions import ForbiddenError, HTTPError
+from lauren import ForbiddenError, NotFoundError, controller, get, post, delete, use_guards, Json
 from lauren.types import ExecutionContext
 from lauren_guards import JwtBearerGuard
 
 from app.items.schemas import CreateItem, ItemOut
-
-
-class NotFoundError(HTTPError):       # lauren ships no generic 404 class — define one
-    status_code = 404
-    code = "not_found"
 from app.items.item_service import ItemService
 
 @use_guards(JwtBearerGuard)
