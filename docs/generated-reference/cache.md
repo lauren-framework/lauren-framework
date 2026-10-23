@@ -48,11 +48,14 @@ Cache the route's responses server-side for ``ttl`` seconds.
 
 The key covers the method (``HEAD`` reads, never writes, the ``GET``
 entry), the route template, the path parameters, the query string
-(order-insensitive), the request headers named in ``vary`` and the
-result of ``key(ctx)``. ``key`` must
-be given for per-user data; returning ``None`` from it bypasses the
-cache for that request. ``tags`` (names, or a callable of the context)
-let ``Cache.invalidate_tags`` evict entries.
+(order-insensitive; ``query=`` limits it to the named parameters), the
+request headers named in ``vary`` and the result of ``key(ctx)``. ``key``
+must be given for per-user data; returning ``None`` from it bypasses the
+cache for that request. A request carrying ``Authorization`` bypasses the
+cache unless ``key=`` or ``vary`` makes entries per caller, or
+``allow_authenticated=True`` declares the response identical for every
+caller. ``tags`` (names, or a callable of the context) let
+``Cache.invalidate_tags`` evict entries.
 
 A response is stored only when its status is in ``statuses``, it is not
 streamed, it sets no cookie, its ``Cache-Control`` has no ``private`` /

@@ -66,6 +66,11 @@ def check_tags(tags: Iterable[str]) -> tuple[str, ...]:
     return tuple(out)
 
 
+def _seed() -> bytes:
+    """A random initial tag generation (``incr`` keeps it a plain integer)."""
+    return str(secrets.randbits(62) + 1).encode("ascii")
+
+
 async def _call(factory: Callable[[], Any]) -> Any:
     result = factory()
     if inspect.isawaitable(result):
@@ -234,7 +239,11 @@ class Cache:
     async def invalidate_tags(self, *tags: str) -> None:
         """Make every entry written under any of ``tags`` a miss (one ``incr`` per tag)."""
         for tag in check_tags(tags):
-            await self._store.incr(f"tag:{tag}")
+            key = f"tag:{tag}"
+            # Seed a missing counter randomly first: a counter that was evicted
+            # must never restart at a generation an old entry recorded.
+            await self._store.set_if_absent(key, _seed())
+            await self._store.incr(key)
 
     def typed(self, tp: Any) -> TypedCache:
         """Return a view whose reads decode into ``tp``."""
@@ -274,10 +283,10 @@ class Cache:
             key = f"tag:{tag}"
             raw = await self._store.get(key)
             if raw is None:
-                seed = secrets.randbits(62) + 1
-                await self._store.set_if_absent(key, str(seed).encode("ascii"))
+                seed = _seed()
+                await self._store.set_if_absent(key, seed)
                 raw = await self._store.get(key)
-                gens[tag] = seed if raw is None else int(raw)
+                gens[tag] = int(seed if raw is None else raw)
             else:
                 gens[tag] = int(raw)
         return gens

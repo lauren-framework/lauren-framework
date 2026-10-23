@@ -13,6 +13,7 @@ from lauren import (
     ExecutionContext,
     LaurenFactory,
     NotFoundError,
+    Request,
     Response,
     Session,
     SessionConfig,
@@ -173,6 +174,28 @@ class CatalogController:
     async def short(self) -> dict:
         return {"n": self.calls.bump("short")}
 
+    @get("/whoami")
+    @cache_response(ttl=30)
+    async def whoami(self, request: Request) -> dict:
+        self.calls.bump("whoami")
+        return {"user": request.headers.get("authorization", "anonymous")}
+
+    @get("/shared-catalog")
+    @cache_response(ttl=30, allow_authenticated=True)
+    async def shared_catalog(self) -> dict:
+        return {"n": self.calls.bump("shared-catalog")}
+
+    @get("/per-token")
+    @cache_response(ttl=30, vary=("authorization",))
+    async def per_token(self, request: Request) -> dict:
+        self.calls.bump("per-token")
+        return {"user": request.headers.get("authorization")}
+
+    @get("/paged")
+    @cache_response(ttl=30, query=("page",))
+    async def paged(self, page: int = 1) -> dict:
+        return {"page": page, "n": self.calls.bump("paged")}
+
 
 def build(clock: ManualClock | None = None) -> Any:
     store = MemoryStore(max_entries=1_000, clock=clock) if clock is not None else None
@@ -314,6 +337,39 @@ def test_returned_404_is_cached_but_a_raised_error_is_not(client: TestClient) ->
     client.get("/c/raises")
     client.get("/c/raises")
     assert calls(client, "raises") == 2
+
+
+def test_credentialed_requests_bypass_a_shared_entry(client: TestClient) -> None:
+    alice = client.get("/c/whoami", headers={"authorization": "Bearer alice"}).json()
+    bob = client.get("/c/whoami", headers={"authorization": "Bearer bob"}).json()
+    assert (alice, bob) == ({"user": "Bearer alice"}, {"user": "Bearer bob"})
+    client.get("/c/whoami")
+    anonymous = client.get("/c/whoami")
+    assert anonymous.json() == {"user": "anonymous"} and "age" in anonymous.headers
+    assert client.get("/c/whoami", headers={"authorization": "Bearer carol"}).json() == {
+        "user": "Bearer carol"
+    }
+    assert calls(client, "whoami") == 4
+
+
+def test_allow_authenticated_shares_one_entry_between_callers(client: TestClient) -> None:
+    client.get("/c/shared-catalog", headers={"authorization": "Bearer alice"})
+    assert client.get("/c/shared-catalog", headers={"authorization": "Bearer bob"}).json() == {"n": 1}
+
+
+def test_vary_on_authorization_keeps_one_entry_per_token(client: TestClient) -> None:
+    client.get("/c/per-token", headers={"authorization": "Bearer alice"})
+    client.get("/c/per-token", headers={"authorization": "Bearer alice"})
+    assert client.get("/c/per-token", headers={"authorization": "Bearer bob"}).json() == {
+        "user": "Bearer bob"
+    }
+    assert calls(client, "per-token") == 2
+
+
+def test_a_query_allow_list_stops_cache_busting_parameters(client: TestClient) -> None:
+    client.get("/c/paged?page=2&_=1")
+    assert client.get("/c/paged?page=2&_=2").json() == {"page": 2, "n": 1}
+    assert client.get("/c/paged?page=3").json() == {"page": 3, "n": 2}
 
 
 def test_openapi_marks_cached_operations() -> None:

@@ -24,6 +24,7 @@ from typing import Any, Callable
 from .._di.custom import Token, use_value
 from ..decorators import module
 from ..exceptions import DecoratorUsageError, StartupError
+from ._lifecycle import adopt_store_lifecycle
 from ._memory import DEFAULT_MAX_ENTRIES, MemoryStore
 from ._protocol import Store
 
@@ -208,6 +209,7 @@ def install_stores(graph: Any, container: Any) -> StoreRegistry | None:
     for name, store in stores.items():
         token: Any = Store if name == DEFAULT_STORE_NAME else StoreToken(name)
         container.register_instance(token, store)
+        adopt_store_lifecycle(container, store)  # a namespaced view's backend too
     registry = StoreRegistry(stores)
     if not container.has_provider(StoreRegistry):
         container.register_custom(use_value(provide=StoreRegistry, value=registry), owning_module=None)

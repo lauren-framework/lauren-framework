@@ -218,7 +218,7 @@ def compile_cache_routes(
             cached[ch.handler_fn] = policy
             ch.interceptors = (*ch.interceptors, ResponseCacheInterceptor)
             reads_session = any(ext.source == "session" for ext in ch.extractions)
-            if reads_session and policy.key is None and not {"cookie", "authorization"} & set(policy.vary):
+            if reads_session and not policy.per_caller:
                 shared_unkeyed.append(f"{method} {path}")
         if idem is not None:
             idempotent[ch.handler_fn] = idem

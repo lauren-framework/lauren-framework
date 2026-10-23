@@ -93,7 +93,13 @@ with TestClient(LaurenFactory.create(SkillShopModule)) as client:
 - Pass a factory (`named={"x": lambda: MemoryStore(max_entries=1_000)}`) when
   several apps (tests) are built from one module — instances are shared.
 - **Per-user responses need `key=`** — without it every caller shares one entry
-  per URL. `key(ctx)` returning `None` skips the cache for that request.
+  per URL. `key(ctx)` returning `None` skips the cache for that request. A
+  request with `Authorization` bypasses the cache unless `key=` / `vary` makes
+  entries per caller or `allow_authenticated=True` says the response is the
+  same for everyone. `query=("page",)` stops `?_=<random>` cache busting.
+- `max_entries` is shared by every namespace of a store: keep revocation,
+  sessions and idempotency records out of a bounded store that also holds
+  public response-cache entries.
 - `@cache_response` stores only GET/HEAD, statuses 200/203/204/300/301/404/405/410
   that were *returned*, non-streamed bodies without `Set-Cookie`, without
   `Cache-Control: private|no-store|no-cache`, with `Vary` covered by `vary=`.

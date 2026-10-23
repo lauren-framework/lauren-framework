@@ -3133,7 +3133,11 @@ threads. `clock` is a zero-argument callable returning seconds
 
 **Rule:** stores must be bounded — framework-created stores (`StoresModule`
 without `default=`, `CacheModule` without a store, the in-memory session
-stores) use `max_entries=100_000`.
+stores) use `max_entries=100_000`. The bound is a count of entries, and
+namespaces of one store share it: when a bounded store also holds public
+response-cache entries, give revocation, sessions and idempotency records a
+store of their own (or a backend that does not evict them) so cache traffic
+cannot push them out.
 
 ### `StoresModule.for_root(*, default=None, named=None)`
 
@@ -3212,7 +3216,8 @@ it automatically: `StoreSessionStore(store, *, namespace="session",
 serializer=None)` (payloads JSON-serialised, `ttl=max_age`) and
 `StoreRevocationStore(store, *, namespace="revocation")` (revoked tokens and
 user cutoffs are keys with TTLs). One `MemoryStore` or Redis store can serve
-sessions, revocation and the cache side by side:
+sessions, revocation and the cache side by side (size a bounded store so cache
+traffic cannot evict revocation entries — see the `MemoryStore` rule):
 
 ```python fragment
 store = MemoryStore(max_entries=200_000)
@@ -3265,7 +3270,7 @@ a factory returning a non-store → `reason="invalid_store"`; bad arguments →
 - `CacheCodec` (`encode(value) -> bytes`, `decode(bytes) -> Any`) is the codec
   protocol. There is no pickle codec: values cross process boundaries.
 
-### `@cache_response(*, ttl, vary=(), key=None, tags=(), methods=("GET", "HEAD"), statuses=DEFAULT_CACHEABLE_STATUSES, debug_header=False, respect_client_no_cache=False)`
+### `@cache_response(*, ttl, vary=(), key=None, tags=(), methods=("GET", "HEAD"), statuses=DEFAULT_CACHEABLE_STATUSES, debug_header=False, respect_client_no_cache=False, query=None, allow_authenticated=False)`
 
 Server-side response caching for a route handler. Metadata only: validated at
 decoration (`DecoratorUsageError` for bare usage, a missing / non-positive
@@ -3275,12 +3280,18 @@ a framework interceptor that is the route's **innermost** interceptor — after
 guards (authorization always runs before a lookup) and inside user
 interceptors (they observe hits). Routes without a policy pay nothing.
 
-- **Key:** method (`HEAD` reads the `GET` entry, never writes it) + route template + path params + query
-  (order-insensitive across names, repeated values keep their order) + the
-  request headers named in `vary` + `key(ctx)`, hashed into
-  `resp:<route template>:<sha256>`. `key=` is **mandatory for per-user data**;
-  `key(ctx)` returning `None` bypasses the cache for that request. `tags` may
-  be names or a callable of the `ExecutionContext`.
+- **Key:** method (`HEAD` reads the `GET` entry, never writes it) + route
+  template + path params + query (order-insensitive across names, repeated
+  values keep their order; `query=("page", …)` keeps only those parameters, so
+  `?_=<random>` cannot bust the cache) + the request headers named in `vary` +
+  `key(ctx)`, hashed into `resp:<route template>:<sha256>`. `key=` is
+  **mandatory for per-user data**; `key(ctx)` returning `None` bypasses the
+  cache for that request. `tags` may be names or a callable of the
+  `ExecutionContext`.
+- **Credentials:** a request carrying `Authorization` bypasses the cache (no
+  lookup, no store) unless `key=` or `vary` on `authorization` / `cookie`
+  makes entries per caller, or `allow_authenticated=True` declares the
+  response identical for every caller.
 - **Stored only when** the status is in `statuses`
   (`DEFAULT_CACHEABLE_STATUSES` = 200, 203, 204, 300, 301, 404, 405, 410 —
   returned, not raised), the body is not streamed, there is no `Set-Cookie`,

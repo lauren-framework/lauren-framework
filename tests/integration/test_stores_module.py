@@ -148,3 +148,11 @@ def test_testing_overrides_replace_a_stores_module_store() -> None:
     with TestClient(app) as client:
         assert client.resolve(Store) is fake
         assert client.get("/c/").json()["hits"] == 1
+
+
+def test_a_namespaced_view_runs_its_backends_lifecycle() -> None:
+    backend = HookedStore()
+    app = LaurenFactory.create(app_module(named={"local": backend.namespace("local")}))
+    with TestClient(app):
+        assert backend.events == ["startup"]
+    assert backend.events == ["startup", "aclose"]

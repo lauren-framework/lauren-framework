@@ -543,7 +543,8 @@ exit).
 - ❌ `@cache_response` on per-user data without `key=` — every caller shares
   one entry per URL. Pass `key=lambda ctx: ...` (returning `None` skips the
   cache); a cached route that injects `Session` without `key=` logs a startup
-  warning.
+  warning, and requests carrying `Authorization` bypass the cache unless
+  `key=` / `vary` / `allow_authenticated=True` says otherwise.
 - ❌ Constructing `MemoryStore()` without `max_entries`, or adding an in-memory
   map that grows with traffic — stores must be bounded (`TTLMap` in
   `lauren/_stores/_memory.py` is the building block).

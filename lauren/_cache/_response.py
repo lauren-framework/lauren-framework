@@ -64,15 +64,25 @@ def response_cache_key(
     headers: Headers,
     vary: tuple[str, ...],
     custom: Any = None,
+    query_names: frozenset[str] | None = None,
 ) -> str:
     """Return the store key of a response: ``resp:<route>:<sha256>``.
 
     ``HEAD`` shares the ``GET`` entry. The query is order-insensitive across
-    parameter names while repeated values keep their order; every ``vary``
-    header contributes its values (absent and empty differ).
+    parameter names while repeated values keep their order (``query_names``
+    keeps only those parameters); every ``vary`` header contributes its
+    values (absent and empty differ).
     """
     canonical_method = "GET" if method == "HEAD" else method
-    query = sorted(((k, v) for k, values in query_params.items() for v in values), key=lambda kv: kv[0])
+    query = sorted(
+        (
+            (k, v)
+            for k, values in query_params.items()
+            if query_names is None or k in query_names
+            for v in values
+        ),
+        key=lambda kv: kv[0],
+    )
     material = [
         canonical_method,
         route_template,
@@ -146,6 +156,10 @@ class ResponseCacheInterceptor:
         request = context.request
         if policy is None or request.method not in policy.methods:
             return await call_handler.handle()
+        if not (policy.per_caller or policy.allow_authenticated) and "authorization" in request.headers:
+            # A credentialed request may get a caller-specific response: never
+            # store it under a shared key, never serve it someone else's entry.
+            return await call_handler.handle()
         custom = None
         if policy.key is not None:
             custom = policy.key(context)
@@ -159,6 +173,7 @@ class ResponseCacheInterceptor:
             headers=request.headers,
             vary=policy.vary,
             custom=custom,
+            query_names=policy.query,
         )
         if not (policy.respect_client_no_cache and client_requests_no_cache(request.headers)):
             entry = await self._cache.read_entry(key)

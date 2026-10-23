@@ -157,6 +157,34 @@ def test_cache_response_works_on_staticmethod_objects() -> None:
     assert getattr(target, CACHE_RESPONSE_META).ttl == 1.0
 
 
+@pytest.mark.parametrize("query", [("",), (3,)])
+def test_cache_response_rejects_invalid_query_names(query: Any) -> None:
+    with pytest.raises(DecoratorUsageError, match="query"):
+        cache_response(ttl=1, query=query)
+
+
+def test_cache_response_query_allow_list_and_credentials_flags() -> None:
+    fn = cache_response(ttl=1, query="page", allow_authenticated=True)(fresh())
+    policy = getattr(fn, CACHE_RESPONSE_META)
+    assert policy.query == frozenset({"page"}) and policy.allow_authenticated
+    assert not policy.per_caller
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({}, False),
+        ({"key": lambda ctx: 1}, True),
+        ({"vary": ("Authorization",)}, True),
+        ({"vary": ("cookie",)}, True),
+        ({"vary": ("accept",)}, False),
+    ],
+)
+def test_policy_per_caller(kwargs: dict[str, Any], expected: bool) -> None:
+    policy = getattr(cache_response(ttl=1, **kwargs)(fresh()), CACHE_RESPONSE_META)
+    assert policy.per_caller is expected
+
+
 # ---------------------------------------------------------------------------
 # @idempotent
 # ---------------------------------------------------------------------------
@@ -247,6 +275,16 @@ def test_head_shares_the_get_entry() -> None:
 )
 def test_key_changes_with_every_keyed_input(overrides: dict[str, Any]) -> None:
     assert key(**overrides) != key()
+
+
+def test_a_query_allow_list_ignores_other_parameters() -> None:
+    allowed = frozenset({"a"})
+    assert key(query_params={"a": ["1"], "_": ["random"]}, query_names=allowed) == key(
+        query_params={"a": ["1"]}, query_names=allowed
+    )
+    assert key(query_params={"a": ["2"]}, query_names=allowed) != key(
+        query_params={"a": ["1"]}, query_names=allowed
+    )
 
 
 def test_headers_outside_vary_do_not_change_the_key() -> None:

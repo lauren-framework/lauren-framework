@@ -46,6 +46,15 @@ class CachePolicy:
     statuses: frozenset[int] = DEFAULT_CACHEABLE_STATUSES
     debug_header: bool = False
     respect_client_no_cache: bool = False
+    #: Query parameters that take part in the key; ``None`` means all of them.
+    query: frozenset[str] | None = None
+    #: Store / serve requests carrying ``Authorization`` without a per-caller key.
+    allow_authenticated: bool = False
+
+    @property
+    def per_caller(self) -> bool:
+        """``True`` when the key separates callers (``key=`` or ``vary`` on credentials)."""
+        return self.key is not None or "authorization" in self.vary or "cookie" in self.vary
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,16 +150,21 @@ def cache_response(
     statuses: Iterable[int] = DEFAULT_CACHEABLE_STATUSES,
     debug_header: bool = False,
     respect_client_no_cache: bool = False,
+    query: Iterable[str] | None = None,
+    allow_authenticated: bool = False,
 ) -> Callable[[F], F]:
     """Cache the route's responses server-side for ``ttl`` seconds.
 
     The key covers the method (``HEAD`` reads, never writes, the ``GET``
     entry), the route template, the path parameters, the query string
-    (order-insensitive), the request headers named in ``vary`` and the
-    result of ``key(ctx)``. ``key`` must
-    be given for per-user data; returning ``None`` from it bypasses the
-    cache for that request. ``tags`` (names, or a callable of the context)
-    let ``Cache.invalidate_tags`` evict entries.
+    (order-insensitive; ``query=`` limits it to the named parameters), the
+    request headers named in ``vary`` and the result of ``key(ctx)``. ``key``
+    must be given for per-user data; returning ``None`` from it bypasses the
+    cache for that request. A request carrying ``Authorization`` bypasses the
+    cache unless ``key=`` or ``vary`` makes entries per caller, or
+    ``allow_authenticated=True`` declares the response identical for every
+    caller. ``tags`` (names, or a callable of the context) let
+    ``Cache.invalidate_tags`` evict entries.
 
     A response is stored only when its status is in ``statuses``, it is not
     streamed, it sets no cookie, its ``Cache-Control`` has no ``private`` /
@@ -194,6 +208,12 @@ def cache_response(
     for status in status_set:
         if isinstance(status, bool) or not isinstance(status, int) or not 100 <= status <= 599:
             raise _fail(name, f"statuses must be HTTP status codes; got {status!r}", argument="statuses")
+    query_names: frozenset[str] | None = None
+    if query is not None:
+        names = (query,) if isinstance(query, str) else tuple(query)
+        if not all(isinstance(n, str) and n for n in names):
+            raise _fail(name, f"query must list query parameter names; got {query!r}", argument="query")
+        query_names = frozenset(names)
     policy = CachePolicy(
         ttl=seconds,
         vary=vary_names,
@@ -203,6 +223,8 @@ def cache_response(
         statuses=status_set,
         debug_header=bool(debug_header),
         respect_client_no_cache=bool(respect_client_no_cache),
+        query=query_names,
+        allow_authenticated=bool(allow_authenticated),
     )
 
     def decorator(target: F) -> F:

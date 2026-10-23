@@ -132,6 +132,15 @@ store = MemoryStore(max_entries=100_000, sweep_interval=60.0)
 - **Test-friendly.** `clock=` takes a zero-argument callable returning seconds
   (`time.monotonic` by default) — see [Testing](#testing).
 
+!!! warning "Namespaces share the bound"
+    `max_entries` counts entries across every namespace of a store. If one
+    bounded store holds public response-cache entries *and* security state
+    (revocation entries, sessions, idempotency records), heavy cache traffic
+    can evict the latter. Give security state its own store — for example
+    `named={"cache": MemoryStore(max_entries=50_000)}` with
+    `CacheModule.for_root(store="cache")` — or a backend that does not evict
+    it.
+
 ---
 
 ## Registering stores — `StoresModule`
@@ -296,6 +305,14 @@ string (parameter order does not matter), the request headers named in `vary`,
 and whatever `key(ctx)` returns. A `HEAD` request reads the `GET` entry but
 never writes it (its response may have no body). Use `key=` for anything
 user-specific; returning `None` from it skips the cache for that request.
+`query=("page", "sort")` keys on those parameters only, so a client appending
+`?_=<random>` cannot fill the cache with copies.
+
+**Credentialed requests.** A request that carries an `Authorization` header
+bypasses the cache — no lookup, no store — unless the entries are per caller
+(`key=`, or `vary=("authorization",)`), or you pass `allow_authenticated=True`
+to declare that the response is the same for every caller (a catalog behind a
+bearer-token guard, say).
 
 **A response is stored only when every rule holds** — anything else is a normal
 miss, never an error:

@@ -569,3 +569,12 @@ def test_default_ttl_sentinel_repr() -> None:
     from lauren._cache._service import DEFAULT
 
     assert repr(DEFAULT) == "DEFAULT"
+
+
+async def test_a_recreated_tag_counter_never_matches_an_entry_again() -> None:
+    cache, store, _ = make_cache()
+    await cache.invalidate_tags("catalog")  # the counter exists from here on
+    await cache.set("k", "old", tags=("catalog",))
+    await store.delete("tag:catalog")  # evicted
+    await cache.invalidate_tags("catalog")  # recreated: must not restart where "k" recorded
+    assert await cache.get("k") is None

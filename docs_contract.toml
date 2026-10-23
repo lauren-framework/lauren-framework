@@ -129,5 +129,6 @@
 "lauren.cache.JsonCacheCodec" = ["encode", "decode", "encoder"]
 "lauren.cache.CachePolicy" = [
     "ttl", "vary", "key", "tags", "methods", "statuses", "debug_header", "respect_client_no_cache",
+    "query", "allow_authenticated", "per_caller",
 ]
 "lauren.cache.IdempotencyPolicy" = ["ttl", "header", "required", "scope", "lock_ttl"]
