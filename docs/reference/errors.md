@@ -41,10 +41,19 @@ LaurenError
 ├── HTTPError  → 500  code=http_error
 │   ├── ExtractorError  → 422  code=extractor_error
 │   │   └── ExtractorFieldError  → 422  code=extractor_field_error
-│   ├── RouteNotFoundError  → 404  code=route_not_found
+│   ├── BadRequestError  → 400  code=bad_request
+│   ├── NotFoundError  → 404  code=not_found
+│   │   └── RouteNotFoundError  → 404  code=route_not_found
 │   ├── MethodNotAllowedError  → 405  code=method_not_allowed
+│   ├── NotAcceptableError  → 406  code=not_acceptable
+│   ├── ConflictError  → 409  code=conflict
+│   ├── GoneError  → 410  code=gone
+│   ├── PreconditionFailedError  → 412  code=precondition_failed
 │   ├── RequestBodyTooLarge  → 413  code=request_body_too_large
 │   ├── UnsupportedMediaTypeError  → 415  code=unsupported_media_type
+│   ├── TooManyRequestsError  → 429  code=too_many_requests
+│   ├── ServiceUnavailableError  → 503  code=service_unavailable
+│   ├── RequestTimeoutError  → 504  code=request_timeout
 │   ├── UnauthorizedError  → 401  code=unauthorized
 │   ├── ForbiddenError  → 403  code=forbidden
 │   ├── MissingStateError  → 500  code=missing_state
@@ -95,12 +104,21 @@ best-effort, so they are collected rather than aborting shutdown.
 | `HTTPError` | `LaurenError` | 500 | `http_error` | Base class for errors mapped to HTTP responses. |
 | `ExtractorError` | `HTTPError` | 422 | `extractor_error` | A request value could not be extracted or validated. |
 | `ExtractorFieldError` | `ExtractorError` | 422 | `extractor_field_error` | One parameter is missing or violates a field constraint. |
-| `RouteNotFoundError` | `HTTPError` | 404 | `route_not_found` | No route matches the request path. |
-| `MethodNotAllowedError` | `HTTPError` | 405 | `method_not_allowed` | The path matches, but not for this HTTP method (the response sets `Allow`). |
+| `BadRequestError` | `HTTPError` | 400 | `bad_request` | The request is malformed in a way that is not schema validation. |
+| `NotFoundError` | `HTTPError` | 404 | `not_found` | The requested resource does not exist — the domain 404. |
+| `RouteNotFoundError` | `NotFoundError` | 404 | `route_not_found` | No route matches the request path. |
+| `MethodNotAllowedError` | `HTTPError` | 405 | `method_not_allowed` | The path matches, but not for this HTTP method; `allow=` sets the `Allow` header. |
+| `NotAcceptableError` | `HTTPError` | 406 | `not_acceptable` | No available representation matches the request's `Accept` headers. |
+| `ConflictError` | `HTTPError` | 409 | `conflict` | The request conflicts with the current state of the resource. |
+| `GoneError` | `HTTPError` | 410 | `gone` | The resource existed but has been removed permanently. |
+| `PreconditionFailedError` | `HTTPError` | 412 | `precondition_failed` | A conditional request header (`If-Match`, `If-Unmodified-Since`) evaluated to false. |
 | `RequestBodyTooLarge` | `HTTPError` | 413 | `request_body_too_large` | The request body exceeds `max_body_size`. |
 | `UnsupportedMediaTypeError` | `HTTPError` | 415 | `unsupported_media_type` | The request body's `Content-Type` is not one the route accepts. |
-| `UnauthorizedError` | `HTTPError` | 401 | `unauthorized` | Authentication is missing or invalid. |
-| `ForbiddenError` | `HTTPError` | 403 | `forbidden` | The caller is not allowed — also what a guard returning `False` raises. |
+| `TooManyRequestsError` | `HTTPError` | 429 | `too_many_requests` | The client sent too many requests; `retry_after=` sets `Retry-After`. |
+| `ServiceUnavailableError` | `HTTPError` | 503 | `service_unavailable` | The server cannot handle the request right now; `retry_after=` sets `Retry-After`. |
+| `RequestTimeoutError` | `HTTPError` | 504 | `request_timeout` | A server-side deadline was exceeded while handling the request (504). |
+| `UnauthorizedError` | `HTTPError` | 401 | `unauthorized` | Authentication is missing or invalid; `challenge=` sets `WWW-Authenticate`. |
+| `ForbiddenError` | `HTTPError` | 403 | `forbidden` | The caller is not allowed — also what a guard returning `False` raises by default. |
 | `MissingStateError` | `HTTPError` | 500 | `missing_state` | `request.state.require(key, T)` found no value for `key`. |
 | `StateTypeError` | `HTTPError` | 500 | `state_type_error` | A `request.state` value has the wrong type for `get_typed` / `require`. |
 | `LifecycleError` | `LaurenError` | — | `lifecycle_error` | Base class for errors around startup, shutdown and lifecycle hooks. |
