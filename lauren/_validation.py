@@ -120,17 +120,27 @@ def _validate_pydantic(tp: Any, data: dict[str, Any], field: str) -> Any:
         _raise_extractor_error(field, errors)
 
 
-def _validate_msgspec(tp: Any, data: dict[str, Any], field: str) -> Any:
+def _validate_msgspec(tp: Any, data: dict[str, Any], field: str, *, lax: bool = False) -> Any:
     import msgspec
     import msgspec.json
 
     try:
+        if lax:
+            return msgspec.convert(data, type=tp, strict=False, dec_hook=_msgspec_passthrough)
         import json
 
         raw = json.dumps(data).encode()
         return msgspec.json.decode(raw, type=tp)
     except msgspec.ValidationError as exc:
         _raise_extractor_error(field, [str(exc)])
+
+
+def _msgspec_passthrough(tp: Any, obj: Any) -> Any:
+    """``dec_hook`` for lax conversion: accept values already of the declared type."""
+    target = get_origin(tp) or tp
+    if isinstance(target, type) and isinstance(obj, target):
+        return obj
+    raise TypeError(f"Expected `{getattr(target, '__name__', target)}`, got `{type(obj).__name__}`")
 
 
 def _validate_dataclass(tp: Any, data: dict[str, Any], field: str) -> Any:
@@ -150,13 +160,19 @@ def _validate_typeddict(tp: Any, data: dict[str, Any], field: str) -> Any:
     return data
 
 
-def validate_as(tp: Any, data: dict[str, Any], *, field: str = "body") -> Any:
-    """Validate *data* as *tp*, raising :class:`~lauren.exceptions.ExtractorError` on failure."""
+def validate_as(tp: Any, data: dict[str, Any], *, field: str = "body", lax: bool = False) -> Any:
+    """Validate *data* as *tp*, raising :class:`~lauren.exceptions.ExtractorError` on failure.
+
+    ``lax=True`` lets values that are already typed Python objects (dates,
+    paths, decimals, :class:`~lauren.config.Secret`, nested instances) through
+    the msgspec backend, which otherwise round-trips *data* through JSON.
+    The configuration loader uses it after coercing raw strings itself.
+    """
     tp = _peel_to_inner(tp)
     if is_pydantic_model(tp):
         return _validate_pydantic(tp, data, field)
     if is_msgspec_struct(tp):
-        return _validate_msgspec(tp, data, field)
+        return _validate_msgspec(tp, data, field, lax=lax)
     if is_dataclass(tp):
         return _validate_dataclass(tp, data, field)
     if is_typeddict(tp):

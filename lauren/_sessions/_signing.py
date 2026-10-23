@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import hmac
 from hashlib import sha256
-from typing import Sequence
+from typing import Any
+
+from .._config._secret import is_secret
 
 # Separator between the value and its signature. base64url ids/payloads
 # and ``secrets.token_urlsafe`` never contain ``.`` so a right-split is
@@ -24,21 +26,26 @@ _SEP = "."
 
 
 def normalize_secrets(
-    secret: str | bytes | Sequence[str | bytes] | None,
+    secret: Any,
 ) -> tuple[bytes, ...]:
-    """Coerce a user secret (str / bytes / sequence of either) to bytes.
+    """Coerce a user secret (str / bytes / ``Secret`` / sequence of those) to bytes.
 
-    Returns an empty tuple when no usable secret was given so callers can
-    raise a configuration error with a precise message.
+    :class:`lauren.config.Secret` (and pydantic ``SecretStr`` / ``SecretBytes``)
+    values are unwrapped here, so ``SessionConfig(secret=settings.session_secret)``
+    works without the caller ever reading the secret. Returns an empty tuple
+    when no usable secret was given so callers can raise a configuration
+    error with a precise message.
     """
     if secret is None:
         return ()
-    if isinstance(secret, (str, bytes)):
-        items: list[str | bytes] = [secret]
+    if isinstance(secret, (str, bytes)) or is_secret(secret):
+        items: list[Any] = [secret]
     else:
         items = list(secret)
     out: list[bytes] = []
     for item in items:
+        if is_secret(item):
+            item = item.get_secret_value()
         if isinstance(item, str):
             if item:
                 out.append(item.encode("utf-8"))

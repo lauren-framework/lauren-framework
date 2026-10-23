@@ -41,6 +41,7 @@ pip install "lauren[full]"          # pydantic + msgspec
 - **Signals & lifecycle events** — `SignalBus` with `StartupBegin`, `StartupComplete`, `ShutdownBegin`, `RequestReceived`, `RequestComplete`, `BackgroundTaskStarted`, `BackgroundTaskComplete`, `BackgroundTaskFailed`.
 - **Sub-application mounting** — `app.mount("/prefix", sub_app)` for composing multiple Lauren or ASGI apps.
 - **Sessions** — first-class signed-cookie sessions via `LaurenFactory.create(..., sessions=SessionConfig(...))`. A mutable `session: Session` is injected into handlers at zero per-request reflection cost; pluggable async `SessionStore` (`InMemorySessionStore`, stateless `SignedCookieSessionStore`, or a Redis impl). HMAC-signed, `HttpOnly`/`Secure`/`SameSite=Lax` by default, with `regenerate_id()` (fixation defence) and `invalidate()` (logout). Unsafe configs are rejected at startup.
+- **Typed configuration** — settings classes (frozen dataclasses, pydantic models, `msgspec.Struct`) loaded by `ConfigModule.for_root(...)` / `for_feature(...)` from `.env`, `.env.{profile}`, TOML/YAML, secret files and the environment (which always wins; `os.environ` is never written), validated inside `LaurenFactory.create` with one aggregated `ConfigValidationError` listing every key and source, injected through DI; `Secret[T]` is redacted in `repr`, logs, JSON and errors; profiles via `LAUREN_PROFILE`.
 - **Content-type policy** — `ContentConfig(strict_content_type=True)` rejects non-JSON `Content-Type`s on JSON body parameters with 415 (session apps default to `"warn"`).
 - **Static file serving** — `StaticFilesModule.for_root("/assets", directory="./public")` as a feature module; dotfiles hidden by default (`dotfiles=`).
 - **Background tasks** — `BackgroundTasks` for fire-and-forget work after the response; `add_task` returns a `TaskHandle` (`status`, `done`, `cancel()` for tasks that have not started, `await result()` from another coroutine).
@@ -80,3 +81,4 @@ See [full reference](llms-full.txt) for complete parameter documentation.
 - [Sub-application mounting](llms-full.txt#mounting-sub-applications): composing multiple ASGI apps.
 - [Background tasks](llms-full.txt#background-tasks): fire-and-forget work after response.
 - [Sessions](llms-full.txt#sessions): signed-cookie sessions with `session: Session` injection and a pluggable store.
+- [Typed configuration](llms-full.txt#configuration): `ConfigModule.for_root(Settings)`, layered sources, profiles, `Secret[T]`, `load_settings`.

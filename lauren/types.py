@@ -1155,7 +1155,8 @@ def _json_default(obj: Any) -> Any:
     It knows how to handle Pydantic v2 models, standard-library datetimes,
     :class:`enum.Enum`, :class:`uuid.UUID`, :class:`pathlib.PurePath`,
     :class:`decimal.Decimal`, :class:`set` / :class:`frozenset`, and
-    dataclass instances.
+    dataclass instances. Secrets (:class:`lauren.config.Secret`, pydantic
+    ``SecretStr`` / ``SecretBytes``) encode as ``"**********"``.
     """
     import enum
     import dataclasses
@@ -1164,6 +1165,11 @@ def _json_default(obj: Any) -> Any:
     import pathlib
     import uuid
 
+    from ._config._secret import REDACTED, is_secret
+
+    # Secrets (lauren.config.Secret, pydantic SecretStr / SecretBytes) never leak.
+    if is_secret(obj):
+        return REDACTED
     # Pydantic v2 models
     if hasattr(obj, "model_dump") and callable(getattr(obj, "model_dump")):
         return obj.model_dump(mode="json")

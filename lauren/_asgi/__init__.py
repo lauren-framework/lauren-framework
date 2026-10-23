@@ -14,6 +14,7 @@ import anyio.to_thread
 from .._typing import resolve_type_hints
 
 from .._arena import RequestArena
+from .._config._module import install_config
 from .._di import INJECTABLE_META, DIContainer, InjectableMeta
 from .._di.custom import CustomProvider
 from ..serialization import (
@@ -789,6 +790,9 @@ class LaurenApp:
         self._running = False
         self._in_flight: set[asyncio.Task[Any]] = set()
         self._started = False
+        # Settings still waiting on an AsyncSource (``lauren.config``); the
+        # factory sets it and ``startup()`` resolves it before any hook runs.
+        self._config_pending: Any = None
         self._shutdown_event = asyncio.Event()
         self._shutdown_running = False
         self._shutdown_complete = asyncio.Event()
@@ -982,6 +986,9 @@ class LaurenApp:
                 raise LifecycleViolationError("startup called twice")
             return
         t0 = time.perf_counter()
+        if self._config_pending is not None:
+            await self._config_pending.resolve(self._container)
+            self._config_pending = None
         # Emit StartupBegin *before* @post_construct runs so listeners
         # see the "DI graph built, about to come online" moment. The
         # bus contract is that listener errors never propagate, so a
@@ -2673,6 +2680,11 @@ class LaurenFactory:
                     _ensure_injectable(gp)
                     container.register(gp, owning_module=None)
 
+        # ---- Phase 2b: Typed configuration ----
+        # Load and validate every ConfigModule spec in the graph (one
+        # aggregated ConfigValidationError) and register the settings.
+        config_pending = install_config(graph, container, logger=_log)
+
         # Install per-module visible-token sets. A module sees its own
         # providers, its own controllers, and anything re-exported by a
         # module it imports (transitively).
@@ -2986,6 +2998,7 @@ class LaurenFactory:
             global_ws_interceptors=effective_global_ws_interceptors or None,
             strict_content_type=effective_strict_content_type,
         )
+        app._config_pending = config_pending
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via
         # ``lauren.serialization.set_active_encoder``). Pinning the

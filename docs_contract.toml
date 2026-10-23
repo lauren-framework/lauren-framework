@@ -43,3 +43,13 @@
     "secret", "store", "cookie_name", "max_age", "idle_timeout", "rolling", "path", "domain",
     "secure", "http_only", "same_site", "serializer", "autoload", "revocation_store", "user_id_key",
 ]
+"lauren.config.ConfigModule" = ["for_root", "for_feature"]
+"lauren.config.Secret" = ["get_secret_value"]
+"lauren.config.Profile" = ["name", "is_development", "is_test", "is_production"]
+"lauren.config.Env" = ["names"]
+"lauren.config.DotenvSource" = ["path", "required", "encoding"]
+"lauren.config.TomlSource" = ["path", "required"]
+"lauren.config.YamlSource" = ["path", "required"]
+"lauren.config.SecretsDirSource" = ["path", "required"]
+"lauren.config.AsyncSource" = ["load"]
+"lauren.exceptions.ConfigValidationError" = ["code"]
