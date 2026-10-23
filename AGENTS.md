@@ -103,6 +103,9 @@ nox -s ver_dec -- --patch
 | `lauren/_di/__init__.py`          | DI container, provider graph, cycles; `_GeneratorContextWrapper` for generator provider lifecycle |
 | `lauren/_di/custom.py`            | `use_value` / `use_class` / `use_factory` /  |
 |                                   | `use_existing` / `Token` / `Inject`          |
+| `lauren/_di/_scope.py`            | Shared request-scope finaliser (`finalize_scope`) used by HTTP, WebSocket and `OperationScope`; `register_framework_value` |
+| `lauren/_discovery.py`            | Startup discovery pass (Phase 6a): marker registry, `DiscoveryIndex`, compiled `CallPlan`s for provider methods |
+| `lauren/context.py`               | `OperationScope` (public; built by `app.scope()`) |
 | `lauren/_discriminated.py`        | `Discriminated[A\|B,"key"]` — detection, validation, OpenAPI schema |
 | `lauren/_encoders/`               | Optional encoder backends (e.g. `pydantic.py`) |
 | `lauren/_routing/__init__.py`     | Radix-tree router                            |
