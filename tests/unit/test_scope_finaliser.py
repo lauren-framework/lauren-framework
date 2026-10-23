@@ -108,6 +108,29 @@ async def test_teardown_errors_are_logged_collected_and_never_raised(
     assert "Flaky" in caplog.text and "websocket teardown" in caplog.text
 
 
+async def test_every_pre_destruct_hook_of_a_request_scoped_instance_runs() -> None:
+    events: list[str] = []
+
+    @injectable(scope=Scope.REQUEST)
+    class Session:
+        @pre_destruct
+        def flush(self) -> None:
+            events.append("flush")
+
+        @pre_destruct
+        async def close(self) -> None:
+            events.append("close")
+
+    container = _container(Session)
+    cache: dict[Any, Any] = {}
+    await container.resolve(Session, request_cache=cache)
+
+    errors = await finalize_scope(container, cache)
+
+    assert errors == []
+    assert events == ["flush", "close"]
+
+
 async def test_generator_provider_teardown_runs_through_aclose() -> None:
     events: list[str] = []
 

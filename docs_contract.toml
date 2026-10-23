@@ -107,3 +107,30 @@
 "lauren.config.SecretsDirSource" = ["path", "required"]
 "lauren.config.AsyncSource" = ["load"]
 "lauren.exceptions.ConfigValidationError" = ["code"]
+"lauren.scheduling.ServiceContext" = [
+    "stop_requested", "sleep", "wait_stopped", "mark_ready", "ready", "name", "restart_count", "log", "scope",
+]
+"lauren.scheduling.JobContext" = ["name", "scheduled_at", "fired_at", "attempt", "log", "cancelled", "scope"]
+"lauren.scheduling.ScheduleModule" = ["for_root"]
+"lauren.scheduling.SchedulerRegistry" = [
+    "jobs", "job", "services", "trigger", "pause", "resume", "remove", "add_interval", "add_cron",
+]
+"lauren.scheduling.JobInfo" = [
+    "name", "kind", "schedule", "next_run_at", "last_run_at", "last_status", "last_error", "last_duration_s",
+    "running", "paused", "enabled", "dynamic", "runs", "failures", "skips", "as_dict",
+]
+"lauren.scheduling.JobRun" = ["name", "status", "scheduled_at", "duration_s", "error", "reason"]
+"lauren.scheduling.HostedServiceInfo" = ["name", "state", "ready", "restart_count", "last_error", "healthy", "as_dict"]
+"lauren.scheduling.CronExpression" = ["next_after", "iter_from", "matches", "with_tz", "expression", "tz", "has_seconds"]
+"lauren.scheduling.SchedulerLock" = ["acquire", "release"]
+"lauren.scheduling.InMemorySchedulerLock" = ["acquire", "release"]
+"lauren.scheduling.Clock" = ["monotonic", "now", "sleep"]
+"lauren.scheduling.SystemClock" = ["monotonic", "now", "sleep"]
+"lauren.scheduling.ManualClock" = ["monotonic", "now", "sleep", "advance", "jump", "sleepers"]
+"lauren.signals.HostedServiceStarted" = ["name"]
+"lauren.signals.HostedServiceStopped" = ["name", "duration_s"]
+"lauren.signals.HostedServiceFailed" = ["name", "error", "restart_count", "will_restart"]
+"lauren.signals.JobStarted" = ["name", "scheduled_at"]
+"lauren.signals.JobCompleted" = ["name", "duration_s", "scheduled_at"]
+"lauren.signals.JobFailed" = ["name", "error", "duration_s", "scheduled_at"]
+"lauren.signals.JobSkipped" = ["name", "reason", "scheduled_at"]

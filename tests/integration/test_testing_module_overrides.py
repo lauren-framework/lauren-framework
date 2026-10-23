@@ -241,6 +241,43 @@ def test_use_class_override_runs_its_own_hooks_and_is_not_stamped() -> None:
     assert INJECTABLE_META not in HookedRepository.__dict__
 
 
+def test_use_class_override_runs_every_lifecycle_hook() -> None:
+    class TwoHookRepository:
+        @post_construct
+        async def open_pool(self) -> None:
+            EVENTS.append("fake-open")
+
+        @post_construct
+        async def warm_cache(self) -> None:
+            EVENTS.append("fake-warm")
+
+        @pre_destruct
+        async def close_pool(self) -> None:
+            EVENTS.append("fake-close")
+
+        @pre_destruct
+        async def flush_cache(self) -> None:
+            EVENTS.append("fake-flush")
+
+        def find(self) -> str:
+            return "two-hook"
+
+    app = (
+        Test.create_testing_module(AppModule)
+        .override_provider(Repository)
+        .use_class(TwoHookRepository)
+        .compile()
+    )
+    with TestClient(app) as client:
+        assert client.get("/user").json()["user"] == "user from two-hook"
+    assert [e for e in EVENTS if e.startswith("fake")] == [
+        "fake-open",
+        "fake-warm",
+        "fake-close",
+        "fake-flush",
+    ]
+
+
 def test_use_class_override_resolves_deps_from_the_owning_module() -> None:
     @injectable()
     class Helper:

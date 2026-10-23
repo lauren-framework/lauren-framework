@@ -119,6 +119,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Fire-and-forget work after the response is sent. `BackgroundTasks` extractor, `TaskHandle`, sync/async callables, `BackgroundTaskFailed` signals, graceful-shutdown drain participation.
 
+-   :material-clock-outline: [__Scheduling & Hosted Services__](scheduling.md)
+
+    ---
+    `@hosted_service` loops started after `@post_construct` and stopped before `@pre_destruct`, with restarts and backoff; `@interval` / `@cron` / `@run_once` jobs with overlap, jitter, timeouts, misfire handling and a DI scope per run; `SchedulerRegistry`; `ManualClock` for tests.
+
 -   :material-cookie: [__Sessions__](sessions.md)
 
     ---

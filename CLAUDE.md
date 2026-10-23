@@ -97,6 +97,7 @@ lauren/                      — framework package
 ├── _lifecycle/              — post_construct / pre_destruct machinery
 ├── _modules/                — module graph & visibility
 ├── _routing/                — radix-tree HTTP router
+├── _scheduling/             — hosted-service supervisor, scheduler, cron parser, clocks, ScheduleModule (private)
 ├── _typing/                 — ForwardRef / PEP 563 resolver (private)
 ├── _validation.py           — provider-agnostic type detection & validation (pydantic, msgspec, dataclass, TypedDict)
 ├── _ws_runtime.py           — WebSocket dispatch engine + WsConnectionContext / WsUpgradeRequest
@@ -117,6 +118,7 @@ lauren/                      — framework package
 ├── config.py                — ConfigModule, Secret, sources, Profile, load_settings (typed configuration)
 ├── context.py               — OperationScope (request scope outside HTTP, via app.scope())
 ├── events.py                — EventBus, EventPublisher, @on_event, EventContext, EmitResult (domain events)
+├── scheduling.py            — @hosted_service, @interval/@cron/@run_once, ScheduleModule, SchedulerRegistry, ManualClock
 ├── signals.py               — POSIX signal integration + on_shutdown hooks
 ├── streaming.py             — StreamingResponse[T], Stream, StreamReader
 ├── sse.py                   — EventStream, ServerSentEvent, last_event_id
@@ -242,6 +244,8 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Share state for the app lifetime | `Scope.SINGLETON` injectable |
 | Decouple modules with domain events | `EventBus` / `EventPublisher` + `@on_event` (`lauren.events`) |
 | Use request-scoped providers outside a request (script, job, worker) | `async with app.scope("name") as scope:` + `await scope.resolve(T)` |
+| Run a long-lived loop for the app's lifetime (consumer, relay, heartbeat) | `@hosted_service()` class with `async def run(self, ctx: ServiceContext)` |
+| Run code on a schedule | `@interval` / `@cron` / `@run_once` on a singleton method + `ScheduleModule.for_root()` |
 | Persist state across requests for one client | Sessions (`sessions=SessionConfig(...)`; inject `session: Session`) |
 | Read typed configuration | `ConfigModule.for_root(Settings)` (or `for_feature`) + inject `Settings`; `load_settings` for factory kwargs |
 | Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
@@ -426,6 +430,21 @@ exit).
   dict is fresh and unshared with any earlier request — a global middleware
   snapshot taken before routing depends on the params appearing there. Locked
   by `tests/integration/test_pre_routing_path_params_snapshot.py`.
+- ❌ `asyncio.create_task(...)` inside `@post_construct` to start a background
+  loop. Nothing supervises or stops it: it can still use the database after the
+  pool's `@pre_destruct` closed it, its exceptions surface only as "Task
+  exception was never retrieved", and it dies with `TestClient`'s startup loop.
+  Use `@hosted_service()` (stopped before `@pre_destruct`, restarted on failure)
+  or `@interval` / `@cron`.
+- ❌ Assuming one worker for scheduled jobs. `uvicorn --workers 4` runs every
+  `@interval` / `@cron` job four times. Use `exclusive=True` with a shared
+  `SchedulerLock` (the default `InMemorySchedulerLock` is per process), or run
+  scheduled work in one dedicated process (`ScheduleModule.for_root(enabled=False)`
+  / `scheduler=False` in the web workers).
+- ❌ Scheduling a method on a `Scope.REQUEST` / `TRANSIENT` provider, or
+  forgetting `ScheduleModule.for_root()` — both raise `LifecycleConfigError` at
+  startup. Request-scoped work inside a job belongs in a job **parameter**
+  (resolved per run in a fresh `OperationScope`), not in the job's provider.
 - ❌ Reading `os.environ` in `__init__` or at import time. It fails late (after
   `create()` returned, or while Python imports the module graph), one key at a
   time, and makes two apps with different configuration impossible in one
@@ -659,6 +678,11 @@ exit).
   `@on_event` (a discovery marker), handler plans and the per-app dispatch
   table (`_plan.py`), `EventBus` / `EventPublisher`, task tracking and the
   shutdown drain (`_bus.py`).
+- `lauren/scheduling.py` / `lauren/_scheduling/` — hosted services
+  (`_supervisor.py`), the scheduler and `SchedulerRegistry` (`_scheduler.py`),
+  `CronExpression` (`_cron.py`), `ManualClock` (`_clock.py`) and the factory
+  hooks (`_module.py`: Phase 2c registers the registry, Phase 6a validates,
+  `LaurenApp.startup()` / `shutdown()` drive the runtime).
 - `lauren/_discovery.py` — Phase 6a discovery: `register_marker`,
   `MarkerSpec`, `DiscoveryIndex`, `DiscoveredMethod`, `CallPlan`.
 - `lauren/_ws_runtime.py` — `WsConnectionContext`, `WsUpgradeRequest`, `CompiledGateway`, `handle_websocket`.

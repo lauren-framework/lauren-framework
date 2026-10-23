@@ -189,6 +189,7 @@ nav:
     - OpenAPI Security from Guards: guides/openapi-security.md
     - Proxy & Static Files: guides/proxy-and-static-files.md
     - Background Tasks: guides/background-tasks.md
+    - Scheduling & Hosted Services: guides/scheduling.md
     - Sessions: guides/sessions.md
     - Typed Configuration: guides/configuration.md
     - Testing: guides/testing.md
@@ -213,6 +214,7 @@ nav:
     - Exception Catalog: reference/exceptions.md
     - Types: reference/types.md
     - Background Tasks: reference/background.md
+    - Scheduling: reference/scheduling.md
     - Sessions: reference/sessions.md
     - Configuration: reference/config.md
     - Signals: reference/signals.md

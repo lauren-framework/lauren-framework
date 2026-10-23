@@ -15,6 +15,7 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 | [building-lauren-streaming](building-lauren-streaming/) | SSE (`EventStream`, `ServerSentEvent`), WebSocket gateways (`@ws_controller`), `StreamingResponse[T]`, Socket.IO adapter |
 | [building-lauren-background-tasks](building-lauren-background-tasks/) | `BackgroundTasks`, `TaskHandle`, fire-and-forget patterns |
 | [building-lauren-events](building-lauren-events/) | Typed domain events between modules: `@on_event` handlers, `EventBus` / `EventPublisher`, delivery modes, priorities, error policies, after-commit emission, `recording()` / `drain()` |
+| [building-lauren-scheduling](building-lauren-scheduling/) | `@hosted_service` loops, `@interval` / `@cron` / `@run_once` jobs, `ScheduleModule`, `SchedulerRegistry`, `SchedulerLock`, `ManualClock` |
 | [building-lauren-sessions](building-lauren-sessions/) | `sessions=SessionConfig(...)`, `session: Session` injection, `SessionStore` backends, signed cookies, `regenerate_id()`/`invalidate()` |
 | [building-lauren-config](building-lauren-config/) | Typed settings validated in `LaurenFactory.create`: `ConfigModule.for_root`/`for_feature`, `.env`/TOML/environment sources, profiles, `Secret[T]`, `load_settings`, `ConfigValidationError` |
 | [testing-lauren-apps](testing-lauren-apps/) | Lifespan-managed `TestClient` / `AsyncTestClient`, cookies & sessions, uploads, streams, `Test.create_testing_module` overrides, pytest plugin, startup-failure assertions |
@@ -34,6 +35,7 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 | `DecoratorUsageError` | [building-lauren-guards](building-lauren-guards/) §Guards |
 | `SessionConfigError` | [building-lauren-sessions](building-lauren-sessions/) §Configuration |
 | `ConfigValidationError` | [building-lauren-config](building-lauren-config/) §Testing |
+| `LifecycleConfigError` (scheduling) | [building-lauren-scheduling](building-lauren-scheduling/) §Startup errors |
 
 ## See also
 

@@ -22,6 +22,7 @@ from .._di._overrides import active_override_plan
 from .._di.custom import CustomProvider
 from .._discovery import DiscoveryIndex, build_discovery_index, registered_markers
 from .._events import EventBus, compile_events, install_events
+from .._scheduling._module import SchedulingRuntime, compile_scheduling, prepare_scheduling
 from ..serialization import (
     JSONEncoder,
     StdlibJSONEncoder,
@@ -882,6 +883,9 @@ class LaurenApp:
         self._discovery: DiscoveryIndex = DiscoveryIndex.empty()
         # The application event bus (``lauren.events``); set by the factory.
         self._events: EventBus | None = None
+        # Hosted services + scheduler (``lauren.scheduling``); ``None`` when
+        # the app declares none, so startup/shutdown pay nothing.
+        self._scheduling: SchedulingRuntime | None = None
 
     # -- Introspection -----------------------------------------------------
 
@@ -1047,6 +1051,10 @@ class LaurenApp:
             self._events._on_startup()
         self._logger.log("Running @post_construct hooks", context="Lifecycle")
         await self._lifecycle.run_post_construct()
+        if self._scheduling is not None:
+            # Hosted services start in dependency order, then the scheduler
+            # is armed; nothing fires before StartupComplete.
+            await self._scheduling.start()
         self._app_state.seal()
         self._started = True
         self._running = True
@@ -1060,17 +1068,25 @@ class LaurenApp:
         )
         # StartupComplete marks the app as ready for traffic.
         await self._signals.emit(StartupComplete(app=self, duration_s=duration))
+        if self._scheduling is not None:
+            self._scheduling.begin_firing()  # READY: run_once / initial_delay count from here
 
     async def shutdown(self, *, drain_timeout: float = 10.0) -> None:
         """Gracefully stop the application.
 
         Steps (each logged as an event):
 
-        1. Mark the app not-running — no new request scheduling.
-        2. Drain in-flight requests (up to ``drain_timeout`` seconds), then
-           running ``@on_event`` handler tasks (with what is left of it).
-        3. Invoke user-registered ``on_shutdown`` callbacks in reverse order.
-        4. Run ``@pre_destruct`` hooks in reverse topological order.
+        1. Mark the app not-running — no new request scheduling; the
+           scheduler stops firing (hosted services keep running).
+        2. Drain in-flight requests (up to ``drain_timeout`` seconds).
+        3. Await in-flight scheduled runs (``ScheduleModule`` ``job_drain_timeout``,
+           default what is left of ``drain_timeout``), then cancel them.
+        4. Stop hosted services in reverse start order.
+        5. Await running ``@on_event`` handler tasks with what is left of the
+           budget (or ``EventsModule``'s ``drain_timeout``), then cancel them —
+           after jobs and services, so events they emit while stopping run.
+        6. Invoke user-registered ``on_shutdown`` callbacks in reverse order.
+        7. Run ``@pre_destruct`` hooks in reverse topological order.
 
         Idempotent: concurrent or repeated calls return as soon as the first
         shutdown has completed.
@@ -1090,6 +1106,9 @@ class LaurenApp:
         # Fire ShutdownBegin early so listeners can observe the
         # transition before the drain / pre_destruct machinery runs.
         await self._signals.emit(ShutdownBegin(app=self))
+        if self._scheduling is not None:
+            self._scheduling.stop_firing()
+        drain_t0 = time.perf_counter()
         # 1. Drain in-flight requests.
         if self._in_flight:
             self._logger.log(
@@ -1110,8 +1129,13 @@ class LaurenApp:
                     context="Shutdown",
                     in_flight=len(self._in_flight),
                 )
-        # 1b. Event handler tasks: await them with what is left of the
-        # budget (or EventsModule's drain_timeout), then cancel the rest.
+        # Scheduled runs, then hosted services (reverse start order) — before
+        # on_shutdown and @pre_destruct, so their dependencies are still alive.
+        if self._scheduling is not None:
+            await self._scheduling.stop(remaining=drain_timeout - (time.perf_counter() - drain_t0))
+        # Event handler tasks: await them with what is left of the budget (or
+        # EventsModule's drain_timeout), then cancel the rest. After jobs and
+        # services, so events emitted while they stop are delivered.
         if self._events is not None:
             await self._events._on_drain(max(0.0, drain_timeout - (time.perf_counter() - shutdown_t0)))
         # 2. User callbacks (reverse registration order).
@@ -2707,6 +2731,8 @@ class LaurenFactory:
         problem_type_base: str | None = None,
         debug: bool | DebugConfig = False,
         lazy_startup: bool = True,
+        hosted_services: bool = True,
+        scheduler: bool = True,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -2751,6 +2777,11 @@ class LaurenFactory:
         on its first HTTP or WebSocket request when the ASGI server never
         sent lifespan events (``httpx.ASGITransport``), logging a warning.
         Pass ``False`` to keep such an app cold until ``startup()`` is awaited.
+
+        ``hosted_services=False`` discovers and validates ``@hosted_service``
+        classes but does not start them; ``scheduler=False`` does the same for
+        scheduled jobs (``SchedulerRegistry.trigger`` still works). Tests and
+        one-off commands use them to build the full app without background work.
         """
         _log: Logger = logger or NullLogger()
         if problem_type_base is not None and (
@@ -2945,6 +2976,10 @@ class LaurenFactory:
         # Load and validate every ConfigModule spec in the graph (one
         # aggregated ConfigValidationError) and register the settings.
         config_pending = install_config(graph, container, logger=_log)
+        # ---- Phase 2c: Scheduling ----
+        # ScheduleModule.for_root() makes the app's SchedulerRegistry a global
+        # provider (before the DI compile, so constructors can depend on it).
+        scheduling_setup = prepare_scheduling(graph, container)
 
         # ---- Phase 2c: Application events ----
         # One EventBus per app (global value provider) and the request-scoped
@@ -3242,6 +3277,8 @@ class LaurenFactory:
         t0 = time.perf_counter()
         discovery = build_discovery_index(container, registered_markers())
         compile_events(events_bus, discovery, container, logger=_log)
+        # Hosted services and scheduled jobs: scope, names, ScheduleModule.
+        scheduling = compile_scheduling(discovery, scheduling_setup)
         _log.verbose(
             f"Phase 6a provider discovery: {sum(map(len, discovery.methods.values()))} method(s), "
             f"{sum(map(len, discovery.classes.values()))} class(es) "
@@ -3324,6 +3361,9 @@ class LaurenFactory:
         app._discovery = discovery
         app._events = events_bus
         events_bus._bind(app)
+        app._scheduling = scheduling.build(
+            app, order=lifecycle._order, hosted_services=hosted_services, scheduler=scheduler
+        )
         app._config_pending = config_pending
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via

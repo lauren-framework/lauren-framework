@@ -89,9 +89,7 @@ async def test_order_is_processed(app: LaurenApp) -> None:
 
 ```python
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
-
-from lauren import Scope, injectable, post_construct, pre_destruct
+from collections.abc import AsyncIterator
 
 
 class MessageBroker(ABC):
@@ -99,15 +97,18 @@ class MessageBroker(ABC):
     async def publish(self, topic: str, message: dict) -> None: ...
 
     @abstractmethod
-    async def consume(self, topic: str, callback: Callable[[dict], Awaitable[None]]) -> None: ...
+    def consume(self, topic: str) -> AsyncIterator[dict]: ...
 ```
 
 ### aio-pika (RabbitMQ)
 
 ```python
 import json
+from collections.abc import AsyncIterator
 
 import aio_pika
+
+from lauren import Scope, injectable, post_construct, pre_destruct
 
 
 @injectable(scope=Scope.SINGLETON, provides=(MessageBroker,))
@@ -125,7 +126,7 @@ class RabbitMQBroker(MessageBroker):
     @pre_destruct
     async def disconnect(self) -> None:
         if self._connection is not None:
-            await self._connection.close()   # also cancels the consumers below
+            await self._connection.close()
 
     async def publish(self, topic: str, message: dict) -> None:
         await self._channel.default_exchange.publish(
@@ -133,23 +134,30 @@ class RabbitMQBroker(MessageBroker):
             routing_key=topic,
         )
 
-    async def consume(self, topic: str, callback: Callable[[dict], Awaitable[None]]) -> None:
+    async def consume(self, topic: str) -> AsyncIterator[dict]:
         queue = await self._channel.declare_queue(topic, durable=True)
-
-        async def on_message(message: aio_pika.abc.AbstractIncomingMessage) -> None:
-            async with message.process():
-                await callback(json.loads(message.body))
-
-        await queue.consume(on_message)
+        async with queue.iterator() as messages:
+            async for message in messages:
+                async with message.process():
+                    yield json.loads(message.body)
 ```
 
 ## Bridging the two
 
-Forward selected domain events to the broker with an ordinary handler, and
-turn incoming broker messages back into domain events — the rest of the app
-only ever sees typed events:
+Forward selected domain events to the broker with an ordinary handler, and turn
+incoming broker messages back into domain events — the rest of the app only ever
+sees typed events. The inbound side is a loop, so make it a
+[`@hosted_service`](../building-lauren-scheduling/SKILL.md) — never
+`asyncio.create_task(...)` in `@post_construct`. The framework starts it after
+every `@post_construct` (so `RabbitMQBroker.connect` already ran), restarts it with
+backoff when it crashes, and stops it **before** the broker's `@pre_destruct`
+closes the connection:
 
 ```python
+from lauren import EventBus, injectable, on_event
+from lauren.scheduling import ServiceContext, hosted_service
+
+
 @injectable()
 class OrderOutbound:
     def __init__(self, broker: MessageBroker) -> None:
@@ -160,28 +168,32 @@ class OrderOutbound:
         await self._broker.publish("orders.created", {"id": event.order_id, "items": list(event.items)})
 
 
-@injectable()
+@hosted_service(restart="on-failure", max_restarts=10, backoff=(1.0, 60.0), stop_timeout=15.0)
 class OrderInbound:
     def __init__(self, broker: MessageBroker, events: EventBus) -> None:
         self._broker = broker
         self._events = events
 
-    @post_construct
-    async def start(self) -> None:
-        await self._broker.consume("orders.created", self._on_message)
-
-    async def _on_message(self, message: dict) -> None:
-        await self._events.emit(OrderCreated(message["id"], tuple(message["items"])))
+    async def run(self, ctx: ServiceContext) -> None:
+        async for message in self._broker.consume("orders.created"):
+            await self._events.emit(OrderCreated(message["id"], tuple(message["items"])))
+            if ctx.stop_requested:
+                break
 ```
+
+Shutdown cancels the service after `stop_timeout` if it is blocked waiting for the
+next message, so the loop needs no timeout of its own. Tests build the app with
+`LaurenFactory.create(..., hosted_services=False)` and emit events directly, or
+drive `with TestClient(app):` so startup and shutdown run on one event loop.
 
 ## Key points
 
-- In-process events are **not durable**: deferred handlers still queued when
-  the process dies are lost. Anything that must survive a crash goes through
-  the broker (or a transactional outbox).
+- In-process events are **not durable**: deferred handlers still queued when the
+  process dies are lost. Anything that must survive a crash goes through the
+  broker (or a transactional outbox).
 - `provides=(MessageBroker,)` lets every service declare `broker: MessageBroker`;
   swap implementations in `global_providers` or with `use_class` in tests.
-- Consumers are tied to the broker connection: closing it in `@pre_destruct`
-  stops them at shutdown.
+- Broker consumers are `@hosted_service` loops: supervised, restarted with
+  backoff, and stopped before `@pre_destruct` closes the connection.
 - Keep broker payloads JSON-serialisable dicts so they are transport-agnostic;
   keep in-process events typed.

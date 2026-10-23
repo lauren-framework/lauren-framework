@@ -277,3 +277,199 @@ class TestLifecycleHooks:
         errors = await sched.run_pre_destruct()
         assert errors == []
         assert order == ["Top", "Base"]
+
+
+# ---------------------------------------------------------------------------
+# Several hooks of one kind per class
+# ---------------------------------------------------------------------------
+
+
+async def _run_lifecycle(*classes: type) -> list[Exception]:
+    container = DIContainer()
+    for cls in classes:
+        container.register(cls)
+    container.compile()
+    sched = LifecycleScheduler(container)
+    sched.compute_order()
+    await sched.run_post_construct()
+    return await sched.run_pre_destruct()
+
+
+class TestSeveralHooksPerClass:
+    async def test_every_post_construct_runs_in_definition_order(self):
+        calls: list[str] = []
+
+        @injectable()
+        class Svc:
+            @post_construct
+            async def zeta_start(self):
+                calls.append("zeta")
+
+            @post_construct
+            def alpha_start(self):
+                calls.append("alpha")
+
+        await _run_lifecycle(Svc)
+
+        assert calls == ["zeta", "alpha"]
+
+    async def test_every_pre_destruct_runs_in_definition_order(self):
+        calls: list[str] = []
+
+        @injectable()
+        class Svc:
+            @pre_destruct
+            async def flush(self):
+                calls.append("flush")
+
+            @pre_destruct
+            def close(self):
+                calls.append("close")
+
+        errors = await _run_lifecycle(Svc)
+
+        assert errors == []
+        assert calls == ["flush", "close"]
+
+    async def test_post_construct_runs_base_class_hooks_first(self):
+        calls: list[str] = []
+
+        class Base:
+            @post_construct
+            def connect(self):
+                calls.append("Base.connect")
+
+        @injectable()
+        class Child(Base):
+            @post_construct
+            def start(self):
+                calls.append("Child.start")
+
+        await _run_lifecycle(Child)
+
+        assert calls == ["Base.connect", "Child.start"]
+
+    async def test_pre_destruct_runs_subclass_hooks_first(self):
+        calls: list[str] = []
+
+        class Base:
+            @pre_destruct
+            def disconnect(self):
+                calls.append("Base.disconnect")
+
+        @injectable()
+        class Child(Base):
+            @pre_destruct
+            def stop(self):
+                calls.append("Child.stop")
+
+        await _run_lifecycle(Child)
+
+        assert calls == ["Child.stop", "Base.disconnect"]
+
+    async def test_override_without_decorator_drops_the_base_hook(self):
+        calls: list[str] = []
+
+        class Base:
+            @post_construct
+            def connect(self):
+                calls.append("Base.connect")
+
+        @injectable()
+        class Child(Base):
+            def connect(self):  # plain override: no longer a hook
+                calls.append("Child.connect")
+
+        await _run_lifecycle(Child)
+
+        assert calls == []
+
+    async def test_decorated_override_runs_once(self):
+        calls: list[str] = []
+
+        class Base:
+            @post_construct
+            def connect(self):
+                calls.append("Base.connect")
+
+        @injectable()
+        class Child(Base):
+            @post_construct
+            def connect(self):
+                calls.append("Child.connect")
+
+        await _run_lifecycle(Child)
+
+        assert calls == ["Child.connect"]
+
+    async def test_aliased_hook_runs_once(self):
+        calls: list[str] = []
+
+        @injectable()
+        class Svc:
+            @post_construct
+            def start(self):
+                calls.append("start")
+
+            begin = start
+
+        await _run_lifecycle(Svc)
+
+        assert calls == ["start"]
+
+    async def test_failing_pre_destruct_does_not_skip_the_next_hook(self):
+        calls: list[str] = []
+
+        @injectable()
+        class Svc:
+            @pre_destruct
+            def first(self):
+                raise RuntimeError("boom")
+
+            @pre_destruct
+            def second(self):
+                calls.append("second")
+
+        errors = await _run_lifecycle(Svc)
+
+        assert calls == ["second"]
+        assert [type(e).__name__ for e in errors] == ["DestructError"]
+
+    async def test_request_scoped_provider_runs_every_post_construct(self):
+        from lauren.types import Scope
+
+        calls: list[str] = []
+
+        @injectable(scope=Scope.REQUEST)
+        class PerRequest:
+            @post_construct
+            def one(self):
+                calls.append("one")
+
+            @post_construct
+            async def two(self):
+                calls.append("two")
+
+        container = DIContainer()
+        container.register(PerRequest)
+        container.compile()
+
+        await container.resolve(PerRequest, request_cache={})
+
+        assert calls == ["one", "two"]
+
+    def test_provider_keeps_the_first_hook_for_single_hook_readers(self):
+        @injectable()
+        class Svc:
+            @post_construct
+            def first(self): ...
+
+            @post_construct
+            def second(self): ...
+
+        container = DIContainer()
+        provider = container.register(Svc)
+
+        assert provider.post_construct is not None
+        assert provider.post_construct.__name__ == "first"
+        assert [h.__name__ for h in provider.post_construct_chain] == ["first", "second"]

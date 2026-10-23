@@ -108,6 +108,8 @@ nox -s ver_dec -- --patch
 | `lauren/context.py`               | `OperationScope` (public; built by `app.scope()`) |
 | `lauren/events.py`                | Public application-event surface (`EventBus`, `EventPublisher`, `on_event`, `EventContext`, `EmitResult`, `EventsModule`, `TransactionPhase`, `UnitOfWork`) |
 | `lauren/_events/`                 | Event bus internals: `@on_event` marker (`_meta`), handler validation + dispatch table (`_plan`), `EventBus` / `EventPublisher`, task tracking, shutdown drain, factory hooks (`_bus`) |
+| `lauren/scheduling.py`            | Public hosted-service / scheduling surface (`@hosted_service`, `@interval`, `@cron`, `@run_once`, `ScheduleModule`, `SchedulerRegistry`, `CronExpression`, `SchedulerLock`, `ManualClock`) |
+| `lauren/_scheduling/`             | Decorators + discovery markers (`_decorators`), supervisor (`_supervisor`), scheduler + registry (`_scheduler`), cron parser (`_cron`), clocks (`_clock`), contexts (`_context`), locks (`_lock`), `ScheduleModule` + factory phases (`_module`) |
 | `lauren/_discriminated.py`        | `Discriminated[A\|B,"key"]` — detection, validation, OpenAPI schema |
 | `lauren/_encoders/`               | Optional encoder backends (e.g. `pydantic.py`) |
 | `lauren/_routing/__init__.py`     | Radix-tree router                            |
@@ -288,6 +290,7 @@ Welcome aboard.
 | Mock / replace a provider in tests | `lauren/testing/_module.py` | `Test.create_testing_module(...)` in `skills/testing-lauren-apps/` |
 | Add a background task | `lauren/background.py` | `skills/building-lauren-background-tasks/` |
 | Decouple modules with domain events | `lauren/events.py` | `skills/building-lauren-events/` |
+| Run a hosted service or a scheduled job | `lauren/scheduling.py` | `skills/building-lauren-scheduling/` |
 | Add session state | `lauren/sessions.py` | `skills/building-lauren-sessions/` |
 | Read typed configuration / secrets | `lauren/config.py` | `skills/building-lauren-config/` |
 | Debug a startup error | `lauren/exceptions.py` | **Common Errors** section below |
@@ -306,6 +309,7 @@ Welcome aboard.
 | SSE, WebSocket gateways, `StreamingResponse` | `skills/building-lauren-streaming/` |
 | `BackgroundTasks`, `TaskHandle` | `skills/building-lauren-background-tasks/` |
 | Domain events: `@on_event`, `EventBus`, `EventPublisher` | `skills/building-lauren-events/` |
+| Hosted services, `@interval` / `@cron` / `@run_once`, `ScheduleModule` | `skills/building-lauren-scheduling/` |
 | Sessions: signed cookies, `Session` injection, pluggable store | `skills/building-lauren-sessions/` |
 | Typed configuration: `ConfigModule`, sources, profiles, `Secret[T]` | `skills/building-lauren-config/` |
 | `TestClient`, async tests, mock providers | `skills/testing-lauren-apps/` |
@@ -334,6 +338,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | Session management | `docs/guides/sessions.md` |
 | Domain events between modules | `docs/guides/events.md` |
 | Typed configuration | `docs/guides/configuration.md` |
+| Hosted services & scheduled jobs | `docs/guides/scheduling.md` |
 | Custom response subclasses and response factories | `docs/guides/custom-responses.md` / `docs/guides/file-responses.md` |
 | Testing playbook | `skills/testing-lauren-apps/SKILL.md` |
 | Release / versioning process | `docs/development/release.md` / `docs/development/versioning.md` |
@@ -348,6 +353,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | `DecoratorUsageError` | `@middleware` / `@injectable` used bare without `()` | Change to `@middleware()` / `@injectable()` |
 | `DuplicateRouteError` | Two handlers registered on the same method + path | Rename one route |
 | `UnresolvableProviderError` | Type not registered anywhere, or owning module not imported | Import the owning module in the consumer module |
+| `LifecycleConfigError` | A scheduled job without `ScheduleModule.for_root()`, a hosted service / job on a non-singleton provider, or a hook on a non-method | Import `ScheduleModule.for_root()`; make the provider a singleton; decorate methods only |
 | `SessionConfigError` | Sessions misconfigured, or `Session` injected with sessions disabled | Pass `sessions=SessionConfig(...)` / fix the unsafe cookie config |
 | `ConfigValidationError` | A settings key is missing or invalid, or the profile is unknown (every problem listed in `detail["errors"]`) | Set the listed keys in the environment / `.env` / config files; tests pass `environ=` to `ConfigModule.for_root` |
 | `GuardConfigError` (`reason="invalid_deny_error"`) | A guard's `deny_error` is not an `HTTPError` subclass or a zero-argument factory (e.g. an exception *instance*, `ValueError`) | `deny_error = UnauthorizedError`, or `deny_error = staticmethod(lambda: UnauthorizedError("…", challenge="…"))` |

@@ -29,3 +29,19 @@ POSIX signal integration and application shutdown hooks.
 ## Event bus events
 
 ::: lauren.EventHandlerFailed
+
+## Hosted service and job events
+
+::: lauren.HostedServiceStarted
+
+::: lauren.HostedServiceStopped
+
+::: lauren.HostedServiceFailed
+
+::: lauren.JobStarted
+
+::: lauren.JobCompleted
+
+::: lauren.JobFailed
+
+::: lauren.JobSkipped

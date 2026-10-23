@@ -60,8 +60,9 @@ async def finalize_scope(
 ) -> list[DestructError]:
     """Tear down every instance in ``cache`` in reverse creation order.
 
-    For each instance, newest first, run the provider's ``@pre_destruct`` hook
-    (if it declares one), then call ``aclose()`` if the instance has one. A
+    For each instance, newest first, run the provider's ``@pre_destruct`` hooks
+    (every one it declares, in order), then call ``aclose()`` if the instance
+    has one. A
     failing step is logged on the ``"lauren"`` logger, recorded as a
     :class:`~lauren.exceptions.DestructError` (its ``__cause__`` is the
     original exception) and teardown continues with the next step. Nothing
@@ -78,8 +79,8 @@ async def finalize_scope(
     for key, instance in [(k, cache[k]) for k in reversed(list(cache))]:
         provider = index.get(key)
         name = _instance_label(key, provider, instance)
-        hook = provider.pre_destruct if provider is not None else None
-        if hook is not None:
+        hooks = provider.pre_destruct_chain if provider is not None else ()
+        for hook in hooks:
             try:
                 result = getattr(instance, hook.__name__)()
                 if inspect.isawaitable(result):

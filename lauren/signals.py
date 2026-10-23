@@ -41,12 +41,12 @@ Five built-in events are fired by the framework:
 * :class:`ShutdownBegin` — a ``lifespan.shutdown`` message arrived
   or a graceful-shutdown signal was received.
 
-Background tasks add :class:`BackgroundTaskStarted` /
-:class:`BackgroundTaskComplete` / :class:`BackgroundTaskFailed`, and the
-application event bus (:mod:`lauren.events`) adds
-:class:`EventHandlerFailed`. Domain events themselves do **not** go through
-this bus: they are delivered by :class:`~lauren.events.EventBus` to DI-aware
-``@on_event`` handlers.
+Background work adds its own events: ``BackgroundTask*`` for
+:class:`~lauren.BackgroundTasks`, ``HostedService*`` and ``Job*`` for hosted
+services and scheduled jobs (:mod:`lauren.scheduling`), and the application event
+bus (:mod:`lauren.events`) adds :class:`EventHandlerFailed`. Domain events
+themselves do **not** go through this bus: they are delivered by
+:class:`~lauren.events.EventBus` to DI-aware ``@on_event`` handlers.
 
 User code registers listeners via :meth:`SignalBus.on` (also
 available as :func:`on` for convenience) and the framework emits
@@ -235,6 +235,71 @@ class EventHandlerFailed(LifecycleEvent):
     mode: str = ""
     #: The event instance itself.
     event: Any = None
+
+
+@dataclass
+class HostedServiceStarted(LifecycleEvent):
+    """Emitted each time a hosted service's ``run()`` starts (first start and every restart)."""
+
+    name: str = ""
+
+
+@dataclass
+class HostedServiceStopped(LifecycleEvent):
+    """Emitted once a hosted service has finished for good (stopped, completed or out of restarts)."""
+
+    name: str = ""
+    #: Seconds since the service first started.
+    duration_s: float = 0.0
+
+
+@dataclass
+class HostedServiceFailed(LifecycleEvent):
+    """Emitted when a hosted service's ``run()`` raises."""
+
+    name: str = ""
+    error: BaseException | None = None
+    #: Restarts performed before this failure.
+    restart_count: int = 0
+    #: ``False`` when the restart policy is exhausted (or stop was requested).
+    will_restart: bool = False
+
+
+@dataclass
+class JobStarted(LifecycleEvent):
+    """Emitted when a scheduled job run begins (after an ``exclusive`` lock was won)."""
+
+    name: str = ""
+    #: The nominal fire time (aware, in the job's time zone).
+    scheduled_at: Any = None
+
+
+@dataclass
+class JobCompleted(LifecycleEvent):
+    """Emitted when a scheduled job run returns normally."""
+
+    name: str = ""
+    duration_s: float = 0.0
+    scheduled_at: Any = None
+
+
+@dataclass
+class JobFailed(LifecycleEvent):
+    """Emitted when a scheduled job run raises, times out (``TimeoutError``) or is cancelled."""
+
+    name: str = ""
+    error: BaseException | None = None
+    duration_s: float = 0.0
+    scheduled_at: Any = None
+
+
+@dataclass
+class JobSkipped(LifecycleEvent):
+    """Emitted when a fire does not run: ``reason`` is ``"overlap"``, ``"locked"``, ``"misfire"`` or ``"disabled"``."""
+
+    name: str = ""
+    reason: str = ""
+    scheduled_at: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -573,6 +638,13 @@ __all__ = [
     "BackgroundTaskComplete",
     "BackgroundTaskFailed",
     "EventHandlerFailed",
+    "HostedServiceStarted",
+    "HostedServiceStopped",
+    "HostedServiceFailed",
+    "JobStarted",
+    "JobCompleted",
+    "JobFailed",
+    "JobSkipped",
     # Bus
     "SignalBus",
     "on",

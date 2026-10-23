@@ -260,6 +260,14 @@ PAGES: dict[str, list[str | tuple[str, str]]] = {
         "lauren.ShutdownBegin",
         ("## Event bus events", ""),
         "lauren.EventHandlerFailed",
+        ("## Hosted service and job events", ""),
+        "lauren.HostedServiceStarted",
+        "lauren.HostedServiceStopped",
+        "lauren.HostedServiceFailed",
+        "lauren.JobStarted",
+        "lauren.JobCompleted",
+        "lauren.JobFailed",
+        "lauren.JobSkipped",
     ],
     "events.md": [
         (
@@ -281,6 +289,32 @@ PAGES: dict[str, list[str | tuple[str, str]]] = {
         "lauren.events.EventRecording",
         ("## Configuration", ""),
         "lauren.events.EventsModule",
+    ],
+    "scheduling.md": [
+        (
+            "# Scheduling & Hosted Services\n\nHosted services, scheduled jobs, cron expressions, locks and clocks "
+            "(`lauren.scheduling`).",
+            "",
+        ),
+        ("## Hosted services", ""),
+        "lauren.scheduling.hosted_service",
+        "lauren.scheduling.ServiceContext",
+        "lauren.scheduling.HostedServiceInfo",
+        ("## Scheduled methods", ""),
+        "lauren.scheduling.interval",
+        "lauren.scheduling.cron",
+        "lauren.scheduling.run_once",
+        "lauren.scheduling.JobContext",
+        ("## Activation and control", ""),
+        "lauren.scheduling.ScheduleModule",
+        "lauren.scheduling.SchedulerRegistry",
+        "lauren.scheduling.JobInfo",
+        "lauren.scheduling.JobRun",
+        ("## Cron expressions, locks and clocks", ""),
+        "lauren.scheduling.CronExpression",
+        "lauren.scheduling.SchedulerLock",
+        "lauren.scheduling.InMemorySchedulerLock",
+        "lauren.scheduling.ManualClock",
     ],
     "testing.md": [
         (

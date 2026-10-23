@@ -197,6 +197,13 @@ from .signals import (
     BackgroundTaskFailed,
     BackgroundTaskStarted,
     EventHandlerFailed,
+    HostedServiceFailed,
+    HostedServiceStarted,
+    HostedServiceStopped,
+    JobCompleted,
+    JobFailed,
+    JobSkipped,
+    JobStarted,
     LifecycleEvent,
     RequestComplete,
     RequestReceived,
@@ -275,6 +282,18 @@ from .reflect import (
 )
 from ._staticfiles import StaticFilesModule
 from .config import ConfigModule, Secret
+from .scheduling import (
+    CronExpression,
+    JobContext,
+    ScheduleModule,
+    SchedulerLock,
+    SchedulerRegistry,
+    ServiceContext,
+    cron,
+    hosted_service,
+    interval,
+    run_once,
+)
 from .sessions import (
     InMemoryRevocationStore,
     InMemorySessionStore,
@@ -385,6 +404,24 @@ __all__ = [
     # typed configuration (the rest lives in lauren.config)
     "ConfigModule",
     "Secret",
+    # hosted services & scheduling (the rest lives in lauren.scheduling)
+    "hosted_service",
+    "interval",
+    "cron",
+    "run_once",
+    "ScheduleModule",
+    "SchedulerRegistry",
+    "JobContext",
+    "ServiceContext",
+    "CronExpression",
+    "SchedulerLock",
+    "HostedServiceStarted",
+    "HostedServiceStopped",
+    "HostedServiceFailed",
+    "JobStarted",
+    "JobCompleted",
+    "JobFailed",
+    "JobSkipped",
     # sessions
     "Session",
     "SessionConfig",
