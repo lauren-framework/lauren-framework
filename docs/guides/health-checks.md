@@ -63,16 +63,16 @@ stateDiagram-v2
     CREATED --> STARTING: startup()
     STARTING --> READY: @post_construct done
     STARTING --> FAILED: startup() raised
+    FAILED --> STARTING: startup() retried
     READY --> DRAINING: begin_draining() / shutdown() begins
     DRAINING --> STOPPED: shutdown() done
     CREATED --> STOPPED: shutdown() without startup()
     STOPPED --> [*]
-    FAILED --> [*]
 ```
 
 * `STARTING` covers `startup()` — `@post_construct` hooks run here (triggered by the ASGI lifespan, or by `TestClient`).
 * `DRAINING` means termination was requested: readiness fails, **requests are still served normally**. `app.begin_draining(reason="...")` enters it (it is synchronous, idempotent and returns `True` only when it changed the state); `shutdown()` enters it on its first line if nobody did earlier.
-* `STOPPED` and `FAILED` are terminal: `startup()` raises `LifecycleViolationError` afterwards (unless `strict_lifecycle=False`). A `FAILED` app stays `FAILED` after `shutdown()`.
+* `STOPPED` is terminal: `startup()` raises `LifecycleViolationError` once shutdown began (unless `strict_lifecycle=False`). `FAILED` lasts until `startup()` is retried — for example after an async configuration source recovered; a `FAILED` app stays `FAILED` after `shutdown()`.
 
 Every transition emits a `LifecycleStateChanged(app, previous, current, reason)` on the app's `SignalBus`, so you can log it or drive your own integrations:
 

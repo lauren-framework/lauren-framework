@@ -53,10 +53,10 @@ stateDiagram-v2
     CREATED --> STARTING: startup()
     STARTING --> READY: every @post_construct ran
     STARTING --> FAILED: startup() raised
+    FAILED --> STARTING: startup() retried
     READY --> DRAINING: begin_draining() / shutdown() begins
     DRAINING --> STOPPED: shutdown() finished
     STOPPED --> [*]
-    FAILED --> [*]
 ```
 
 `@post_construct` hooks run during `STARTING`; `@pre_destruct` hooks run while the app is `DRAINING`, and it is `STOPPED` once they are done. `app.begin_draining()` lets a pre-stop hook or a signal handler fail readiness *before* `shutdown()` starts, while requests are still served — see [Health & Readiness Probes](../guides/health-checks.md).
@@ -161,7 +161,7 @@ class DbSession:
 | `DestructError` | A `@pre_destruct` hook raised an exception; collected and logged. |
 | `DestructTimeoutError` | A `@pre_destruct` hook exceeded its per-hook timeout. |
 | `DrainTimeoutError` | The drain phase exceeded `drain_timeout`. |
-| `LifecycleViolationError` (startup) | `startup()` called again — while starting, after a failed startup, or after shutdown (`detail["lifecycle_state"]`). |
+| `LifecycleViolationError` (startup) | `startup()` called again while starting or after it succeeded, or once shutdown began (`detail["lifecycle_state"]`); retrying after a failed startup is allowed. |
 
 All of them are emitted through the structured logger, so production aggregators see them as JSON records you can alert on.
 

@@ -197,12 +197,40 @@ async def test_a_cancelled_startup_is_failed() -> None:
     assert transitions[-1] == (S.STARTING, S.FAILED, "CancelledError")
 
 
-async def test_startup_after_a_failed_startup_is_rejected() -> None:
+async def test_a_failed_startup_can_be_retried() -> None:
+    signals = SignalBus()
+    attempts: list[int] = []
+
+    @injectable()
+    class Flaky:
+        @post_construct
+        async def connect(self) -> None:
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise RuntimeError("not yet")
+
+    @module(providers=[Flaky])
+    class FlakyModule:
+        pass
+
+    app = LaurenFactory.create(FlakyModule, signals=signals)
+    with pytest.raises(RuntimeError):
+        await app.startup()
+    transitions = _recorded(signals)
+
+    await app.startup()
+
+    assert app.lifecycle_state is S.READY
+    assert transitions == [(S.FAILED, S.STARTING, ""), (S.STARTING, S.READY, "")]
+
+
+async def test_a_failed_app_cannot_start_once_shutdown_began() -> None:
     app = LaurenFactory.create(_failing_module())
     with pytest.raises(RuntimeError):
         await app.startup()
+    await app.shutdown()
 
-    with pytest.raises(LifecycleViolationError) as info:
+    with pytest.raises(LifecycleViolationError, match="after shutdown") as info:
         await app.startup()
 
     assert info.value.detail == {"lifecycle_state": "failed"}
@@ -223,11 +251,21 @@ async def test_stopped_is_terminal() -> None:
     await app.startup()
     await app.shutdown()
 
-    with pytest.raises(LifecycleViolationError) as info:
+    with pytest.raises(LifecycleViolationError, match="after shutdown") as info:
         await app.startup()
 
     assert info.value.detail == {"lifecycle_state": "stopped"}
     assert app.lifecycle_state is S.STOPPED
+
+
+async def test_startup_while_ready_is_called_twice() -> None:
+    app = LaurenFactory.create(EmptyModule)
+    await app.startup()
+
+    with pytest.raises(LifecycleViolationError, match="called twice") as info:
+        await app.startup()
+
+    assert info.value.detail == {"lifecycle_state": "ready"}
 
 
 async def test_a_second_startup_returns_quietly_without_strict_lifecycle() -> None:

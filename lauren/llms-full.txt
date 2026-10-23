@@ -216,9 +216,9 @@ Attributes & methods:
 - `app.app_state: AppState` — sealed, read-only app-level state.
 - `app.routes()` — list of `RouteEntry` objects.
 - `app.openapi()` — OpenAPI 3.1 schema dict.
-- `await app.startup()` — builds singletons and runs `@post_construct` hooks. Invoked by the ASGI lifespan protocol (uvicorn, hypercorn); call it yourself when there is no lifespan (e.g. `httpx.ASGITransport`) — `TestClient` does. A second call — also after a failed startup or after shutdown — raises `LifecycleViolationError` (`detail["lifecycle_state"]`) unless the app was built with `strict_lifecycle=False`. Nothing starts the app lazily on a first request.
+- `await app.startup()` — builds singletons and runs `@post_construct` hooks. Invoked by the ASGI lifespan protocol (uvicorn, hypercorn); call it yourself when there is no lifespan (e.g. `httpx.ASGITransport`) — `TestClient` does. A second call — or a call after shutdown began — raises `LifecycleViolationError` (`detail["lifecycle_state"]`) unless the app was built with `strict_lifecycle=False`; after a failed startup (`FAILED`) it may be called again to retry. Nothing starts the app lazily on a first request.
 - `await app.shutdown(drain_timeout=10.0)` — runs `@pre_destruct` hooks, awaits in-flight requests.
-- `app.lifecycle_state: AppLifecycleState` — `CREATED` → `STARTING` → `READY` → `DRAINING` → `STOPPED`, or `FAILED` when `startup()` raised (see [Lifecycle state](#lifecycle-state)).
+- `app.lifecycle_state: AppLifecycleState` — `CREATED` → `STARTING` → `READY` → `DRAINING` → `STOPPED`, or `FAILED` when `startup()` raised (until it is retried; see [Lifecycle state](#lifecycle-state)).
 - `app.begin_draining(*, reason="") -> bool` — `READY → DRAINING`: readiness fails while requests are still served. Synchronous, idempotent; `True` only when it changed the state.
 - `await app(scope, receive, send)` — standard ASGI callable (HTTP + lifespan).
 - `app.mount(path, app)` — mount a sub-ASGI application at a path prefix.
@@ -2090,11 +2090,13 @@ current, reason)` on the app's `SignalBus`.
 | `CREATED → STARTING` | top of `startup()`, before `StartupBegin` |
 | `STARTING → READY` | after every `@post_construct` hook, before `StartupComplete` |
 | `STARTING → FAILED` | `startup()` raised (the lifespan answers `lifespan.startup.failed`) |
+| `FAILED → STARTING` | `startup()` called again to retry (e.g. an async configuration source recovered) |
 | `READY → DRAINING` | `app.begin_draining(reason=...)`, or the first step of `shutdown()` |
 | `DRAINING → STOPPED` | end of `shutdown()` (`CREATED → STOPPED` for an app never started) |
 
-`STOPPED` and `FAILED` are terminal. During `DRAINING` requests are served
-normally; only readiness fails.
+`STOPPED` is terminal; `FAILED` lasts until `startup()` is retried (a `FAILED`
+app that shuts down stays `FAILED`, and `startup()` then raises). During
+`DRAINING` requests are served normally; only readiness fails.
 
 ```python run
 from lauren import AppLifecycleState, LifecycleStateChanged, SignalBus, module

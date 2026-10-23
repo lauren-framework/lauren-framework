@@ -948,7 +948,7 @@ class LaurenApp:
         ``READY`` once it has finished, ``DRAINING`` after
         :meth:`begin_draining` or once :meth:`shutdown` begins, ``STOPPED``
         when :meth:`shutdown` has finished; ``FAILED`` if :meth:`startup`
-        raised. Every transition emits a
+        raised (until :meth:`startup` is retried). Every transition emits a
         :class:`~lauren.signals.LifecycleStateChanged` on :attr:`signals`.
         """
         return self._lifecycle_state
@@ -1086,12 +1086,13 @@ class LaurenApp:
 
     async def startup(self) -> None:
         state = self._lifecycle_state
-        if state is not AppLifecycleState.CREATED:
+        # A failed startup may be retried (e.g. an async configuration source
+        # that was unavailable), unless shutdown has begun.
+        retry = state is AppLifecycleState.FAILED and not self._shutdown_running
+        if state is not AppLifecycleState.CREATED and not retry:
             if self._strict_lifecycle:
                 raise LifecycleViolationError(
-                    "startup called twice"
-                    if state is not AppLifecycleState.FAILED
-                    else "startup called after a failed startup; build a new app",
+                    "startup called after shutdown" if self._shutdown_running else "startup called twice",
                     detail={"lifecycle_state": state.value},
                 )
             return

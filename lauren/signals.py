@@ -93,9 +93,11 @@ class AppLifecycleState(enum.Enum):
     ``CREATED`` (``LaurenFactory.create`` returned) → ``STARTING``
     (``startup()`` running) → ``READY`` (serving) → ``DRAINING``
     (termination requested: readiness fails, requests are still served) →
-    ``STOPPED`` (``shutdown()`` finished). ``FAILED`` means ``startup()``
-    raised. ``STOPPED`` and ``FAILED`` are terminal. Every transition emits a
-    :class:`LifecycleStateChanged` on the app's :class:`SignalBus`.
+    ``STOPPED`` (``shutdown()`` finished, terminal). ``FAILED`` means
+    ``startup()`` raised; it lasts until ``startup()`` is retried
+    (``FAILED → STARTING``) — a ``FAILED`` app that shuts down stays
+    ``FAILED``. Every transition emits a :class:`LifecycleStateChanged` on
+    the app's :class:`SignalBus`.
     """
 
     CREATED = "created"
@@ -221,10 +223,10 @@ class ShutdownBegin(LifecycleEvent):
 class LifecycleStateChanged(LifecycleEvent):
     """Emitted on every transition of ``app.lifecycle_state``.
 
-    Transitions happen in ``startup()`` (``CREATED → STARTING``, then
-    ``READY`` or ``FAILED``), in ``app.begin_draining()`` or at the start of
-    ``shutdown()`` (``READY → DRAINING``) and at the end of ``shutdown()``
-    (``→ STOPPED``). Listeners run in transition order.
+    Transitions happen in ``startup()`` (``CREATED`` or ``FAILED`` →
+    ``STARTING``, then ``READY`` or ``FAILED``), in ``app.begin_draining()``
+    or at the start of ``shutdown()`` (``READY → DRAINING``) and at the end
+    of ``shutdown()`` (``→ STOPPED``). Listeners run in transition order.
     """
 
     app: Any = None
