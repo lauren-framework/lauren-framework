@@ -16,6 +16,8 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 | [building-lauren-background-tasks](building-lauren-background-tasks/) | `BackgroundTasks`, `TaskHandle`, fire-and-forget patterns |
 | [building-lauren-events](building-lauren-events/) | Typed domain events between modules: `@on_event` handlers, `EventBus` / `EventPublisher`, delivery modes, priorities, error policies, after-commit emission, `recording()` / `drain()` |
 | [building-lauren-sessions](building-lauren-sessions/) | `sessions=SessionConfig(...)`, `session: Session` injection, `SessionStore` backends, signed cookies, `regenerate_id()`/`invalidate()` |
+| [building-lauren-caching](building-lauren-caching/) | Stores & caching: the `Store` protocol, bounded `MemoryStore`, `StoresModule`, `Lock`, sessions on a store, `CacheModule` / `Cache.get_or_set` (single-flight, tags, stale-while-revalidate), `@cache_response`, `@idempotent` |
+| [redis-caching](redis-caching/) | A `Store` over `redis.asyncio` so the cache, response caching, idempotency keys and sessions share Redis across workers |
 | [building-lauren-config](building-lauren-config/) | Typed settings validated in `LaurenFactory.create`: `ConfigModule.for_root`/`for_feature`, `.env`/TOML/environment sources, profiles, `Secret[T]`, `load_settings`, `ConfigValidationError` |
 | [testing-lauren-apps](testing-lauren-apps/) | Lifespan-managed `TestClient` / `AsyncTestClient`, cookies & sessions, uploads, streams, `Test.create_testing_module` overrides, pytest plugin, startup-failure assertions |
 | [migrating-from-fastapi](migrating-from-fastapi/) | Side-by-side FastAPI → lauren equivalents (routing, DI, middleware, errors) |
@@ -34,6 +36,7 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 | `DecoratorUsageError` | [building-lauren-guards](building-lauren-guards/) §Guards |
 | `SessionConfigError` | [building-lauren-sessions](building-lauren-sessions/) §Configuration |
 | `ConfigValidationError` | [building-lauren-config](building-lauren-config/) §Testing |
+| `StartupError` (`reason="cache_module_missing"`) | [building-lauren-caching](building-lauren-caching/) §Rules that bite |
 
 ## See also
 

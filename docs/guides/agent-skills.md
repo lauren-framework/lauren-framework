@@ -67,6 +67,7 @@ npx skills add lauren-framework/lauren-framework --local
 | [`building-lauren-guards`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/building-lauren-guards) | Guards, interceptors, middleware, `@use_guards` |
 | [`building-lauren-streaming`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/building-lauren-streaming) | SSE, WebSocket gateways, `StreamingResponse[T]` |
 | [`building-lauren-background-tasks`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/building-lauren-background-tasks) | `BackgroundTasks`, `TaskHandle`, fire-and-forget |
+| [`building-lauren-caching`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/building-lauren-caching) | `Store` / `MemoryStore`, `StoresModule`, `Cache.get_or_set`, `@cache_response`, `@idempotent`, `Lock` |
 | [`testing-lauren-apps`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/testing-lauren-apps) | `TestClient`, `WsTestClient`, async tests, mock providers |
 | [`common-patterns`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/common-patterns) | CRUD, health check, background job, typed SSE stream |
 
@@ -91,7 +92,7 @@ npx skills add lauren-framework/lauren-framework --local
 | [`sqlalchemy-async`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/sqlalchemy-async) | Async engine, `AsyncSession`, request-scoped sessions |
 | [`alembic-migrations`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/alembic-migrations) | Alembic `upgrade` / `downgrade` patterns |
 | [`multi-database-routing`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/multi-database-routing) | Primary/replica read-write routing |
-| [`redis-caching`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/redis-caching) | TTL-based caching, prefix invalidation |
+| [`redis-caching`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/redis-caching) | A Redis `Store` behind `Cache`, response caching, idempotency and sessions; tag invalidation |
 | [`postgres-fts`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/postgres-fts) | Full-text search, `tsvector` / `to_tsquery` |
 | [`search-engine-integration`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/search-engine-integration) | Elasticsearch / Meilisearch abstract interface |
 

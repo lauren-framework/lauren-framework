@@ -126,7 +126,12 @@ nox -s ver_dec -- --patch
 | `lauren/sessions.py`              | Public session surface (`Session`, `SessionConfig`, stores) |
 | `lauren/config.py`                | Public typed-configuration surface (`ConfigModule`, `Secret`, sources, `Profile`, `load_settings`) |
 | `lauren/_config/`                 | Settings loader: coercion table (`_coerce`), sources + `.env` parser (`_sources`), layered resolution + aggregated errors (`_loader`), `ConfigModule` + factory Phase 2b (`_module`), `Secret` (`_secret`) |
-| `lauren/_sessions/`               | Session engine, stores, HMAC signing, serializer, config |
+| `lauren/_sessions/`               | Session engine, stores, HMAC signing, serializer, config; `_adapters` (sessions / revocation on any `Store`) |
+| `lauren/stores.py`                | Public store surface (`Store`, `MemoryStore`, `PrefixedStore`, `StoresModule`, `StoreToken`, `StoreRegistry`, `Lock`, `StoreSessionStore`, `StoreRevocationStore`) |
+| `lauren/_stores/`                 | Store protocol + checks (`_protocol`), bounded `TTLMap` / `MemoryStore` (`_memory`), `PrefixedStore`, `Lock`, `StoresModule` + Phase 2 `install_stores` (`_module`), lifecycle adoption (`_lifecycle`) |
+| `lauren/cache.py`                 | Public caching surface (`Cache`, `TypedCache`, `CacheModule`, `CacheCodec`, `JsonCacheCodec`, `cache_response`, `idempotent`, policies) |
+| `lauren/_cache/`                  | `Cache` service (`_service`), entry layout (`_entry`), codecs + typed decode (`_codec`), decorators (`_policy`), response-cache keying / store rules / interceptor (`_response`), idempotency interceptor (`_idempotency`), `CacheModule` + factory hooks (`_module`) |
+| `lauren/testing/store_contract.py` | Shared `Store` contract suite (`run_store_contract`, `STORE_CONTRACT_CHECKS`) for core and companion backends |
 | `lauren/streaming.py`             | StreamingResponse[T], Stream, StreamReader   |
 | `lauren/sse.py`                   | EventStream, ServerSentEvent, last_event_id  |
 | `lauren/types.py`                 | Request, Response, State, Headers, Scope, `Discriminated`, … |
@@ -289,6 +294,7 @@ Welcome aboard.
 | Add a background task | `lauren/background.py` | `skills/building-lauren-background-tasks/` |
 | Decouple modules with domain events | `lauren/events.py` | `skills/building-lauren-events/` |
 | Add session state | `lauren/sessions.py` | `skills/building-lauren-sessions/` |
+| Cache data or responses, idempotency keys, shared stores | `lauren/cache.py`, `lauren/stores.py` | `skills/building-lauren-caching/` |
 | Read typed configuration / secrets | `lauren/config.py` | `skills/building-lauren-config/` |
 | Debug a startup error | `lauren/exceptions.py` | **Common Errors** section below |
 | Port from FastAPI | `llms-full.txt` §Guards | `skills/migrating-from-fastapi/` |
@@ -307,6 +313,8 @@ Welcome aboard.
 | `BackgroundTasks`, `TaskHandle` | `skills/building-lauren-background-tasks/` |
 | Domain events: `@on_event`, `EventBus`, `EventPublisher` | `skills/building-lauren-events/` |
 | Sessions: signed cookies, `Session` injection, pluggable store | `skills/building-lauren-sessions/` |
+| Stores & caching: `Store`, `Cache.get_or_set`, `@cache_response`, `@idempotent` | `skills/building-lauren-caching/` |
+| Redis behind the cache / sessions (a `Store` over `redis.asyncio`) | `skills/redis-caching/` |
 | Typed configuration: `ConfigModule`, sources, profiles, `Secret[T]` | `skills/building-lauren-config/` |
 | `TestClient`, async tests, mock providers | `skills/testing-lauren-apps/` |
 | FastAPI → lauren side-by-side equivalents | `skills/migrating-from-fastapi/` |
@@ -332,6 +340,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | Enumerating all HTTP routes / WS gateways at runtime | `get_all_routes`, `get_all_ws_gateways` in `lauren.reflect` |
 | SSE / streaming | `docs/guides/sse.md` |
 | Session management | `docs/guides/sessions.md` |
+| Stores, caching, response caching, idempotency keys | `docs/guides/caching.md` |
 | Domain events between modules | `docs/guides/events.md` |
 | Typed configuration | `docs/guides/configuration.md` |
 | Custom response subclasses and response factories | `docs/guides/custom-responses.md` / `docs/guides/file-responses.md` |
@@ -353,6 +362,8 @@ Full index: [`skills/README.md`](skills/README.md)
 | `GuardConfigError` (`reason="invalid_deny_error"`) | A guard's `deny_error` is not an `HTTPError` subclass or a zero-argument factory (e.g. an exception *instance*, `ValueError`) | `deny_error = UnauthorizedError`, or `deny_error = staticmethod(lambda: UnauthorizedError("…", challenge="…"))` |
 | `StartupError` (`reason="debug_in_production"`) | `debug=` enabled while the configuration profile is production | Enable debug pages only in development |
 | `StartupError` (`reason="invalid_debug_config"` / `"invalid_problem_type_base"`) | `debug=` is not a bool / valid `DebugConfig`, or `problem_type_base` is not a non-empty string | Fix the value passed to `LaurenFactory.create` |
+| `StartupError` (`reason="cache_module_missing"`) | A route uses `@cache_response` / `@idempotent` but no `Cache` is provided | Import `CacheModule.for_root()` into the app |
+| `StartupError` (`reason="duplicate_store_name"` / `"invalid_store"`) | Two default stores / one store name registered twice, or a store factory that returned a non-`Store` | Configure each store once in `StoresModule.for_root(...)` |
 | `StartupError` (generic) | Missing required parameter in constructor injection | Add the type as a `@module` provider or import its module |
 
 ## Interceptor `CallHandler.handle()` contract (v1.4.2+)

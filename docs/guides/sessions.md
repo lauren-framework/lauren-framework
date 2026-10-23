@@ -161,6 +161,25 @@ app = LaurenFactory.create(
     in the cookie store, and keep payloads small (`max_bytes`, default 4 KB; an
     over-size payload raises `ValueError`).
 
+### Any `Store`
+
+`SessionConfig(store=...)` (and `revocation_store=`) also accept any key-value
+[`Store`](caching.md) — the in-core `MemoryStore` or a networked backend — and
+adapt it with `StoreSessionStore` (payloads JSON-serialised under `session:`,
+expiring with `max_age`) or `StoreRevocationStore`. One backend then serves
+sessions, revocation and the cache side by side:
+
+```python
+from lauren import LaurenFactory, SessionConfig
+from lauren.stores import MemoryStore
+
+store = MemoryStore(max_entries=200_000)
+app = LaurenFactory.create(
+    AppModule,
+    sessions=SessionConfig(secret=SECRET, store=store, revocation_store=store, max_age=3600),
+)
+```
+
 ### A Redis backend (recipe)
 
 Implement the same Protocol and pass an **instance** via
@@ -439,6 +458,7 @@ request handle) with `lauren_guards.Session` (a frozen auth record).
 - **Encryption** of cookie payloads — the cookie store *signs* but does not
   *encrypt*. Use a server-side store for confidential data.
 - **A bundled Redis backend** — Lauren core has no third-party runtime deps; the
-  Redis store above is a recipe.
+  Redis store above is a recipe, and any Redis implementation of the
+  [`Store`](caching.md) protocol works as a session store too.
 - **WebSocket session writes** — a gateway may read the session off the upgrade
   cookie, but there is no response frame to attach a `Set-Cookie` to.

@@ -101,6 +101,8 @@ lauren/                      — framework package
 ├── _validation.py           — provider-agnostic type detection & validation (pydantic, msgspec, dataclass, TypedDict)
 ├── _ws_runtime.py           — WebSocket dispatch engine + WsConnectionContext / WsUpgradeRequest
 ├── _socketio.py             — Engine.IO/Socket.IO adapter (private)
+├── _stores/                 — Store protocol, bounded MemoryStore/TTLMap, Lock, StoresModule (private)
+├── _cache/                  — Cache service, @cache_response / @idempotent runtime, CacheModule (private)
 ├── reflect/                 — public sub-package: full metadata introspection API
 │   ├── __init__.py          — re-exports all public symbols
 │   ├── _reader.py           — static class readers (own-class rule, no inheritance)
@@ -120,6 +122,8 @@ lauren/                      — framework package
 ├── signals.py               — POSIX signal integration + on_shutdown hooks
 ├── streaming.py             — StreamingResponse[T], Stream, StreamReader
 ├── sse.py                   — EventStream, ServerSentEvent, last_event_id
+├── stores.py                — public Store / MemoryStore / StoresModule / Lock / session adapters
+├── cache.py                 — public Cache / CacheModule / cache_response / idempotent
 ├── socketio.py              — public Socket.IO controller surface
 ├── testing/                 — TestClient / AsyncTestClient, Test.create_testing_module, pytest_plugin
 ├── types.py                 — Request, Response, State, Headers, Scope, Discriminated, …
@@ -243,6 +247,10 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Decouple modules with domain events | `EventBus` / `EventPublisher` + `@on_event` (`lauren.events`) |
 | Use request-scoped providers outside a request (script, job, worker) | `async with app.scope("name") as scope:` + `await scope.resolve(T)` |
 | Persist state across requests for one client | Sessions (`sessions=SessionConfig(...)`; inject `session: Session`) |
+| Cache an expensive computation | `CacheModule.for_root()` + `await cache.get_or_set(key, factory, ttl=..., tags=(...), type=T)` |
+| Cache a GET response server-side | `@cache_response(ttl=..., vary=(...), key=...)` on the handler |
+| Make an unsafe request safe to retry | `@idempotent(ttl=..., scope=...)` (`Idempotency-Key` header) |
+| Share state across workers (sessions, cache, locks) | One `Store` via `StoresModule.for_root(default=...)` |
 | Read typed configuration | `ConfigModule.for_root(Settings)` (or `for_feature`) + inject `Settings`; `load_settings` for factory kwargs |
 | Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
 | Copy Lauren metadata (guards, interceptors, …) to another class/fn | `@propagate_metadata(source)` |
@@ -527,6 +535,20 @@ exit).
   once per route and media type) and get one startup WARN until a policy is
   set explicitly; strict mode answers 415 `UnsupportedMediaTypeError` before
   the body is read (guards still run first).
+- ❌ Registering a store (or any object with `@post_construct` / `startup()`)
+  through `use_value` and expecting its hooks to run — `use_value` never runs
+  lifecycle hooks. Use `StoresModule.for_root(default=...)`, pass it to
+  `SessionConfig(store=...)` / `CacheModule.for_root(store=...)` (both run its
+  hooks, once per object), or `DIContainer.register_instance` in framework code.
+- ❌ `@cache_response` on per-user data without `key=` — every caller shares
+  one entry per URL. Pass `key=lambda ctx: ...` (returning `None` skips the
+  cache); a cached route that injects `Session` without `key=` logs a startup
+  warning.
+- ❌ Constructing `MemoryStore()` without `max_entries`, or adding an in-memory
+  map that grows with traffic — stores must be bounded (`TTLMap` in
+  `lauren/_stores/_memory.py` is the building block).
+- ❌ Expecting a model back from `Cache.get` / `get_or_set` hits without
+  `type=` — hits decode to JSON data; pass `type=Model` or use `cache.typed(Model)`.
 - ❌ Serving a directory that contains secrets with
   `StaticFilesModule.for_root(..., dotfiles="allow")`. The default
   (`"allow_well_known"`) answers an empty 404 for any path segment starting
@@ -681,6 +703,15 @@ exit).
 - `lauren/exceptions.py` — the full error hierarchy (generated table:
    `docs/reference/errors.md`). Pick the closest existing class before adding a new one.
 - `lauren/signals.py` — `SignalBus`, lifecycle events, POSIX signal handlers.
+- `lauren/stores.py` / `lauren/_stores/` — `Store` protocol, `MemoryStore` and
+  its `TTLMap` engine, `PrefixedStore`, `Lock`, `StoresModule` (Phase 2 hook
+  `install_stores`); session adapters in `lauren/_sessions/_adapters.py`;
+  contract suite in `lauren/testing/store_contract.py`.
+- `lauren/cache.py` / `lauren/_cache/` — `Cache` (single-flight, tags,
+  stale-while-revalidate), `CacheModule` (Phase 2d `install_cache`), the
+  `@cache_response` / `@idempotent` policies and their interceptors, compiled
+  in Phase 5 by `compile_cache_routes`. Response-cache keying and header rules
+  live together in `_cache/_response.py`.
 - `lauren/testing/` — `TestClient` (one persistent loop per client, lifespan
   via `with`), `AsyncTestClient`, `Test.create_testing_module` overrides,
   cookie jar, `WsTestClient`, opt-in `pytest_plugin`.
