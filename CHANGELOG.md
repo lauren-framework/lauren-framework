@@ -124,6 +124,26 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Lifecycle events `HostedServiceStarted` / `HostedServiceStopped` /
   `HostedServiceFailed` and `JobStarted` / `JobCompleted` / `JobFailed` /
   `JobSkipped`.
+- **Native validation engine:** dataclass, `TypedDict`, `NamedTuple`, enum,
+  literal, numeric, temporal, UUID, `Decimal`, container, union, `Discriminated`
+  and recursive types are validated without pydantic; nested models become real
+  instances and `__post_init__` errors become issues.
+- `lauren.validation`: constraint markers (`Ge`, `Gt`, `Le`, `Lt`, `MultipleOf`,
+  `MinLen`, `MaxLen`, `Pattern`, `Strict`, `Alias`),
+  `@validation_config(extra=, strict=, rename="camel")`, `TypeCompiler` /
+  `CompiledType` (`validate`, `project`, `json_schema`), `validate()` and
+  `ValidationFailed`.
+- `ValidationPolicy` (`LaurenFactory.create(validation=...)` /
+  `Lauren(validation=...)`) with `stdlib_models="legacy" | "warn" | "enforce"`,
+  `json_mode`, `extra`, `include_input` and `max_issues`; `app.type_compiler` and
+  `app.validation_policy`.
+- `ValidationIssue`: every validation 422, WebSocket error frame and stream error
+  carries `detail["issues"]` (`{loc, type, msg, ctx?, input?}`), and every failing
+  parameter of a request is reported in one 422. `ExtractorError.from_issues()` and
+  `WebSocketValidationError.from_issues()`.
+- Marker constraints on bare parameters (`size: Annotated[int, Le(100)] = 10`) and
+  unified `Query[Model]` / `Form[Model]` for dataclass, `TypedDict` and
+  `NamedTuple` models.
 
 ### Changed
 
@@ -150,6 +170,14 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - `LaurenApp.shutdown()` now stops the scheduler firing, drains requests, awaits
   (then cancels) scheduled runs, stops hosted services and drains event handlers
   before the `on_shutdown` callbacks and `@pre_destruct`.
+- WebSocket payloads and `Stream[T]` items are validated by the app's compiled
+  validators with the same issues as HTTP; the process-wide streaming adapter cache
+  is gone.
+- A pipe or custom-extractor `ExtractorError` becomes a `value_error` issue at the
+  parameter's location, and RFC 9457 `errors` arrays are built from the issues.
+- pydantic and msgspec `Query[Model]` / `Form[Model]` list fields read every
+  repeated key; `FieldDescriptor` constraints that cannot apply log a startup
+  warning.
 
 ### Deprecated
 
@@ -174,6 +202,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   first for `@post_construct`, subclass first for `@pre_destruct`, definition
   order within a class, including classes substituted by `use_class` test
   overrides. Additional hooks used to be silently ignored.
+- Oversized `Json[T]`, `Bytes` and form bodies answer 413, not 422.
+- msgspec bodies are decoded once instead of three times, and dataclass query
+  models no longer resolve type hints on every request.
+- A bare `Discriminated[...]` parameter no longer crashes at startup, and
+  `TypedDict` `Required` / `NotRequired` are honoured under
+  `from __future__ import annotations`.
 
 ## [1.10.0] - 2026-10-23
 
