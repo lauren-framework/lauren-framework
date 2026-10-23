@@ -519,6 +519,30 @@ await wait_for_shutdown(event)
 
 Phases: drain → `on_shutdown` callbacks (LIFO) → `@pre_destruct` hooks (reverse topo) → goodbye. Idempotent.
 
+## Contexts & commands
+
+<!-- docs-contract: fragment -->
+```python
+from lauren import LaurenFactory, injectable
+from lauren.commands import CommandContext, command
+
+async with LaurenFactory.create_context(AppModule) as ctx:   # startup / shutdown, no HTTP
+    svc = ctx.get(UserService)                                # constructed singleton
+    async with ctx.scope("job") as scope:                     # request scope without a request
+        db = await scope.resolve(DbSession)
+
+@injectable()
+class Seed:
+    @command("db:seed")
+    async def seed(self, ctx: CommandContext, *, count: int = 50) -> int:
+        ctx.echo(f"seeded {count}")
+        return 0
+
+result = await ctx.run_command("db:seed", "--count", "3")   # CommandResult(exit_code, value, stdout, stderr)
+```
+
+Shell: `python -m lauren exec app.main:AppModule db:seed --count 3`, `python -m lauren commands app.main:AppModule`, `python -m lauren console app.main:AppModule`. Exit codes: 0 ok, 1 error, 2 usage, 3 cannot start, 130/143 signal.
+
 ## Testing
 
 ```python

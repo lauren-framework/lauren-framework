@@ -124,6 +124,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     `@hosted_service` loops started after `@post_construct` and stopped before `@pre_destruct`, with restarts and backoff; `@interval` / `@cron` / `@run_once` jobs with overlap, jitter, timeouts, misfire handling and a DI scope per run; `SchedulerRegistry`; `ManualClock` for tests.
 
+-   :material-console: [__Commands & Scripts__](commands-and-scripts.md)
+
+    ---
+    The app's DI graph and lifecycle without HTTP: `LaurenFactory.create_context`, operation scopes, `@command` methods run with `python -m lauren exec`, the console, testing with `ctx.run_command`, workers and Kubernetes `CronJob`s.
+
 -   :material-cookie: [__Sessions__](sessions.md)
 
     ---

@@ -115,6 +115,10 @@ lauren/                      — framework package
 ├── logging.py               — built-in NestJS-style logger
 ├── serialization.py         — JSON encoders (stdlib, orjson, msgspec, pydantic)
 ├── background.py            — BackgroundTasks, TaskHandle (fire-and-forget after response)
+├── context.py               — ApplicationContext (create_context) + OperationScope (app.scope())
+├── commands.py              — @command, Opt, CommandContext, CommandResult (public surface)
+├── _commands/               — command compiler (argparse at startup) + `python -m lauren` runner
+├── __main__.py              — `python -m lauren exec | commands | console`
 ├── config.py                — ConfigModule, Secret, sources, Profile, load_settings (typed configuration)
 ├── context.py               — OperationScope (request scope outside HTTP, via app.scope())
 ├── events.py                — EventBus, EventPublisher, @on_event, EventContext, EmitResult (domain events)
@@ -247,6 +251,8 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Run a long-lived loop for the app's lifetime (consumer, relay, heartbeat) | `@hosted_service()` class with `async def run(self, ctx: ServiceContext)` |
 | Run code on a schedule | `@interval` / `@cron` / `@run_once` on a singleton method + `ScheduleModule.for_root()` |
 | Persist state across requests for one client | Sessions (`sessions=SessionConfig(...)`; inject `session: Session`) |
+| Run code with the app's DI graph outside HTTP | `LaurenFactory.create_context(AppModule)` / `app.scope()` |
+| Admin / maintenance task (seed, migrate, purge) | `@command("db:seed")` on a provider method + `python -m lauren exec` |
 | Read typed configuration | `ConfigModule.for_root(Settings)` (or `for_feature`) + inject `Settings`; `load_settings` for factory kwargs |
 | Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
 | Copy Lauren metadata (guards, interceptors, …) to another class/fn | `@propagate_metadata(source)` |
@@ -567,6 +573,21 @@ exit).
   controller needs per-request construction, add
   `@injectable(scope=Scope.REQUEST)` *below* `@controller` (bottom-up
   application means `@injectable` runs first and wins).
+- ❌ Admin tasks as HTTP endpoints. A `POST /api/seed` route (often without a
+  guard) lets anyone who reaches the API run it. Write a `@command` on a
+  provider and run it with `python -m lauren exec TARGET db:seed`; scripts use
+  `async with LaurenFactory.create_context(AppModule) as ctx:`. Never call
+  private `_open()` hooks by hand — a context runs the real lifecycle.
+- ❌ Resolving `Scope.REQUEST` providers outside a scope. `await
+  app.container.resolve(DbSession)` in a script, job or worker silently falls
+  back to a transient that is **never torn down** (no `@pre_destruct`, no
+  `aclose()`); the 1.x default only warns once per provider. Resolve them
+  inside a request, `app.scope()` / `ctx.scope()` or a command, and build test
+  apps with `strict_request_scope=True` (it raises `DIScopeViolationError`,
+  `reason="no_active_scope"`; the 2.0 default).
+- ❌ Expecting `Lauren.on_startup` hooks to run at compile time. They run
+  inside `LaurenApp.startup()` after every `@post_construct` hook (before
+  hosted services start); `await lauren_app.startup()` only compiles.
 - ❌ Writing a blocking sync `@pre_destruct` hook without concern for the
   event loop — sync hooks run in a thread pool via `asyncio.to_thread` so
   they do not block, and they respect the same `timeout=` as async hooks.
@@ -693,6 +714,11 @@ exit).
 - `lauren/streaming.py` — `StreamingResponse[T]`, `Stream`,
   `StreamReader`, content-negotiation logic.
 - `lauren/background.py` — `BackgroundTasks`, `TaskHandle`, `_BG_TASKS_ATTR`.
+- `lauren/context.py` — `ApplicationContext` (`LaurenFactory.create_context`,
+  `app.context()`) and `OperationScope` (`app.scope()`).
+- `lauren/commands.py` / `lauren/_commands/` — `@command`, `Opt`,
+  `CommandContext`, `CommandResult`; the Phase 6a compiler (`_compile`) and the
+  `python -m lauren` runner (`_runner`).
 - `lauren/config.py` / `lauren/_config/` — `ConfigModule`, `Secret`, sources,
   the coercion table (`_coerce.py`, the one place string → type conversion
   lives) and `install_config`, the factory's Phase 2b (`_module.py`).

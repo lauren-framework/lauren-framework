@@ -173,6 +173,12 @@ core ideas:
   `@pre_destruct`; `@interval` / `@cron` / `@run_once` jobs on singleton
   methods with overlap control, jitter, timeouts, misfire handling, a DI scope
   per run, IANA time zones and a `ManualClock` for tests.
+* **Commands & scripts** — `LaurenFactory.create_context(AppModule)` runs the
+  server's DI graph and lifecycle without HTTP; `ctx.scope()` gives scripts a
+  request scope with deterministic teardown. `@command("db:seed")` turns a
+  provider method into a CLI command — arguments derived from its signature,
+  validated at startup — run with `python -m lauren exec` and tested with
+  `await ctx.run_command(...)`.
 * **Sessions** — first-class signed-cookie sessions via
   `LaurenFactory.create(..., sessions=SessionConfig(...))`. A mutable
   `session: Session` is injected into handlers at zero per-request cost; the
@@ -514,6 +520,47 @@ Services start after `@post_construct` and stop, in reverse order, before
 `@pre_destruct`; jobs fire once the app is ready. Bad cron expressions, missing
 `ScheduleModule`, non-singleton providers and duplicate names fail at startup.
 See the [Scheduling guide](https://lauren-py.dev/guides/scheduling/).
+
+## Commands
+
+Admin and maintenance tasks are commands, not HTTP endpoints:
+
+```python fragment
+from typing import Annotated
+
+from lauren import injectable
+from lauren.commands import CommandContext, Opt, command
+
+@injectable()
+class SeedCommands:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    @command("db:seed", help="Insert fixture data.")
+    async def seed(
+        self,
+        ctx: CommandContext,
+        *,
+        count: Annotated[int, Opt(short="-n", help="rows per table")] = 50,
+        reset: bool = False,
+    ) -> int:
+        if reset and not ctx.confirm("Truncate every table?"):
+            return 1
+        ctx.echo(f"seeded {await self._db.seed(count)} rows")
+        return 0
+```
+
+```console
+$ python -m lauren exec app.main:AppModule db:seed -n 500 --reset --yes
+seeded 500 rows
+```
+
+The command runs with the app started (`@post_construct` before,
+`@pre_destruct` after) in its own DI scope; the exit code comes from the return
+value. `python -m lauren commands` lists commands, `python -m lauren console`
+opens an async REPL on the app, and `LaurenFactory.create_context(AppModule)`
+does the same for your own scripts. See the
+[Commands & Scripts guide](https://lauren-py.dev/guides/commands-and-scripts/).
 
 ## Performance
 
