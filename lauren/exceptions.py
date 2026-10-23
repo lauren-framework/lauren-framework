@@ -25,7 +25,7 @@ import math
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
-from typing import Any
+from typing import Any, Self
 
 #: Header names the framework owns on every error envelope.
 _RESERVED_ERROR_HEADERS: frozenset[str] = frozenset({"content-type", "content-length"})
@@ -347,11 +347,78 @@ class HTTPError(LaurenError):
         self.headers = _normalize_headers(tuple(extra)) + self.headers
 
 
+def _issue_dict(issue: Any, include_input: bool) -> dict[str, Any]:
+    """One validation issue as its JSON dict (``ValidationIssue`` or a mapping)."""
+    to_dict = getattr(issue, "to_dict", None)
+    if callable(to_dict):
+        return dict(to_dict(include_input=include_input))
+    out = {str(k): v for k, v in dict(issue).items() if include_input or k != "input"}
+    if "loc" in out:
+        out["loc"] = list(out["loc"]) if isinstance(out["loc"], (list, tuple)) else [out["loc"]]
+    return out
+
+
+def _issue_text(entry: Mapping[str, Any]) -> str:
+    """``"query.page: Input should be ..."`` — the legacy ``detail.errors`` string."""
+    loc = entry.get("loc") or ()
+    where = ".".join(str(part) for part in loc) if loc else "<root>"
+    return f"{where}: {entry.get('msg', '')}"
+
+
+#: ``loc`` roots followed by a parameter (wire) name.
+_PARAMETER_LOC_ROOTS = frozenset({"path", "query", "header", "cookie", "form"})
+
+
+def _issues_detail(
+    issues: Iterable[Any], include_input: bool
+) -> tuple[list[Any], list[dict[str, Any]], list[str]]:
+    items = list(issues)
+    dicts = [_issue_dict(issue, include_input) for issue in items]
+    return items, dicts, [_issue_text(d) for d in dicts]
+
+
 class ExtractorError(HTTPError):
     """A request value could not be extracted or validated."""
 
     status_code = 422
     code = "extractor_error"
+    #: The structured validation issues behind this error (``ValidationIssue``
+    #: objects), mirrored as JSON dicts in ``detail["issues"]``.
+    issues: tuple[Any, ...] = ()
+
+    @classmethod
+    def from_issues(
+        cls,
+        issues: Iterable[Any],
+        *,
+        field: str | None = None,
+        message: str | None = None,
+        include_input: bool = False,
+        detail: Mapping[str, Any] | None = None,
+    ) -> Self:
+        """Build a 422 from validation issues (``ValidationIssue`` objects or ``{loc, type, msg}`` dicts).
+
+        ``detail["issues"]`` holds the issues as ``{"loc", "type", "msg", "ctx"?}``
+        dicts (``"input"`` only with ``include_input``). The 1.x keys stay
+        alongside: ``detail["field"]`` names the first failing parameter and
+        ``detail["errors"]`` lists ``"loc: msg"`` strings. The message is the
+        single issue's text, or ``"N validation errors"``.
+        """
+        items, dicts, texts = _issues_detail(issues, include_input)
+        if message is None:
+            message = texts[0] if len(texts) == 1 else f"{len(texts)} validation errors"
+        if field is None and dicts:
+            loc = dicts[0].get("loc") or []
+            if len(loc) > 1 and loc[0] in _PARAMETER_LOC_ROOTS:
+                field = str(loc[1])
+            elif loc:
+                field = str(loc[0])
+        full: dict[str, Any] = {"field": field, "errors": texts, "issues": dicts}
+        if detail:
+            full.update(detail)
+        err = cls(message, detail=full)
+        err.issues = tuple(items)
+        return err
 
 
 class ExtractorFieldError(ExtractorError):
