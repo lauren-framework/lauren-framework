@@ -2733,6 +2733,7 @@ class LaurenFactory:
         lazy_startup: bool = True,
         hosted_services: bool = True,
         scheduler: bool = True,
+        strict_request_scope: bool = False,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -2782,6 +2783,13 @@ class LaurenFactory:
         classes but does not start them; ``scheduler=False`` does the same for
         scheduled jobs (``SchedulerRegistry.trigger`` still works). Tests and
         one-off commands use them to build the full app without background work.
+
+        ``strict_request_scope=True`` makes resolving a ``Scope.REQUEST``
+        provider outside any request, WebSocket connection or ``app.scope()``
+        raise :class:`~lauren.exceptions.DIScopeViolationError`
+        (``reason="no_active_scope"``). The default keeps the 1.x fallback — a
+        new, never torn down instance per resolution — and logs a warning once
+        per provider.
         """
         _log: Logger = logger or NullLogger()
         if problem_type_base is not None and (
@@ -2851,7 +2859,7 @@ class LaurenFactory:
         # it so the container can enforce NestJS-style encapsulation at
         # resolution time.
         t0 = time.perf_counter()
-        container = DIContainer(overrides=override_plan)
+        container = DIContainer(overrides=override_plan, strict_request_scope=strict_request_scope)
         for p in graph.iter_providers():
             owning_module = graph.module_for_provider(p)
             # Custom-provider records (use_value / use_class /

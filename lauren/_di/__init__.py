@@ -71,6 +71,7 @@ registry; this preserves backward compatibility and keeps test setup concise.
 from __future__ import annotations
 
 import inspect
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -93,6 +94,8 @@ from .custom import (
     OptionalDep,
     _InjectMarker,
 )
+
+_logger = logging.getLogger("lauren")
 
 INJECTABLE_META = "__lauren_injectable__"
 
@@ -283,7 +286,7 @@ class Provider:
 class DIContainer:
     """Compiled DI container; immutable after :meth:`compile`."""
 
-    def __init__(self, *, overrides: OverridePlan | None = None) -> None:
+    def __init__(self, *, overrides: OverridePlan | None = None, strict_request_scope: bool = False) -> None:
         self._providers: dict[type, Provider] = {}
         # Token -> list of providers (for protocols / multi-bindings)
         self._token_bindings: dict[type, list[Provider]] = {}
@@ -311,6 +314,12 @@ class DIContainer:
         self._overrides: OverridePlan | None = overrides
         #: token -> provider rows built from an override, once applied.
         self._override_rows: dict[Any, list[Provider]] = {}
+        #: ``LaurenFactory.create(strict_request_scope=...)``: resolving a
+        #: ``Scope.REQUEST`` provider outside any request / ``app.scope()``
+        #: raises instead of falling back to an untracked transient.
+        self._strict_request_scope = strict_request_scope
+        #: Request-scoped providers already warned about (lax mode warns once each).
+        self._unscoped_warned: set[Any] = set()
 
     # -- Registration ------------------------------------------------------
 
@@ -1368,8 +1377,10 @@ class DIContainer:
                 return cached.value if isinstance(cached, _GeneratorContextWrapper) else cached
         elif provider.scope == Scope.REQUEST:
             if request_cache is None:
-                # Falls back to transient if no request context is active.
-                pass
+                # No request, WebSocket connection or OperationScope is active:
+                # strict mode refuses; lax mode (the 1.x default) falls back to
+                # an untracked transient and warns once per provider.
+                self._unscoped_request_resolution(provider)
             elif _singleton_key in request_cache:
                 cached = request_cache[_singleton_key]
                 return cached.value if isinstance(cached, _GeneratorContextWrapper) else cached
@@ -1468,6 +1479,26 @@ class DIContainer:
                 await _invoke_hook(resolved_instance, hook)
 
         return instance.value if isinstance(instance, _GeneratorContextWrapper) else instance
+
+    def _unscoped_request_resolution(self, provider: Provider) -> None:
+        """Handle a ``Scope.REQUEST`` provider resolved without a request cache."""
+        token = provider.cls
+        name = _describe(token)
+        if self._strict_request_scope:
+            raise DIScopeViolationError(
+                f"{name} is request-scoped but was resolved outside a request or app.scope(); "
+                f"resolve it inside `async with app.scope(...) as scope:` (scope.resolve({name}))",
+                detail={"token": name, "reason": "no_active_scope"},
+            )
+        key = id(provider) if provider.multi else token
+        if key in self._unscoped_warned:
+            return
+        self._unscoped_warned.add(key)
+        _logger.warning(
+            "%s is request-scoped but was resolved outside a request or `app.scope()`; it will never be "
+            "torn down. Use `app.scope()` or enable `strict_request_scope=True`.",
+            name,
+        )
 
     # -- Lifecycle access --------------------------------------------------
 

@@ -114,7 +114,7 @@ assert client.post("/users/", json={"name": "Ada", "age": 36}).status_code == 20
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, problem_type_base=None, debug=False, lazy_startup=True, hosted_services=True, scheduler=True)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, problem_type_base=None, debug=False, lazy_startup=True, hosted_services=True, scheduler=True, strict_request_scope=False)`
 
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
@@ -164,6 +164,7 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `lazy_startup` | `bool` | `True` | Run `startup()` on the first HTTP / WebSocket request when the ASGI server never sent lifespan events (logs a warning); `False` keeps such an app cold until `await app.startup()` |
 | `hosted_services` | `bool` | `True` | `False` discovers and validates `@hosted_service` classes but does not start them (tests, one-off commands) |
 | `scheduler` | `bool` | `True` | `False` keeps scheduled jobs discovered and validated (and `SchedulerRegistry.trigger` working) but fires nothing |
+| `strict_request_scope` | `bool` | `False` | `True` makes resolving a `Scope.REQUEST` provider outside any request, WebSocket connection or `app.scope()` raise `DIScopeViolationError` (`reason="no_active_scope"`); the default falls back to an untracked transient and logs a warning once per provider (see [Operation scopes](#operation-scopes-appscope)) |
 
 ### `Lauren` (imperative API)
 
@@ -880,7 +881,12 @@ Rules:
 - On exit, every request-scoped instance is torn down newest first: `@pre_destruct`, then `aclose()` (generator providers' teardown). HTTP requests and WebSocket connections use the same finaliser. Teardown errors are logged on the `lauren` logger and collected, never raised; an exception from the block propagates unchanged after teardown.
 - Scopes are single-use (entering twice raises `LifecycleViolationError`), do not nest or inherit, and belong to the app's container, so two apps never share instances.
 - Several coroutines of one operation may share a scope; two of them resolving the same request-scoped token for the first time concurrently may each build an instance, exactly as within one HTTP request.
-- **Outside any request or scope**, resolving a `Scope.REQUEST` provider through the container (`await app.container.resolve(DbSession)`) falls back to transient behaviour: a new instance per call that is never torn down. Resolve request-scoped providers only inside a request or `app.scope()`.
+- **Outside any request or scope**, resolving a `Scope.REQUEST` provider through the container (`await app.container.resolve(DbSession)`) is a leak: by default it falls back to transient behaviour — a new instance per call that is never torn down — and logs a WARN on the `lauren` logger once per provider: *"DbSession is request-scoped but was resolved outside a request or `app.scope()`; it will never be torn down. Use `app.scope()` or enable `strict_request_scope=True`."* With `LaurenFactory.create(..., strict_request_scope=True)` (also `Lauren(strict_request_scope=True)`) the same resolution raises `DIScopeViolationError` with `detail={"token": "DbSession", "reason": "no_active_scope"}`. Requests, WebSocket connections and `app.scope()` blocks are unaffected. Lauren 2.0 makes strict the default. **Rule:** resolve request-scoped providers only inside a request or `app.scope()`.
+
+| Mode | `Scope.REQUEST` provider resolved outside any scope |
+|---|---|
+| default (`strict_request_scope=False`) | new instance per call, never torn down; one WARN per provider and app |
+| `strict_request_scope=True` | `DIScopeViolationError`, `detail={"token": ..., "reason": "no_active_scope"}` |
 
 ---
 
