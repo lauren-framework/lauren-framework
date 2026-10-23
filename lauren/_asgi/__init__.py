@@ -981,25 +981,19 @@ class LaurenApp:
             context="LaurenApp",
             reason=reason,
         )
-        event = self._set_lifecycle_state(AppLifecycleState.DRAINING, reason)
-        if event is not None:
-            self._signals.emit_sync(event)
+        self._signals.emit_sync(self._set_lifecycle_state(AppLifecycleState.DRAINING, reason))
         return True
 
-    def _set_lifecycle_state(
-        self, state: AppLifecycleState, reason: str = ""
-    ) -> LifecycleStateChanged | None:
-        """Record a transition; return the event to emit (``None`` when unchanged)."""
-        previous = self._lifecycle_state
-        if previous is state:
-            return None
-        self._lifecycle_state = state
+    def _set_lifecycle_state(self, state: AppLifecycleState, reason: str = "") -> LifecycleStateChanged:
+        """Record a transition and return the event announcing it (the caller emits it).
+
+        Callers only transition to a different state, so every call is a change.
+        """
+        previous, self._lifecycle_state = self._lifecycle_state, state
         return LifecycleStateChanged(app=self, previous=previous, current=state, reason=reason)
 
     async def _transition(self, state: AppLifecycleState, reason: str = "") -> None:
-        event = self._set_lifecycle_state(state, reason)
-        if event is not None:
-            await self._signals.emit(event)
+        await self._signals.emit(self._set_lifecycle_state(state, reason))
 
     def routes(self) -> list[RouteEntry]:
         return self._router.routes()
@@ -1119,15 +1113,12 @@ class LaurenApp:
             await self._transition(AppLifecycleState.FAILED, f"{type(exc).__name__}: {exc}")
             raise
         except BaseException as exc:  # cancelled: do not await listeners
-            event = self._set_lifecycle_state(AppLifecycleState.FAILED, type(exc).__name__)
-            if event is not None:
-                self._signals.emit_sync(event)
+            self._signals.emit_sync(self._set_lifecycle_state(AppLifecycleState.FAILED, type(exc).__name__))
             raise
         ready = self._set_lifecycle_state(AppLifecycleState.READY)
         if self._events is not None:
             self._events._on_ready()  # deferred event handlers queued during startup start now
-        if ready is not None:
-            await self._signals.emit(ready)
+        await self._signals.emit(ready)
         duration = time.perf_counter() - t0
         self._logger.log(
             f"Application ready ({format_duration_ms(duration)})",
