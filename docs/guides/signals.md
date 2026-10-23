@@ -86,6 +86,13 @@ The [application event bus](events.md) adds one more:
 |---|---|---|
 | `EventHandlerFailed` | An `@on_event` handler raised, or was cancelled at shutdown | `event_type`, `handler`, `error`, `mode`, `event` |
 
+The application lifecycle state and [health checks](health-checks.md) add two more:
+
+| Event | When fired | Key fields |
+|---|---|---|
+| `LifecycleStateChanged` | `app.lifecycle_state` changed (`STARTING`, `READY`, `DRAINING`, `STOPPED`, `FAILED`) | `app`, `previous`, `current`, `reason` |
+| `HealthChanged` | A health check's status, or the report's aggregate (`name=None`), changed | `app`, `name`, `previous`, `current`, `details` |
+
 All events inherit from `LifecycleEvent` which carries a `timestamp: float` (monotonic)
 so listeners can compute deltas without recording wall-clock time themselves.
 
@@ -253,20 +260,20 @@ class MetricsSink:
 Register `MetricsSink` as a singleton provider. The constructor wires itself into the
 bus — no explicit subscription call at startup needed.
 
-### Readiness flip on `StartupComplete`
+### Readiness from the lifecycle state
+
+Do not hand-roll a readiness flag: `app.lifecycle_state` is already the source
+of truth, and it fails readiness while the app drains too. Prefer
+[`HealthModule.for_root()`](health-checks.md); to react to transitions, listen
+for `LifecycleStateChanged`:
 
 ```python
-from lauren.signals import StartupComplete
+from lauren import AppLifecycleState, LifecycleStateChanged
 
-ready = {"ok": False}
-
-@app.signals.on(StartupComplete)
-def flip_ready(event: StartupComplete) -> None:
-    ready["ok"] = True
-
-@get("/health/ready")
-async def readiness(self) -> dict:
-    return {"ready": ready["ok"]}
+@app.signals.on(LifecycleStateChanged)
+def announce(event: LifecycleStateChanged) -> None:
+    if event.current is AppLifecycleState.DRAINING:
+        registry.deregister(instance_id)   # e.g. a service registry
 ```
 
 ### Background task failure alerting
@@ -489,8 +496,8 @@ app.signals.clear()
 ```python
 from lauren.signals import install_signal_handlers, wait_for_shutdown
 
-# Wire SIGTERM + SIGINT to app.shutdown():
-event = install_signal_handlers(app, drain_timeout=30)
+# SIGTERM / SIGINT: app.begin_draining(), keep serving 10 s, then app.shutdown():
+event = install_signal_handlers(app, drain_timeout=30, shutdown_delay=10)
 
 # In your main loop:
 await wait_for_shutdown(event)
@@ -500,6 +507,9 @@ await wait_for_shutdown(event)
 received. `wait_for_shutdown` is a thin wrapper for `await event.wait()`.
 
 The handlers are idempotent — multiple signals don't trigger multiple shutdowns.
+During `shutdown_delay` the app is `DRAINING`: readiness probes answer 503 while
+requests are still served, so load balancers stop routing to it before the
+socket closes (see [Draining before the socket closes](health-checks.md#draining-before-the-socket-closes)).
 
 See also the [Lifecycle Hooks](../core-concepts/lifecycle.md) guide for the four-phase
 shutdown sequence.
@@ -511,5 +521,6 @@ shutdown sequence.
 * [WebSockets](websockets.md) — the gateway, `EventForwarder`, and token service from the real-world example above.
 * [Background Tasks](background-tasks.md) — `BackgroundTaskStarted/Complete/Failed` signals.
 * [Application Events](events.md) — the domain event bus (`@on_event`, `EventBus`, `EventPublisher`) and its `EventHandlerFailed` signal.
+* [Health & Readiness Probes](health-checks.md) — `app.lifecycle_state`, `begin_draining()`, `HealthModule` and `HealthChanged`.
 * [Lifecycle Hooks](../core-concepts/lifecycle.md) — `@post_construct` / `@pre_destruct` and shutdown phases.
 * [Reference → Cheat Sheet](../reference/cheat-sheet.md) — one-line signal patterns.

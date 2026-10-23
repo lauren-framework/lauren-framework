@@ -13,7 +13,7 @@ Complete, copy-pasteable patterns. Each is a working snippet you can drop into a
 ## Patterns
 
 - **Authenticated CRUD**: controller with JWT guard, Pydantic models, DI service → [auth-protected-crud.md](auth-protected-crud.md)
-- **Health check module**: minimal `GET /health` + `GET /ready` endpoint → [health-check.md](health-check.md)
+- **Health check module**: `HealthModule.for_root()` + a database `@health_check` → [health-check.md](health-check.md)
 - **Background job**: fire-and-forget task with `@post_construct`/`@pre_destruct` + shutdown signal → [background-job.md](background-job.md)
 - **Typed SSE stream**: `StreamingResponse[T]` with Pydantic model, content-negotiation → [typed-sse-stream.md](typed-sse-stream.md)
 - **Module composition**: feature modules with shared database, cross-cutting concerns in root → see below

@@ -94,6 +94,7 @@ lauren/                      — framework package
 ├── _discriminated.py        — Discriminated[A|B,"key"] runtime (detection, validation, OpenAPI)
 ├── _encoders/               — optional encoder backends (pydantic)
 ├── _events/                 — application event bus: @on_event marker, handler plans + dispatch table, EventBus/EventPublisher
+├── _health/                 — health probes: @health_check marker, HealthRuntime (timeouts, single-flight, cache), indicators, HealthModule
 ├── _lifecycle/              — post_construct / pre_destruct machinery
 ├── _modules/                — module graph & visibility
 ├── _routing/                — radix-tree HTTP router
@@ -117,6 +118,7 @@ lauren/                      — framework package
 ├── config.py                — ConfigModule, Secret, sources, Profile, load_settings (typed configuration)
 ├── context.py               — OperationScope (request scope outside HTTP, via app.scope())
 ├── events.py                — EventBus, EventPublisher, @on_event, EventContext, EmitResult (domain events)
+├── health.py                — HealthModule, @health_check, HealthResult, HealthStatus (liveness/readiness probes)
 ├── signals.py               — POSIX signal integration + on_shutdown hooks
 ├── streaming.py             — StreamingResponse[T], Stream, StreamReader
 ├── sse.py                   — EventStream, ServerSentEvent, last_event_id
@@ -241,6 +243,9 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Share state across a single request | `Scope.REQUEST` injectable |
 | Share state for the app lifetime | `Scope.SINGLETON` injectable |
 | Decouple modules with domain events | `EventBus` / `EventPublisher` + `@on_event` (`lauren.events`) |
+| Expose liveness / readiness / startup probes | `HealthModule.for_root()` + `@health_check("name")` on a singleton method (`lauren.health`) |
+| Fail readiness before the server stops accepting traffic | `app.begin_draining()` (or `install_signal_handlers(app, shutdown_delay=...)`); read `app.lifecycle_state` |
+| Let a global guard skip public routes | `ctx.get_metadata(PUBLIC_METADATA_KEY, False)` in the guard; mark routes with `@set_metadata(PUBLIC_METADATA_KEY, True)` |
 | Use request-scoped providers outside a request (script, job, worker) | `async with app.scope("name") as scope:` + `await scope.resolve(T)` |
 | Persist state across requests for one client | Sessions (`sessions=SessionConfig(...)`; inject `session: Session`) |
 | Read typed configuration | `ConfigModule.for_root(Settings)` (or `for_feature`) + inject `Settings`; `load_settings` for factory kwargs |
@@ -490,6 +495,21 @@ deterministic).
   which cancels the handler's task when it closes. Use `wait=True`, an async
   test (`await client.arequest(...)` then `await bus.drain()`) or
   `"background"`.
+- ❌ Checking dependencies in liveness probes. A database outage must take
+  pods **out of rotation** (readiness), not **restart** them (liveness) — that
+  turns a hiccup into a restart storm. `@health_check` feeds `"ready"` by
+  default; tag a check `"live"` only when its failure means *this process* is
+  broken.
+- ❌ Hand-rolled `{"status": "ok"}` health endpoints that ignore the lifecycle
+  state — they answer "ok" before `@post_construct` ran (nothing starts the app
+  lazily on a first request), while draining and while dependencies are down.
+  Use `HealthModule.for_root()`, or at least answer from `app.lifecycle_state`.
+  Under uvicorn `shutdown()` runs after the socket closed, so readiness must
+  flip earlier: `app.begin_draining()` from a `preStop` window or
+  `install_signal_handlers(app, shutdown_delay=...)`.
+- ❌ Comparing private flags (`app._started`, `app._running`) or keeping a
+  private copy of the app's state in a framework component — both are derived
+  from `app.lifecycle_state`; read that (the event bus does).
 - ❌ Writing another request-scope teardown loop. HTTP, WebSocket and
   `OperationScope` all call `lauren._di._scope.finalize_scope`, which finds
   providers through the container's precomputed `instance_index()`.
@@ -646,6 +666,11 @@ deterministic).
   shutdown drain (`_bus.py`).
 - `lauren/_discovery.py` — Phase 6a discovery: `register_marker`,
   `MarkerSpec`, `DiscoveryIndex`, `DiscoveredMethod`, `CallPlan`.
+- `lauren/health.py` / `lauren/_health/` — `HealthModule.for_root`, the
+  `@health_check` marker, `compile_checks` (startup validation) and the per-app
+  `HealthRuntime` (probe semantics, timeouts, single-flight, cache, details
+  policy, `HealthChanged`). The lifecycle state machine itself lives on
+  `LaurenApp` (`lifecycle_state`, `begin_draining()`, `_transition`).
 - `lauren/_ws_runtime.py` — `WsConnectionContext`, `WsUpgradeRequest`, `CompiledGateway`, `handle_websocket`.
 - `lauren/websockets.py` — gateway runtime + `BroadcastGroup`.
 - `lauren/reflect/` — full metadata introspection API: `reflect_routes`, `reflect_controller`, `get_all_routes`, `get_controller_metadata`, `propagate_metadata` targets this module's readers.

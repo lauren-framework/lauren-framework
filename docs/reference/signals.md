@@ -29,3 +29,11 @@ POSIX signal integration and application shutdown hooks.
 ## Event bus events
 
 ::: lauren.EventHandlerFailed
+
+## Lifecycle state and health events
+
+::: lauren.AppLifecycleState
+
+::: lauren.LifecycleStateChanged
+
+::: lauren.HealthChanged
