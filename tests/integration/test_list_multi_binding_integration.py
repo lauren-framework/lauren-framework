@@ -433,3 +433,32 @@ class TestModuleBoundaryWithList:
         assert r.status_code == 200
         # Only ``Public`` is visible — PrivateModule isn't imported at all.
         assert r.json() == {"features": ["public"]}
+
+
+# ---------------------------------------------------------------------------
+# Order: multi-bindings resolve in declaration order.
+# ---------------------------------------------------------------------------
+
+
+def test_list_parameter_follows_provider_declaration_order():
+    # Regression: module providers were registered from a set, so the order
+    # of a ``list[T]`` changed from run to run.
+    def _notifier(i: int) -> type:
+        cls = type(f"Notifier{i}", (), {"channel": lambda self, i=i: f"n{i}"})
+        return injectable(provides=[Notifier], multi=True)(cls)
+
+    notifiers = [_notifier(i) for i in range(30)]
+
+    @controller("/order")
+    class Ctl:
+        @get("/")
+        async def idx(self, items: list[Notifier]) -> dict:
+            return {"channels": [n.channel() for n in items]}
+
+    @module(controllers=[Ctl], providers=notifiers)
+    class AppModule:
+        pass
+
+    r = TestClient(LaurenFactory.create(AppModule)).get("/order/")
+
+    assert r.json() == {"channels": [f"n{i}" for i in range(30)]}
