@@ -26,32 +26,33 @@ common mistakes.
 15. [Exception Handlers](#exception-handlers)
 16. [`@propagate_metadata` — copy Lauren decorator metadata between objects](#propagate_metadata--copy-lauren-decorator-metadata-between-objects)
 17. [Auto-Serialization](#auto-serialization)
-18. [Sync vs Async Handlers](#sync-vs-async-handlers)
-19. [Background Tasks](#background-tasks)
-20. [Hosted Services & Scheduling](#hosted-services--scheduling)
-21. [Error Catalog](#error-catalog)
-22. [Debug Error Pages](#debug-error-pages)
-23. [Testing](#testing)
-24. [Strict Decorator Inheritance](#strict-decorator-inheritance)
-25. [OpenAPI 3.1 Generation](#openapi-31-generation)
-26. [Logging](#logging)
-27. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
-28. [Health & Readiness](#health--readiness)
-29. [Application Events](#application-events)
-30. [WebSockets](#websockets)
-31. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
-32. [Typed Streaming](#typed-streaming)
-33. [Socket.IO Compatibility](#socketio-compatibility)
-34. [Sessions](#sessions)
-35. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
-36. [Configuration](#configuration)
-37. [Static Files](#static-files)
-38. [Request Arena](#request-arena)
-39. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
-40. [AI Documentation Access](#ai-documentation-access)
-41. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-42. [Companion Packages](#companion-packages)
-43. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
+18. [Pagination](#pagination)
+19. [Sync vs Async Handlers](#sync-vs-async-handlers)
+20. [Background Tasks](#background-tasks)
+21. [Hosted Services & Scheduling](#hosted-services--scheduling)
+22. [Error Catalog](#error-catalog)
+23. [Debug Error Pages](#debug-error-pages)
+24. [Testing](#testing)
+25. [Strict Decorator Inheritance](#strict-decorator-inheritance)
+26. [OpenAPI 3.1 Generation](#openapi-31-generation)
+27. [Logging](#logging)
+28. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
+29. [Health & Readiness](#health--readiness)
+30. [Application Events](#application-events)
+31. [WebSockets](#websockets)
+32. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
+33. [Typed Streaming](#typed-streaming)
+34. [Socket.IO Compatibility](#socketio-compatibility)
+35. [Sessions](#sessions)
+36. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
+37. [Configuration](#configuration)
+38. [Static Files](#static-files)
+39. [Request Arena](#request-arena)
+40. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+41. [AI Documentation Access](#ai-documentation-access)
+42. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+43. [Companion Packages](#companion-packages)
+44. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -116,7 +117,7 @@ assert client.post("/users/", json={"name": "Ada", "age": 36}).status_code == 20
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, problem_type_base=None, debug=False, lazy_startup=True, hosted_services=True, scheduler=True, validation=None)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, problem_type_base=None, debug=False, lazy_startup=True, hosted_services=True, scheduler=True, validation=None, pagination=None)`
 
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
@@ -167,6 +168,7 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `hosted_services` | `bool` | `True` | `False` discovers and validates `@hosted_service` classes but does not start them (tests, one-off commands) |
 | `scheduler` | `bool` | `True` | `False` keeps scheduled jobs discovered and validated (and `SchedulerRegistry.trigger` working) but fires nothing |
 | `validation` | `ValidationPolicy` | `None` | Validation policy: `ValidationPolicy(stdlib_models="warn", json_mode="lax", extra="ignore", include_input=None, max_issues=50)` (see [Validation](#validation); `StartupError` with `reason="invalid_validation_policy"` for anything else) |
+| `pagination` | `PaginationConfig` | `None` | App-wide paging defaults, maxima, parameter names, page envelope and cursor secret (see [Pagination](#pagination); `StartupError` with `reason="invalid_pagination_config"` / `"pagination_secret_missing"`) |
 
 ### `Lauren` (imperative API)
 
@@ -1677,6 +1679,194 @@ handler is in scope at those points.
 never bare `@use_encoder`.  Passing a class instead of an instance
 (`@use_encoder(OrjsonEncoder)`) is rejected at decoration time with a clear
 error.
+
+---
+
+## Pagination
+
+Validated paging parameters, page responses with one envelope per app, RFC
+8288 `Link` headers and opaque signed cursors. Public names live in
+`lauren.pagination` and are exported from `lauren`: `OffsetPagination`,
+`PageNumberPagination`, `CursorPagination`, `PaginationConfig`, `Page`,
+`CursorPage`, `paginate_sequence`.
+
+```python run
+from dataclasses import dataclass
+
+from lauren import (
+    CursorPage,
+    CursorPagination,
+    LaurenFactory,
+    OffsetPagination,
+    Page,
+    PaginationConfig,
+    controller,
+    get,
+    module,
+)
+from lauren.testing import TestClient
+
+
+@dataclass
+class PgUserOut:
+    id: int
+    name: str
+
+
+@dataclass(frozen=True)
+class PgUserKey:                                     # the keyset; validated when a cursor is decoded
+    id: int
+
+
+PG_USERS = [PgUserOut(id=i, name=f"u{i}") for i in range(1, 36)]
+
+
+@controller("/pg")
+class PgController:
+    @get("/users")
+    async def users(self, paging: OffsetPagination) -> Page[PgUserOut]:
+        rows = PG_USERS[paging.offset : paging.offset + paging.limit]
+        return Page.of(rows, paging, total=len(PG_USERS))       # total optional
+
+    @get("/feed")
+    async def feed(self, paging: CursorPagination[PgUserKey]) -> CursorPage[PgUserOut]:
+        after = paging.cursor.id if paging.cursor else 0
+        if paging.direction == "next":                           # rows after the keyset, ascending
+            rows = [u for u in PG_USERS if u.id > after]
+        else:                                                    # "prev": rows before it, descending
+            rows = [u for u in reversed(PG_USERS) if u.id < after]
+        return CursorPage.from_rows(rows[: paging.limit + 1], paging, key=lambda u: PgUserKey(id=u.id))
+
+
+@module(controllers=[PgController])
+class PgModule: ...
+
+
+pg_client = TestClient(LaurenFactory.create(PgModule, pagination=PaginationConfig(cursor_secret="pg-key")))
+
+r = pg_client.get("/pg/users?limit=10&offset=10&q=x")
+assert r.json()["meta"] == {"limit": 10, "offset": 10, "total": 35, "has_next": True}
+assert '</pg/users?limit=10&offset=20&q=x>; rel="next"' in r.headers["link"]
+assert pg_client.get("/pg/users?limit=500").status_code == 422             # loc ["query", "limit"]
+
+feed = pg_client.get("/pg/feed?limit=5").json()
+nxt = pg_client.get("/pg/feed", params={"cursor": feed["meta"]["next_cursor"], "limit": 5}).json()
+assert [u["id"] for u in nxt["items"]] == [6, 7, 8, 9, 10]
+bad = pg_client.get("/pg/feed", params={"cursor": "forged.0000"})
+assert (bad.status_code, bad.json()["error"]["code"]) == (400, "invalid_cursor")
+```
+
+### Paging parameters
+
+A handler parameter annotated with a paging type is a built-in extraction
+source (no marker, no `Depends`), compiled at startup; it may be wrapped in
+`Annotated[..., PaginationConfig(...)]`.
+
+| Type | Query | Attributes |
+|---|---|---|
+| `OffsetPagination` | `?limit=&offset=` | `limit`, `offset` |
+| `PageNumberPagination` | `?page=&per_page=` (1-based) | `page`, `per_page`, `limit` (= `per_page`), `offset` (= `(page - 1) * per_page`) |
+| `CursorPagination[C]` | `?cursor=&limit=` | `cursor: C \| None` (`None` on the first page), `direction` (`"next"` / `"prev"`), `limit`, `encode_cursor(key, *, direction="next") -> str` |
+
+* Integers are validated by the native engine (`Ge` / `Le` markers): `limit` /
+  `per_page` in `1..max_limit`, `offset` in `0..max_offset`, `page >= 1` (and
+  `(page - 1) * per_page <= max_offset`). Failures are a 422
+  `ExtractorFieldError` with `issues[].loc == ["query", <name>]`, merged with
+  the request's other parameter failures. Missing → default; repeated → first
+  value.
+* `C` is any type the validation engine compiles (dataclass, `TypedDict`,
+  `NamedTuple`, pydantic, msgspec, scalars); bare `CursorPagination` accepts any
+  JSON keyset. Unsupported → `UnresolvableParameterError`
+  (`reason="unsupported_cursor_type"`) at startup. A field descriptor on a
+  paging parameter → `UnresolvableParameterError`
+  (`reason="pagination_field_descriptor"`); pipes run as usual.
+* A tampered, truncated, malformed, expired or wrong-version cursor → 400
+  `BadRequestError` with `code="invalid_cursor"`,
+  `detail={"param": "cursor", "reason": "signature" | "malformed" | "version" | "expired" | "payload"}`.
+  An empty `?cursor=` means the first page.
+* Built outside a request (`OffsetPagination(limit=10, offset=0)`,
+  `PageNumberPagination(page=1, per_page=20)`,
+  `CursorPagination(cursor=None, *, limit=20, direction="next", secret=None)`)
+  they are plain values for unit tests (invalid arguments → `ValueError`); such
+  pages render without links. `CursorPagination` needs `secret=` there to sign.
+
+### `PaginationConfig(*, default_limit=None, max_limit=None, max_offset=None, limit_param=None, offset_param=None, page_param=None, per_page_param=None, cursor_param=None, envelope=None, meta_keys=None, total_header=None, base_url=None, cursor_secret=None, cursor_max_age=None)`
+
+Frozen dataclass; every `None` field inherits. App-wide:
+`LaurenFactory.create(..., pagination=PaginationConfig(...))` /
+`Lauren(pagination=...)`; per parameter: `Annotated[OffsetPagination,
+PaginationConfig(...)]`. Precedence: parameter → app → built-in default.
+
+| Field | Built-in | Notes |
+|---|---|---|
+| `default_limit` / `max_limit` | `20` / `100` | ints >= 1; an inherited default above a more specific `max_limit` follows it down |
+| `max_offset` | `None` (unbounded) | int >= 0; links beyond it are omitted |
+| `limit_param` / `offset_param` / `page_param` / `per_page_param` / `cursor_param` | `limit` / `offset` / `page` / `per_page` / `cursor` | non-empty, distinct within a style |
+| `envelope` | `"items"` | `"items"` \| `"data"` \| `"bare"` — app level only |
+| `meta_keys` | `"snake"` | `"camel"` → `hasNext`, `perPage`, `totalPages`, `nextCursor`, `prevCursor` — app level only |
+| `total_header` | on for `"bare"`, else off | `X-Total-Count` when `total` is known |
+| `base_url` | `None` (relative links) | trusted `http(s)://` origin → absolute `Link` URLs |
+| `cursor_secret` | `None` | str / bytes / `Secret` or a sequence (first signs, all verify); required by any `CursorPagination` route |
+| `cursor_max_age` | `None` (never expire) | seconds; older cursors → `reason="expired"` |
+
+Invalid values → `StartupError` (`detail["reason"] == "invalid_pagination_config"`,
+`detail["field"]`, plus `route` / `handler` / `param` for a parameter layer); a
+non-`PaginationConfig` `pagination=` → the same reason with `detail["got"]`. A
+`CursorPagination` route without a secret → `StartupError`
+(`detail["reason"] == "pagination_secret_missing"`, `detail["route"]`). The
+secret never appears in `repr` or error messages.
+
+### `Page[T]` / `CursorPage[T]` and helpers
+
+* `Page[T]`: frozen keyword-only dataclass `items: list[T]`, `limit: int`,
+  `offset: int = 0`, `total: int | None = None`, `has_next: bool`.
+* `CursorPage[T]`: `items`, `limit`, `has_next`, `next_cursor: str | None = None`,
+  `prev_cursor: str | None = None`.
+* `Page.of(items, paging, *, total=None, has_next=None)` — `has_next` is
+  `offset + len(items) < total`; without `total` pass `has_next=` (never
+  guessed: `ValueError`); more than `paging.limit` items → `ValueError`.
+* `Page.from_rows(rows, paging, *, total=None)` — give `limit + 1` rows; the
+  probe row is trimmed and sets `has_next`.
+* `CursorPage.from_rows(rows, paging, *, key)` — `limit + 1` rows in the
+  direction of travel (`"next"`: after the keyset ascending; `"prev"`: before
+  it descending, returned ascending); signs `key(row)` of the boundary rows.
+* `paginate_sequence(seq, paging)` — any iterable; offset / page-number →
+  `Page` with `total=len`; cursor → `CursorPage` with positional cursors (use
+  bare `CursorPagination` or `CursorPagination[int]`).
+
+Returning a page renders (one `isinstance` check in response coercion):
+
+| `envelope` | Body | Headers |
+|---|---|---|
+| `"items"` | `{"items": [...], "meta": {...}}` | `Link` (+ `X-Total-Count` if `total_header`) |
+| `"data"` | `{"data": [...], "meta": {...}, "links": {"self", "first", "prev", "next", "last"}}` (`null` when unavailable) | `Link` |
+| `"bare"` | `[...]` | `Link`, `X-Total-Count` |
+
+`meta`: offset → `limit, offset, total, has_next`; page number → `page,
+per_page, total, total_pages, has_next`; cursor → `limit, has_next,
+next_cursor, prev_cursor` (`total` / `total_pages` are `null` when unknown).
+`Link` relations: `first` always, `prev` unless on the first page, `next` only
+with `has_next`, `last` only with a known `total` (never for cursors). URLs come
+from a copy of the request path and query: only the pagination parameters
+change, others keep their order and encoding; they are path-absolute and
+include the root path (`root_path=` or the ASGI `root_path`), absolute with
+`base_url`. A page built directly (not via the helpers) renders the app
+envelope without links. Items of any backend serialise through the app encoder;
+`(page, 206)` tuples work.
+
+OpenAPI: pagination parameters with `minimum` / `maximum` / `default`; bodies
+as components `<Item>Page`, `<Item>NumberedPage`, `<Item>CursorPage` in the
+app's envelope (a plain array for `"bare"`); `Link` (and `X-Total-Count`)
+response headers.
+
+**Rules:**
+
+* Never expose raw database ids or offsets as cursors — use `CursorPagination`
+  (signed, opaque; signed, not encrypted).
+* Use a dedicated `cursor_secret`, never the session secret (cursors are signed
+  in their own namespace with the shared signer, `lauren._signing`).
+* `total` is optional — for large tables fetch `limit + 1` rows
+  (`Page.from_rows`) or use cursors instead of counting.
 
 ---
 

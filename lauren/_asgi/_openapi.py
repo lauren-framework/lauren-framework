@@ -41,6 +41,7 @@ from .._discriminated import (
     is_native_discriminated_union,
     openapi_schema_for_discriminated,
 )
+from .._pagination._openapi import contribute_openapi as _contribute_pagination
 
 
 DEFAULT_INFO: dict[str, Any] = {"title": "lauren application", "version": "1.0.0"}
@@ -624,6 +625,17 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             # Feature 7 — vendor extension telling OpenAPI tooling this
             # operation yields a structured, typed stream.
             op["x-streaming"] = True
+        if compiled is not None:
+            # Pagination parameters and Page[T] / CursorPage[T] bodies (one
+            # seam, picked up by F06's generic-schema naming later).
+            _contribute_pagination(
+                op,
+                extractions=compiled.extractions,
+                response_type=rmeta.response_model if rmeta.response_model is not None else return_annotation,
+                components=components,
+                app_config=app._pagination,
+                item_schema=_resolve_item_schema,
+            )
 
         # Calculates the OpenAPI `security` requirements for this operation by inspecting
         # the compiled handler's guards and the app's global guards. Resolution rules:

@@ -1081,7 +1081,7 @@ def _convert_struct(
 
 
 #: Sources whose ``Extraction.compiled`` plan performs the whole extraction.
-_PLAN_SOURCES: frozenset[str] = frozenset({"path", "query", "header", "cookie", "json", "form"})
+_PLAN_SOURCES: frozenset[str] = frozenset({"path", "query", "header", "cookie", "json", "form", "pagination"})
 
 #: Primitive Python types that can be meaningfully coerced from a query-string
 #: segment without any DI or body-parsing machinery.

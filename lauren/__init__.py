@@ -289,6 +289,15 @@ from .reflect import (
 )
 from ._staticfiles import StaticFilesModule
 from .health import HealthModule
+from .pagination import (
+    CursorPage,
+    CursorPagination,
+    OffsetPagination,
+    Page,
+    PageNumberPagination,
+    PaginationConfig,
+    paginate_sequence,
+)
 from .config import ConfigModule, Secret
 from .scheduling import (
     CronExpression,
@@ -416,6 +425,14 @@ __all__ = [
     "OpenAPISecurityMeta",
     # static files
     "StaticFilesModule",
+    # pagination (lauren.pagination)
+    "OffsetPagination",
+    "PageNumberPagination",
+    "CursorPagination",
+    "PaginationConfig",
+    "Page",
+    "CursorPage",
+    "paginate_sequence",
     # typed configuration (the rest lives in lauren.config)
     "ConfigModule",
     "Secret",
