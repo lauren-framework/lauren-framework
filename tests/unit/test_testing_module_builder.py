@@ -112,6 +112,7 @@ def test_module_overridden_twice_is_rejected() -> None:
     [
         lambda b: b.override_provider(Repo).use_class("not a class"),
         lambda b: b.override_provider(Repo).use_factory("not callable"),
+        lambda b: b.override_provider(Repo).use_values([]),
         lambda b: b.override_guard("not a class"),
         lambda b: b.override_guard(Guard).use_value(object()),
         lambda b: b.override_guard(Guard).use_class(dict),

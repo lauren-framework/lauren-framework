@@ -125,8 +125,10 @@ class ProviderOverrideBuilder:
         return self._done("existing", existing=token)
 
     def use_values(self, values: Iterable[Any]) -> "TestingModuleBuilder":
-        """Replace a whole multi-binding set (``list[T]``) with ``values``."""
-        return self._done("values", values=tuple(values))
+        """Replace a whole multi-binding set (``list[T]``) with ``values`` (at least one)."""
+        items = tuple(values)
+        _require(bool(items), "use_values() needs at least one value")
+        return self._done("values", values=items)
 
 
 class GuardOverrideBuilder(ProviderOverrideBuilder):
