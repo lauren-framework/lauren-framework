@@ -120,14 +120,44 @@ def test_dataclass_validation_failure_has_an_errors_array(client: TestClient) ->
     body = _assert_problem(client.post("/books/", json={"pages": 3}), 422)
 
     assert body["type"] == BASE + "extractor_error"
-    assert body["errors"] and body["errors"][0]["parameter"] == "body"
-    assert "title" in body["errors"][0]["detail"]
+    assert body["errors"] == [{"detail": "Field required", "pointer": "#/title", "code": "missing"}]
 
 
 def test_typeddict_validation_failure_has_an_errors_array(client: TestClient) -> None:
     body = _assert_problem(client.post("/books/search", json={"q": "dune"}), 422)
 
-    assert body["errors"] == [{"detail": "Missing required keys: ['limit']", "parameter": "body"}]
+    assert body["errors"] == [{"detail": "Field required", "pointer": "#/limit", "code": "missing"}]
+
+
+def test_problem_context_keeps_the_issues(client: TestClient) -> None:
+    body = _assert_problem(client.post("/books/search", json={"q": "dune"}), 422)
+
+    assert body["context"]["issues"] == [
+        {"loc": ["body", "limit"], "type": "missing", "msg": "Field required"}
+    ]
+
+
+def test_several_failing_parameters_share_one_problem() -> None:
+    @controller("/shelf")
+    class ShelfController:
+        @get("/{shelf_id}")
+        async def show(self, shelf_id: int, page: int, size: int = 10) -> dict:
+            return {}
+
+    @module(controllers=[ShelfController])
+    class ShelfModule:
+        pass
+
+    client = TestClient(LaurenFactory.create(ShelfModule, error_format="rfc9457"))
+
+    body = _assert_problem(client.get("/shelf/x?page=one&size=two"), 422)
+
+    assert body["detail"] == "3 validation errors"
+    assert [(e.get("in"), e.get("parameter"), e["code"]) for e in body["errors"]] == [
+        ("path", "shelf_id", "int_parsing"),
+        ("query", "page", "int_parsing"),
+        ("query", "size", "int_parsing"),
+    ]
 
 
 @pytest.mark.pydantic
@@ -152,8 +182,13 @@ def test_pydantic_validation_failure_has_an_errors_array() -> None:
 
     body = _assert_problem(client.post("/pets/", json={"name": "Rex", "age": "old"}), 422)
 
-    assert body["errors"][0]["parameter"] == "body"
-    assert "int_parsing" in body["errors"][0]["detail"]
+    assert body["errors"] == [
+        {
+            "detail": "Input should be a valid integer, unable to parse string as an integer",
+            "pointer": "#/age",
+            "code": "int_parsing",
+        }
+    ]
 
 
 def test_domain_error_uses_the_problem_type_base(client: TestClient) -> None:

@@ -142,11 +142,14 @@ class TestSseFrameExtractor:
         assert _sse_extract_data(block) == b""
 
 
-class TestAdapterCache:
-    def test_adapter_cached_per_type(self):
+class TestAdapterBuild:
+    def test_adapter_is_not_cached_process_wide(self):
+        # Apps build adapters once at startup and keep them on their compiled
+        # plans; there is no module-level cache (Golden Rule 5).
         a1 = _build_adapter(Chunk)
         a2 = _build_adapter(Chunk)
-        assert a1 is a2
+        assert a1 is not a2
+        assert not hasattr(__import__("lauren.streaming").streaming, "_ADAPTER_CACHE")
 
     def test_adapter_validates_concrete_model(self):
         adapter = _build_adapter(Chunk)
@@ -289,11 +292,8 @@ class TestBuildAdapterNoPydantic:
         from lauren import streaming
 
         monkeypatch.setattr(streaming, "_PYDANTIC_AVAILABLE", False)
-        # Clear cache so the monkeypatched flag takes effect (Phase 3 caches adapters).
-        streaming._ADAPTER_CACHE.clear()
         result = streaming._build_adapter(str)
         assert result is None
-        streaming._ADAPTER_CACHE.clear()  # restore for other tests
 
 
 class TestIsDiscriminatedUnionNoPydantic:

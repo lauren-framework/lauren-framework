@@ -91,6 +91,7 @@ class Lauren:
         signals: Any | None = None,
         arena: Any | None = None,
         arena_capacity: int | None = None,
+        validation: Any | None = None,
     ) -> None:
         self._title = title
         self._version = version
@@ -126,6 +127,7 @@ class Lauren:
         self._signals = signals
         self._arena = arena
         self._arena_capacity = arena_capacity
+        self._validation = validation
         self._startup_handlers: list[Callable[[], Any]] = []
         self._shutdown_handlers: list[Callable[[], Any]] = []
 
@@ -460,6 +462,7 @@ class Lauren:
             signals=self._signals,
             arena=self._arena,
             arena_capacity=self._arena_capacity,
+            validation=self._validation,
         )
         # --- Run user-provided startup hooks now that DI is live ---------
         for hook in self._startup_handlers:

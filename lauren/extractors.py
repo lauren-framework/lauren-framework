@@ -753,6 +753,11 @@ class Extraction:
     #: Each entry carries the ``__lauren_pipe__`` marker attached by
     #: :func:`pipe`. An empty tuple means "no pipes" — the common case.
     pipes: tuple[PipeDecoratorTarget, ...] = ()
+    #: Validation plan compiled by ``LaurenFactory.create`` (the app's type
+    #: compiler) for path / query / header / cookie / JSON / form-model and
+    #: stream parameters. ``None`` for hand-built extractions, which keep the
+    #: pre-engine behaviour.
+    compiled: Any = None
 
 
 def _peel_optional(annotation: object) -> tuple[object, bool]:
@@ -1019,7 +1024,13 @@ def _is_struct_type(annotation: object) -> bool:
     return _is_msgspec_struct_type(annotation) or _is_dataclass_type(annotation)
 
 
-def _convert_struct(data: object, struct_cls: type[Any], field_name: str) -> object:
+def _convert_struct(
+    data: object,
+    struct_cls: type[Any],
+    field_name: str,
+    *,
+    hints: Mapping[str, Any] | None = None,
+) -> object:
     """Convert *data* (a plain dict or list of string values) to an instance
     of *struct_cls*, applying type coercion.
 
@@ -1043,10 +1054,13 @@ def _convert_struct(data: object, struct_cls: type[Any], field_name: str) -> obj
 
             return _msgspec.convert(data, struct_cls, strict=False)
         if dataclasses.is_dataclass(struct_cls):
-            # Dataclass — coerce each field individually then construct.
-            import typing
+            # Dataclass — coerce each field individually then construct. The
+            # field types are resolved once at startup (``hints``); only
+            # hand-built extractions resolve them here.
+            if hints is None:
+                from ._di import _safe_class_hints
 
-            hints = typing.get_type_hints(struct_cls)
+                hints = _safe_class_hints(struct_cls)
             mapping_data = cast(dict[str, object], data)
             coerced: dict[str, object] = {}
             for f in dataclasses.fields(struct_cls):
@@ -1065,6 +1079,9 @@ def _convert_struct(data: object, struct_cls: type[Any], field_name: str) -> obj
         ) from exc
     return data
 
+
+#: Sources whose ``Extraction.compiled`` plan performs the whole extraction.
+_PLAN_SOURCES: frozenset[str] = frozenset({"path", "query", "header", "cookie", "json", "form"})
 
 #: Primitive Python types that can be meaningfully coerced from a query-string
 #: segment without any DI or body-parsing machinery.
@@ -1095,6 +1112,10 @@ def _is_implicit_query_type(annotation: object) -> bool:
     if annotation is _inspect.Parameter.empty:
         return False
     inner, _ = _peel_optional(annotation)
+    if get_origin(inner) is Annotated:
+        # ``size: Annotated[int, Le(100)] = 10`` — validation markers on a
+        # bare scalar keep it a query parameter.
+        inner = get_args(inner)[0]
     if inner in _SCALAR_TYPES:
         return True
     origin = get_origin(inner)
@@ -1356,6 +1377,9 @@ async def _extract_raw(
 ) -> object:
     """Source-specific extraction without pipe application."""
     source = extraction.source
+    plan = extraction.compiled
+    if plan is not None and source in _PLAN_SOURCES:
+        return await plan.extract(request, extraction)
     inner = extraction.inner_type
     fd = extraction.field_descriptor
 
@@ -1545,6 +1569,11 @@ async def _extract_raw(
     except ExtractorError:
         raise
     except Exception as exc:
+        from .exceptions import HTTPError
+
+        if isinstance(exc, HTTPError):
+            # ``RequestBodyTooLarge`` (413) and friends keep their status.
+            raise
         raise ExtractorError(
             f"failed to extract {extraction.name!r}: {exc}",
             detail={"field": extraction.name, "source": source},
