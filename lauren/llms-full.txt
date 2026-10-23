@@ -3116,6 +3116,8 @@ class Store(Protocol):
 - A backend may define `async def startup(self)` / `async def aclose(self)`;
   `StoresModule`, `CacheModule(store=...)` and `SessionConfig(store=...)` run
   them with the app (`@post_construct` / `@pre_destruct` win when declared).
+  Pre-built instances start before any provider the container constructs (so
+  a service's `@post_construct` may already use the cache) and stop after them.
 
 ### `MemoryStore(*, max_entries, sweep_interval=60.0, clock=None)`
 

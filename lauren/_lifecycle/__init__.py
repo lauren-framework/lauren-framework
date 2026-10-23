@@ -73,6 +73,15 @@ class LifecycleScheduler:
 
         for p in providers:
             visit(p)
+        # Pre-built instances (value providers: a store handed to StoresModule /
+        # SessionConfig / CacheModule, ``use_value`` rows) have no dependencies,
+        # so moving them to the front keeps the order topological — and makes a
+        # store's ``startup()`` run before any constructed provider's
+        # ``@post_construct`` can use it, however the two are wired (shutdown,
+        # in reverse, stops them last).
+        order = [p for p in order if p.provider_kind == "value"] + [
+            p for p in order if p.provider_kind != "value"
+        ]
         self._order = order
         return order
 

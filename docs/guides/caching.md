@@ -175,7 +175,9 @@ class Quotas:
   `default=None` creates a per-app `MemoryStore(max_entries=100_000)`.
 - Each store is a lifecycle-managed singleton: a backend's `startup()` /
   `aclose()` (or `@post_construct` / `@pre_destruct`) run at `app.startup()` /
-  `app.shutdown()`. A bare `use_value(provide=Store, value=...)` registration
+  `app.shutdown()` — before any provider the container constructs starts, and
+  after the last one stops, so a service may warm the cache in its own
+  `@post_construct`. A bare `use_value(provide=Store, value=...)` registration
   never runs hooks.
 
 ### Sessions on the same store

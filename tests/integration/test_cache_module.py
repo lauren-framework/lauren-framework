@@ -197,3 +197,45 @@ def test_testing_overrides_replace_the_cache() -> None:
 
     app = Test.create_testing_module(Root).override_provider(Cache).use_value(fake).compile()
     assert resolve_cache(app) is fake
+
+
+class StrictStore(MemoryStore):
+    """Refuses to be used before ``startup()`` ran (like a real client pool)."""
+
+    def __init__(self) -> None:
+        super().__init__(max_entries=100)
+        self.events: list[str] = []
+
+    async def startup(self) -> None:
+        self.events.append("startup")
+
+    async def aclose(self) -> None:
+        self.events.append("aclose")
+
+    async def set(self, key: str, value: bytes, *, ttl: float | None = None) -> None:
+        assert self.events == ["startup"], "store used before startup() / after aclose()"
+        await super().set(key, value, ttl=ttl)
+
+
+def test_a_store_starts_before_services_warm_the_cache_and_stops_after_them() -> None:
+    from lauren import post_construct, pre_destruct
+
+    store = StrictStore()
+
+    @injectable()
+    class Warmup:
+        def __init__(self, cache: Cache) -> None:
+            self.cache = cache
+
+        @post_construct
+        async def warm(self) -> None:
+            await self.cache.set("greeting", "hi")
+
+        @pre_destruct
+        async def flush(self) -> None:
+            await self.cache.set("bye", "now")
+
+    app = make_app(CacheModule.for_root(store=store), providers=[Warmup])
+    with TestClient(app) as client:
+        assert client.resolve(Cache) is not None
+    assert store.events == ["startup", "aclose"]
