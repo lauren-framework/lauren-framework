@@ -211,7 +211,8 @@ A change is ready for merge when:
       `run` examples execute, documented attributes exist (new ones are
       added to `docs_contract.toml`), and generated fact regions are
       current (`python scripts/sync_doc_facts.py`).
-- [ ] New behaviour has at least one test in the matching layer.
+- [ ] New behaviour has at least one test in the matching layer, and
+      `nox -s coverage` stays above its 90 % branch-coverage floor.
 - [ ] Public API changes are reflected in `__all__`, `llms.txt`,
       and `llms-full.txt`.
 - [ ] User-facing additions have a doc page or section under `docs/`.

@@ -20,7 +20,7 @@ nox -s tests_unit                   # unit only  (tests/unit/)
 nox -s tests_integration            # integration only  (tests/integration/)
 nox -s tests_e2e                    # end-to-end only  (tests/e2e/)
 nox -s tests_property               # Hypothesis property tests (tests/property/)
-nox -s coverage                     # tests + coverage report
+nox -s coverage                     # tests + branch coverage; fails below 90 %
 
 # Run a single test file / specific test without nox overhead
 pip install -e ".[dev]"             # one-time local install
