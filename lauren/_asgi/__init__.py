@@ -766,6 +766,7 @@ class LaurenApp:
         global_ws_guards: list[type] | None = None,
         global_ws_interceptors: list[type] | None = None,
         strict_content_type: bool | str = False,
+        lazy_startup: bool = True,
     ) -> None:
         self._router = router
         self._container = container
@@ -790,6 +791,13 @@ class LaurenApp:
         self._running = False
         self._in_flight: set[asyncio.Task[Any]] = set()
         self._started = False
+        # Lazy startup for servers / drivers that never send lifespan events
+        # (``httpx.ASGITransport``, some embedded servers): the first ``http``
+        # or ``websocket`` scope starts the app once, behind a single-flight
+        # task, unless a lifespan message was seen or the app opted out.
+        self._lazy_startup = lazy_startup
+        self._lifespan_seen = False
+        self._lazy_start_task: asyncio.Task[None] | None = None
         self._shutdown_event = asyncio.Event()
         self._shutdown_running = False
         self._shutdown_complete = asyncio.Event()
@@ -1841,8 +1849,12 @@ class LaurenApp:
         send: Callable[[dict[str, Any]], Awaitable[None]],
     ) -> None:
         if scope["type"] == "lifespan":
+            self._lifespan_seen = True
             await self._lifespan(scope, receive, send)
             return
+        if not self._started and self._lazy_startup and not self._lifespan_seen:
+            if scope["type"] in ("http", "websocket") and not self._shutdown_running:
+                await self._start_lazily()
         # Check mounted sub-applications before lauren's own routing.  Only
         # HTTP and WebSocket scopes can match a path prefix; other ASGI types
         # (e.g. custom extensions) are left to fall through to the normal path.
@@ -1892,6 +1904,7 @@ class LaurenApp:
             receive=receive,
             app_state=self._app_state,
             max_body_size=self._max_body_size,
+            extensions=scope.get("extensions"),
         )
         task = asyncio.current_task()
         if task is not None:
@@ -1960,6 +1973,24 @@ class LaurenApp:
             # iterable it may still reference the request's ``_receive``
             # callable.
             self._arena.release_request(request)
+
+    async def _start_lazily(self) -> None:
+        """Run :meth:`startup` once for a driver that never sent lifespan events.
+
+        Concurrent first requests share one startup task; a startup failure is
+        re-raised to every request (the app is not retried — a half-run
+        ``@post_construct`` sequence cannot be replayed safely).
+        """
+        task = self._lazy_start_task
+        if task is None:
+            message = (
+                "app started lazily on its first request; the ASGI server did not send "
+                "lifespan events (pass lazy_startup=False to LaurenFactory.create to disable)"
+            )
+            logger.warning(message)
+            self._logger.warn(message, context="LaurenApp")
+            task = self._lazy_start_task = asyncio.ensure_future(self.startup())
+        await asyncio.shield(task)
 
     async def _websocket(
         self,
@@ -2475,6 +2506,7 @@ class LaurenFactory:
         mounts: dict[str, Any] | None = None,
         sessions: SessionConfig | None = None,
         content: ContentConfig | None = None,
+        lazy_startup: bool = True,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -2500,6 +2532,11 @@ class LaurenFactory:
         (:class:`~lauren.types.ContentConfig`). Left unset, apps with
         ``sessions=`` log mismatched JSON ``Content-Type`` values ("warn")
         and other apps do not check them.
+
+        ``lazy_startup`` (default ``True``) makes the app run :meth:`LaurenApp.startup`
+        on its first HTTP or WebSocket request when the ASGI server never
+        sent lifespan events (``httpx.ASGITransport``), logging a warning.
+        Pass ``False`` to keep such an app cold until ``startup()`` is awaited.
         """
         _log: Logger = logger or NullLogger()
         content_config = content if content is not None else ContentConfig()
@@ -2990,6 +3027,7 @@ class LaurenFactory:
             global_ws_guards=effective_global_ws_guards or None,
             global_ws_interceptors=effective_global_ws_interceptors or None,
             strict_content_type=effective_strict_content_type,
+            lazy_startup=lazy_startup,
         )
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via
