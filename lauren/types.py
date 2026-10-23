@@ -1167,9 +1167,6 @@ def _json_default(obj: Any) -> Any:
 
     from ._config._secret import REDACTED, is_secret
 
-    # Secrets (lauren.config.Secret, pydantic SecretStr / SecretBytes) never leak.
-    if is_secret(obj):
-        return REDACTED
     # Pydantic v2 models
     if hasattr(obj, "model_dump") and callable(getattr(obj, "model_dump")):
         return obj.model_dump(mode="json")
@@ -1190,6 +1187,10 @@ def _json_default(obj: Any) -> Any:
         return list(obj)
     if isinstance(obj, bytes):
         return obj.decode("utf-8", errors="replace")
+    # Secrets (lauren.config.Secret, pydantic SecretStr / SecretBytes) never
+    # leak; checked after the common rich types so they pay nothing for it.
+    if is_secret(obj):
+        return REDACTED
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return dataclasses.asdict(obj)
     # msgspec.Struct — detected via __struct_fields__ without importing msgspec.

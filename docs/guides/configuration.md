@@ -351,8 +351,8 @@ ConfigModule.for_root(
 )
 ```
 
-Coming from `APP_ENV`? Set `LAUREN_PROFILE` instead (or pass
-`profile=os.environ["APP_ENV"]`).
+Coming from an `APP_ENV` variable? Rename it to `LAUREN_PROFILE` in your
+deployment; custom profile names (`staging`, `qa`) go in `profiles=`.
 
 ---
 
