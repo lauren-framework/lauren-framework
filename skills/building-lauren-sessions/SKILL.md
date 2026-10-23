@@ -121,22 +121,21 @@ first signs, all verify.
 
 ## Test sessions
 
-`TestClient` has **no cookie jar** — thread the cookie by hand:
+A lifespan-managed `TestClient` keeps a cookie jar — no hand-threading:
 
 ```python
-def _cookie(resp, name="lauren_session"):
-    sc = resp.header("set-cookie") or ""
-    for part in sc.split(";"):
-        part = part.strip()
-        if part.startswith(f"{name}="):
-            return part.split("=", 1)[1]
-    return None
+from lauren.testing import TestClient
 
-r1 = client.get("/account/visits")
-sid = _cookie(r1)
-r2 = client.get("/account/visits", cookies={"lauren_session": sid})
-assert r2.json()["visits"] == 2
+with TestClient(app) as client:              # app built with sessions=SessionConfig(...)
+    client.get("/account/visits")
+    assert client.get("/account/visits").json()["visits"] == 2   # cookie replayed
+    client.set_session({"user_id": "u-42"})  # signed by the app's own session engine
+    other = client.new_session()             # second browser, empty jar
 ```
+
+`secure=True` (the default) works on the default `http://testserver`. A bare
+`TestClient(app)` (no `with`) does not store `Set-Cookie` unless
+`persist_cookies=True` (1.x behaviour).
 
 ## Key points
 

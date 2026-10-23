@@ -110,7 +110,7 @@ assert client.post("/users/", json={"name": "Ada", "age": 36}).status_code == 20
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, lazy_startup=True)`
 
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
@@ -120,7 +120,7 @@ Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven ph
 4. **DI graph compilation** — detect circular deps, scope violations, protocol ambiguities.
 5. **Router compilation** — walk controllers, compile handler signatures into extraction plans, insert into the radix tree.
 6. **Lifecycle order computation** — build the topological `@post_construct` / `@pre_destruct` schedule.
-7. **Readiness** — build the `LaurenApp` object. `startup()` (singleton construction, `@post_construct` hooks, `StartupComplete`) runs on the ASGI lifespan `startup` event. When you drive the app without lifespan support — e.g. `httpx.ASGITransport` — call `await app.startup()` yourself; `lauren.testing.TestClient` does it for you.
+7. **Readiness** — build the `LaurenApp` object. `startup()` (singleton construction, `@post_construct` hooks, `StartupComplete`) runs on the ASGI lifespan `startup` event. When the driver sends no lifespan events — e.g. `httpx.ASGITransport` — the app starts itself on its first HTTP or WebSocket request (once, behind a single-flight latch, with a logged warning) unless built with `lazy_startup=False`; `lauren.testing.TestClient` starts it explicitly.
 
 Failures in phases 1–6 raise a `StartupError` subclass immediately — the app never begins serving traffic with an invalid graph.
 
@@ -155,6 +155,7 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `mounts` | `dict[str, Any]` | `None` | Sub-applications mounted at path prefixes |
 | `sessions` | `SessionConfig` | `None` | Enable signed-cookie sessions (see [Sessions](#sessions)) |
 | `content` | `ContentConfig` | `None` | Request-body content policy: `ContentConfig(strict_content_type=None \| False \| "warn" \| True)` (see [Content-type policy](#content-type-policy-contentconfig)) |
+| `lazy_startup` | `bool` | `True` | Run `startup()` on the first HTTP / WebSocket request when the ASGI server never sent lifespan events (logs a warning); `False` keeps such an app cold until `await app.startup()` |
 
 ### `Lauren` (imperative API)
 
@@ -207,7 +208,7 @@ Attributes & methods:
 - `app.app_state: AppState` — sealed, read-only app-level state.
 - `app.routes()` — list of `RouteEntry` objects.
 - `app.openapi()` — OpenAPI 3.1 schema dict.
-- `await app.startup()` — builds singletons and runs `@post_construct` hooks. Invoked by the ASGI lifespan protocol (uvicorn, hypercorn); call it yourself when there is no lifespan (e.g. `httpx.ASGITransport`) — `TestClient` does. A second call raises `LifecycleViolationError` unless the app was built with `strict_lifecycle=False`.
+- `await app.startup()` — builds singletons and runs `@post_construct` hooks. Invoked by the ASGI lifespan protocol (uvicorn, hypercorn), by `TestClient`, or — for drivers without lifespan events such as `httpx.ASGITransport` — lazily by the first request (`lazy_startup=True`, the default). A second call raises `LifecycleViolationError` unless the app was built with `strict_lifecycle=False`.
 - `await app.shutdown(drain_timeout=10.0)` — runs `@pre_destruct` hooks, awaits in-flight requests.
 - `await app(scope, receive, send)` — standard ASGI callable (HTTP + lifespan).
 - `app.mount(path, app)` — mount a sub-ASGI application at a path prefix.
@@ -368,7 +369,7 @@ class B: ...
 
 ### `Request`
 
-Properties: `method`, `path`, `url`, `path_params`, `query_params`, `headers`, `cookies`, `client`, `server`, `state`, `app_state`.
+Properties: `method`, `path`, `url`, `path_params`, `query_params`, `headers`, `cookies`, `client`, `server`, `state`, `app_state`, `extensions` (the ASGI `scope["extensions"]`, read-only; empty when the server sent none).
 
 Body methods (async): `await request.body() -> bytes`, `await request.text()`, `await request.json()`, `await request.form()`, `request.stream()`.
 
@@ -1554,20 +1555,155 @@ or applied without parentheses).
 from lauren.testing import TestClient
 
 app = LaurenFactory.create(AppModule)
-c = TestClient(app)
-
-r = c.get("/users/42", headers={"Authorization": "Bearer ..."})
-assert r.status_code == 200
-assert r.json()["id"] == 42
+with TestClient(app) as c:             # startup() on enter, shutdown() on exit
+    r = c.get("/users/42", headers={"Authorization": "Bearer ..."})
+    assert r.status_code == 200
+    assert r.json()["id"] == 42
+    assert r.headers.get("content-type") == "application/json"
 ```
 
-`TestClient`:
-- `get / post / put / patch / delete / options / head`
-- `request(method, url, *, headers=None, json=None, content=None, params=None, cookies=None)`
-- All methods return a `TestResponse` with `status_code`, `headers` (list of tuples), `body` (bytes), `text` (str), `json()`, `header(name)`, `headers_all(name)`.
-- Works inside `asyncio.run(...)` tests — it auto-switches to a background thread when called from within a running event loop.
-- Starts the app for you (singletons built, `@post_construct` hooks run), mirroring the ASGI lifespan — immediately for a `LaurenApp`, on the first request for a `Lauren` app (so routes added after creating the client still count).
-- Passes the URL path to the app as written: it does **not** percent-decode it the way ASGI servers do, so a path like `/files/a%2Fb` reaches a handler as `a%2Fb` in tests but `a/b` under uvicorn.
+`lauren.testing` (all names import from there): `TestClient`, `AsyncTestClient`,
+`TestResponse`, `StreamingTestResponse`, `ResponseHeaders`,
+`HTTPStatusAssertionError`, `CookieJar`, `StoredCookie`, `Test`,
+`TestingModuleBuilder`, `lifespan`, `WsTestClient`, `WebSocketTestSession`,
+`WebSocketSession`; opt-in fixtures in `lauren.testing.pytest_plugin`.
+
+### `TestClient(app, *, base_url="http://testserver", headers=None, cookies=None, follow_redirects=False, timeout=30.0, raise_server_exceptions=False, lifespan="auto", backend="asyncio", backend_options=None, root_path="", strict_cookies=False, persist_cookies=None)`
+
+- **One persistent event loop per client**: startup, requests, background tasks,
+  WebSockets and shutdown share it, so `asyncio.Event`/`Queue`/`Lock`, pools and
+  tasks created in `@post_construct` keep working. A call from sync test code
+  runs that loop in the test's thread (thread-local state and context variables
+  are visible, as in 1.x); a daemon thread runs it between calls. Calling the
+  sync client inside a running loop works but warns once — use `AsyncTestClient`.
+- **Lifespan**: `with TestClient(app)` runs `startup()` on enter and the full
+  shutdown (drain → `on_shutdown` → `@pre_destruct` → generator teardown) on
+  exit; failures raise the original exception. A bare `TestClient(app)` keeps
+  1.x behaviour: a `LaurenApp` starts at construction, a `Lauren` app on its
+  first request; `close()` shuts down; garbage collection stops the loop
+  without shutdown hooks. `lifespan="off"` never starts/stops; `"on"` also
+  drives a foreign ASGI app's lifespan outside `with` and fails if unsupported.
+- **One driver per app**: a second `TestClient(app)` attaches to the live
+  client's loop; entering it with `with` raises — use `client.new_session()`
+  (same app and loop, empty jar). Restarting a shut-down app raises.
+- **Requests**: `request(method, url, *, params, headers, cookies, json, data, files, content, follow_redirects, timeout, disconnect_after)`
+  and `get/post/put/patch/delete/head/options(url, **kw)`; `await arequest(...)`.
+  `data=` → urlencoded form, `files=` → multipart (`{"f": ("a.png", b"...", "image/png")}`,
+  file objects, lists), `content=` bytes/str or an (async) iterable streamed per
+  chunk. A `host` header comes from `base_url`; an explicit `content-type` wins.
+- **Timeouts**: `timeout` (30 s; `None` for a bare client) bounds each request;
+  on expiry the app task is cancelled and `TimeoutError` is raised.
+- **Cookies**: `client.cookies` is a browser-like `CookieJar` (domain/path
+  matching, `Max-Age`/`Expires`, `Max-Age=0` deletes, `__Host-`/`__Secure-`
+  rules; `Secure` cookies work on `testserver`/`localhost`/`127.0.0.1`/`::1`
+  unless `strict_cookies=True`). `Set-Cookie` is stored for `with`-managed and
+  `new_session()` clients (`persist_cookies=None`); a bare client stores none
+  unless `persist_cookies=True`. Per-request `cookies=` merge without
+  persisting; an explicit `Cookie` header bypasses the jar.
+  `client.set_session({...})` issues a valid signed session cookie.
+- **Streaming**: `with client.stream("GET", "/events") as r:` →
+  `StreamingTestResponse` with `iter_bytes()/iter_text()/iter_lines()/iter_sse()`
+  (`ServerSentEvent` items); leaving the block (or `r.close()`) delivers
+  `http.disconnect`; `timeout` bounds each chunk.
+- **Disconnects**: `receive()` blocks after the body until the response is
+  complete, then reports `http.disconnect`. `disconnect_after=0.2` simulates a
+  client abort: a blocked `receive()` gets `http.disconnect`, a streamed body is
+  truncated, later sends are dropped, and the call returns after the app's
+  coroutine finished with `r.aborted is True` (`status_code` is `None` if the
+  response never started).
+- **Diagnostics**: `raise_server_exceptions=True` re-raises errors that became a
+  500 (not `HTTPError`s) via a `lauren.testing` scope extension
+  (`request.extensions`); `with client.capture(RequestComplete) as events:`
+  collects the app's lifecycle events; `client.resolve(Token)` resolves DI on
+  the client's loop.
+- **WebSockets**: `with client.websocket_connect("/chat", timeout=5.0) as ws:` —
+  sync `send_text/send_bytes/send_json/send_event(event, data)` and
+  `receive/receive_text/receive_bytes/receive_json/receive_event()`, carrying
+  the jar's cookies. `WsTestClient(app).connect(path, server_timeout=2.0)` is the
+  async variant.
+- Passes the URL path to the app as written: it does **not** percent-decode it
+  the way ASGI servers do, so `/files/a%2Fb` reaches a handler as `a%2Fb` in
+  tests but `a/b` under uvicorn.
+
+`TestResponse`: `status_code`, `headers` (`ResponseHeaders` — still a
+`list[tuple[str, str]]`, plus case-insensitive `get`, `getall`, `["name"]`,
+`keys()`, `in`), `body`/`content`, `text`, `json()`, `header(name)`,
+`headers_all(name)`, `cookies`, `is_success`/`is_redirect`/`is_client_error`/
+`is_server_error`, `raise_for_status()` (raises
+`HTTPStatusAssertionError(AssertionError)`), `aborted`, `url`, `request`,
+`elapsed`, `history`.
+
+`AsyncTestClient` has the same keywords and methods, awaited, on the caller's
+loop (`async with AsyncTestClient(app) as client`, `await client.get(...)`,
+`async with client.stream(...)` with `aiter_*`). An app driven by a client on
+another loop raises `RuntimeError`. `async with lauren.testing.lifespan(app):`
+runs startup/shutdown around a third-party client such as
+`httpx.AsyncClient(transport=ASGITransport(app))`.
+
+### Provider overrides — `Test.create_testing_module(root, *, overrides=(), **factory_kwargs)`
+
+```python run
+from lauren import controller, get, injectable, module
+from lauren.testing import Test, TestClient
+
+@injectable()
+class Clock:
+    def now(self) -> str:
+        return "real time"
+
+@controller("/time")
+class TimeController:
+    def __init__(self, clock: Clock) -> None:
+        self.clock = clock
+
+    @get("/")
+    async def now(self) -> dict:
+        return {"now": self.clock.now()}
+
+@module(providers=[Clock], exports=[Clock])
+class ClockModule:
+    pass
+
+@module(imports=[ClockModule], controllers=[TimeController])
+class TimeModule:
+    pass
+
+class FrozenClock:
+    def now(self) -> str:
+        return "2026-01-01T00:00:00Z"
+
+app = Test.create_testing_module(TimeModule).override_provider(Clock).use_class(FrozenClock).compile()
+with TestClient(app) as client:
+    assert client.get("/time/").json() == {"now": "2026-01-01T00:00:00Z"}
+```
+
+`TestingModuleBuilder` steps: `override_provider(token)` →
+`use_value(v)` / `use_class(cls, scope=None)` / `use_factory(fn, injects=[...], scope=None)` /
+`use_existing(token)` / `use_values([...])` (whole multi-binding set), with
+`.optional()` to tolerate a missing target; `override_guard(G)` → `allow()` /
+`deny()` / `use_value` / `use_class`; `override_interceptor(I)` and
+`override_middleware(M)` → `passthrough()` / `use_value` / `use_class`;
+`override_exception_handler(H)` → `use_value(obj_or_fn)` / `use_class` (class
+form); `override_module(Old).with_module(New)`. `compile()` runs the full
+`LaurenFactory.create` (same kwargs) with the overrides applied: the
+replacement keeps the target's token, owning module, `provides` and `multi`, so
+visibility and Protocol / `list[T]` bindings are unchanged; the replaced
+provider is never instantiated; `use_class`/`use_factory` inherit the target's
+scope. Errors: `MissingProviderError` with `detail["reason"] == "override_target_missing"`
+(target nothing registers), `StartupError` (same reason, module not imported),
+`DIScopeViolationError` (scope narrowing), `DecoratorUsageError` (same token
+overridden twice). Declarative form: `overrides=[use_value(provide=Repo, value=fake)]`.
+No user class is mutated and nothing is consulted per request.
+
+### pytest plugin (opt-in)
+
+`pytest_plugins = ["lauren.testing.pytest_plugin"]` in `conftest.py`. Ini:
+`lauren_app = "pkg.main:AppModule"` (a `@module` class, a
+`TestingModuleBuilder`, or — with `lauren_client_scope = session` — an app
+object) and `lauren_client_scope` (default `function`). Fixtures: `lauren_app`
+(compiles a `lauren_testing_module` fixture when you define one),
+`lauren_client` (lifespan-managed), `lauren_aclient` (pytest-asyncio),
+`lauren_ws`, `lauren_capture`.
 
 ### Test tiers
 

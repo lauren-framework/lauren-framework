@@ -13,7 +13,7 @@ Produces :class:`LaurenApp` instances via the 7-phase pipeline.
 #### `LaurenFactory.create`
 
 ```python
-def create(root_module: type, strict_lifecycle: bool = True, global_middlewares: Iterable[type] | None = None, global_guards: Iterable[type] | None = None, global_interceptors: Iterable[type] | None = None, global_exception_handlers: Iterable[Any] | None = None, global_providers: Iterable[Any] | None = None, global_ws_guards: Iterable[type] | None = None, global_ws_interceptors: Iterable[type] | None = None, max_body_size: int = 1048576, app_state: AppState | None = None, logger: Logger | None = None, openapi_info: dict[str, Any] | None = None, openapi_servers: list[dict[str, Any]] | None = None, openapi_security_schemes: dict[str, Any] | None = None, openapi_url: str | None = None, docs_url: str | None = None, redoc_url: str | None = None, arena: RequestArena | None = None, arena_capacity: int | None = None, json_encoder: JSONEncoder | None = None, signals: SignalBus | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, sessions: SessionConfig | None = None, content: ContentConfig | None = None) -> LaurenApp
+def create(root_module: type, strict_lifecycle: bool = True, global_middlewares: Iterable[type] | None = None, global_guards: Iterable[type] | None = None, global_interceptors: Iterable[type] | None = None, global_exception_handlers: Iterable[Any] | None = None, global_providers: Iterable[Any] | None = None, global_ws_guards: Iterable[type] | None = None, global_ws_interceptors: Iterable[type] | None = None, max_body_size: int = 1048576, app_state: AppState | None = None, logger: Logger | None = None, openapi_info: dict[str, Any] | None = None, openapi_servers: list[dict[str, Any]] | None = None, openapi_security_schemes: dict[str, Any] | None = None, openapi_url: str | None = None, docs_url: str | None = None, redoc_url: str | None = None, arena: RequestArena | None = None, arena_capacity: int | None = None, json_encoder: JSONEncoder | None = None, signals: SignalBus | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, sessions: SessionConfig | None = None, content: ContentConfig | None = None, lazy_startup: bool = True) -> LaurenApp
 ```
 
 Build a :class:`LaurenApp` from a root ``@module`` class.
@@ -41,10 +41,15 @@ route handlers are tried first, then globals.
 ``sessions=`` log mismatched JSON ``Content-Type`` values ("warn")
 and other apps do not check them.
 
+``lazy_startup`` (default ``True``) makes the app run :meth:`LaurenApp.startup`
+on its first HTTP or WebSocket request when the ASGI server never
+sent lifespan events (``httpx.ASGITransport``), logging a warning.
+Pass ``False`` to keep such an app cold until ``startup()`` is awaited.
+
 ### `Lauren`
 
 ```python
-class Lauren(title: str = 'lauren application', version: str = '1.0.0', description: str | None = None, openapi_url: str | None = '/openapi.json', docs_url: str | None = '/docs', redoc_url: str | None = '/redoc', servers: list[dict[str, Any]] | None = None, security_schemes: dict[str, Any] | None = None, debug: bool = False, max_body_size: int = 1048576, strict_lifecycle: bool = True, app_state: AppState | None = None, logger: Any | None = None, global_middlewares: list[type] | None = None, global_guards: list[type] | None = None, global_interceptors: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, sessions: Any | None = None, content: Any | None = None, json_encoder: Any | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, signals: Any | None = None, arena: Any | None = None, arena_capacity: int | None = None)
+class Lauren(title: str = 'lauren application', version: str = '1.0.0', description: str | None = None, openapi_url: str | None = '/openapi.json', docs_url: str | None = '/docs', redoc_url: str | None = '/redoc', servers: list[dict[str, Any]] | None = None, security_schemes: dict[str, Any] | None = None, debug: bool = False, max_body_size: int = 1048576, strict_lifecycle: bool = True, app_state: AppState | None = None, logger: Any | None = None, global_middlewares: list[type] | None = None, global_guards: list[type] | None = None, global_interceptors: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, sessions: Any | None = None, content: Any | None = None, json_encoder: Any | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, signals: Any | None = None, arena: Any | None = None, arena_capacity: int | None = None, lazy_startup: bool = True)
 ```
 
 A FastAPI-inspired ASGI application over lauren's module pipeline.
@@ -276,7 +281,7 @@ parity with the classic API.
 ### `LaurenApp`
 
 ```python
-class LaurenApp(router: Router, container: DIContainer, module_graph: ModuleGraph, lifecycle: LifecycleScheduler, compiled_handlers: dict[tuple[str, str], CompiledHandler], global_middlewares: list[type], app_state: AppState, strict_lifecycle: bool = True, max_body_size: int = 1048576, logger: Logger | None = None, ws_router: Router | None = None, ws_gateways: dict[str, Any] | None = None, arena: RequestArena | None = None, signals: SignalBus | None = None, error_format: str = 'default', global_guards: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_interceptors: list[type] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, strict_content_type: bool | str = False)
+class LaurenApp(router: Router, container: DIContainer, module_graph: ModuleGraph, lifecycle: LifecycleScheduler, compiled_handlers: dict[tuple[str, str], CompiledHandler], global_middlewares: list[type], app_state: AppState, strict_lifecycle: bool = True, max_body_size: int = 1048576, logger: Logger | None = None, ws_router: Router | None = None, ws_gateways: dict[str, Any] | None = None, arena: RequestArena | None = None, signals: SignalBus | None = None, error_format: str = 'default', global_guards: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_interceptors: list[type] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, strict_content_type: bool | str = False, lazy_startup: bool = True)
 ```
 
 A compiled, ready-to-serve ASGI application.

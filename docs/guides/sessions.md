@@ -359,31 +359,33 @@ async def h(self, session: Session) -> dict:   # no sessions=SessionConfig(...) 
 
 ## Testing sessions
 
-Lauren's `TestClient` keeps **no cookie jar**, so thread the cookie by hand:
-read it from `Set-Cookie` on one response, pass it back via `cookies={...}` on
-the next.
+A lifespan-managed `TestClient` keeps a browser-like **cookie jar**: the session
+cookie a response sets is replayed on the next request, `Max-Age=0` (logout)
+removes it, and the default `secure=True` cookie works on the default
+`http://testserver` base URL (browsers treat test hosts as secure contexts).
 
 ```python
 from lauren import LaurenFactory, SessionConfig
 from lauren.testing import TestClient
 
-def _cookie(resp, name="lauren_session"):
-    sc = resp.header("set-cookie") or ""
-    for part in sc.split(";"):
-        part = part.strip()
-        if part.startswith(f"{name}="):
-            return part.split("=", 1)[1]
-    return None
+app = LaurenFactory.create(AppModule, sessions=SessionConfig(secret="x" * 32))
 
-client = TestClient(LaurenFactory.create(AppModule, sessions=SessionConfig(secret="x" * 32)))
+with TestClient(app) as client:
+    assert client.get("/account/visits").json() == {"visits": 1}
+    assert client.get("/account/visits").json() == {"visits": 2}   # cookie replayed
 
-r1 = client.get("/account/visits")
-assert r1.json() == {"visits": 1}
-cookie = _cookie(r1)
+    other = client.new_session()              # a second browser with an empty jar
+    assert other.get("/account/visits").json() == {"visits": 1}
 
-r2 = client.get("/account/visits", cookies={"lauren_session": cookie})
-assert r2.json() == {"visits": 2}
+    client.set_session({"visits": 41})        # a valid signed cookie, issued by the app's engine
+    assert client.get("/account/visits").json() == {"visits": 42}
 ```
+
+`client.cookies.get("lauren_session")` reads the stored value; pass
+`cookies={...}` to override a cookie for a single request (tampering tests). A
+bare `TestClient(app)` — not used with `with` — keeps the 1.x behaviour of not
+storing `Set-Cookie` (opt in with `persist_cookies=True`). See the
+[Testing guide](testing.md#cookies-and-sessions).
 
 ---
 

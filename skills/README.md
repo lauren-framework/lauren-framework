@@ -15,7 +15,7 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 | [building-lauren-streaming](building-lauren-streaming/) | SSE (`EventStream`, `ServerSentEvent`), WebSocket gateways (`@ws_controller`), `StreamingResponse[T]`, Socket.IO adapter |
 | [building-lauren-background-tasks](building-lauren-background-tasks/) | `BackgroundTasks`, `TaskHandle`, fire-and-forget patterns |
 | [building-lauren-sessions](building-lauren-sessions/) | `sessions=SessionConfig(...)`, `session: Session` injection, `SessionStore` backends, signed cookies, `regenerate_id()`/`invalidate()` |
-| [testing-lauren-apps](testing-lauren-apps/) | `TestClient`, `WsTestClient`, async tests, mock providers, startup-failure assertions |
+| [testing-lauren-apps](testing-lauren-apps/) | Lifespan-managed `TestClient` / `AsyncTestClient`, cookies & sessions, uploads, streams, `Test.create_testing_module` overrides, pytest plugin, startup-failure assertions |
 | [migrating-from-fastapi](migrating-from-fastapi/) | Side-by-side FastAPI → lauren equivalents (routing, DI, middleware, errors) |
 | [using-companion-packages](using-companion-packages/) | CORS, auth guards (`jwt_bearer`, `api_key`), structured logging with `lauren-logging` |
 | [building-companion-packages](building-companion-packages/) | Package structure, DI/module integration, CI/CD, `llms*.txt`, and publishing for Lauren ecosystem packages |

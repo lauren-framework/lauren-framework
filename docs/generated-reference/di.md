@@ -203,7 +203,7 @@ Example::
 ### `DIContainer`
 
 ```python
-class DIContainer()
+class DIContainer(overrides: OverridePlan | None = None)
 ```
 
 Compiled DI container; immutable after :meth:`compile`.
@@ -224,6 +224,14 @@ field annotations), and installs an immutable :class:`Provider`
 entry. Classes and functions are routed by the same registry
 so module visibility, scope validation, and multi-binding all
 work uniformly.
+
+#### `DIContainer.applied_overrides`
+
+```python
+def applied_overrides(self) -> frozenset[Any]
+```
+
+Tokens whose registration an override has replaced in this container.
 
 #### `DIContainer.register_value`
 

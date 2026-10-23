@@ -171,6 +171,13 @@ core ideas:
   Unsafe configuration is rejected at startup. Pair with
   `content=ContentConfig(strict_content_type=True)` so cross-site `text/plain`
   posts to JSON routes are rejected (415).
+* **Testing toolkit** — `with TestClient(app)` runs startup and the full
+  shutdown on one persistent event loop, keeps a browser-like cookie jar, sends
+  forms / uploads / streamed bodies, reads endless streams event by event and
+  simulates client aborts. `Test.create_testing_module(AppModule)
+  .override_provider(X).use_value(fake).compile()` swaps any provider, guard,
+  middleware or module and is validated by the real factory. `AsyncTestClient`
+  and an opt-in pytest plugin round it out.
 * **Static files** — `StaticFilesModule.for_root("/assets", directory="./public")`
   with ETag caching, `Cache-Control`, path-traversal protection, and dotfiles
   (`.env`, `.git/`) hidden by default (`/.well-known/` still served).
@@ -400,6 +407,24 @@ The cookie is HMAC-signed and secure by default (`HttpOnly`, `Secure`,
 `SameSite=Lax`). Swap `InMemorySessionStore` for the stateless
 `SignedCookieSessionStore` or a Redis-backed `SessionStore` in production.
 Unsafe configuration fails inside `LaurenFactory.create`, not at runtime.
+
+## Testing
+
+```python
+from lauren.testing import Test, TestClient
+
+app = Test.create_testing_module(AppModule).override_provider(Mailer).use_value(FakeMailer()).compile()
+
+with TestClient(app) as client:                 # startup() on enter, shutdown() on exit
+    client.post("/account/login")               # Set-Cookie kept in client.cookies
+    assert client.get("/account/visits").json() == {"visits": 1}
+    with client.stream("GET", "/events") as r:  # endless SSE, event by event
+        first = next(r.iter_sse())
+```
+
+One event loop per client keeps startup-created resources (pools, `asyncio`
+primitives, background tasks) alive across requests. See the
+[testing guide](https://lauren-py.dev/guides/testing/).
 
 ## Performance
 

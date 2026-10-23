@@ -115,7 +115,7 @@ lauren/                      — framework package
 ├── streaming.py             — StreamingResponse[T], Stream, StreamReader
 ├── sse.py                   — EventStream, ServerSentEvent, last_event_id
 ├── socketio.py              — public Socket.IO controller surface
-├── testing.py               — TestClient + WsTestClient (in-process ASGI)
+├── testing/                 — TestClient / AsyncTestClient, Test.create_testing_module, pytest_plugin
 ├── types.py                 — Request, Response, State, Headers, Scope, Discriminated, …
 ├── websockets.py            — @ws_controller, @on_message, WebSocket, BroadcastGroup
 ├── docs.py                  — programmatic access to llms.txt / llms-full.txt
@@ -232,6 +232,7 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
 | Copy Lauren metadata (guards, interceptors, …) to another class/fn | `@propagate_metadata(source)` |
 | Read all routes declared on a controller | `reflect_routes(cls)` → `tuple[ReflectedRoute, ...]` |
+| Replace a provider / guard / middleware in a test | `Test.create_testing_module(AppModule).override_provider(X).use_value(fake).compile()` |
 | Query the compiled route table of a running app | `get_all_routes(app)`, `get_route_metadata(app, method, path)` |
 | Read any `@use_*` metadata from a class without `__dict__` access | `reflect_guards`, `reflect_interceptors`, `reflect_exception_handlers`, … |
 
@@ -347,9 +348,10 @@ WebSockets and SSE are first-class peers of HTTP, not bolt-ons.
   ```
 
 When adding tests for either, drive a real app through
-`lauren.testing.WsTestClient` (websockets) or `TestClient` (SSE — the
-buffered client returns the entire stream body, which makes assertions
-deterministic).
+`client.websocket_connect(...)` / `lauren.testing.WsTestClient` (websockets) or
+`TestClient` (SSE — `client.get(...)` returns a finite stream's entire body,
+`client.stream(...)` reads an endless one event by event and disconnects on
+exit).
 
 → *See `skills/building-lauren-streaming/` for copy-paste SSE and WebSocket gateway patterns.*
 
@@ -396,11 +398,19 @@ deterministic).
   controller / injectable / module / middleware / ws_controller /
   exception_handler — the framework raises
   `MetadataInheritanceError` at startup, not at runtime.
-- ❌ Returning a `StreamingResponse` from a handler that uses the
-  buffered `TestClient` and expecting per-frame assertions — the
-  buffered client materialises the entire body. Use `TestClient` for
-  end-state assertions; instantiate the response and iterate it
-  manually for chunk-by-chunk inspection.
+- ❌ Calling `client.get(...)` on an endless stream and expecting per-frame
+  assertions — `get` buffers the whole body (and hits the client `timeout`
+  on a stream that never ends). Use `with client.stream(...) as r:` and
+  `r.iter_sse()` / `r.iter_bytes()`; leaving the block disconnects.
+- ❌ Driving one app with two independent test clients. An app's loop-bound
+  resources live on its driver's event loop: a second `TestClient(app)`
+  attaches to the first client's loop, entering it with `with` raises, and an
+  `AsyncTestClient` on another loop raises. Use `client.new_session()` for a
+  second user and build a fresh app (or testing module) per lifespan.
+- ❌ Rebuilding a whole test module with `use_value(...)` to swap one provider
+  — use `Test.create_testing_module(AppModule).override_provider(X).use_value(fake).compile()`;
+  it replaces the provider wherever it lives in the graph and is validated by
+  the real factory (a target nothing registers fails `compile()`).
 - ❌ Calling asyncio primitives (e.g. `asyncio.Queue.put_nowait`)
   directly from inside a sync handler. Sync handlers run in a thread
   pool; asyncio objects are not thread-safe. Use
@@ -497,7 +507,10 @@ deterministic).
 - **Unit** (`tests/unit/`) — import the specific module, call directly.
   Pure-Python, no event loop unless the module is async-only.
 - **Integration** (`tests/integration/`) — build a `@module`, call
-  `LaurenFactory.create`, drive via `lauren.testing.TestClient`.
+  `LaurenFactory.create`, drive via `lauren.testing.TestClient` (prefer
+  `with TestClient(app) as client:` — startup on enter, shutdown hooks on
+  exit, cookie jar on). Swap collaborators with
+  `Test.create_testing_module(...).override_provider(...)`.
 - **E2E** (`tests/e2e/`) — full-stack multi-backend tests that exercise
   all validator paths (pydantic, dataclass, TypedDict, discriminated unions)
   in a single running app. Mirror integration structure but verify the
@@ -509,9 +522,11 @@ deterministic).
   context-manager guarantees the server task is awaited so unhandled
   server-side exceptions surface cleanly into the test.
 - **SSE** — return `EventStream` from a handler, drive it through
-  `TestClient`, and parse the buffered body. There's a tiny
-  `parse_sse_body` helper in `tests/integration/test_sse.py` that's
-  sufficient for assertions.
+  `TestClient`: parse a finite body from `client.get(...)`, or read an endless
+  stream with `client.stream(...).iter_sse()`.
+- **Disconnects** — `disconnect_after=` on any request (or closing a stream)
+  simulates a client abort; `receive()` otherwise blocks after the body until
+  the response is complete, like a real server.
 - **Startup-failure tests** — build the module, `LaurenFactory.create`
   inside `pytest.raises(SomeError)`, assert on `detail` keys too.
 - **Regression shape:** every bug fix gets a test in the same file as
@@ -554,7 +569,9 @@ deterministic).
 - `lauren/exceptions.py` — the full error hierarchy (generated table:
    `docs/reference/errors.md`). Pick the closest existing class before adding a new one.
 - `lauren/signals.py` — `SignalBus`, lifecycle events, POSIX signal handlers.
-- `lauren/testing.py` — `TestClient`, `WsTestClient` for in-process testing.
+- `lauren/testing/` — `TestClient` (one persistent loop per client, lifespan
+  via `with`), `AsyncTestClient`, `Test.create_testing_module` overrides,
+  cookie jar, `WsTestClient`, opt-in `pytest_plugin`.
 - `lauren/serialization.py` — JSON encoders: `StdlibJSONEncoder`,
   `OrjsonEncoder`, `MsgspecEncoder`, `PydanticEncoder`.
 - `lauren/extractors.py` — typed extractors, pipes, `ExtractionMarker`.
