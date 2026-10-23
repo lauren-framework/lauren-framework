@@ -341,6 +341,16 @@ class SchedulingRuntime:
         self._logger = logger
         self._job_drain_timeout = job_drain_timeout
 
+    def restrict(self, *, hosted_services: bool, scheduler: bool) -> None:
+        """Before startup: keep hosted services / scheduled firing off (``ApplicationContext``).
+
+        Only narrows — what the app was built without stays off.
+        """
+        if not hosted_services and self.supervisor is not None:
+            self.supervisor._enabled = False
+        if not scheduler and self.scheduler is not None:
+            self.scheduler._enabled = False
+
     async def start(self) -> None:
         """Startup steps 3-4: start hosted services in order, then arm the scheduler."""
         if self.supervisor is not None:

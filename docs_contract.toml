@@ -70,9 +70,23 @@
 ]
 "lauren.LaurenApp" = [
     "router", "container", "app_state", "routes", "openapi",
-    "startup", "shutdown", "on_shutdown", "mount", "mounts", "scope", "error_format",
+    "startup", "shutdown", "on_shutdown", "mount", "mounts", "scope", "context", "error_format",
 ]
+"lauren.LaurenFactory" = ["create", "create_context"]
 "lauren.OperationScope" = ["name", "values", "active", "teardown_errors", "resolve"]
+"lauren.ApplicationContext" = [
+    "app", "container", "active", "get", "resolve", "scope", "run_command", "commands",
+    "wait_for_shutdown_signal", "from_lauren",
+]
+"lauren.CommandContext" = [
+    "name", "argv", "stdout", "stderr", "is_interactive", "assume_yes", "log", "echo", "error", "confirm", "fail",
+]
+"lauren.CommandResult" = ["exit_code", "value", "stdout", "stderr", "exception"]
+"lauren.Opt" = ["short", "env", "help"]
+"lauren.commands.CommandInfo" = ["name", "aliases", "help", "hidden", "parameters", "module", "target"]
+"lauren.commands.CommandParameter" = [
+    "name", "kind", "flags", "type", "required", "default", "repeatable", "choices", "env", "help",
+]
 "lauren.events.EventBus" = ["emit", "recording", "drain", "disabled", "handlers_for"]
 "lauren.events.EventPublisher" = ["emit", "emit_threadsafe", "in_request"]
 "lauren.events.EmitResult" = ["event", "handled", "scheduled", "errors", "ok"]

@@ -40,7 +40,7 @@ from typing import Any, Awaitable, Callable
 
 from .context import OperationScope
 from .decorators import controller, module
-from .exceptions import LifecycleViolationError, StartupError
+from .exceptions import LifecycleViolationError
 from .types import AppState, DebugConfig
 
 
@@ -339,13 +339,13 @@ class Lauren:
     # ------------------------------------------------------------------
 
     def on_startup(self, fn: Callable[[], Any]) -> Callable[[], Any]:
-        """Register a callable to run when the application compiles.
+        """Register a callable to run when the application starts.
 
-        Accepts both sync and async callables. Hooks run right after
-        ``LaurenFactory.create`` has built the app — the DI graph is
-        compiled, but singletons are not instantiated yet, so
-        ``@post_construct`` hooks (which run in ``LaurenApp.startup()``)
-        have **not** fired — and before any request is dispatched.
+        Accepts both sync and async callables. Hooks run in registration order
+        inside ``LaurenApp.startup()`` (the ASGI lifespan, ``TestClient``, an
+        ``ApplicationContext``) after all ``@post_construct`` hooks have fired
+        and before hosted services start or any request is dispatched. A
+        failing hook aborts startup with a :class:`StartupError`.
         """
         self._assert_not_compiled("register an on_startup handler")
         self._startup_handlers.append(fn)
@@ -377,14 +377,14 @@ class Lauren:
             )
 
     async def startup(self) -> Any:
-        """Compile the application and run its ``on_startup`` hooks.
+        """Compile the application without starting it.
 
         Safe to call multiple times — later calls return the already-compiled
         :class:`LaurenApp`. Starting the app (building singletons, running
-        ``@post_construct``) is the ASGI lifespan's job;
-        :class:`~lauren.testing.TestClient` compiles and starts the app on its
-        first request. Returns the underlying :class:`LaurenApp` so tests can
-        introspect it.
+        ``@post_construct`` and then ``on_startup`` hooks) is the ASGI
+        lifespan's job; :class:`~lauren.testing.TestClient` compiles and
+        starts the app on its first request. Returns the underlying
+        :class:`LaurenApp` so tests can introspect it.
         """
         return await self._compile()
 
@@ -408,17 +408,15 @@ class Lauren:
         await self._compiled.shutdown(drain_timeout=drain_timeout)
 
     async def _compile(self) -> Any:
-        if self._compiled is not None:
-            return self._compiled
-        if self._compile_lock is None:
-            self._compile_lock = asyncio.Lock()
-        async with self._compile_lock:
-            if self._compiled is not None:
-                return self._compiled
-            self._compiled = await self._build_compiled()
+        return self._compile_now()
+
+    def _compile_now(self) -> Any:
+        """Compile synchronously (once); building the app never awaits."""
+        if self._compiled is None:
+            self._compiled = self._build_compiled()
         return self._compiled
 
-    async def _build_compiled(self) -> Any:
+    def _build_compiled(self) -> Any:
         # Import locally to avoid circular imports at package load time.
         from ._asgi import LaurenFactory
 
@@ -473,17 +471,9 @@ class Lauren:
             scheduler=self._scheduler,
             strict_request_scope=self._strict_request_scope,
         )
-        # --- Run user-provided startup hooks now that DI is live ---------
-        for hook in self._startup_handlers:
-            try:
-                res = hook()
-                if inspect.isawaitable(res):
-                    await res
-            except Exception as exc:
-                raise StartupError(
-                    f"on_startup handler {getattr(hook, '__name__', repr(hook))} failed: {exc}",
-                    detail={"handler": getattr(hook, "__name__", repr(hook))},
-                ) from exc
+        # --- Startup hooks run inside LaurenApp.startup(), after every
+        # @post_construct hook (not here, before singletons exist) ---------
+        app._startup_hooks.extend(self._startup_handlers)
         # --- Attach user shutdown hooks to the underlying LaurenApp ------
         for hook in self._shutdown_handlers:
             app.on_shutdown(hook)

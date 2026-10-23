@@ -20,6 +20,7 @@ from .._di import INJECTABLE_META, DIContainer, InjectableMeta
 from .._di._scope import finalize_scope
 from .._di._overrides import active_override_plan
 from .._di.custom import CustomProvider
+from .._commands._compile import CommandRegistry, compile_commands
 from .._discovery import DiscoveryIndex, build_discovery_index, registered_markers
 from .._events import EventBus, compile_events, install_events
 from .._scheduling._module import SchedulingRuntime, compile_scheduling, prepare_scheduling
@@ -38,7 +39,7 @@ from ..signals import (
     get_default_bus,
 )
 from ..background import BackgroundTasks as _BackgroundTasks, _BG_TASKS_ATTR
-from ..context import OperationScope
+from ..context import ApplicationContext, OperationScope
 from .._lifecycle import LifecycleScheduler
 from .._modules import ModuleGraph
 from .._routing import RouteEntry, Router
@@ -886,6 +887,11 @@ class LaurenApp:
         # Hosted services + scheduler (``lauren.scheduling``); ``None`` when
         # the app declares none, so startup/shutdown pay nothing.
         self._scheduling: SchedulingRuntime | None = None
+        # ``@command`` methods (``lauren.commands``), compiled in Phase 6a.
+        self._commands: CommandRegistry = CommandRegistry()
+        # ``Lauren.on_startup`` hooks: run by ``startup()`` right after the
+        # ``@post_construct`` hooks, so the DI graph is fully initialised.
+        self._startup_hooks: list[Callable[[], Any]] = []
 
     # -- Introspection -----------------------------------------------------
 
@@ -1031,6 +1037,21 @@ class LaurenApp:
         """
         return OperationScope(self._container, name, values=values)
 
+    def context(
+        self, *, hosted_services: bool = False, scheduler: bool = False, drain_timeout: float = 10.0
+    ) -> ApplicationContext:
+        """Wrap this built, not yet started app in an :class:`~lauren.context.ApplicationContext`.
+
+        For tooling that only knows ``main:app``; ``async with app.context() as ctx:``
+        starts the app without serving HTTP and shuts it down on exit. Hosted
+        services and the scheduler stay off unless enabled here (and on the
+        app). Raises :class:`~lauren.exceptions.LifecycleViolationError` when
+        the app was already started: one lifecycle has one owner.
+        """
+        return ApplicationContext(
+            self, hosted_services=hosted_services, scheduler=scheduler, drain_timeout=drain_timeout
+        )
+
     # -- Startup / Shutdown ------------------------------------------------
 
     async def startup(self) -> None:
@@ -1051,6 +1072,8 @@ class LaurenApp:
             self._events._on_startup()
         self._logger.log("Running @post_construct hooks", context="Lifecycle")
         await self._lifecycle.run_post_construct()
+        if self._startup_hooks:
+            await self._run_startup_hooks()
         if self._scheduling is not None:
             # Hosted services start in dependency order, then the scheduler
             # is armed; nothing fires before StartupComplete.
@@ -1070,6 +1093,20 @@ class LaurenApp:
         await self._signals.emit(StartupComplete(app=self, duration_s=duration))
         if self._scheduling is not None:
             self._scheduling.begin_firing()  # READY: run_once / initial_delay count from here
+
+    async def _run_startup_hooks(self) -> None:
+        """Run ``Lauren.on_startup`` hooks in order; a failure becomes a :class:`StartupError`."""
+        for hook in self._startup_hooks:
+            name = getattr(hook, "__name__", repr(hook))
+            try:
+                result = hook()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                raise StartupError(
+                    f"on_startup handler {name} failed: {exc}",
+                    detail={"handler": name},
+                ) from exc
 
     async def shutdown(self, *, drain_timeout: float = 10.0) -> None:
         """Gracefully stop the application.
@@ -3287,6 +3324,8 @@ class LaurenFactory:
         compile_events(events_bus, discovery, container, logger=_log)
         # Hosted services and scheduled jobs: scope, names, ScheduleModule.
         scheduling = compile_scheduling(discovery, scheduling_setup)
+        # Commands: names, CLI argument specs and argparse parsers.
+        commands = compile_commands(discovery)
         _log.verbose(
             f"Phase 6a provider discovery: {sum(map(len, discovery.methods.values()))} method(s), "
             f"{sum(map(len, discovery.classes.values()))} class(es) "
@@ -3373,6 +3412,7 @@ class LaurenFactory:
             app, order=lifecycle._order, hosted_services=hosted_services, scheduler=scheduler
         )
         app._config_pending = config_pending
+        app._commands = commands
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via
         # ``lauren.serialization.set_active_encoder``). Pinning the
@@ -3414,6 +3454,30 @@ class LaurenFactory:
             providers=len(container.all_providers()),
         )
         return app
+
+    @staticmethod
+    def create_context(
+        root_module: type,
+        *,
+        hosted_services: bool = False,
+        scheduler: bool = False,
+        drain_timeout: float = 10.0,
+        **create_kwargs: Any,
+    ) -> ApplicationContext:
+        """Build the app with :meth:`create` and wrap it in an :class:`~lauren.context.ApplicationContext`.
+
+        The graph is the server's — every phase runs, routes included, so if
+        a command or script boots, the server boots — but nothing is served.
+        ``async with LaurenFactory.create_context(AppModule) as ctx:`` runs
+        ``startup()`` on enter and ``shutdown(drain_timeout=...)`` on exit.
+        Hosted services and the scheduler are **off** by default (pass
+        ``hosted_services=True`` for a worker); ``create_kwargs`` go to
+        :meth:`create` unchanged.
+        """
+        app = LaurenFactory.create(
+            root_module, hosted_services=hosted_services, scheduler=scheduler, **create_kwargs
+        )
+        return app.context(hosted_services=hosted_services, scheduler=scheduler, drain_timeout=drain_timeout)
 
 
 def _compile_guard_denial(guard_cls: type) -> Any:

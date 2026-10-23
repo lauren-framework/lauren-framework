@@ -28,28 +28,29 @@ common mistakes.
 17. [Sync vs Async Handlers](#sync-vs-async-handlers)
 18. [Background Tasks](#background-tasks)
 19. [Hosted Services & Scheduling](#hosted-services--scheduling)
-20. [Error Catalog](#error-catalog)
-21. [Debug Error Pages](#debug-error-pages)
-22. [Testing](#testing)
-23. [Strict Decorator Inheritance](#strict-decorator-inheritance)
-24. [OpenAPI 3.1 Generation](#openapi-31-generation)
-25. [Logging](#logging)
-26. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
-27. [Application Events](#application-events)
-28. [WebSockets](#websockets)
-29. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
-30. [Typed Streaming](#typed-streaming)
-31. [Socket.IO Compatibility](#socketio-compatibility)
-32. [Sessions](#sessions)
-33. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
-34. [Configuration](#configuration)
-35. [Static Files](#static-files)
-36. [Request Arena](#request-arena)
-37. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
-38. [AI Documentation Access](#ai-documentation-access)
-39. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-40. [Companion Packages](#companion-packages)
-41. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
+20. [Standalone Context & Commands](#standalone-context--commands)
+21. [Error Catalog](#error-catalog)
+22. [Debug Error Pages](#debug-error-pages)
+23. [Testing](#testing)
+24. [Strict Decorator Inheritance](#strict-decorator-inheritance)
+25. [OpenAPI 3.1 Generation](#openapi-31-generation)
+26. [Logging](#logging)
+27. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
+28. [Application Events](#application-events)
+29. [WebSockets](#websockets)
+30. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
+31. [Typed Streaming](#typed-streaming)
+32. [Socket.IO Compatibility](#socketio-compatibility)
+33. [Sessions](#sessions)
+34. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
+35. [Configuration](#configuration)
+36. [Static Files](#static-files)
+37. [Request Arena](#request-arena)
+38. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+39. [AI Documentation Access](#ai-documentation-access)
+40. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+41. [Companion Packages](#companion-packages)
+42. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -166,6 +167,8 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `scheduler` | `bool` | `True` | `False` keeps scheduled jobs discovered and validated (and `SchedulerRegistry.trigger` working) but fires nothing |
 | `strict_request_scope` | `bool` | `False` | `True` makes resolving a `Scope.REQUEST` provider outside any request, WebSocket connection or `app.scope()` raise `DIScopeViolationError` (`reason="no_active_scope"`); the default falls back to an untracked transient and logs a warning once per provider (see [Operation scopes](#operation-scopes-appscope)) |
 
+`LaurenFactory.create_context(root_module, *, hosted_services=False, scheduler=False, drain_timeout=10.0, **create_kwargs)` builds the same app and wraps it in an `ApplicationContext` — the DI graph and lifecycle without HTTP, for scripts, commands and workers (see [Standalone Context & Commands](#standalone-context--commands)).
+
 ### `Lauren` (imperative API)
 
 `Lauren` is a higher-level wrapper around `LaurenFactory` that provides an imperative, chainable API for building applications without the full NestJS-style module system:
@@ -206,8 +209,11 @@ the registered routes and modules. Mutators — `include_module`, `add_middlewar
 `add_guard`, `add_interceptor`, `add_exception_handler`, `add_provider`,
 `mount(path, asgi_app)` and the route decorators — must run before the app
 compiles (first request or `await app.startup()`); afterwards they raise
-`LifecycleViolationError`. `on_startup` hooks run when the app compiles, before
-singletons are built (so before `@post_construct`).
+`LifecycleViolationError`. `on_startup` hooks run inside `LaurenApp.startup()`
+(the ASGI lifespan, `TestClient`, an `ApplicationContext`) after every
+`@post_construct` hook and before hosted services start or a request is
+served; a failing hook raises `StartupError` (`detail={"handler": name}`).
+`await app.startup()` on a `Lauren` app only compiles it.
 
 ### `LaurenApp`
 
@@ -223,6 +229,7 @@ Attributes & methods:
 - `await app(scope, receive, send)` — standard ASGI callable (HTTP + lifespan).
 - `app.mount(path, app)` — mount a sub-ASGI application at a path prefix.
 - `app.scope(name="operation", *, values=None)` — open an `OperationScope` for request-scoped providers outside a request (see [Operation scopes](#operation-scopes-appscope)).
+- `app.context(*, hosted_services=False, scheduler=False, drain_timeout=10.0)` — wrap the built, not yet started app in an `ApplicationContext` (see [Standalone Context & Commands](#standalone-context--commands)).
 
 ### Mounting Sub-Applications
 
@@ -823,7 +830,7 @@ class Settings:
 
 ### Operation scopes (`app.scope()`)
 
-`app.scope(name="operation", *, values=None) -> OperationScope` opens the request scope without a request, for scripts, scheduled work and other non-HTTP code. Use it as an `async with` block while the app is running (after `await app.startup()`); `Lauren()` apps have the same method once compiled (before that it raises `LifecycleViolationError`).
+`app.scope(name="operation", *, values=None) -> OperationScope` opens the request scope without a request, for scripts, scheduled work and other non-HTTP code. Use it as an `async with` block while the app is running (after `await app.startup()`, or inside an `ApplicationContext`, whose `ctx.scope()` is the same); `Lauren()` apps have the same method once compiled (before that it raises `LifecycleViolationError`). Commands run in a scope of their own.
 
 ```python run
 import asyncio
@@ -1814,6 +1821,310 @@ block exits.
   shared `SchedulerLock`, or a dedicated scheduler process.
 - Durable, retried jobs are out of scope: runs missed while the process was
   down are not replayed (beyond `misfire_grace`).
+
+---
+
+## Standalone Context & Commands
+
+Run the application's DI graph and lifecycle without serving HTTP — for
+scripts, one-off admin tasks, Kubernetes `CronJob`s and queue workers. The API
+lives in `lauren.context` and `lauren.commands`; `ApplicationContext`,
+`command`, `Opt`, `CommandContext` and `CommandResult` are also exported from
+`lauren`.
+
+### `LaurenFactory.create_context(root_module, *, hosted_services=False, scheduler=False, drain_timeout=10.0, **create_kwargs)`
+
+Builds the app with `LaurenFactory.create(root_module, **create_kwargs)` —
+every phase, routes included, so if a script boots, the server boots — and
+returns an `ApplicationContext`. Nothing is served. Two other ways to get one:
+
+- `app.context(*, hosted_services=False, scheduler=False, drain_timeout=10.0)`
+  wraps a built, **not yet started** `LaurenApp` (for tooling that only knows
+  `main:app`). An app that was already started raises
+  `LifecycleViolationError` (`reason="app_already_started"`): one lifecycle
+  has one owner.
+- `ApplicationContext.from_lauren(lauren_app, *, hosted_services=False,
+  scheduler=False, drain_timeout=10.0)` compiles an imperative `Lauren` app
+  (without starting it) and wraps it.
+
+```python run
+import asyncio
+
+from lauren import LaurenFactory, Scope, injectable, module, post_construct, pre_destruct
+from lauren.commands import CommandContext, command
+
+
+@injectable()
+class Database:
+    def __init__(self) -> None:
+        self.rows: list[str] = []
+        self.connected = False
+
+    @post_construct
+    async def connect(self) -> None:
+        self.connected = True
+
+    @pre_destruct
+    async def disconnect(self) -> None:
+        self.connected = False
+
+
+@injectable(scope=Scope.REQUEST)
+class UnitOfWork:
+    def __init__(self, db: Database) -> None:
+        self.db = db
+        self.closed = False
+
+    async def aclose(self) -> None:  # runs when the scope ends
+        self.closed = True
+
+
+@injectable()
+class SeedCommands:
+    @command("db:seed", help="Insert fixture rows.")
+    async def seed(self, ctx: CommandContext, uow: UnitOfWork, *, count: int = 3) -> int:
+        uow.db.rows.extend(f"row-{i}" for i in range(count))
+        ctx.echo(f"seeded {count} rows")
+        return 0
+
+
+@module(providers=[Database, UnitOfWork, SeedCommands])
+class ToolsModule:
+    pass
+
+
+async def main() -> None:
+    async with LaurenFactory.create_context(ToolsModule) as ctx:  # startup: @post_construct
+        db = ctx.get(Database)  # an already constructed singleton
+        assert db.connected
+        async with ctx.scope("backfill") as scope:  # the request scope without a request
+            uow = await scope.resolve(UnitOfWork)
+        assert uow.closed
+        result = await ctx.run_command("db:seed", "--count", "2")
+        assert (result.exit_code, result.stdout) == (0, "seeded 2 rows\n")
+        assert db.rows == ["row-0", "row-1"]
+    assert not db.connected  # shutdown: @pre_destruct
+
+
+asyncio.run(main())
+```
+
+`ApplicationContext` members:
+
+| Member | Semantics |
+|---|---|
+| `async with ctx:` | `await app.startup()` on enter — `@post_construct`, then `Lauren.on_startup` hooks; hosted services and the scheduler only when enabled on the context **and** the app. `await app.shutdown(drain_timeout=...)` on exit — `on_shutdown`, then `@pre_destruct`. An exception from the block propagates after shutdown; a startup failure shuts down whatever had started, then propagates. Single-use |
+| `ctx.app`, `ctx.container` | Escape hatches: the `LaurenApp` and its `DIContainer` |
+| `ctx.active` | `True` inside the block |
+| `ctx.get(token)` | The already constructed singleton, synchronously (a list for a `list[T]` or multi-bound token). `MissingProviderError` for an unknown token, `DIScopeViolationError` (`reason="not_singleton"`) for a request-scoped or transient one |
+| `await ctx.resolve(token, *, owning_module=None)` | General resolution (singletons, new transients). A `Scope.REQUEST` token raises `DIScopeViolationError` (`reason="no_active_scope"`): use a scope |
+| `ctx.scope(name="context", *, values=None)` | A new `OperationScope`, as `app.scope()` |
+| `await ctx.run_command(name, *argv, stdin=None, interactive=False, assume_yes=False, verbose=False)` | Runs a discovered command like `python -m lauren exec` and returns a `CommandResult`; failures become exit codes, never exceptions |
+| `ctx.commands(*, include_hidden=False)` | `tuple[CommandInfo, ...]` sorted by name; works before entering |
+| `await ctx.wait_for_shutdown_signal(signals=(SIGINT, SIGTERM))` | Blocks until one of the signals arrives and returns its number. The handlers exist for this call only, so a second signal gets the default behaviour |
+
+`get`, `resolve`, `scope`, `run_command` and `wait_for_shutdown_signal` raise
+`LifecycleViolationError` (`reason="context_not_active"`) outside the block. A
+worker wants hosted services but no HTTP:
+
+```python fragment
+async def worker_main() -> None:
+    async with LaurenFactory.create_context(WorkerModule, hosted_services=True) as ctx:
+        await ctx.wait_for_shutdown_signal()  # SIGINT / SIGTERM → leave the block → graceful shutdown
+```
+
+### `@command(name, *, help=None, aliases=(), hidden=False)`
+
+Marks a method of any provider as a command. It must be called with
+parentheses, and `name` must match `^[a-z0-9][a-z0-9._:-]*$`
+(`DecoratorUsageError` otherwise). It appends a `CommandMeta` to
+`__lauren_command__` and returns the function unchanged; stacking registers
+several names. `help` defaults to the docstring's first line; `aliases` are
+extra names; `hidden=True` keeps a command runnable but out of listings.
+
+Commands are discovered app-wide by the Phase 6a discovery pass of
+`LaurenFactory.create` (method lookup follows the MRO like routes) and
+validated there: a duplicate name or alias raises `DuplicateBindingError`
+(`reason="duplicate_command_name"`, `targets` names both methods), and a
+parameter that is neither injectable nor a CLI type raises
+`UnresolvableParameterError` (`reason="unsupported_command_parameter"`, with
+`command` and `param`). The provider may have any scope: every invocation runs
+in its own `OperationScope`, seeded with the `CommandContext`, so a
+`Scope.REQUEST` command class or dependency is built per run and torn down
+afterwards.
+
+Parameters are mapped once, at startup, where the `argparse` parser is built
+too:
+
+| Parameter | Becomes |
+|---|---|
+| annotated `CommandContext` | injected |
+| `Annotated[T, Inject(token)]`, or a type the provider's module can resolve | injected from the command's scope (route-handler precedence; a provider another module does not export is **not** visible) |
+| `bool`, wherever declared | `--name / --no-name` flag (`bool \| None` defaults to `None`) |
+| keyword-only (after `*`) | `--kebab-case` option; required when it has no default |
+| any other parameter without a default | required positional argument |
+| any other parameter with a default | optional positional argument |
+| `list[T]` / `tuple[T, ...]` | repeatable option (`--tag a --tag b`); as a positional, one or more values (zero or more with a default) |
+| `T \| None` | optional, default `None` |
+| `Enum`, `Literal[...]` | choices (enum values or member names) |
+| anything else | `UnresolvableParameterError` at startup |
+
+CLI types are `str`, `int`, `float`, `Decimal`, `bool`, `Path`, `UUID`,
+`datetime` / `date` / `time` (ISO 8601), `timedelta` (seconds or an ISO 8601
+duration), `Enum` and `Literal`, converted with the lax table typed
+configuration uses. An unannotated parameter is a `str` (or its default's
+type). `Annotated[T, Opt(short="-n", env="SEED_COUNT", help="rows")]` adds a
+short flag, an environment-variable fallback (read at run time; the command
+line wins) and help text; `short` and `env` apply to options only
+(`DecoratorUsageError`, `reason="opt_on_positional"`). Help is generated from
+`help=` or the docstring, `Opt(help=...)`, defaults, choices and env names;
+`-h` / `--help` prints it.
+
+```python fragment
+@injectable()
+class SeedCommands:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    @command("db:seed", help="Insert fixture data.", aliases=("seed",))
+    async def seed(
+        self,
+        ctx: CommandContext,
+        fixture: Fixture = Fixture.DEMO,  # optional positional, choices
+        *,
+        count: Annotated[int, Opt(short="-n", help="rows per table")] = 50,  # -n / --count
+        reset: bool = False,  # --reset / --no-reset
+    ) -> int:
+        if reset and not ctx.confirm("Truncate every table?"):
+            return 1
+        ctx.echo(f"seeded {await self._db.seed(fixture, count)} rows")
+        return 0
+
+    @command("db:export")
+    async def export(self, target: Path, *, tables: list[str] | None = None) -> dict:
+        ...  # the returned dict is printed as JSON
+```
+
+### Results, output and exit codes
+
+| Outcome | Exit code | Output |
+|---|---|---|
+| returns `None` | 0 | — |
+| returns an `int` | that int | — |
+| returns a `bool` | 0 if true, else 1 | — |
+| returns another value | 0 | JSON-encoded with the app's `json_encoder` to stdout (exit 1 if it cannot be encoded) |
+| `ctx.fail("message", exit_code=2)` | 2 | message to stderr; raises `SystemExit`, so `finally` blocks and scope teardown run |
+| unknown command or argument error | 2 | message or argparse usage to stderr |
+| uncaught exception | 1 | one-line summary to stderr; the full traceback with `--verbose` |
+| the app cannot be built or started (runner) | 3 | the rendered error and its `detail` |
+| first SIGINT / SIGTERM (runner) | 130 / 143 | the command task is cancelled (`finally` runs), the scope is torn down, the app shuts down; a second signal exits immediately |
+
+`CommandContext` — annotate a command parameter, or a request-scoped
+provider's constructor parameter, with it: `name` (the canonical name), `argv`,
+`echo(*parts, sep=" ", end="\n")` → stdout, `error(*parts)` → stderr, the
+`stdout` / `stderr` streams, `is_interactive` (the runner's stdin is a
+terminal), `assume_yes` (`--yes`), `confirm(prompt, *, default=False)`
+(`--yes` answers yes; when nobody can answer it **refuses** — a note to stderr,
+returns `False` — instead of hanging), `fail(message, exit_code=1)` and `log`
+(the app logger bound to `context="Command:<name>"`). Write output with
+`ctx.echo`, not `print()`, so it can be captured.
+
+`CommandResult(exit_code, value=None, stdout="", stderr="", exception=None)`
+is frozen: `value` is the return value and `exception` the uncaught exception,
+if any. For tooling, `lauren.commands` also has
+`CommandInfo(name, aliases, help, hidden, parameters, module, target)` and
+`CommandParameter(name, kind, flags, type, required, default, repeatable,
+choices, env, help)` (`kind` is `"positional"`, `"option"` or `"flag"`).
+
+### `python -m lauren`
+
+```text
+python -m lauren exec    [-t TARGET] [-y] [-v] [TARGET] COMMAND [ARGS...]
+python -m lauren commands [-t TARGET] [--all] [TARGET]
+python -m lauren console  [-t TARGET] [-v] [TARGET]
+```
+
+`TARGET` is `pkg.module:attr` — or `--target`, or `$LAUREN_TARGET` — naming a
+`@module` class (→ `create_context`), a `LaurenApp` (→ `app.context()`), a
+`Lauren` app (→ `from_lauren`), an `ApplicationContext`, or a zero-argument
+(sync or async) factory returning one of them (`main:create_app`).
+
+- `exec` looks the command up and parses its arguments **before** starting the
+  app, so an unknown command, `--help` or a usage error never runs
+  `@post_construct`; then it starts the app (hosted services and the scheduler
+  off), runs the command in a fresh scope and shuts down. `--yes` / `--verbose`
+  are also accepted after `COMMAND` unless the command declares those options.
+- `commands` lists the commands without starting the app (`--all` adds hidden
+  ones).
+- `console` starts the app and opens a Python REPL with `ctx`, `app`,
+  `container`, `get`, `resolve`, `scope` and `asyncio` preloaded; top-level
+  `await` works and `exit()` / Ctrl-D shuts the app down.
+
+Exit codes follow the table above; a malformed TARGET is a usage error (2), and
+an import failure or a TARGET of the wrong kind is 3. The runner is
+stdlib-only and keeps no state between runs; `lauren-cli`'s `lauren exec`,
+`lauren commands` and `lauren console` run it in-process.
+
+### Testing commands
+
+`Test.create_testing_module(...)` overrides apply to contexts exactly as to
+apps; `ctx.run_command` captures the output:
+
+```python run
+import asyncio
+
+from lauren import injectable, module
+from lauren.commands import CommandContext, command
+from lauren.testing import Test
+
+
+@injectable()
+class Mailer:
+    def send(self, to: str) -> str:
+        raise RuntimeError("would send real mail")
+
+
+@injectable()
+class MailCommands:
+    def __init__(self, mailer: Mailer) -> None:
+        self._mailer = mailer
+
+    @command("mail:test")
+    def send_test(self, ctx: CommandContext, to: str) -> None:
+        ctx.echo(self._mailer.send(to))
+
+
+@module(providers=[Mailer, MailCommands])
+class MailModule:
+    pass
+
+
+class FakeMailer:
+    def send(self, to: str) -> str:
+        return f"queued for {to}"
+
+
+async def main() -> None:
+    app = Test.create_testing_module(MailModule).override_provider(Mailer).use_value(FakeMailer()).compile()
+    async with app.context() as ctx:
+        result = await ctx.run_command("mail:test", "ada@example.com")
+    assert (result.exit_code, result.stdout) == (0, "queued for ada@example.com\n")
+
+
+asyncio.run(main())
+```
+
+**Rules:**
+
+- Never expose admin or maintenance tasks (seeding, migrations, purges) as HTTP
+  endpoints: write a `@command` and run it with `python -m lauren exec` (a
+  Kubernetes `CronJob` for periodic work).
+- Resolve request-scoped providers only inside a request, `app.scope()` /
+  `ctx.scope()` or a command; anywhere else they leak (see
+  [Operation scopes](#operation-scopes-appscope) and `strict_request_scope=True`).
+- Keep commands thin adapters over services, like controllers.
+- A context owns its app's lifecycle: never `await app.startup()` on an app you
+  wrap.
 
 ---
 
@@ -3815,6 +4126,29 @@ class Good:
             await self.tick()
 ```
 
+### Anti-pattern: admin tasks as HTTP endpoints
+
+```python fragment
+@controller("/api")
+class SeedController:
+    @post("/seed")                      # anyone who reaches the API can re-seed the database
+    async def seed(self, db: DatabaseService) -> dict: ...
+```
+
+Write a command instead and run it where the operator controls the process
+(`python -m lauren exec app.main:AppModule db:seed`, a Kubernetes `CronJob`):
+
+```python fragment
+@injectable()
+class SeedCommands:
+    def __init__(self, db: DatabaseService) -> None:
+        self._db = db
+
+    @command("db:seed")
+    async def seed(self, ctx: CommandContext, *, count: int = 50) -> None:
+        ctx.echo(f"seeded {await run_seed(self._db, count=count)} rows")
+```
+
 ### Anti-pattern: calling asyncio primitives from a sync handler
 
 ```python
@@ -3966,7 +4300,10 @@ request.
 | Run post-construct hook | `@post_construct` on an `async def` method of an `@injectable` |
 | Run a long-lived loop for the app's lifetime | `@hosted_service()` class with `async def run(self, ctx)`; list it in `providers` |
 | Run code on a schedule | `@interval(seconds=60)` / `@cron("0 3 * * *")` on a singleton method + `ScheduleModule.for_root()` |
-| Run one job now (admin endpoint, test) | `await registry.trigger("name")` with `registry: SchedulerRegistry` |
+| Run one job now (command, test) | `await registry.trigger("name")` with `registry: SchedulerRegistry` |
+| Run code with the app's DI graph outside HTTP | `async with LaurenFactory.create_context(AppModule) as ctx:` then `ctx.get(...)` / `ctx.scope()` |
+| Admin / maintenance task | `@command("db:seed")` on a provider method; `python -m lauren exec app.main:AppModule db:seed` |
+| Test a command | `result = await ctx.run_command("db:seed", "--count", "3")` → `result.exit_code`, `result.stdout` |
 | Serve a file (auto MIME, streamed) | `return await Response.file("/path/to/file.pdf")` |
 | Serve a file with custom name | `return await Response.file(path, filename="report.pdf")` |
 | Serve a file inline (browser preview) | `return await Response.file(path, inline=True)` |

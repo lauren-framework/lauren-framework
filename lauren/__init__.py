@@ -29,6 +29,9 @@ Core capabilities
 * WebSocket gateways, Server-Sent Events, typed streaming and sessions.
 * Typed application events: ``@on_event`` handlers on providers, validated at
   startup, published through ``EventBus`` / the request-scoped ``EventPublisher``.
+* Standalone contexts (``LaurenFactory.create_context``) and DI-aware
+  ``@command`` methods run with ``python -m lauren exec`` — the app's graph
+  and lifecycle without HTTP.
 * OpenAPI 3.1 generation from return annotations and ``response_model``
   (any of the supported model kinds).
 * Auto-serialization: return dicts, models, dataclasses, or
@@ -72,7 +75,8 @@ from .background import BackgroundTasks, TaskHandle
 from ._app import Lauren
 from ._arena import RequestAllocation, RequestArena
 from ._asgi import LaurenApp, LaurenFactory
-from .context import OperationScope
+from .commands import CommandContext, CommandResult, Opt, command
+from .context import ApplicationContext, OperationScope
 from .events import EmitResult, EventBus, EventContext, EventPublisher, on_event
 from ._di import DIContainer
 from ._di.custom import (
@@ -352,6 +356,12 @@ __all__ = [
     "LaurenFactory",
     "DIContainer",
     "OperationScope",
+    "ApplicationContext",
+    # DI-aware commands (the rest lives in lauren.commands)
+    "command",
+    "Opt",
+    "CommandContext",
+    "CommandResult",
     # Custom providers (NestJS-style)
     "Token",
     "Inject",
