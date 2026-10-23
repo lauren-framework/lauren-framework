@@ -184,6 +184,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - `@idempotent(...)`: `Idempotency-Key` replay with `Idempotent-Replayed: true`. A request whose key is still in flight answers 409, a payload mismatch 422, and a missing key 400.
 - `lauren.testing.store_contract.run_store_contract` for testing store backends.
 - `StartupError` reasons `cache_module_missing`, `duplicate_store_name`, `invalid_store` and `conflicting_cache_options`.
+- `status_code=` on every route decorator: plain return values are sent with it, `None` sends it with an empty body, and OpenAPI documents it.
+- Typed results `Ok[T]`, `Created[T]` (`location=`), `Accepted[T]`, `NoContent` and the `Annotated[T, Status(code)]` marker. Unions document one response per member, and result bodies use the route's encoder.
+- Response contracts: `response_validation="off" | "filter" | "strict"`, set on the factory, on `Lauren(...)` or per route. `filter` projects the returned value onto the declared type, so extra fields from a subclass, an ORM object or a dict never leave; `strict` also validates. A violation is a 500 `response_validation_error`, logged with structured issues. `StreamingResponse[T]` items are projected too.
+- `@raises(*http_errors, description=)` documents error responses in OpenAPI and in `ReflectedRoute.raises`. With `debug=` on, an undeclared error raised by the handler logs one warning.
+- `response_headers=` documents success-response headers.
+- `json_fallback="dict" | "warn" | "error"` on the factory, and `fallback=` on the built-in encoders.
+- `ReflectedResponse`; `ReflectedRoute.status_code`, `.responses_typed` and `.raises`; `LaurenApp.response_validation` and `.json_fallback`.
 
 ### Changed
 
@@ -229,11 +236,16 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   the default).
 - `InMemorySessionStore` / `InMemoryRevocationStore` are bounded (`max_entries=100_000`), sweep expired entries, accept `clock=` and no longer hold an `asyncio.Lock` tied to one event loop. The revocation store logs a warning the first time it evicts a live entry.
 - Pre-built singletons (value providers) start before any constructed provider and stop after them.
+- OpenAPI documents declared statuses: `-> None` / `-> NoContent` as a 204 with no content, `-> Response` without a JSON body, `-> T | None` as T plus a 204, and a bare `dict` as `{"type": "object"}`. Return annotations are resolved at startup.
+- `json_fallback` defaults to `"warn"`: serializing an object through its `__dict__` logs one warning per type.
+- `response_model=` with the contract off logs one startup warning listing those routes.
+- Status and type contradictions (a 204/304 route with a body type, `status_code=` disagreeing with a typed result, duplicate statuses) fail at startup with `DecoratorUsageError`.
 
 ### Deprecated
 
 - `detail.type` on `internal_error` responses and `detail.guard` on guard denials:
   from 2.0 they are sent only when debug pages are enabled.
+- The defaults `response_validation="off"` and `json_fallback="warn"` change to `"filter"` and `"error"` in 2.0.
 
 ### Fixed
 
@@ -266,6 +278,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   used to run at compile time, before any singleton existed.
   `await lauren_app.startup()` on a `Lauren` app now only compiles it.
 - A store passed as `SessionConfig(store=...)` / `revocation_store=` now gets its `@post_construct` / `@pre_destruct` (or `startup()` / `aclose()`) hooks run. The documented Redis recipe used to answer 500 on the first request.
+- A `NamedTuple` return value is serialized instead of being read as a `(body, status)` pair.
+- `CompiledType.project()` no longer emits a pydantic subclass's extra fields.
 
 ## [1.10.0] - 2026-10-23
 
