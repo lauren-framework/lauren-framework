@@ -110,7 +110,7 @@ Fan-out to a named set of connections. Safe for single-process deployments.
 ```python
 from lauren.websockets import BroadcastGroup
 
-# Provided as a singleton via DI; inject into the gateway
+# Provided as a singleton via DI (see "Wiring into a module"); inject into the gateway
 class ChatGateway:
     def __init__(self, rooms: BroadcastGroup) -> None:
         self._rooms = rooms
@@ -144,15 +144,19 @@ For multi-process (multiple uvicorn workers), subclass `BroadcastGroup` and back
 ## Wiring into a module
 
 ```python
-from lauren import module
+from lauren import injectable, module
 from lauren.websockets import BroadcastGroup
+
+@injectable(provides=[BroadcastGroup])   # BroadcastGroup itself is not @injectable
+class Rooms(BroadcastGroup): ...
 
 @module(
     controllers=[ChatGateway],        # ws_controller classes go in controllers=
-    providers=[BroadcastGroup],       # BroadcastGroup is a regular DI provider
+    providers=[Rooms],                # gateways inject it as BroadcastGroup
 )
 class ChatModule:
     pass
+```
 
 ---
 

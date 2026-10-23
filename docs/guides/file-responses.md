@@ -39,12 +39,14 @@ The `Content-Disposition` header becomes `inline; filename="logo.png"`.
 
 `Response.file()` uses `mimetypes.guess_type()` automatically. Override it when the extension is absent or wrong:
 
+<!-- docs-contract: fragment -->
 ```python
 return await Response.file("/tmp/export", media_type="application/vnd.ms-excel", filename="export.xls")
 ```
 
 ### Full signature
 
+<!-- docs-contract: fragment -->
 ```python
 await Response.file(
     path,                           # str or Path
@@ -60,11 +62,10 @@ await Response.file(
 Raises `FileNotFoundError` when `path` does not point to an existing file. Map it to a 404 with an exception handler:
 
 ```python
-from lauren import exception_handler
-from lauren.exceptions import NotFoundError
+from lauren import Response, exception_handler
 
 @exception_handler(FileNotFoundError)
-async def on_missing_file(request, exc: FileNotFoundError) -> Response:
+async def on_missing_file(exc: FileNotFoundError, request) -> Response:   # (exc, request)
     return Response(b"file not found", status=404)
 ```
 
@@ -110,6 +111,7 @@ class FeedController:
 
 `data` can be a `str` (encoded to UTF-8) or `bytes`:
 
+<!-- docs-contract: fragment -->
 ```python
 # bytes form — already encoded
 return Response.xml(b"<root/>", status=201)
@@ -117,6 +119,7 @@ return Response.xml(b"<root/>", status=201)
 
 ### Signature
 
+<!-- docs-contract: fragment -->
 ```python
 Response.xml(
     data: str | bytes,

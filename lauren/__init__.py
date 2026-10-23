@@ -12,16 +12,24 @@ Core capabilities
 * Dependency injection with SINGLETON / REQUEST / TRANSIENT scopes,
   Protocol binding, multi-bindings, cycle detection.
 * Typed extractors: ``Path[T]``, ``Query[T]``, ``Header[T]``, ``Cookie[T]``,
-  ``Json[T]`` (Pydantic), ``Form[T]``, ``Bytes``, ``State``, ``Depends[T]``,
-  plus user-defined extractors via a ``ExtractionMarker.extract`` classmethod.
+  ``Json[T]``, ``Form[T]``, ``Bytes``, ``ByteStream``, ``UploadFile``,
+  ``State``, ``Depends[T]``, plus user-defined extractors — an
+  ``ExtractionMarker`` subclass whose instance method
+  ``extract(self, ctx, extraction)`` is resolved through DI.
+* Validation without a hard dependency: Pydantic models, msgspec structs,
+  dataclasses, ``TypedDict`` and ``Discriminated[A | B, "key"]`` unions
+  (Pydantic is optional).
 * Modules with imports / exports and circular-import detection.
 * Lifecycle hooks (``@post_construct``, ``@pre_destruct``) in topological
   order with timeouts.
 * Seven-phase startup (``LaurenFactory.create``) that fails fast on any
   invalid graph.
-* Middleware (onion model) and guards, attachable to controllers or routes.
-* OpenAPI 3.1 generation from Pydantic response models.
-* Auto-serialization: return dicts, Pydantic models, dataclasses, or
+* Middleware (onion model), guards, interceptors and exception handlers,
+  attachable globally, to controllers, or to routes.
+* WebSocket gateways, Server-Sent Events, typed streaming and sessions.
+* OpenAPI 3.1 generation from return annotations and ``response_model``
+  (any of the supported model kinds).
+* Auto-serialization: return dicts, models, dataclasses, or
   ``(body, status)`` tuples; lauren builds the Response.
 * Strict inheritance: subclasses are controllers / injectables only when
   re-decorated explicitly.
@@ -143,6 +151,7 @@ from .exceptions import (
     StateTypeError,
     UnauthorizedError,
     UnresolvableParameterError,
+    UnsupportedMediaTypeError,
 )
 from .extractors import (
     PIPE_META,
@@ -214,6 +223,7 @@ from . import reflect  # noqa: F401
 from .reflect import (
     # context types
     WsConnectionContext,
+    WsMessageContext,
     WsUpgradeRequest,
     # cross-cutting readers
     reflect_guards,
@@ -261,6 +271,7 @@ from .types import (
     CallHandler,
     CallNext,
     ClientInfo,
+    ContentConfig,
     Discriminated,
     ExecutionContext,
     GuardProtocol,
@@ -362,6 +373,7 @@ __all__ = [
     "MutableHeaders",
     "ClientInfo",
     "ServerInfo",
+    "ContentConfig",
     "CallNext",
     "CallHandler",
     "MiddlewareProtocol",
@@ -419,6 +431,7 @@ __all__ = [
     "WebSocket",
     # reflect — context types
     "WsConnectionContext",
+    "WsMessageContext",
     "WsUpgradeRequest",
     # reflect — cross-cutting readers
     "reflect_guards",
@@ -486,6 +499,7 @@ __all__ = [
     "RouteNotFoundError",
     "MethodNotAllowedError",
     "RequestBodyTooLarge",
+    "UnsupportedMediaTypeError",
     "UnauthorizedError",
     "ForbiddenError",
     "MissingStateError",

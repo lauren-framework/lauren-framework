@@ -13,7 +13,7 @@ Produces :class:`LaurenApp` instances via the 7-phase pipeline.
 #### `LaurenFactory.create`
 
 ```python
-def create(root_module: type, strict_lifecycle: bool = True, global_middlewares: Iterable[type] | None = None, global_guards: Iterable[type] | None = None, global_interceptors: Iterable[type] | None = None, global_exception_handlers: Iterable[Any] | None = None, global_providers: Iterable[Any] | None = None, global_ws_guards: Iterable[type] | None = None, global_ws_interceptors: Iterable[type] | None = None, max_body_size: int = 1048576, app_state: AppState | None = None, logger: Logger | None = None, openapi_info: dict[str, Any] | None = None, openapi_servers: list[dict[str, Any]] | None = None, openapi_security_schemes: dict[str, Any] | None = None, openapi_url: str | None = None, docs_url: str | None = None, redoc_url: str | None = None, arena: RequestArena | None = None, arena_capacity: int | None = None, json_encoder: JSONEncoder | None = None, signals: SignalBus | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, sessions: SessionConfig | None = None) -> LaurenApp
+def create(root_module: type, strict_lifecycle: bool = True, global_middlewares: Iterable[type] | None = None, global_guards: Iterable[type] | None = None, global_interceptors: Iterable[type] | None = None, global_exception_handlers: Iterable[Any] | None = None, global_providers: Iterable[Any] | None = None, global_ws_guards: Iterable[type] | None = None, global_ws_interceptors: Iterable[type] | None = None, max_body_size: int = 1048576, app_state: AppState | None = None, logger: Logger | None = None, openapi_info: dict[str, Any] | None = None, openapi_servers: list[dict[str, Any]] | None = None, openapi_security_schemes: dict[str, Any] | None = None, openapi_url: str | None = None, docs_url: str | None = None, redoc_url: str | None = None, arena: RequestArena | None = None, arena_capacity: int | None = None, json_encoder: JSONEncoder | None = None, signals: SignalBus | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, sessions: SessionConfig | None = None, content: ContentConfig | None = None) -> LaurenApp
 ```
 
 Build a :class:`LaurenApp` from a root ``@module`` class.
@@ -36,10 +36,15 @@ raises (handlers). Per-route ``@use_guards`` and
 ``@use_exception_handlers`` declarations compose with these globals —
 route handlers are tried first, then globals.
 
+``content`` sets the request-body content policy
+(:class:`~lauren.types.ContentConfig`). Left unset, apps with
+``sessions=`` log mismatched JSON ``Content-Type`` values ("warn")
+and other apps do not check them.
+
 ### `Lauren`
 
 ```python
-class Lauren(title: str = 'lauren application', version: str = '1.0.0', description: str | None = None, openapi_url: str | None = '/openapi.json', docs_url: str | None = '/docs', redoc_url: str | None = '/redoc', servers: list[dict[str, Any]] | None = None, security_schemes: dict[str, Any] | None = None, debug: bool = False, max_body_size: int = 1048576, strict_lifecycle: bool = True, app_state: AppState | None = None, logger: Any | None = None, global_middlewares: list[type] | None = None, global_guards: list[type] | None = None, global_interceptors: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_providers: list[Any] | None = None, sessions: Any | None = None)
+class Lauren(title: str = 'lauren application', version: str = '1.0.0', description: str | None = None, openapi_url: str | None = '/openapi.json', docs_url: str | None = '/docs', redoc_url: str | None = '/redoc', servers: list[dict[str, Any]] | None = None, security_schemes: dict[str, Any] | None = None, debug: bool = False, max_body_size: int = 1048576, strict_lifecycle: bool = True, app_state: AppState | None = None, logger: Any | None = None, global_middlewares: list[type] | None = None, global_guards: list[type] | None = None, global_interceptors: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, sessions: Any | None = None, content: Any | None = None, json_encoder: Any | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, signals: Any | None = None, arena: Any | None = None, arena_capacity: int | None = None)
 ```
 
 A FastAPI-inspired ASGI application over lauren's module pipeline.
@@ -182,17 +187,30 @@ Accepts the same shapes as the module ``providers=`` list: an
 ``use_value`` / ``use_class`` / ``use_factory`` / ``use_existing``.
 Must be called before the application compiles.
 
+#### `Lauren.mount`
+
+```python
+def mount(self, path: str, app: Any) -> None
+```
+
+Mount an ASGI sub-application at *path* (see :meth:`LaurenApp.mount`).
+
+Buffered until the application compiles, like routes and modules;
+calling it afterwards raises :class:`LifecycleViolationError`.
+
 #### `Lauren.on_startup`
 
 ```python
 def on_startup(self, fn: Callable[[], Any]) -> Callable[[], Any]
 ```
 
-Register a callable to run during application startup.
+Register a callable to run when the application compiles.
 
-Accepts both sync and async callables. Hooks run after the DI
-graph is built and after all ``@post_construct`` hooks have fired,
-but before any request is dispatched.
+Accepts both sync and async callables. Hooks run right after
+``LaurenFactory.create`` has built the app — the DI graph is
+compiled, but singletons are not instantiated yet, so
+``@post_construct`` hooks (which run in ``LaurenApp.startup()``)
+have **not** fired — and before any request is dispatched.
 
 #### `Lauren.on_shutdown`
 
@@ -211,11 +229,14 @@ Executes after in-flight requests drain and before
 def startup(self) -> Any
 ```
 
-Compile the application and run all startup hooks.
+Compile the application and run its ``on_startup`` hooks.
 
-Safe to call multiple times — subsequent invocations are
-no-ops that return the already-compiled :class:`LaurenApp`.
-Returns the underlying :class:`LaurenApp` so tests can introspect it.
+Safe to call multiple times — later calls return the already-compiled
+:class:`LaurenApp`. Starting the app (building singletons, running
+``@post_construct``) is the ASGI lifespan's job;
+:class:`~lauren.testing.TestClient` compiles and starts the app on its
+first request. Returns the underlying :class:`LaurenApp` so tests can
+introspect it.
 
 #### `Lauren.shutdown`
 
@@ -255,7 +276,7 @@ parity with the classic API.
 ### `LaurenApp`
 
 ```python
-class LaurenApp(router: Router, container: DIContainer, module_graph: ModuleGraph, lifecycle: LifecycleScheduler, compiled_handlers: dict[tuple[str, str], CompiledHandler], global_middlewares: list[type], app_state: AppState, strict_lifecycle: bool = True, max_body_size: int = 1048576, logger: Logger | None = None, ws_router: Router | None = None, ws_gateways: dict[str, Any] | None = None, arena: RequestArena | None = None, signals: SignalBus | None = None, error_format: str = 'default', global_guards: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_interceptors: list[type] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None)
+class LaurenApp(router: Router, container: DIContainer, module_graph: ModuleGraph, lifecycle: LifecycleScheduler, compiled_handlers: dict[tuple[str, str], CompiledHandler], global_middlewares: list[type], app_state: AppState, strict_lifecycle: bool = True, max_body_size: int = 1048576, logger: Logger | None = None, ws_router: Router | None = None, ws_gateways: dict[str, Any] | None = None, arena: RequestArena | None = None, signals: SignalBus | None = None, error_format: str = 'default', global_guards: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_interceptors: list[type] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, strict_content_type: bool | str = False)
 ```
 
 A compiled, ready-to-serve ASGI application.

@@ -53,6 +53,8 @@
 
 **Documentation**: <a href="https://lauren-py.dev" target="_blank">https://lauren-py.dev</a>
 
+**Docs MCP server** (for AI coding agents): `https://lauren-py.dev/api/mcp` &mdash; <a href="https://lauren-py.dev/mcp" target="_blank">setup guide</a>
+
 **Source Code**: <a href="https://github.com/lauren-framework/lauren-framework" target="_blank">https://github.com/lauren-framework/lauren-framework</a>
 
 ---
@@ -73,11 +75,23 @@ API patterns, observability, security, and more.
 
 | Resource | What it contains |
 |---|---|
-| [`lauren/llms.txt`](https://raw.githubusercontent.com/lauren-framework/lauren-framework/refs/heads/main/lauren/llms.txt) | 2 KB framework overview — start here |
-| [`lauren/llms-full.txt`](https://raw.githubusercontent.com/lauren-framework/lauren-framework/refs/heads/main/lauren/llms-full.txt) | 25 KB complete reference — all APIs, patterns, common errors |
+| [`lauren/llms.txt`](https://raw.githubusercontent.com/lauren-framework/lauren-framework/refs/heads/main/lauren/llms.txt) | Framework overview — start here |
+| [`lauren/llms-full.txt`](https://raw.githubusercontent.com/lauren-framework/lauren-framework/refs/heads/main/lauren/llms-full.txt) | Complete reference — all APIs, patterns, common errors |
 | [`AGENTS.md`](https://github.com/lauren-framework/lauren-framework/blob/main/AGENTS.md) | Agent rules, by-task lookup, file ownership, common errors, definition of done |
 | [`CLAUDE.md`](https://github.com/lauren-framework/lauren-framework/blob/main/CLAUDE.md) | Conventions, commands, golden rules, pattern selection guide |
 | [`skills/`](https://github.com/lauren-framework/lauren-framework/tree/main/skills/) | 60+ copy-paste skill guides covering every common task |
+
+### Connect your agent to the live docs (MCP)
+
+The docs site hosts a read-only MCP server so agents can search the current
+documentation instead of guessing from training data:
+
+```bash
+claude mcp add --transport http lauren-docs https://lauren-py.dev/api/mcp
+```
+
+Configurations for Cursor, VS Code, Windsurf, Gemini CLI and stdio-only clients:
+[lauren-py.dev/mcp](https://lauren-py.dev/mcp).
 
 Full install guide and skills index: [docs/guides/agent-skills.md](https://github.com/lauren-framework/lauren-framework/blob/main/docs/guides/agent-skills.md)
 
@@ -145,17 +159,21 @@ core ideas:
   stream downloads with `await Response.file(...)`, or emit XML with
   `Response.xml(...)` while keeping the dispatch pipeline untouched.
 * **Background tasks** — `BackgroundTasks` extractor fires work after the
-  response is sent. `TaskHandle` exposes cancel/await. Signals notify on
-  start, complete, and failure.
+  response is sent. `TaskHandle` exposes `status`, `done`, `cancel()` (before
+  the task starts) and `await result()` (from another coroutine). Signals
+  notify on start, complete, and failure.
 * **Sessions** — first-class signed-cookie sessions via
   `LaurenFactory.create(..., sessions=SessionConfig(...))`. A mutable
   `session: Session` is injected into handlers at zero per-request cost; the
   pluggable async `SessionStore` ships with an in-memory backend and a
   stateless `SignedCookieSessionStore`. HMAC-signed, `HttpOnly`/`Secure`/
   `SameSite=Lax` by default, with `regenerate_id()` and `invalidate()`.
-  Unsafe configuration is rejected at startup.
+  Unsafe configuration is rejected at startup. Pair with
+  `content=ContentConfig(strict_content_type=True)` so cross-site `text/plain`
+  posts to JSON routes are rejected (415).
 * **Static files** — `StaticFilesModule.for_root("/assets", directory="./public")`
-  with ETag caching, `Cache-Control`, and path-traversal protection.
+  with ETag caching, `Cache-Control`, path-traversal protection, and dotfiles
+  (`.env`, `.git/`) hidden by default (`/.well-known/` still served).
 * **Socket.IO** — Engine.IO v4 / Socket.IO v5 adapter via `@socketio_controller`.
 * **OpenAPI 3.1** — Automatic schema generation from Pydantic models,
   dataclasses, `TypedDict`, and `Discriminated` unions. Swagger UI and ReDoc
@@ -423,10 +441,12 @@ full tables, the method and the pinned dependency set are on the
 | Package | Purpose |
 |---|---|
 | `uvicorn` / `hypercorn` / `granian` | ASGI server (none bundled — pick one) |
-| `httpx` | Required for `lauren.testing.TestClient` |
-| `orjson` | Faster JSON — auto-detected at import time |
+| `pydantic` / `msgspec` | Model validation and OpenAPI for those model kinds (`lauren[pydantic]`, `lauren[msgspec]`, `lauren[full]`) |
+| `orjson` | Faster JSON via `OrjsonEncoder` — opt in with `json_encoder=OrjsonEncoder()` or `json_encoder=auto_encoder()` |
 | `msgspec` | Alternative fast JSON encoder via `MsgspecEncoder` |
-| `python-multipart` | Required for `Form[...]` extractors |
+| `httpx` | Only if you prefer `httpx.ASGITransport` in tests — `lauren.testing.TestClient` needs nothing extra |
+
+Form bodies and multipart uploads are parsed in-tree; no `python-multipart` needed.
 
 ## Companion packages
 

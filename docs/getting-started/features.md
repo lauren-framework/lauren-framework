@@ -356,7 +356,7 @@ Lauren ships an [llms.txt](https://llmstxt.org)-format overview and a complete L
 
 ```python
 from lauren import docs
-print(docs.llms_full_txt())     # ~25 KB — paste into any AI assistant
+print(docs.llms_full_txt())     # the complete reference — paste into any AI assistant
 ```
 
 Coding agents (Claude, Cursor, Aider) can ingest the full reference and produce idiomatic Lauren code on the first try.

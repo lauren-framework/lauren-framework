@@ -59,7 +59,7 @@ Five framework events are emitted automatically:
 | `StartupBegin` | First `lifespan.startup` message; `@post_construct` not yet run | `app` |
 | `StartupComplete` | Every `@post_construct` hook finished; app ready | `app`, `duration_s` |
 | `RequestReceived` | ASGI scope decoded; router not yet run | `request` |
-| `RequestComplete` | Response fully sent (success and error paths) | `request`, `response`, `status`, `duration_s`, `error` |
+| `RequestComplete` | Final response produced (success and error paths); emitted just **before** it is sent | `request`, `response`, `status`, `duration_s`, `error` |
 | `ShutdownBegin` | `lifespan.shutdown` or OS signal received | `app` |
 
 Three additional events relate to background tasks:

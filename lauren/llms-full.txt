@@ -15,26 +15,37 @@ common mistakes.
 4. [Decorators](#decorators)
 5. [Types (Request / Response / State / Headers)](#types-request--response--state--headers)
 6. [Extractors](#extractors)
-7. [Dependency Injection](#dependency-injection)
-8. [Custom Providers](#custom-providers)
-9. [Modules](#modules)
-10. [Guards & Middleware](#guards--middleware)
-11. [Exception Handlers](#exception-handlers)
-12. [Auto-Serialization](#auto-serialization)
-13. [Error Catalog](#error-catalog)
-14. [Testing](#testing)
-15. [Strict Decorator Inheritance](#strict-decorator-inheritance)
-16. [Custom Extractors (plugin API)](#custom-extractors-plugin-api)
-17. [OpenAPI 3.1 Generation](#openapi-31-generation)
-18. [Logging](#logging)
-19. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
-20. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-21. [WebSockets](#websockets)
-22. [Server-Sent Events](#server-sent-events-eventstream)
-23. [Typed Streaming](#typed-streaming)
-24. [Socket.IO Compatibility](#socketio-compatibility)
-25. [Sessions](#sessions)
-26. [Companion Packages](#companion-packages)
+7. [Pipes](#pipes)
+8. [Custom Extractors (plugin API)](#custom-extractors-plugin-api)
+9. [Dependency Injection](#dependency-injection)
+10. [Custom Providers](#custom-providers)
+11. [Modules](#modules)
+12. [Guards & Middleware](#guards--middleware)
+13. [Interceptors](#interceptors)
+14. [Exception Handlers](#exception-handlers)
+15. [`@propagate_metadata` — copy Lauren decorator metadata between objects](#propagate_metadata--copy-lauren-decorator-metadata-between-objects)
+16. [Auto-Serialization](#auto-serialization)
+17. [Sync vs Async Handlers](#sync-vs-async-handlers)
+18. [Background Tasks](#background-tasks)
+19. [Error Catalog](#error-catalog)
+20. [Testing](#testing)
+21. [Strict Decorator Inheritance](#strict-decorator-inheritance)
+22. [OpenAPI 3.1 Generation](#openapi-31-generation)
+23. [Logging](#logging)
+24. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
+25. [WebSockets](#websockets)
+26. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
+27. [Typed Streaming](#typed-streaming)
+28. [Socket.IO Compatibility](#socketio-compatibility)
+29. [Sessions](#sessions)
+30. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
+31. [Static Files](#static-files)
+32. [Request Arena](#request-arena)
+33. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+34. [AI Documentation Access](#ai-documentation-access)
+35. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+36. [Companion Packages](#companion-packages)
+37. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -56,7 +67,7 @@ is installed. `py.typed` marker ships for full static-analysis support.
 
 ## Minimal Example
 
-```python
+```python run
 import asyncio
 from pydantic import BaseModel
 from lauren import (
@@ -86,13 +97,20 @@ class AppModule:
 app = LaurenFactory.create(AppModule)
 # `app` is an ASGI callable — use uvicorn/hypercorn to serve.
 # startup() is called automatically via the ASGI lifespan protocol.
+
+# Exercise it in-process (TestClient runs startup() for you):
+from lauren.testing import TestClient
+
+client = TestClient(app)
+assert client.get("/users/7").json() == {"id": 7, "found": True}
+assert client.post("/users/", json={"name": "Ada", "age": 36}).status_code == 201
 ```
 
 ---
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None)`
 
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
@@ -102,7 +120,7 @@ Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven ph
 4. **DI graph compilation** — detect circular deps, scope violations, protocol ambiguities.
 5. **Router compilation** — walk controllers, compile handler signatures into extraction plans, insert into the radix tree.
 6. **Lifecycle order computation** — build the topological `@post_construct` / `@pre_destruct` schedule.
-7. **Readiness** — build the `LaurenApp` object; `startup()` is deferred to the ASGI lifespan event (or the first HTTP request for servers without lifespan support).
+7. **Readiness** — build the `LaurenApp` object. `startup()` (singleton construction, `@post_construct` hooks, `StartupComplete`) runs on the ASGI lifespan `startup` event. When you drive the app without lifespan support — e.g. `httpx.ASGITransport` — call `await app.startup()` yourself; `lauren.testing.TestClient` does it for you.
 
 Failures in phases 1–6 raise a `StartupError` subclass immediately — the app never begins serving traffic with an invalid graph.
 
@@ -115,7 +133,7 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `global_middlewares` | `Iterable[type]` | `None` | Middleware classes applied to every request (onion order) |
 | `global_guards` | `Iterable[type]` | `None` | Guard classes applied to every HTTP request |
 | `global_interceptors` | `Iterable[type]` | `None` | Interceptor classes applied to every HTTP handler |
-| `global_ws_guards` | `Iterable[type]` | `None` | Guard classes applied before every WebSocket `@on_connect` |
+| `global_ws_guards` | `Iterable[type]` | `None` | Guard classes applied before every WebSocket `@on_connect` (registered with DI automatically) |
 | `global_ws_interceptors` | `Iterable[type]` | `None` | Interceptor classes wrapping every WebSocket `@on_connect` |
 | `global_exception_handlers` | `Iterable[Any]` | `None` | Exception handler classes/functions for every request |
 | `global_providers` | `Iterable[Any]` | `None` | Extra providers added to the root module |
@@ -136,13 +154,21 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `root_path` | `str` | `""` | ASGI root path for reverse proxy prefix stripping |
 | `mounts` | `dict[str, Any]` | `None` | Sub-applications mounted at path prefixes |
 | `sessions` | `SessionConfig` | `None` | Enable signed-cookie sessions (see [Sessions](#sessions)) |
+| `content` | `ContentConfig` | `None` | Request-body content policy: `ContentConfig(strict_content_type=None \| False \| "warn" \| True)` (see [Content-type policy](#content-type-policy-contentconfig)) |
 
 ### `Lauren` (imperative API)
 
 `Lauren` is a higher-level wrapper around `LaurenFactory` that provides an imperative, chainable API for building applications without the full NestJS-style module system:
 
-```python
-from lauren import Lauren
+```python run
+from dataclasses import asdict, dataclass
+
+from lauren import Json, Lauren
+from lauren.testing import TestClient
+
+@dataclass
+class CreateUser:
+    name: str
 
 app = Lauren()
 
@@ -151,14 +177,26 @@ async def health() -> dict:
     return {"status": "ok"}
 
 @app.post("/users")
-async def create_user(body: Json[CreateUser]) -> dict:
-    return body.model_dump(), 201
+async def create_user(body: Json[CreateUser]) -> tuple[dict, int]:
+    return asdict(body), 201
 
-# Build the ASGI app:
-asgi_app = app.build()
+# `app` itself is the ASGI callable (`uvicorn main:app`); it compiles lazily.
+client = TestClient(app)
+assert client.post("/users", json={"name": "ada"}).status_code == 201
 ```
 
-`Lauren` exposes the same `create()` parameters as `LaurenFactory` but through a builder pattern. It internally creates a root module from the registered routes and providers.
+`Lauren(...)` accepts every `LaurenFactory.create` option — the OpenAPI ones
+under friendlier names (`title` / `version` / `description` → `openapi_info`,
+`servers` → `openapi_servers`, `security_schemes` →
+`openapi_security_schemes`) — and differs in defaults: `/docs`, `/redoc` and
+`/openapi.json` are enabled. `debug` is reserved and has no effect yet (passing
+`True` logs a warning). It internally creates a root module from the registered
+routes and modules. Mutators — `include_module`, `add_middleware`,
+`add_guard`, `add_interceptor`, `add_exception_handler`, `add_provider`,
+`mount(path, asgi_app)` and the route decorators — must run before the app
+compiles (first request or `await app.startup()`); afterwards they raise
+`LifecycleViolationError`. `on_startup` hooks run when the app compiles, before
+singletons are built (so before `@post_construct`).
 
 ### `LaurenApp`
 
@@ -169,7 +207,7 @@ Attributes & methods:
 - `app.app_state: AppState` — sealed, read-only app-level state.
 - `app.routes()` — list of `RouteEntry` objects.
 - `app.openapi()` — OpenAPI 3.1 schema dict.
-- `await app.startup()` — idempotent; invoked automatically by the ASGI lifespan protocol (uvicorn) or lazily on the first HTTP request. Call explicitly in tests that check `@post_construct` state.
+- `await app.startup()` — builds singletons and runs `@post_construct` hooks. Invoked by the ASGI lifespan protocol (uvicorn, hypercorn); call it yourself when there is no lifespan (e.g. `httpx.ASGITransport`) — `TestClient` does. A second call raises `LifecycleViolationError` unless the app was built with `strict_lifecycle=False`.
 - `await app.shutdown(drain_timeout=10.0)` — runs `@pre_destruct` hooks, awaits in-flight requests.
 - `await app(scope, receive, send)` — standard ASGI callable (HTTP + lifespan).
 - `app.mount(path, app)` — mount a sub-ASGI application at a path prefix.
@@ -199,7 +237,7 @@ Any ASGI callable (not just `LaurenApp`) can be mounted — this includes Starle
 
 Marks a class as a DI provider.
 
-```python
+```python run
 from lauren import Scope, injectable
 
 @injectable(scope=Scope.SINGLETON)
@@ -220,7 +258,7 @@ class DbSession:
 
 **Rule:** subclasses of `@injectable` classes are NOT automatically injectable. You must re-decorate explicitly:
 
-```python
+```python run
 @injectable()
 class Base: ...
 
@@ -258,10 +296,11 @@ Violations raised at startup:
 
 ### `@controller(prefix="", *, tags=None, summary=None, description=None, deprecated=False, security=None)`
 
-Declares a controller class. Automatically makes the class `@injectable(scope=Scope.REQUEST)` so handlers can receive request-scoped deps (sessions, current user, etc.).
+Declares a controller class. Automatically makes the class `@injectable(scope=Scope.SINGLETON)` (NestJS behaviour): one instance for the app, so a controller may depend only on singletons. For per-request construction (request-scoped dependencies, per-request `@post_construct`), add `@injectable(scope=Scope.REQUEST)` *below* `@controller`.
 
-```python
+```python run
 @controller("/api/v1/users", tags=["users"])
+@injectable(scope=Scope.REQUEST)          # needed: DbSession is request-scoped
 class UserController:
     def __init__(self, session: DbSession) -> None: ...
 ```
@@ -273,7 +312,7 @@ class UserController:
 
 Each decorator attaches a `RouteMeta` to the method. Multiple route decorators on the same method register multiple routes.
 
-```python
+```python run
 @controller("/p")
 class PingController:
     @get("/ping")
@@ -284,7 +323,9 @@ class PingController:
 
 ### Lifecycle hook decorators
 
-```python
+```python run
+from lauren import injectable, post_construct, pre_destruct
+
 @injectable()
 class Db:
     @post_construct
@@ -294,7 +335,7 @@ class Db:
     async def disconnect(self) -> None: ...
 ```
 
-- `@post_construct` — runs after DI construction, in topological order (deps first).
+- `@post_construct` — runs after DI construction, in topological order (deps first). Singletons are built and their hooks run in `LaurenApp.startup()` (the ASGI lifespan `startup` event), not in `LaurenFactory.create`. A sync hook runs inline on the event loop and there is no timeout. Declare at most one `@post_construct` and one `@pre_destruct` per class — only the first found is honoured.
 - `@pre_destruct` — runs at shutdown in reverse-topological order, with a per-hook timeout (default 10 s). Both sync and async hooks are supported:
   - **Async hooks** are cancelled via `asyncio.wait_for` if they exceed the timeout.
   - **Sync hooks** run in a thread pool via `asyncio.to_thread` — they never block the event loop and receive the same timeout protection as async hooks. A sync hook that never returns is cancelled at the timeout boundary.
@@ -302,7 +343,7 @@ class Db:
 
 ### Middleware & guard decorators
 
-- `@middleware` — marks a class with a `dispatch(request, call_next)` method as middleware.
+- `@middleware()` — marks a class with a `dispatch(request, call_next)` method as middleware. Always call it with parentheses: bare `@middleware` raises `DecoratorUsageError`.
 - `@use_middlewares(*classes)` — attach middleware to a **controller class** OR a **handler method**.
 - `@use_guards(*classes)` — attach guards to a **controller class** OR a **handler method**.
 - `@set_metadata(key, value)` — attach free-form metadata readable by guards via `ExecutionContext.get_metadata(key, default)`.
@@ -357,7 +398,7 @@ Immutable value object. All `with_*` methods return new instances.
 **Subclassing:**
 `Response` has no `__slots__` and is designed to be subclassed.  Any `Response` subclass returned from a handler is passed through `_coerce_to_response` unchanged (the `isinstance` check fires immediately).  All `with_*` builders preserve the concrete subclass type via `type(self).__new__(type(self))` in `_clone`.  Add domain factory classmethods, extra instance attributes, or computed properties freely.
 
-```python
+```python run
 class JsonApiResponse(Response):
     @classmethod
     def resource(cls, data: dict, *, status: int = 200) -> "JsonApiResponse":
@@ -388,6 +429,32 @@ request.state.has("user_id")                    # bool
 ### `Headers`
 
 Case-insensitive, ordered, multi-value mapping. Use `.getall(name)` to get a list of values (e.g. multiple `Set-Cookie` lines).
+
+### Types & Connection Info
+
+`ClientInfo` and `ServerInfo` are small dataclasses with `host` and `port`
+fields, available on `Request.client` and `Request.server` respectively.
+
+`MutableHeaders` is the writable headers mapping used when constructing
+or mutating a `Response`.
+
+`ByteStream` is the zero-copy streaming body extractor:
+`body: ByteStream` receives an async iterable of raw `bytes` chunks so
+the handler can process the body without buffering it into memory.
+
+`UploadFile` is the multipart file-upload extractor — FastAPI-compatible:
+
+```python
+from lauren import UploadFile
+
+@post("/upload")
+async def upload(self, file: UploadFile) -> dict:
+    content = await file.read()
+    return {"filename": file.filename, "size": len(content)}
+```
+
+`StateExtractor` is the typed extractor for `request.state` fields
+declared by guards or middleware.
 
 ---
 
@@ -423,7 +490,7 @@ async def show(self, id: int) -> dict:  # `id` is treated as Path[int]
 
 For validation metadata and OpenAPI hints, use `QueryField` / `HeaderField` / `CookieField`:
 
-```python
+```python run
 from lauren import Query, QueryField
 
 @get("/search")
@@ -440,13 +507,13 @@ Supported constraints: `ge`, `le`, `gt`, `lt`, `min_length`, `max_length`, `patt
 
 ### JSON body with Pydantic
 
-```python
+```python run
 class CreatePost(BaseModel):
     title: str
     body: str
 
 @post("/posts")
-async def create(self, body: Json[CreatePost]) -> dict:
+async def create(self, body: Json[CreatePost]) -> tuple[dict, int]:
     return body.model_dump(), 201
 ```
 
@@ -458,7 +525,7 @@ Validation errors are raised as `ExtractorError` and mapped to HTTP 422.
 correct variant class — no pydantic required. Works with `@dataclass`,
 `TypedDict`, `msgspec.Struct`, and `pydantic.BaseModel` variants:
 
-```python
+```python run
 from dataclasses import dataclass
 from typing import Literal
 from lauren import Discriminated, Json, post
@@ -493,7 +560,7 @@ recognized and auto-promoted to a JSON body extraction.
 `ByteStream` provides an async iterable of raw `bytes` chunks, avoiding
 buffering the entire body into memory:
 
-```python
+```python run
 from lauren import ByteStream
 
 @post("/ingest")
@@ -504,8 +571,10 @@ async def ingest(self, stream: ByteStream) -> dict:
     return {"bytes_received": total}
 ```
 
-The body is bounded by `max_body_size` (default 1 MB). Oversize bodies
-raise `RequestBodyTooLarge` (413).
+The body is bounded by `max_body_size` (default 1 MB). An oversize
+`ByteStream` raises `RequestBodyTooLarge` (413). For `Json[T]` and `Bytes`
+parameters the extractor currently wraps the overflow, so the client sees a
+422 `extractor_error` instead.
 
 ### File uploads
 
@@ -520,8 +589,100 @@ async def upload(self, file: UploadFile) -> dict:
     return {"filename": file.filename, "size": len(content)}
 ```
 
-`UploadFile` provides `.filename`, `.content_type`, `.file` (a
-`SpooledTemporaryFile`), and async `.read()` / `.write()` methods.
+`UploadFile` holds the part **in memory** (bounded by `max_body_size`) and
+provides `.filename`, `.content_type`, `.headers`, `.name` (the form field),
+`.size`, `async .read()` and `.read_sync()`. There is no `.file` handle and no
+`.write()`; spool to disk yourself if you need to.
+
+---
+
+## Pipes
+
+Pipes transform or validate an extracted parameter value **before** it
+reaches the handler.
+
+```python run
+from lauren import ExtractorFieldError, Path, Pipe, PipeContext, is_pipe
+
+class PositiveIntPipe(Pipe):
+    async def transform(self, value: int, ctx: PipeContext) -> int:
+        if value <= 0:
+            # An HTTPError maps to a 4xx; a plain ValueError would be a 500.
+            raise ExtractorFieldError("must be positive", detail={"field": ctx.name})
+        return value
+
+@get("/{id}")
+async def get_item(self, id: Path[int, PositiveIntPipe]) -> dict: ...
+```
+
+`PipeMeta` is the metadata marker stored on pipe callables; `PIPE_META`
+is the sentinel attribute name; `is_pipe(obj)` returns `True` if *obj*
+carries the pipe marker.
+
+`PathField` provides alias / validation overrides for path parameters,
+analogous to Pydantic's `Field`.  `FieldDescriptor` is the richer
+variant that supports `ge`, `le`, `min_length`, etc.
+
+`PipeContext` carries the parameter name, annotation, and owning handler
+metadata so a pipe can make context-aware decisions.
+
+---
+
+## Custom Extractors (plugin API)
+
+Any subclass of `ExtractionMarker` with an async `extract` method can
+participate in handler signatures. The canonical form is an **instance
+method** that receives an `ExecutionContext` plus the `Extraction`
+metadata; the legacy classmethod form is still supported for backward
+compatibility.
+
+```python run
+from lauren.extractors import Extraction, ExtractionMarker
+from lauren.exceptions import UnauthorizedError
+from lauren.types import ExecutionContext
+
+class CurrentUser(ExtractionMarker):
+    source = "app.current_user"  # any unique string
+
+    async def extract(
+        self,
+        execution_context: ExecutionContext,
+        extraction: Extraction,
+    ) -> object:
+        uid = execution_context.request.state.get("user_id")
+        if uid is None:
+            raise UnauthorizedError("missing auth")
+        return {"user_id": uid}
+
+# Usage — declare as a handler parameter annotation:
+@get("/me")
+async def me(self, user: CurrentUser) -> dict:
+    return user
+```
+
+The extractor receives:
+- `execution_context` — full request/handler context, including
+  `execution_context.request`, route metadata, and the matched handler.
+- `extraction` — an `Extraction` with `name`, `default`, `has_default`,
+  and `inner_type`.
+
+Raise any `HTTPError` subclass (`UnauthorizedError`, `ForbiddenError`, ...) to short-circuit with the matching status.
+
+If the extractor needs constructor dependencies, decorate it with
+`@injectable` and list it in a module's `providers=[...]`. Lauren then
+resolves the extractor through the DI container and still calls the same
+`extract(self, execution_context, extraction)` method.
+
+The legacy classmethod shape still works:
+
+```python
+class LegacyUser(ExtractionMarker):
+    source = "legacy.current_user"
+
+    @classmethod
+    async def extract(cls, request, extraction, *, container, request_cache):
+        ...
+```
 
 ---
 
@@ -544,7 +705,7 @@ async def upload(self, file: UploadFile) -> dict:
 
 ### Protocols and multi-bindings
 
-```python
+```python run
 from typing import Protocol, runtime_checkable
 
 @runtime_checkable
@@ -567,7 +728,7 @@ Two providers for the same token without `multi=True` raise `ProtocolAmbiguityEr
 
 Multi-bindings can be requested with their natural type at *every* injection site, not just `container.resolve(T)`:
 
-```python
+```python run
 @injectable(provides=[EmailSender], multi=True)
 class SmtpSender: ...
 
@@ -603,7 +764,7 @@ When an `@injectable()`-decorated function is a generator or async generator, th
 - The **yielded value** = the resolved dependency (what callers receive).
 - Code **after** `yield` = teardown (runs when the scope ends).
 
-```python
+```python run
 @injectable()                           # SINGLETON — setup at startup, teardown at shutdown
 def db_pool():
     pool = create_pool(DATABASE_URL)
@@ -639,13 +800,122 @@ Use `try/finally` for guaranteed cleanup even when handlers raise 500 errors.
 
 If an `__init__` parameter has a default value, the DI container treats it as optional — the default is used when no provider is registered. This is what lets dataclass-backed configs work naturally:
 
-```python
+```python run
 @injectable(scope=Scope.SINGLETON)
 @dataclass
 class Settings:
     database_url: str = "sqlite:///:memory:"
     jwt_secret: str = "dev"
 ```
+
+---
+
+## Custom Providers
+
+Four NestJS-style recipes for cases where ``@injectable`` is not enough.
+All return a ``CustomProvider`` record listed in a module's
+``providers=[...]``.
+
+### `use_value` — bind to a literal
+
+```python run
+from lauren import Token, module, use_value
+
+DB_URL = Token("DB_URL")
+
+@module(providers=[
+    use_value(provide=DB_URL, value="postgres://localhost/app"),
+    use_value(provide="FEATURE_FLAGS", value={"beta": True}),   # bare strings work too
+])
+class ValueModule: ...
+```
+
+### `use_class` — bind a token to a different class
+
+```python run
+from lauren import Scope, module, use_class
+
+class ConfigService: ...
+class ProductionConfig(ConfigService): ...
+class DevelopmentConfig(ConfigService): ...
+PROD = False
+
+@module(providers=[
+    use_class(
+        provide=ConfigService,
+        use=ProductionConfig if PROD else DevelopmentConfig,
+        scope=Scope.SINGLETON,
+    ),
+])
+class ConfigModule: ...
+```
+
+### `use_factory` — compute the value through a DI-resolved function
+
+```python run
+from lauren import LaurenFactory, OptionalDep, Scope, module, use_factory, use_value
+from lauren.logging import Logger
+
+class Engine:
+    def __init__(self, url: str, logger: Logger | None = None) -> None:
+        self.url, self.logger = url, logger
+
+def make_engine(url: str, log: Logger | None) -> Engine:
+    return Engine(url, logger=log)
+
+@module(providers=[
+    use_value(provide=DB_URL, value="sqlite://"),
+    use_factory(
+        provide=Engine,
+        factory=make_engine,
+        injects=[DB_URL, OptionalDep("LOGGER")],   # "LOGGER" is not registered → None
+        scope=Scope.SINGLETON,
+    ),
+])
+class EngineModule: ...
+
+app = LaurenFactory.create(EngineModule)
+```
+
+`async def` factories are awaited transparently.
+
+### `use_existing` — alias one token to another
+
+```python run
+from lauren import LaurenFactory, injectable, module, use_existing
+
+@injectable()
+class LoggerService: ...
+
+@module(providers=[
+    LoggerService,
+    use_existing(provide="AliasedLoggerService", existing=LoggerService),
+])
+class AliasModule: ...
+
+app = LaurenFactory.create(AliasModule)
+```
+
+### `Inject` for non-class tokens
+
+```python run
+from typing import Annotated
+from lauren import Inject, Token
+
+DB_URL = Token("DB_URL")
+
+@injectable()
+class Repo:
+    def __init__(
+        self,
+        url: Annotated[str, Inject(DB_URL)],
+    ) -> None:
+        self.url = url
+```
+
+`Token("NAME")` is hashable, identity-distinct by default
+(``unique=True``), and renders nicely in errors. Bare strings work but
+sacrifice the diagnostic and IDE benefits.
 
 ---
 
@@ -675,7 +945,7 @@ Resolution rules:
 
 Guards authorize a request by returning `bool` (or raising an `HTTPError`).
 
-```python
+```python run
 from lauren import ExecutionContext
 
 class AdminGuard:
@@ -689,22 +959,26 @@ Attach with `@use_guards(...)`. Guards declared on a controller class run before
 
 `@set_metadata("key", value)` lets guards read per-route policy:
 
-```python
-@get("/purge")
-@use_guards(RoleGuard)
-@set_metadata("required_role", "admin")
-async def purge(self) -> dict: ...
+```python run
+from lauren import get, set_metadata, use_guards
 
 class RoleGuard:
     async def can_activate(self, ctx):
         required = ctx.get_metadata("required_role", "user")
         return ctx.request.state.get("user", {}).get("role") == required
+
+@get("/purge")
+@use_guards(RoleGuard)
+@set_metadata("required_role", "admin")
+async def purge(self) -> dict: ...
 ```
 
 ### Middleware (`MiddlewareProtocol`)
 
-```python
-@middleware
+```python run
+from lauren import middleware
+
+@middleware()
 class RequestId:
     async def dispatch(self, request, call_next):
         import uuid
@@ -718,6 +992,234 @@ Registration paths (onion order, outermost first):
 1. Global — `LaurenFactory.create(AppModule, global_middlewares=[RequestId, AuthMiddleware])`
 2. Controller — `@use_middlewares(...)` on the controller class
 3. Route — `@use_middlewares(...)` on a handler method
+
+**Errors raised by middleware.** A middleware may raise to reject a request. An
+`HTTPError` raised by middleware at *any* level — before or after `call_next` —
+is rendered with its own status and the standard envelope (`error_format` is
+honoured). Which exception handlers may claim it depends on where it was raised:
+
+| Raised in | Handlers consulted |
+|---|---|
+| Route/controller middleware, guards, extractors, interceptors, the handler | route → controller → global |
+| Global middleware (before or after `call_next`), the session engine | global only |
+| An exception handler's own `catch` | none (logged with its cause, then 500) |
+
+Any other unhandled exception becomes `500 internal_error`, logged with its
+traceback and an `origin` naming the component that raised it. The connection
+stays usable and `RequestComplete` fires for every request.
+
+### Per-Route Middleware (`use_middlewares`)
+
+`use_middlewares` attaches middleware(s) to a specific controller class
+or route handler without registering them globally:
+
+```python run
+from lauren import use_middlewares, middleware, injectable, Scope
+
+@middleware()
+@injectable(scope=Scope.SINGLETON)
+class AuditLog:
+    async def dispatch(self, req, call_next):
+        response = await call_next(req)
+        print(f"AUDIT {req.method} {req.path} → {response.status_code}")
+        return response
+
+@use_middlewares(AuditLog)
+@controller("/admin")
+class AdminController: ...
+```
+
+`CallNext` is the callable type for `call_next` inside a middleware
+`dispatch` method.
+
+---
+
+## Interceptors
+
+Interceptors run **after guards** and **before** the handler. They wrap
+handler execution: ideal for timing, caching, or response transforms.
+
+```python run
+from lauren import interceptor, use_interceptors, CallHandler
+from lauren.types import ExecutionContext, Response
+
+@interceptor()
+class TimingInterceptor:
+    async def intercept(self, ctx: ExecutionContext, next: CallHandler) -> Response:
+        import time
+        t0 = time.monotonic()
+        response = await next.handle()
+        ms = (time.monotonic() - t0) * 1000
+        return response.with_header("x-duration-ms", f"{ms:.1f}")
+
+# Apply to a controller or individual route:
+@use_interceptors(TimingInterceptor)
+@controller("/api")
+class MyController: ...
+```
+
+`InterceptorProtocol` is the structural protocol every interceptor satisfies.
+`InterceptorConfigError` is raised when an interceptor is misconfigured at
+startup (e.g. applied without parentheses).
+
+`use_middlewares` is the per-controller / per-route equivalent of
+`global_middlewares=` on the app factory.  Both `use_interceptors` and
+`use_middlewares` take **classes** (resolved through DI — not instances) and
+can be stacked; stacking accumulates.
+
+---
+
+## Exception Handlers
+
+Catch domain or framework exceptions and turn them into structured
+HTTP responses. Two forms — class (DI-injected) and function (no DI).
+Three attachment scopes — global, per-controller, per-route.
+
+### Class form
+
+```python run
+from lauren import HTTPError, LaurenFactory, controller, exception_handler, get, module
+from lauren.logging import Logger, NullLogger
+from lauren.testing import TestClient
+from lauren.types import Request, Response
+
+class NotFoundError(HTTPError):      # domain errors: subclass HTTPError
+    status_code = 404
+    code = "not_found"
+
+class ConflictError(HTTPError):
+    status_code = 409
+    code = "conflict"
+
+@exception_handler(NotFoundError, ConflictError)
+class DomainErrors:
+    def __init__(self, log: Logger) -> None:
+        self.log = log
+
+    async def catch(self, exc: Exception, request: Request) -> Response:
+        self.log.warn(f"domain error: {type(exc).__name__}: {exc}")
+        return Response.json({"error": str(exc)}, status=400)
+
+@controller("/items")
+class ItemController:
+    @get("/{item_id}")
+    async def show(self, item_id: int) -> dict:
+        raise NotFoundError(f"item {item_id} not found")
+
+@module(controllers=[ItemController])
+class ItemsModule: ...
+
+app = LaurenFactory.create(
+    ItemsModule,
+    global_exception_handlers=[DomainErrors],
+    global_providers=[NullLogger],      # any Logger implementation
+)
+assert TestClient(app).get("/items/7").json() == {"error": "item 7 not found"}
+```
+
+The class is auto-marked as `@injectable(scope=Scope.SINGLETON)` so it
+participates in DI like guards and middleware. It MUST define
+`catch(self, exc, request)` returning a ``Response``.
+
+### Function form
+
+```python run
+@exception_handler(ValueError)
+async def handle_value_error(exc: ValueError, request: Request) -> Response:
+    return Response.json({"detail": str(exc)}, status=422)
+```
+
+Function-form handlers are invoked directly with ``(exc, request)`` and
+do **not** participate in DI. For dependencies, use the class form.
+
+### Attachment
+
+```python run
+from lauren import use_exception_handlers
+
+# Per-controller — handles every method on the class:
+@use_exception_handlers(DomainErrors)
+@controller("/users")
+class UserController: ...
+
+# Per-route — handles only this handler:
+@get("/x")
+@use_exception_handlers(handle_value_error)
+async def x(self): ...
+
+# Global — handles every request:
+app = LaurenFactory.create(
+    AppModule,
+    global_exception_handlers=[DomainErrors, handle_value_error],
+    global_providers=[NullLogger],   # DomainErrors injects a Logger
+)
+```
+
+Resolution order, most specific wins: route → controller → global.
+Within each tier handlers are tried in registration order; the first
+whose declared types match (`isinstance(exc, declared)`) wins.
+
+### Rules
+
+* `@exception_handler` MUST be invoked with at least one exception
+  type. Bare `@exception_handler` and empty `@exception_handler()` are
+  both rejected with `ExceptionHandlerConfigError`.
+* A handler can declare multiple types: `@exception_handler(A, B)`, or
+  equivalently by **stacking** the decorator (stacking *accumulates*
+  the types, it does not overwrite — duplicates are de-duplicated):
+  ```python
+  @exception_handler(UnauthorizedError)
+  @exception_handler(ForbiddenError)
+  def to_login(exc, request): ...   # catches both
+  ```
+* Subclasses of `@exception_handler` classes are NOT auto-handlers —
+  re-decorate to opt in (`MetadataInheritanceError`).
+* Handlers should *return* responses, never raise. A raise inside
+  `catch` becomes a `500 internal_error`, logged together with the error
+  it was handling (`origin="exception_handler"`, `handler`, `cause`).
+* Errors raised by a **global** middleware (or the session engine) are
+  outside any route, so only **global** handlers can claim them.
+
+---
+
+## `@propagate_metadata` — copy Lauren decorator metadata between objects
+
+Like `functools.wraps` but for Lauren's `@use_*` decorators.  Copies guard,
+interceptor, middleware, exception-handler, encoder, and user-metadata
+annotations from a *source* to the decorated target.
+
+```python
+from lauren import propagate_metadata, use_guards, controller, get
+
+# Copy all @use_* metadata from source to target class
+@propagate_metadata(SourceClass)
+@controller("/derived")
+class DerivedController: ...
+
+# Copy from a function (e.g. when building decorator wrappers)
+@propagate_metadata(original_fn)
+@get("/wrapped")
+async def wrapper(*a, **kw): return await original_fn(*a, **kw)
+
+# Selective — only propagate guards and user metadata
+@propagate_metadata(Source, interceptors=False, middlewares=False, encoder=False)
+@controller("/x")
+class X: ...
+```
+
+**Ordering for list-based metadata** (guards, interceptors, middlewares,
+exception handlers): source entries are **prepended** before the target's
+own entries, so propagated behaviour runs as the outermost layer.
+
+**Encoder**: source encoder is copied only when the target has no encoder of
+its own (target's explicit `@use_encoder` wins).
+
+**User metadata** (`@set_metadata` key/value pairs): source dict is merged in;
+target's existing keys take precedence on conflict.
+
+Parameters: `source` (required), `guards=True`, `interceptors=True`,
+`middlewares=True`, `exception_handlers=True`, `encoder=True`,
+`user_metadata=True`.
 
 ---
 
@@ -760,6 +1262,80 @@ async def r7(self) -> list[BaseModel]:
 async def r8(self):
     return Response.html("<h1>hi</h1>")     # raw Response is honored
 ```
+
+### JSON Serialisation
+
+The default encoder is `StdlibJSONEncoder` (the process-wide default, swappable
+with `lauren.serialization.set_active_encoder`). `auto_encoder()` returns the
+fastest available one (orjson > msgspec > stdlib) — Lauren does **not** apply it
+for you; pass it explicitly: `LaurenFactory.create(..., json_encoder=auto_encoder())`.
+
+The encoder is threaded through the entire application — it is used for
+handler response coercion, error responses (`_error_response`), SSE events
+(`EventStream`, `Response.sse`), WebSocket `send_json`, and every streaming
+frame.  Pass it once at factory time and every output path honours it.
+
+| Class | Dependency | Best for |
+|---|---|---|
+| `StdlibJSONEncoder` | Built-in `json` (always available) | Default, zero deps |
+| `OrjsonEncoder` | `orjson` C extension | Fastest for dict/list payloads |
+| `MsgspecEncoder` | `msgspec` | Fastest when returning `msgspec.Struct` directly |
+| `PydanticEncoder` | `pydantic` (v2) | Pydantic-heavy APIs; honours all `@field_serializer` / `model_config` rules; skips the intermediate `model_dump()` dict |
+| `JSONEncoder` | — | Protocol — implement `encode(obj) -> bytes` and `encode_compact(obj) -> bytes` |
+
+```python run
+from lauren import LaurenFactory, PydanticEncoder, auto_encoder
+# Wire at build time — every output path inherits this encoder:
+app = LaurenFactory.create(AppModule, json_encoder=PydanticEncoder())
+
+# Or auto-select best available (orjson > msgspec > stdlib):
+enc = auto_encoder()
+enc.encode({"hello": "world"})
+```
+
+`PydanticEncoder` calls `model.model_dump_json()` / `TypeAdapter.dump_json(items)`
+directly so pydantic-core serialises model → bytes in one step, skipping the
+intermediate Python dict.  Non-Pydantic values (plain dicts, lists, primitives,
+`msgspec.Struct`, dataclasses) fall back to `StdlibJSONEncoder` transparently.
+
+#### Per-route / per-controller encoder override — `@use_encoder`
+
+Individual routes or whole controllers can override the app-level encoder:
+
+```python
+from lauren import use_encoder, OrjsonEncoder, PydanticEncoder, controller, get
+
+# Every route on this controller uses OrjsonEncoder:
+@use_encoder(OrjsonEncoder())
+@controller("/fast")
+class FastController:
+    @get("/")
+    async def h(self) -> dict: ...
+
+# Only this one route uses PydanticEncoder; others use the app encoder:
+@controller("/mixed")
+class MixedController:
+    @get("/models")
+    @use_encoder(PydanticEncoder())
+    async def models(self) -> list[MyModel]: ...
+
+    @get("/plain")
+    async def plain(self) -> dict: ...
+```
+
+Precedence: **method-level > controller-level > app-level**.
+
+The override applies to handler response coercion, EventStream framing, and
+error responses for that route.  Route-not-found (404) and unhandled
+outer-layer exceptions always use the app-level encoder because no compiled
+handler is in scope at those points.
+
+`@use_encoder` must always be called with parentheses — `@use_encoder(enc)`,
+never bare `@use_encoder`.  Passing a class instead of an instance
+(`@use_encoder(OrjsonEncoder)`) is rejected at decoration time with a clear
+error.
+
+---
 
 ## Sync vs Async Handlers
 
@@ -813,46 +1389,123 @@ The default JSON encoder handles: Pydantic v2 models, enums (`Enum.value`), `dat
 
 ---
 
+## Background Tasks
+
+`BackgroundTasks` lets you fire work **after** the response has been
+sent. Declare it as a handler parameter and the framework injects it:
+
+```python run
+from dataclasses import dataclass
+
+from lauren import BackgroundTasks, Json, LaurenFactory, Scope, TaskHandle, controller, injectable, module, post
+from lauren.testing import TestClient
+
+@dataclass
+class SignUpBody:
+    email: str
+
+@injectable(scope=Scope.SINGLETON)
+class EmailService:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    async def send(self, addr: str) -> None:
+        self.sent.append(addr)
+
+@controller("/accounts")
+class AccountController:
+    def __init__(self, email: EmailService) -> None:
+        self._email = email
+
+    @post("/sign-up")
+    async def sign_up(self, body: Json[SignUpBody], tasks: BackgroundTasks) -> dict:
+        handle: TaskHandle = tasks.add_task(self._email.send, body.email)
+        return {"status": "queued", "task_id": handle.task_id}   # runs after the response
+
+@module(controllers=[AccountController], providers=[EmailService])
+class AccountsModule: ...
+
+app = LaurenFactory.create(AccountsModule)
+assert TestClient(app).post("/accounts/sign-up", json={"email": "a@b.c"}).json()["status"] == "queued"
+```
+
+`TaskHandle` carries `task_id` and `status` (`"pending"` → `"running"` →
+`"done"` | `"failed"` | `"cancelled"`), plus:
+
+* `done` — `True` once the status is terminal.
+* `cancel()` — skips a task that has not started; returns `False` once it is
+  running or finished (tasks share the request's `asyncio.Task`).
+* `await result()` — the task's return value; re-raises its exception, or
+  `concurrent.futures.CancelledError` (an ordinary `Exception`) if it was cancelled. Tasks run only after the
+  response is sent, so the request that queued the task cannot await it — that
+  raises `RuntimeError`; await it from another coroutine (a WebSocket handler,
+  a test).
+
+Both `async def` and regular `def` callables are accepted; sync callables are
+offloaded via `anyio.to_thread.run_sync`. If the request task is cancelled
+(shutdown, client disconnect) the interrupted and remaining tasks are marked
+`"cancelled"`.
+
+### Background-task signals
+
+Three `LifecycleEvent` subclasses are emitted on the shared `SignalBus`:
+
+| Event | When |
+|---|---|
+| `BackgroundTaskStarted` | Just before the callable is invoked |
+| `BackgroundTaskComplete` | After it returns successfully |
+| `BackgroundTaskFailed` | After it raises an exception |
+
+---
+
 ## Error Catalog
 
 All exceptions live in `lauren.exceptions` and inherit from `LaurenError`.
 
-**Startup errors (not HTTP-mapped):**
+Every class, generated from `lauren/exceptions.py` (startup errors are raised
+by `LaurenFactory.create` or at decoration time and are never HTTP-mapped;
+`HTTPError` subclasses render as responses; lifecycle errors are logged):
 
-| Class | Meaning |
-|---|---|
-| `RouterConflictError` | Two routes share the same (method, path) |
-| `CircularDependencyError` | DI graph has a cycle |
-| `CircularModuleError` | Module imports form a cycle |
-| `MissingProviderError` | No provider registered for a token |
-| `ProtocolAmbiguityError` | Multiple providers for a non-`multi` token |
-| `ModuleExportViolation` | Module exports something it doesn't own or import |
-| `LifecycleConfigError` | Misuse of `@post_construct` / `@pre_destruct` |
-| `MetadataInheritanceError` | Subclass used a parent's decoration without re-declaring |
-| `DuplicateBindingError` | Same class registered twice |
-| `UnresolvableParameterError` | Handler/provider param cannot be mapped |
-| `DIScopeViolationError` | Singleton depends on request-scoped |
-| `MiddlewareConfigError` | Middleware class missing `dispatch` |
-| `GuardConfigError` | Guard class missing `can_activate` |
-| `InterceptorConfigError` | Interceptor class missing `intercept` or wrong signature |
-| `ExceptionHandlerConfigError` | Exception handler misconfigured |
-| `SessionConfigError` | Invalid `SessionConfig`, or `Session` injected with sessions disabled |
-| `OpenAPISchemaError` | OpenAPI generation failed |
-| `DecoratorUsageError` | Configurable decorator used bare (without `()`)
-
-**HTTP-mapped errors:**
-
-| Class | Status | `code` |
-|---|---|---|
-| `ExtractorError` / `ExtractorFieldError` | 422 | `extractor_error` |
-| `RouteNotFoundError` | 404 | `route_not_found` |
-| `MethodNotAllowedError` | 405 | `method_not_allowed` (includes `allow` list) |
-| `RequestBodyTooLarge` | 413 | `request_body_too_large` |
-| `UnauthorizedError` | 401 | `unauthorized` |
-| `ForbiddenError` | 403 | `forbidden` |
-| `MissingStateError` / `StateTypeError` | 500 | `missing_state` / `state_type_error` |
-
-**Lifecycle errors:** `LifecycleError`, `LifecycleViolationError`, `DestructError`, `DestructTimeoutError`, `DrainTimeoutError`.
+<!-- lauren:facts:error-catalog -->
+| Class | Base | HTTP status | `code` | Meaning |
+|---|---|---|---|---|
+| `LaurenError` | `Exception` | — | `lauren_error` | Base class for all lauren framework errors. |
+| `StartupError` | `LaurenError` | — | `startup_error` | Base class for configuration errors raised by `LaurenFactory.create` (never HTTP-mapped). |
+| `RouterConflictError` | `StartupError` | — | `router_conflict` | Two routes share the same (method, path) signature. |
+| `CircularDependencyError` | `StartupError` | — | `circular_dependency` | A cycle was detected in the DI graph. |
+| `CircularModuleError` | `StartupError` | — | `circular_module` | A cycle was detected in the module import graph. |
+| `MissingProviderError` | `StartupError` | — | `missing_provider` | No provider is registered for a requested token. |
+| `ProtocolAmbiguityError` | `StartupError` | — | `protocol_ambiguity` | A protocol has multiple providers but `multi=False` was requested. |
+| `ModuleExportViolation` | `StartupError` | — | `module_export_violation` | A module exports a provider it neither declares nor imports. |
+| `LifecycleConfigError` | `StartupError` | — | `lifecycle_config` | `@post_construct` / `@pre_destruct` decorates something other than a method. |
+| `MetadataInheritanceError` | `StartupError` | — | `metadata_inheritance` | Injectable metadata was inherited from a base class (forbidden). |
+| `DuplicateBindingError` | `StartupError` | — | `duplicate_binding` | The same class or token is registered twice in one container. |
+| `UnresolvableParameterError` | `StartupError` | — | `unresolvable_parameter` | A handler or provider parameter cannot be resolved to an extractor or dep. |
+| `DIScopeViolationError` | `StartupError` | — | `di_scope_violation` | A singleton depends on a request-scoped provider (or similar). |
+| `MiddlewareConfigError` | `StartupError` | — | `middleware_config` | A middleware lacks `dispatch(request, call_next)`, or `@use_middlewares` cannot run where placed. |
+| `GuardConfigError` | `StartupError` | — | `guard_config` | A guard lacks `can_activate(context)`, or `@use_guards` cannot run where placed. |
+| `InterceptorConfigError` | `StartupError` | — | `interceptor_config` | An interceptor lacks `intercept(ctx, call_handler)`, or `@use_interceptors` cannot run where placed. |
+| `ExceptionHandlerConfigError` | `StartupError` | — | `exception_handler_config` | An `@exception_handler` / `@use_exception_handlers` was misused. |
+| `SessionConfigError` | `StartupError` | — | `session_config` | A `SessionConfig` was invalid, or a `Session` was injected into a handler in an app that did not enable sessions. |
+| `OpenAPISchemaError` | `StartupError` | — | `openapi_schema` | Reserved for strict OpenAPI generation — not raised yet. |
+| `DecoratorUsageError` | `StartupError` | — | `decorator_usage` | A decorator or provider helper was used incorrectly — most often without parentheses. |
+| `HTTPError` | `LaurenError` | 500 | `http_error` | Base class for errors mapped to HTTP responses. |
+| `ExtractorError` | `HTTPError` | 422 | `extractor_error` | A request value could not be extracted or validated. |
+| `ExtractorFieldError` | `ExtractorError` | 422 | `extractor_field_error` | One parameter is missing or violates a field constraint. |
+| `RouteNotFoundError` | `HTTPError` | 404 | `route_not_found` | No route matches the request path. |
+| `MethodNotAllowedError` | `HTTPError` | 405 | `method_not_allowed` | The path matches, but not for this HTTP method (the response sets `Allow`). |
+| `RequestBodyTooLarge` | `HTTPError` | 413 | `request_body_too_large` | The request body exceeds `max_body_size`. |
+| `UnsupportedMediaTypeError` | `HTTPError` | 415 | `unsupported_media_type` | The request body's `Content-Type` is not one the route accepts. |
+| `UnauthorizedError` | `HTTPError` | 401 | `unauthorized` | Authentication is missing or invalid. |
+| `ForbiddenError` | `HTTPError` | 403 | `forbidden` | The caller is not allowed — also what a guard returning `False` raises. |
+| `MissingStateError` | `HTTPError` | 500 | `missing_state` | `request.state.require(key, T)` found no value for `key`. |
+| `StateTypeError` | `HTTPError` | 500 | `state_type_error` | A `request.state` value has the wrong type for `get_typed` / `require`. |
+| `LifecycleError` | `LaurenError` | — | `lifecycle_error` | Base class for errors around startup, shutdown and lifecycle hooks. |
+| `LifecycleViolationError` | `LifecycleError` | — | `lifecycle_violation` | A lifecycle operation was used in the wrong state (`startup()` twice, a mutator after compile). |
+| `DestructError` | `LifecycleError` | — | `destruct_error` | A `@pre_destruct` hook raised during shutdown (collected; shutdown continues). |
+| `DestructTimeoutError` | `LifecycleError` | — | `destruct_timeout` | A `@pre_destruct` hook exceeded its timeout (collected; shutdown continues). |
+| `DrainTimeoutError` | `LifecycleError` | — | `drain_timeout` | Reserved: not raised — a drain timeout at shutdown is logged as a warning. |
+<!-- /lauren:facts -->
 
 All HTTP errors serialize as:
 
@@ -873,11 +1526,31 @@ class NotFoundError(HTTPError):
 raise NotFoundError("user not found", detail={"id": user_id})
 ```
 
+### Errors: Decorator & Interceptor
+
+`DecoratorUsageError` is raised when a configurable decorator such as
+`@controller`, `@injectable`, or `@middleware` is used **bare** (without
+parentheses):
+
+```python
+# Wrong — raises DecoratorUsageError as soon as the class is defined:
+@controller          # missing ()
+class Broken: ...
+
+# Correct:
+@controller("/api")
+class Fine: ...
+```
+
+`InterceptorConfigError` is raised when an interceptor class is
+misconfigured at startup (e.g. no `intercept` method, wrong signature,
+or applied without parentheses).
+
 ---
 
 ## Testing
 
-```python
+```python run
 from lauren.testing import TestClient
 
 app = LaurenFactory.create(AppModule)
@@ -893,6 +1566,8 @@ assert r.json()["id"] == 42
 - `request(method, url, *, headers=None, json=None, content=None, params=None, cookies=None)`
 - All methods return a `TestResponse` with `status_code`, `headers` (list of tuples), `body` (bytes), `text` (str), `json()`, `header(name)`, `headers_all(name)`.
 - Works inside `asyncio.run(...)` tests — it auto-switches to a background thread when called from within a running event loop.
+- Starts the app for you (singletons built, `@post_construct` hooks run), mirroring the ASGI lifespan — immediately for a `LaurenApp`, on the first request for a `Lauren` app (so routes added after creating the client still count).
+- Passes the URL path to the app as written: it does **not** percent-decode it the way ASGI servers do, so a path like `/files/a%2Fb` reaches a handler as `a%2Fb` in tests but `a/b` under uvicorn.
 
 ### Test tiers
 
@@ -938,7 +1613,7 @@ The `_preload_lauren` session fixture is critical: if any Lauren module is first
 
 **Rule:** subclassing does not inherit `@controller`, `@module`, `@injectable`, or `@middleware` status. Every class must be decorated explicitly.
 
-```python
+```python run
 @injectable()
 class Base: ...
 
@@ -960,64 +1635,6 @@ Method-level decorators (`@get`, `@post`, etc.) DO propagate through inheritance
 
 ---
 
-## Custom Extractors (plugin API)
-
-Any subclass of `ExtractionMarker` with an async `extract` method can
-participate in handler signatures. The canonical form is an **instance
-method** that receives an `ExecutionContext` plus the `Extraction`
-metadata; the legacy classmethod form is still supported for backward
-compatibility.
-
-```python
-from lauren.extractors import Extraction, ExtractionMarker
-from lauren.exceptions import UnauthorizedError
-from lauren.types import ExecutionContext
-
-class CurrentUser(ExtractionMarker):
-    source = "app.current_user"  # any unique string
-
-    async def extract(
-        self,
-        execution_context: ExecutionContext,
-        extraction: Extraction,
-    ) -> object:
-        uid = execution_context.request.state.get("user_id")
-        if uid is None:
-            raise UnauthorizedError("missing auth")
-        return {"user_id": uid}
-
-# Usage — declare as a handler parameter annotation:
-@get("/me")
-async def me(self, user: CurrentUser) -> dict:
-    return user
-```
-
-The extractor receives:
-- `execution_context` — full request/handler context, including
-  `execution_context.request`, route metadata, and the matched handler.
-- `extraction` — an `Extraction` with `name`, `default`, `has_default`,
-  and `inner_type`.
-
-Raise any `HTTPError` subclass (`UnauthorizedError`, `ForbiddenError`, ...) to short-circuit with the matching status.
-
-If the extractor needs constructor dependencies, decorate it with
-`@injectable` and list it in a module's `providers=[...]`. Lauren then
-resolves the extractor through the DI container and still calls the same
-`extract(self, execution_context, extraction)` method.
-
-The legacy classmethod shape still works:
-
-```python
-class LegacyUser(ExtractionMarker):
-    source = "legacy.current_user"
-
-    @classmethod
-    async def extract(cls, request, extraction, *, container, request_cache):
-        ...
-```
-
----
-
 ## OpenAPI 3.1 Generation
 
 `app.openapi()` returns a schema dict. Route metadata is derived from:
@@ -1025,18 +1642,42 @@ class LegacyUser(ExtractionMarker):
 - Controller `@controller(prefix=..., tags=..., summary=..., description=..., deprecated=..., security=...)`
 - Handler `@get(..., summary=..., description=..., response_model=..., responses=..., deprecated=..., operation_id=..., include_in_schema=..., tags=...)`
 
-`response_model` must be a Pydantic v2 model (exposes `model_json_schema()`).
+The response schema comes from `response_model=` or, when omitted, from the handler's return annotation (`-> UserOut`, `-> list[UserOut]`, `-> tuple[UserOut, int]`). Pydantic models, msgspec structs, dataclasses, `TypedDict`s and `Discriminated[...]` unions are all supported; a type that cannot be described degrades to a generic object schema.
 
-```python
+```python run
 class UserOut(BaseModel):
     id: int
     name: str
 
-@get("/users/{id}", response_model=UserOut, operation_id="getUser")
-async def show(self, id: Path[int]) -> UserOut: ...
+@controller("/users")
+class UserReadController:
+    @get("/{id}", response_model=UserOut, operation_id="getUser")
+    async def show(self, id: Path[int]) -> UserOut: ...
+
+@module(controllers=[UserReadController])
+class OpenApiModule: ...
+
+spec = LaurenFactory.create(OpenApiModule).openapi()
+assert spec["paths"]["/users/{id}"]["get"]["operationId"] == "getUser"
 ```
 
 Schemas are emitted under `components.schemas` and referenced from the path operation's `responses.200.content["application/json"].schema`.
+
+### OpenAPI Security
+
+`openapi_security` attaches OpenAPI 3.1 security requirement objects to
+a guard class so the generated schema documents authentication schemes:
+
+```python run
+from lauren import openapi_security
+
+@openapi_security({"BearerAuth": []})          # one dict per requirement (OR-ed)
+class JwtGuard:
+    async def can_activate(self, ctx) -> bool: ...
+```
+
+`OpenAPISecurityMeta` is the metadata dataclass stored on the guard by
+this decorator.
 
 ---
 
@@ -1051,7 +1692,7 @@ Four implementations are built in:
 * ``NullLogger`` — silent; also the factory default if no logger is provided.
 * ``InMemoryLogger`` — test helper that captures records in a list.
 
-```python
+```python run
 from lauren import LaurenFactory
 from lauren.logging import default_logger, ConsoleLogger, JsonLogger, LogLevel
 
@@ -1110,7 +1751,7 @@ All four steps are logged through the installed logger. Calls are
 idempotent: concurrent or repeated ``shutdown()`` invocations return once
 the first shutdown has finished.
 
-```python
+```python run
 app = LaurenFactory.create(AppModule, logger=default_logger())
 
 # Register arbitrary cleanup (decorator form supported):
@@ -1132,434 +1773,106 @@ server already delivers SIGTERM to the lifespan protocol, so you typically
 won't need ``install_signal_handlers`` — it's for standalone scripts and
 customised runners.
 
----
+### Signals & Lifecycle Events
 
-## Common Patterns & Anti-Patterns
+`SignalBus` is an in-process pub/sub bus for `LifecycleEvent` subclasses.
+Subscribe with the `@bus.on(EventType)` decorator or `bus.subscribe()`.
+The default app bus is accessible via `lauren.signals.bus`.
 
-### Pattern: per-request DB session
+```python run
+from lauren import SignalBus
+from lauren.signals import (
+    StartupBegin, StartupComplete,
+    ShutdownBegin,
+    RequestReceived, RequestComplete,
+    LifecycleEvent,
+)
 
-```python
-@injectable(scope=Scope.REQUEST)
-class DbSession:
-    def __init__(self, engine: Engine) -> None:
-        self._engine = engine
-        self._s = None
+bus = SignalBus()
 
-    @property
-    def s(self):
-        if self._s is None:
-            self._s = self._engine.session()
-        return self._s
-
-    async def aclose(self):                # called automatically by lauren
-        if self._s is not None:
-            await self._s.close()
-
-@controller("/x")
-class C:
-    def __init__(self, db: DbSession): ...
+@bus.on(StartupComplete)
+async def on_ready(event: StartupComplete) -> None:
+    print("App ready")
 ```
 
-Lauren's runtime awaits `aclose()` on every request-scoped instance after each request, so DB sessions close deterministically.
+Full event hierarchy:
 
-### Pattern: extract the user at the handler level
-
-```python
-class CurrentUser(ExtractionMarker):
-    source = "app.current_user"
-    @classmethod
-    async def extract(cls, request, extraction, *, container, request_cache):
-        ...
-
-@controller("/me")
-class MeController:
-    @get("/")
-    async def me(self, user: CurrentUser) -> dict:
-        return {"id": user.id}
-```
-
-Better than threading an AuthContext through the controller constructor — the dependency is visible per-route.
-
-### Pattern: return tuple for non-default status
-
-```python
-@post("/")
-async def create(self, body: Json[CreateUser]):
-    user = await self._repo.create(body)
-    return user, 201, {"location": f"/users/{user.id}"}
-```
-
-### Anti-pattern: subclassing to "inherit" routes
-
-```python
-@controller("/a")
-class A:
-    @get("/")
-    async def idx(self): ...
-
-class B(A):  # NO - not a controller, startup raises MetadataInheritanceError
-    pass
-```
-
-Decorate B explicitly with `@controller(...)` to opt in.
-
-### Anti-pattern: singleton depending on request-scoped
-
-```python
-@injectable()  # SINGLETON
-class Bad:
-    def __init__(self, session: DbSession): ...  # DbSession is REQUEST \u2014 raises DIScopeViolationError
-```
-
-Either make `Bad` request-scoped too, or refactor so it receives the session per-method.
-
-### Pattern: sync handler wrapping a blocking library
-
-```python
-import httpx as _httpx  # sync client
-
-@controller("/proxy")
-class ProxyController:
-    @get("/data")
-    def fetch(self) -> dict:
-        # time.sleep / requests.get / blocking DB calls are all safe here —
-        # the sync handler runs in a thread pool, not on the event loop.
-        resp = _httpx.get("https://api.example.com/data")
-        return resp.json()
-```
-
-### Anti-pattern: calling asyncio primitives from a sync handler
-
-```python
-import asyncio
-
-_queue: asyncio.Queue = asyncio.Queue()
-
-@controller("/events")
-class EventController:
-    @post("/")
-    def push(self, body: Json[Event]) -> None:
-        # ❌ NOT safe — asyncio.Queue is not thread-safe
-        _queue.put_nowait(body)
-
-        # ✅ Safe — schedules work back on the event loop
-        asyncio.get_running_loop().call_soon_threadsafe(_queue.put_nowait, body)
-```
-
-### Anti-pattern: building `Response.json(...)` manually for every handler
-
-```python
-# Don't:
-@get("/")
-async def h(self) -> Response:
-    return Response.json({"ok": True})
-
-# Do:
-@get("/")
-async def h(self) -> dict:
-    return {"ok": True}
-```
-
-Lauren serializes the return value automatically.
-
----
-
-## Appendix: Cheat Sheet
-
-| Task | Pattern |
+| Event | When |
 |---|---|
-| Register a dependency | `@injectable()` on the class; add to `@module(providers=[...])` |
-| Declare a route | `@controller("/p")` on class, `@get("/x")` on method |
-| Extract URL param | `id: Path[int]` |
-| Extract query param | `q: Query[str] = QueryField(default="", ge=..., le=...)` |
-| Extract JSON body | `body: Json[MyPydanticModel]` |
-| Raise 404 in handler | `raise NotFoundError("...")` (subclass `HTTPError`) |
-| Add a guard to one route | `@use_guards(MyGuard)` on the method |
-| Add a guard to all routes on a controller | `@use_guards(MyGuard)` on the class |
-| Override JSON encoder for one route | `@use_encoder(OrjsonEncoder())` on the method |
-| Override JSON encoder for all routes on a controller | `@use_encoder(MsgspecEncoder())` on the class |
-| Read per-route metadata in a guard | `ctx.get_metadata("key", default)` |
-| Attach a singleton explicitly | `app.container.set_singleton(MyCls, instance)` |
-| Run post-construct hook | `@post_construct` on an `async def` method of an `@injectable` |
-| Serve a file (auto MIME, streamed) | `return await Response.file("/path/to/file.pdf")` |
-| Serve a file with custom name | `return await Response.file(path, filename="report.pdf")` |
-| Serve a file inline (browser preview) | `return await Response.file(path, inline=True)` |
-| Serve XML | `return Response.xml("<root>...</root>")` |
-| Serve Server-Sent Events | `Response.sse(async_iterable_of_dicts)` |
+| `StartupBegin` | `lifespan.startup` arrives; `@post_construct` not yet run |
+| `StartupComplete` | All `@post_construct` hooks finished |
+| `ShutdownBegin` | `lifespan.shutdown` or OS signal received |
+| `RequestReceived` | ASGI scope parsed into a `Request` |
+| `RequestComplete` | Final response produced (also on errors); emitted just before it is sent |
+| `BackgroundTaskStarted` | Background task begins |
+| `BackgroundTaskComplete` | Background task finishes successfully |
+| `BackgroundTaskFailed` | Background task raises |
 
----
-
-_End of reference._
-
----
-
-## Server-Sent Events (`EventStream`)
-
-`EventStream` is a one-way streaming response primitive that frames
-events according to the Server-Sent Events spec
-(`text/event-stream`). The browser's `EventSource` reads from it
-natively — no JS-side parser code required.
-
-```python
-from lauren import EventStream, ServerSentEvent
-
-@get("/feed")
-async def feed(self, q: Depends[Queue]) -> EventStream:
-    async def producer():
-        async for ev in q.subscribe():
-            yield ServerSentEvent(event=ev.kind, data=ev.payload, id=ev.id)
-    return EventStream(producer(), keep_alive=15.0)
-```
-
-Producers can yield strings (treated as `data`), dicts (auto-promoted
-via `ServerSentEvent.from_dict`), or `ServerSentEvent` instances.
-
-`keep_alive=N` emits a comment frame (`: keep-alive\n\n`) every `N`
-seconds when the producer is idle, preventing intermediaries from
-killing long-lived connections.
-
-`last_event_id(request.headers)` reads the browser's `Last-Event-ID`
-header for resumable streams.
-
-## Socket.IO Compatibility
-
-Lauren ships an Engine.IO v4 / Socket.IO v5 adapter so the official
-`socket.io-client` can connect to a lauren backend without any
-wire-level glue:
-
-```python
-from lauren.socketio import (
-    SocketIOConnection, on_socketio_event, socketio_controller,
-)
-
-@socketio_controller("/socket.io/")
-class ChatGateway:
-    @on_socketio_event("connect")
-    async def hello(self, conn: SocketIOConnection) -> None:
-        await conn.emit("welcome", {"sid": conn.sid})
-
-    @on_socketio_event("chat:message")
-    async def on_message(
-        self, conn: SocketIOConnection, payload: dict
-    ) -> dict:
-        return {"echo": payload}  # auto-acks the client
-```
-
-Two reserved event names map to lifecycle hooks: `"connect"` and
-`"disconnect"`. Every other name routes inbound `EVENT` packets to
-the matching method; the return value, if non-`None`, becomes an `ACK`
-payload when the client supplied a callback.
-
-The adapter implements the **WebSocket transport** subset (no
-long-polling, no binary attachments, root namespace only). It layers
-on `@ws_controller` internally so DI, lifecycle, and middleware all
-work identically to a hand-written WS gateway.
-
-JS client::
-
-    import { io } from "socket.io-client";
-    const sock = io("ws://...", { transports: ["websocket"] });
-    sock.emit("chat:message", {text: "hi"}, (ack) => console.log(ack));
-
-
----
-
-## Custom Providers
-
-Four NestJS-style recipes for cases where ``@injectable`` is not enough.
-All return a ``CustomProvider`` record listed in a module's
-``providers=[...]``.
-
-### `use_value` — bind to a literal
-
-```python
-from lauren import use_value, Token
-
-DB_URL = Token("DB_URL")
-
-@module(providers=[
-    use_value(provide=DB_URL, value="postgres://localhost/app"),
-    use_value(provide="REDIS", value=redis.from_url(...)),
-])
-class AppModule: ...
-```
-
-### `use_class` — bind a token to a different class
-
-```python
-from lauren import use_class, Scope
-
-@module(providers=[
-    use_class(
-        provide=ConfigService,
-        use=ProductionConfig if PROD else DevelopmentConfig,
-        scope=Scope.SINGLETON,
-    ),
-])
-class AppModule: ...
-```
-
-### `use_factory` — compute the value through a DI-resolved function
-
-```python
-from lauren import use_factory, OptionalDep
-
-def make_engine(url: str, log: Logger | None) -> Engine:
-    return Engine(url, logger=log)
-
-@module(providers=[
-    use_factory(
-        provide=Engine,
-        factory=make_engine,
-        injects=[DB_URL, OptionalDep("LOGGER")],
-        scope=Scope.SINGLETON,
-    ),
-])
-class AppModule: ...
-```
-
-`async def` factories are awaited transparently.
-
-### `use_existing` — alias one token to another
-
-```python
-from lauren import use_existing
-
-@module(providers=[
-    LoggerService,
-    use_existing(provide="AliasedLoggerService", existing=LoggerService),
-])
-class AppModule: ...
-```
-
-### `Inject` for non-class tokens
-
-```python
-from typing import Annotated
-from lauren import Inject, Token
-
-DB_URL = Token("DB_URL")
-
-@injectable()
-class Repo:
-    def __init__(
-        self,
-        url: Annotated[str, Inject(DB_URL)],
-    ) -> None:
-        self.url = url
-```
-
-`Token("NAME")` is hashable, identity-distinct by default
-(``unique=True``), and renders nicely in errors. Bare strings work but
-sacrifice the diagnostic and IDE benefits.
-
----
-
-## Exception Handlers
-
-Catch domain or framework exceptions and turn them into structured
-HTTP responses. Two forms — class (DI-injected) and function (no DI).
-Three attachment scopes — global, per-controller, per-route.
-
-### Class form
-
-```python
-from lauren import exception_handler, use_exception_handlers
-from lauren.types import Request, Response
-
-class NotFoundError(HTTPError):
-    status_code = 404
-    code = "not_found"
-
-@exception_handler(NotFoundError, ConflictError)
-class DomainErrors:
-    def __init__(self, log: Logger) -> None:
-        self.log = log
-
-    async def catch(self, exc: Exception, request: Request) -> Response:
-        self.log.warn(f"domain error: {type(exc).__name__}: {exc}")
-        return Response.json({"error": str(exc)}, status=400)
-```
-
-The class is auto-marked as `@injectable(scope=Scope.SINGLETON)` so it
-participates in DI like guards and middleware. It MUST define
-`catch(self, exc, request)` returning a ``Response``.
-
-### Function form
-
-```python
-@exception_handler(ValueError)
-async def handle_value_error(exc: ValueError, request: Request) -> Response:
-    return Response.json({"detail": str(exc)}, status=422)
-```
-
-Function-form handlers are invoked directly with ``(exc, request)`` and
-do **not** participate in DI. For dependencies, use the class form.
-
-### Attachment
-
-```python
-# Per-controller — handles every method on the class:
-@use_exception_handlers(DomainErrors)
-@controller("/users")
-class UserController: ...
-
-# Per-route — handles only this handler:
-@get("/x")
-@use_exception_handlers(handle_value_error)
-async def x(self): ...
-
-# Global — handles every request:
-app = LaurenFactory.create(
-    AppModule,
-    global_exception_filters=[DomainErrors, AuditFailures],
-)
-```
-
-Resolution order, most specific wins: route → controller → global.
-Within each tier handlers are tried in registration order; the first
-whose declared types match (`isinstance(exc, declared)`) wins.
-
-### Rules
-
-* `@exception_handler` MUST be invoked with at least one exception
-  type. Bare `@exception_handler` and empty `@exception_handler()` are
-  both rejected with `ExceptionHandlerConfigError`.
-* A handler can declare multiple types: `@exception_handler(A, B)`, or
-  equivalently by **stacking** the decorator (stacking *accumulates*
-  the types, it does not overwrite — duplicates are de-duplicated):
-  ```python
-  @exception_handler(UnauthorizedError)
-  @exception_handler(ForbiddenError)
-  def to_login(exc, request): ...   # catches both
-  ```
-* Subclasses of `@exception_handler` classes are NOT auto-handlers —
-  re-decorate to opt in (`MetadataInheritanceError`).
-* Handlers should *return* responses, never raise. A raise inside
-  `catch` becomes a hard 500.
+`LifecycleEvent` is the common base class for all events above.
 
 ---
 
 ## WebSockets
 
 First-class WebSocket controllers with typed message dispatch. `@use_guards`
-and `@use_interceptors` work natively on `@ws_controller` classes — guards run
-before `@on_connect` with a `WsConnectionContext` that duck-types with
-`ExecutionContext` so the same guard class serves both HTTP and WebSocket.
-See the **Reflect** section below for `WsConnectionContext`, `WsUpgradeRequest`,
-and the `apply_guards` / `apply_interceptors` helpers.
+and `@use_interceptors` work natively on gateways, at two levels:
+
+| Declared on | Guards run | Interceptors wrap |
+|---|---|---|
+| `global_ws_guards` / `global_ws_interceptors`, the `@ws_controller` class | once, before the connection is accepted (denial → close 1008) | `@on_connect` |
+| the `@on_connect` method | once, after global + class guards | `@on_connect`, inside the class-level ones |
+| an `@on_message` method | **for every frame** routed to it, after payload validation | only that handler |
+
+Connection-level guards receive a `WsConnectionContext` that duck-types with
+`ExecutionContext`, so the same guard class serves both HTTP and WebSocket.
+Message-level guards receive a `WsMessageContext` (a `WsConnectionContext`
+subclass adding `event` and the validated `payload`, with `handler_func` set and
+class + method `@set_metadata` merged, method wins). A message guard returning
+`False` answers with the error frame
+`{"error": {"code": "forbidden", "message": "guard X denied the message", "detail": {"guard": "X", "event": "..."}}}`,
+the handler does not run, and the connection stays open; a guard raising an
+`HTTPError` answers with that error's envelope instead. WS interceptors'
+`call_handler.handle()` returns the handler's raw return value (no `Response`).
+Guard/interceptor classes are registered with DI automatically.
+
+Rejected at startup (never silently ignored): `@use_middlewares` on any WS hook
+method (`MiddlewareConfigError`); `@use_guards` / `@use_interceptors` on
+`@on_disconnect` / `@on_error` (`GuardConfigError` / `InterceptorConfigError`);
+`@use_exception_handlers` / `@use_encoder` on any WS hook method
+(`ExceptionHandlerConfigError` / `DecoratorUsageError`);
+`@use_guards` / `@use_interceptors` / `@use_middlewares` on a Socket.IO
+`@on_socketio_event` handler (raised by `@socketio_controller`). Class-level
+`@use_middlewares` on a gateway is introspection-only, never runs, and logs a startup warning.
+
+```python
+class ModeratorOnly:
+    async def can_activate(self, ctx: WsMessageContext) -> bool:
+        return ctx.connection.state.get("role") == "moderator"
+
+@ws_controller("/room/{room_id}")
+class RoomGateway:
+    @on_message("room.kick")
+    @use_guards(ModeratorOnly)          # checked for every room.kick frame
+    async def kick(self, ws: WebSocket, body: Json[Kick]) -> None: ...
+```
+
+See the **Reflect** section below for `WsConnectionContext`, `WsMessageContext`,
+`WsUpgradeRequest`, and the `apply_guards` / `apply_interceptors` helpers.
 
 ### Gateway anatomy
 
-```python
+```python run
 from pydantic import BaseModel
 from lauren import (
-    BroadcastGroup, Json, WebSocket, ws_controller,
+    BroadcastGroup, Json, WebSocket, injectable, module, ws_controller,
     on_connect, on_disconnect, on_error, on_message,
 )
 
 class ChatMessage(BaseModel):
     text: str
+
+@injectable(provides=[BroadcastGroup])     # one shared room registry
+class Rooms(BroadcastGroup): ...
 
 @ws_controller("/chat/{room_id}")
 class ChatGateway:
@@ -1583,13 +1896,21 @@ class ChatGateway:
 
     @on_disconnect
     async def left(self, ws: WebSocket) -> None:
-        # ``BroadcastGroup`` automatically unsubscribes ``ws`` from every
-        # group at disconnect, but explicit cleanup is fine too.
-        pass
+        # Nothing unsubscribes ``ws`` for you — do it here (``broadcast``
+        # also prunes sockets whose send fails).
+        await self._rooms.unsubscribe_all(ws)
+
+@module(controllers=[ChatGateway], providers=[Rooms])
+class ChatModule: ...
 ```
 
-Register the gateway in a module's ``controllers=[…]`` list — same
-contract as HTTP controllers. ``@ws_controller`` auto-marks the class
+`BroadcastGroup` is **not** registered by default and is not `@injectable`
+itself: subclass it with `@injectable(provides=[BroadcastGroup])` (as above)
+or bind an instance with `use_value(provide=BroadcastGroup,
+value=BroadcastGroup())`, and list that in `providers=` (or
+`global_providers=`). Injecting it otherwise fails at startup with
+`MissingProviderError`. Register the gateway in
+a module's ``controllers=[…]`` list — same contract as HTTP controllers. ``@ws_controller`` auto-marks the class
 as ``@injectable(scope=Scope.REQUEST)`` so each connection gets its own
 instance.
 
@@ -1615,7 +1936,7 @@ Properties: `path`, `path_template`, `path_params`, `headers`,
 
 Use `Discriminated[A | B, "key"]` for pydantic-free discriminated unions:
 
-```python
+```python run
 from dataclasses import dataclass
 from typing import Literal
 from lauren import Discriminated, Json, WebSocket, on_message, ws_controller
@@ -1658,7 +1979,7 @@ injectable.
 |--------------------------------------------|-------------------------------------------------|
 | `await group.subscribe(name, ws)`          | Add ``ws`` to ``name``. Idempotent.             |
 | `await group.unsubscribe(name, ws)`        | Remove. Safe to call if not a member.           |
-| `await group.unsubscribe_all(ws)`          | Remove from every group. Auto-called on disconnect. |
+| `await group.unsubscribe_all(ws)`          | Remove from every group. Call it from `@on_disconnect` — the runtime does not. |
 | `await group.broadcast(name, msg, *, as_bytes=False, exclude=None)` | Send to every subscriber; returns number sent. Detects and prunes dead sockets. |
 | `group.groups()` / `group.members(name)` / `group.member_count(name)` | Introspection. |
 
@@ -1668,7 +1989,7 @@ the same controller code works unchanged.
 
 ### Authorisation
 
-```python
+```python run
 @ws_controller("/private")
 class PrivateGateway:
     @on_connect
@@ -1683,7 +2004,7 @@ Returning from `@on_connect` without calling `accept()` rejects the
 handshake. Three safe rejection patterns exist (all produce identical
 client-visible close codes):
 
-```python
+```python fragment
 # 1. close() then return (preferred)
 await ws.close(code=4401, reason="unauthorised"); return
 
@@ -1696,7 +2017,7 @@ await ws.close(code=4401); raise WebSocketDisconnect("unauthorised", close_code=
 
 ### Errors and `@on_error`
 
-```python
+```python run
 @on_error
 async def caught(self, ws: WebSocket, exc: Exception) -> None:
     # Run for any exception inside @on_message handlers other than
@@ -1713,14 +2034,16 @@ Errors related to WebSockets:
 
 ### Testing
 
-```python
+```python run
+from lauren import LaurenFactory
 from lauren.testing import WsTestClient
 
+app = LaurenFactory.create(ChatModule)
 client = WsTestClient(app)
-async with client.connect("/chat/42") as ws:
-    await ws.send_json({"event": "chat.send", "data": {"text": "hi"}})
-    reply = await ws.receive_json()
-    assert reply["text"] == "hi"
+async with client.connect("/chat/42") as alice, client.connect("/chat/42") as bob:
+    await alice.send_json({"event": "chat.send", "data": {"text": "hi"}})
+    reply = await bob.receive_json()       # the sender is excluded from the broadcast
+    assert reply == {"event": "chat.recv", "text": "hi"}
 ```
 
 The session context-manager guarantees the server task is awaited so
@@ -1738,6 +2061,47 @@ decorators.
 
 ---
 
+## Server-Sent Events (`EventStream`)
+
+`EventStream` is a one-way streaming response primitive that frames
+events according to the Server-Sent Events spec
+(`text/event-stream`). The browser's `EventSource` reads from it
+natively — no JS-side parser code required.
+
+```python run
+from lauren import EventStream, ServerSentEvent
+
+@get("/feed")
+async def feed(self, q: Depends[Queue]) -> EventStream:
+    async def producer():
+        async for ev in q.subscribe():
+            yield ServerSentEvent(event=ev.kind, data=ev.payload, id=ev.id)
+    return EventStream(producer(), keep_alive=15.0)
+```
+
+Producers can yield strings (treated as `data`), dicts (auto-promoted
+via `ServerSentEvent.from_dict`), or `ServerSentEvent` instances.
+
+`keep_alive=N` emits a comment frame (`: keep-alive\n\n`) every `N`
+seconds when the producer is idle, preventing intermediaries from
+killing long-lived connections.
+
+`last_event_id(request.headers)` reads the browser's `Last-Event-ID`
+header for resumable streams.
+
+### Server-Sent Events Helpers
+
+`format_sse_event` formats a single SSE frame as its wire string without
+creating a full `ServerSentEvent` object — useful for low-level adapters:
+
+```python run
+from lauren import format_sse_event
+line = format_sse_event(data="hello", event="ping", id="1")
+assert line == "event: ping\nid: 1\ndata: hello\n\n"
+```
+
+---
+
 ## Typed Streaming
 
 For homogeneous streams (single Pydantic schema), prefer
@@ -1745,7 +2109,7 @@ For homogeneous streams (single Pydantic schema), prefer
 content-negotiates between SSE, NDJSON, and JSON Lines based on the
 client's `Accept` header.
 
-```python
+```python run
 from typing import AsyncIterator
 from pydantic import BaseModel
 from lauren import StreamingResponse
@@ -1768,12 +2132,54 @@ Negotiation rules:
 | `Accept` (or default)                | Format chosen           |
 |--------------------------------------|-------------------------|
 | `text/event-stream`                  | SSE                     |
-| `application/x-ndjson`               | NDJSON                  |
-| `application/json-seq`               | JSON Lines              |
-| `*/*` or anything else               | NDJSON (default)        |
+| `application/x-ndjson`, `application/ndjson` | NDJSON          |
+| `application/json+stream`, `application/jsonl`, `application/x-jsonlines` | JSON Lines (sent as `application/json+stream`) |
+| missing, `*/*`, or anything else     | JSON Lines (default)    |
 
 The `Stream` extractor and `StreamReader[T]` consumer give the same
 typed-iteration story for *receiving* a stream from the client.
+
+---
+
+## Socket.IO Compatibility
+
+Lauren ships an Engine.IO v4 / Socket.IO v5 adapter so the official
+`socket.io-client` can connect to a lauren backend without any
+wire-level glue:
+
+```python run
+from lauren.socketio import (
+    SocketIOConnection, on_socketio_event, socketio_controller,
+)
+
+@socketio_controller("/socket.io/")
+class ChatGateway:
+    @on_socketio_event("connect")
+    async def hello(self, conn: SocketIOConnection) -> None:
+        await conn.emit("welcome", {"sid": conn.sid})
+
+    @on_socketio_event("chat:message")
+    async def on_message(
+        self, conn: SocketIOConnection, payload: dict
+    ) -> dict:
+        return {"echo": payload}  # auto-acks the client
+```
+
+Two reserved event names map to lifecycle hooks: `"connect"` and
+`"disconnect"`. Every other name routes inbound `EVENT` packets to
+the matching method; the return value, if non-`None`, becomes an `ACK`
+payload when the client supplied a callback.
+
+The adapter implements the **WebSocket transport** subset (no
+long-polling, no binary attachments, root namespace only). It layers
+on `@ws_controller` internally so DI, lifecycle, and middleware all
+work identically to a hand-written WS gateway.
+
+JS client::
+
+    import { io } from "socket.io-client";
+    const sock = io("ws://...", { transports: ["websocket"] });
+    sock.emit("chat:message", {text: "hi"}, (ack) => console.log(ack));
 
 ---
 
@@ -1789,7 +2195,7 @@ The single declaration point — passed as `LaurenFactory.create(..., sessions=S
 cookie is HMAC-signed (`secret` is required), `HttpOnly` and `Secure` are
 on, and `SameSite=Lax`.
 
-```python
+```python run
 from lauren import LaurenFactory, SessionConfig, InMemorySessionStore
 
 app = LaurenFactory.create(
@@ -1818,7 +2224,7 @@ Injected into any handler that declares a `session: Session` parameter, at
 zero per-request reflection cost (the same mechanism as `ExecutionContext`).
 `request.state.session` is the non-injected equivalent.
 
-```python
+```python run
 from lauren import Session, controller, get, post
 
 @controller("/account")
@@ -1869,11 +2275,12 @@ class SessionStore(Protocol):
 - `SignedCookieSessionStore(*, max_bytes=4096)` — stateless: the whole
   (signed) payload rides in the cookie, no server row. Signed ≠ encrypted —
   never put confidential data here; an over-size payload raises `ValueError`.
-- Production multi-worker: implement the Protocol over Redis/DB as an
-  `@injectable(SINGLETON)` store (open in `@post_construct`, close in
-  `@pre_destruct`) and pass it via `SessionConfig(store=...)`. The store is
-  also registered as a global provider, so services may inject
-  `store: SessionStore` directly.
+- Production multi-worker: implement the Protocol over Redis/DB and pass an
+  instance via `SessionConfig(store=...)`. The instance is registered as a
+  **value** provider (also injectable as `store: SessionStore`), so DI
+  lifecycle hooks never run on it — `@post_construct` / `@pre_destruct` on the
+  store class are ignored. Open the connection pool lazily on first use (or
+  before passing the store in) and close it from `app.on_shutdown(...)`.
 
 ### `SessionSerializer` (Protocol)
 
@@ -1888,7 +2295,7 @@ expires (same as a JWT). Pass an optional `RevocationStore` to make it
 revocable; it stays off by default so the cookie store remains truly
 stateless unless you opt in.
 
-```python
+```python run
 from lauren import SessionConfig, SignedCookieSessionStore, InMemoryRevocationStore
 
 app = LaurenFactory.create(
@@ -1931,7 +2338,7 @@ otherwise.
 
 ### `SessionConfigError`
 
-`StartupError` subclass (the 29th error class), raised by
+`StartupError` subclass, raised by
 `LaurenFactory.create` for any invalid session policy — joins the
 `*ConfigError` family.
 
@@ -1941,407 +2348,51 @@ otherwise.
 > `request.state.user`; the two compose. Don't confuse `lauren.Session`
 > (mutable request handle) with `lauren_guards.Session` (frozen auth row).
 
----
+### CSRF and JSON routes
 
-## Companion Packages
-
-The framework stays small on purpose; cross-cutting concerns live in
-companion packages that depend on stock `lauren>=1.0`.
-
-### `lauren-middlewares`
-
-Production-grade middlewares, each as a factory function returning a
-`@middleware`-decorated class:
-
-* `cors(...)` — W3C CORS with origin allow-lists, regex,
-  credentials, expose-headers, preflight short-circuit.
-* `rate_limit(...)` — token-bucket per IP/key, pluggable store,
-  429 + `Retry-After`.
-* `gzip(...)` — compress responses ≥ threshold for compressible types.
-* `security_headers(...)` — OWASP defaults (HSTS, XCTO, XFO,
-  Referrer-Policy, Permissions-Policy, COOP/CORP, optional CSP).
-* `request_id(...)` — generate / propagate `X-Request-ID`.
-* `trusted_hosts(...)` — `Host` header allow-list with subdomain
-  wildcards.
-* `request_log(...)` — structured access log.
-* `https_redirect(...)` — HTTP → HTTPS with `X-Forwarded-Proto`.
-* `body_size_limit(...)` — early 413 on oversize POSTs.
-* `timeout(...)` — `asyncio.wait_for` wrapper, 504 on expiry.
-
-```bash
-pip install lauren-middlewares
-```
-
-```python
-from lauren import LaurenFactory
-from lauren_middlewares import (
-    cors, rate_limit, gzip, security_headers, request_id,
-)
-
-app = LaurenFactory.create(
-    AppModule,
-    global_middlewares=[
-        request_id(),
-        security_headers(),
-        cors(allow_origins=["https://app.example.com"]),
-        rate_limit(per_minute=60),
-        gzip(),
-    ],
-)
-```
-
-### `lauren-logging`
-
-Configurable logging module modelled after NestJS's
-`LoggerModule.forRoot`. Processor pipeline, contextvars binding,
-request-logging middleware, pluggable backends.
-
-```bash
-pip install lauren-logging                  # core
-pip install lauren-logging[structlog]       # structlog backend
-pip install lauren-logging[otel]            # OpenTelemetry processor
-```
-
-```python
-from lauren_logging import (
-    LoggingModule, LoggingConfig, LoggingService, ConsoleBackend,
-    ContextvarsProcessor, RedactSecrets,
-)
-
-LogModule = LoggingModule.configure(
-    LoggingConfig(
-        backend=ConsoleBackend(),
-        processors=[ContextvarsProcessor(), RedactSecrets()],
-    ),
-)
-
-@module(imports=[LogModule], controllers=[BillingController])
-class AppModule: ...
-
-@injectable()
-class BillingService:
-    def __init__(self, log: LoggingService) -> None:
-        self.log = log
-    def charge(self, user_id: int) -> None:
-        self.log.info("charged", user_id=user_id)
-```
-
-Backends: `ConsoleBackend`, `StdlibBackend`, `StructlogBackend`
-(extra), `FileBackend`, `RotatingFileBackend`, `FanOutBackend`,
-`QueueBackend`, `NullBackend`, `InMemoryBackend`.
-
-Processors: `ContextvarsProcessor`, `RedactSecrets`, `Sampler`,
-`RateLimit`, `TimestampProcessor`, `OpenTelemetryProcessor` (extra).
-
-Drop-in `request_logging()` middleware propagates `X-Request-ID`,
-binds contextvars, and emits a structured request-summary line per
-request.
+Cookie sessions make every state-changing route a CSRF target, and a `Json[T]`
+body is parsed whatever its `Content-Type` unless the app opts in: a cross-site
+HTML form or `fetch(..., {mode: "no-cors"})` can POST `text/plain` without a
+CORS preflight and the browser attaches the session cookie. Session-enabled apps
+therefore default to `strict_content_type="warn"` (mismatches accepted and logged
+once per route × media type) and `LaurenFactory.create` logs one startup WARN
+listing the JSON POST routes (the method cross-site simple requests can use)
+until a policy is chosen. Fix:
+`content=ContentConfig(strict_content_type=True)` (text/plain JSON → 415), and
+`lauren-guards.csrf` for form-encoded routes. See
+[Content-type policy](#content-type-policy-contentconfig).
 
 ---
 
-## Background Tasks
+## Content-type policy (`ContentConfig`)
 
-`BackgroundTasks` lets you fire work **after** the response has been
-sent. Declare it as a handler parameter and the framework injects it:
+```python run
+from lauren import ContentConfig, LaurenFactory
 
-```python
-from lauren import BackgroundTasks, injectable, Scope
-
-@injectable(scope=Scope.SINGLETON)
-class EmailService:
-    async def send(self, addr: str) -> None: ...
-
-@post("/sign-up")
-async def sign_up(self, body: Json[SignUpBody], tasks: BackgroundTasks) -> dict:
-    handle: TaskHandle = tasks.add_task(self._email.send, body.email)
-    return {"status": "queued"}
+app = LaurenFactory.create(AppModule, content=ContentConfig(strict_content_type=True))
+# also: Lauren(content=ContentConfig(...))
 ```
 
-`TaskHandle` has `.cancel()`, `.result()` (awaitable), and `.done`
-properties.  Both `async def` and regular `def` callables are accepted;
-sync callables are offloaded via `anyio.to_thread.run_sync`.
+`ContentConfig(strict_content_type=None)` is a frozen dataclass (importable
+from `lauren` and `lauren.types`). `strict_content_type` decides what a JSON
+body parameter — `Json[T]`, an implicit model body, `Discriminated[...]` — does
+with the request's `Content-Type`. The check runs right **after guards**
+(401/403 still win), **before interceptors** and **before any body byte is
+read**.
 
-### Background-task signals
-
-Three `LifecycleEvent` subclasses are emitted on the shared `SignalBus`:
-
-| Event | When |
+| Value | Behaviour |
 |---|---|
-| `BackgroundTaskStarted` | Just before the callable is invoked |
-| `BackgroundTaskComplete` | After it returns successfully |
-| `BackgroundTaskFailed` | After it raises an exception |
-
----
-
-## Signals & Lifecycle Events
-
-`SignalBus` is an in-process pub/sub bus for `LifecycleEvent` subclasses.
-Subscribe with the `@bus.on(EventType)` decorator or `bus.subscribe()`.
-The default app bus is accessible via `lauren.signals.bus`.
-
-```python
-from lauren import SignalBus
-from lauren.signals import (
-    StartupBegin, StartupComplete,
-    ShutdownBegin,
-    RequestReceived, RequestComplete,
-    LifecycleEvent,
-)
-
-bus = SignalBus()
-
-@bus.on(StartupComplete)
-async def on_ready(event: StartupComplete) -> None:
-    print("App ready")
-```
-
-Full event hierarchy:
-
-| Event | When |
-|---|---|
-| `StartupBegin` | `lifespan.startup` arrives; `@post_construct` not yet run |
-| `StartupComplete` | All `@post_construct` hooks finished |
-| `ShutdownBegin` | `lifespan.shutdown` or OS signal received |
-| `RequestReceived` | ASGI scope parsed into a `Request` |
-| `RequestComplete` | Response fully sent to the client |
-| `BackgroundTaskStarted` | Background task begins |
-| `BackgroundTaskComplete` | Background task finishes successfully |
-| `BackgroundTaskFailed` | Background task raises |
-
-`LifecycleEvent` is the common base class for all events above.
-
----
-
-## Interceptors
-
-Interceptors run **after guards** and **before** the handler. They wrap
-handler execution: ideal for timing, caching, or response transforms.
-
-```python
-from lauren import interceptor, use_interceptors, CallHandler
-from lauren.types import ExecutionContext, Response
-
-@interceptor()
-class TimingInterceptor:
-    async def intercept(self, ctx: ExecutionContext, next: CallHandler) -> Response:
-        import time
-        t0 = time.monotonic()
-        response = await next.handle()
-        ms = (time.monotonic() - t0) * 1000
-        return response.with_header("x-duration-ms", f"{ms:.1f}")
-
-# Apply to a controller or individual route:
-@use_interceptors(TimingInterceptor)
-@controller("/api")
-class MyController: ...
-```
-
-`InterceptorProtocol` is the structural protocol every interceptor satisfies.
-`InterceptorConfigError` is raised when an interceptor is misconfigured at
-startup (e.g. applied without parentheses).
-
-`use_middlewares` is the per-controller / per-route equivalent of
-`global_middlewares=` on the app factory.  Both `use_interceptors` and
-`use_middlewares` accept a class or an instance and can be stacked.
-
----
-
-## Pipes
-
-Pipes transform or validate an extracted parameter value **before** it
-reaches the handler.
-
-```python
-from lauren import Pipe, PipeContext, is_pipe
-from lauren import Path, injectable, Scope
-
-class PositiveIntPipe(Pipe):
-    async def transform(self, value: int, ctx: PipeContext) -> int:
-        if value <= 0:
-            raise ValueError("Must be positive")
-        return value
-
-@get("/{id}")
-async def get_item(self, id: Path[int, PositiveIntPipe]) -> dict: ...
-```
-
-`PipeMeta` is the metadata marker stored on pipe callables; `PIPE_META`
-is the sentinel attribute name; `is_pipe(obj)` returns `True` if *obj*
-carries the pipe marker.
-
-`PathField` provides alias / validation overrides for path parameters,
-analogous to Pydantic's `Field`.  `FieldDescriptor` is the richer
-variant that supports `ge`, `le`, `min_length`, etc.
-
-`PipeContext` carries the parameter name, annotation, and owning handler
-metadata so a pipe can make context-aware decisions.
-
----
-
-## Per-Route Middleware (`use_middlewares`)
-
-`use_middlewares` attaches middleware(s) to a specific controller class
-or route handler without registering them globally:
-
-```python
-from lauren import use_middlewares, middleware, injectable, Scope
-
-@middleware()
-@injectable(scope=Scope.SINGLETON)
-class AuditLog:
-    async def dispatch(self, req, call_next):
-        response = await call_next(req)
-        print(f"AUDIT {req.method} {req.url.path} → {response.status_code}")
-        return response
-
-@use_middlewares(AuditLog)
-@controller("/admin")
-class AdminController: ...
-```
-
-`CallNext` is the callable type for `call_next` inside a middleware
-`dispatch` method.
-
----
-
-## `@propagate_metadata` — copy Lauren decorator metadata between objects
-
-Like `functools.wraps` but for Lauren's `@use_*` decorators.  Copies guard,
-interceptor, middleware, exception-handler, encoder, and user-metadata
-annotations from a *source* to the decorated target.
-
-```python
-from lauren import propagate_metadata, use_guards, controller, get
-
-# Copy all @use_* metadata from source to target class
-@propagate_metadata(SourceClass)
-@controller("/derived")
-class DerivedController: ...
-
-# Copy from a function (e.g. when building decorator wrappers)
-@propagate_metadata(original_fn)
-@get("/wrapped")
-async def wrapper(*a, **kw): return await original_fn(*a, **kw)
-
-# Selective — only propagate guards and user metadata
-@propagate_metadata(Source, interceptors=False, middlewares=False, encoder=False)
-@controller("/x")
-class X: ...
-```
-
-**Ordering for list-based metadata** (guards, interceptors, middlewares,
-exception handlers): source entries are **prepended** before the target's
-own entries, so propagated behaviour runs as the outermost layer.
-
-**Encoder**: source encoder is copied only when the target has no encoder of
-its own (target's explicit `@use_encoder` wins).
-
-**User metadata** (`@set_metadata` key/value pairs): source dict is merged in;
-target's existing keys take precedence on conflict.
-
-Parameters: `source` (required), `guards=True`, `interceptors=True`,
-`middlewares=True`, `exception_handlers=True`, `encoder=True`,
-`user_metadata=True`.
-
----
-
-## JSON Serialisation
-
-Lauren auto-selects the fastest available encoder at startup via
-`auto_encoder()`.  The selection order is orjson > msgspec > stdlib.
-
-The encoder is threaded through the entire application — it is used for
-handler response coercion, error responses (`_error_response`), SSE events
-(`EventStream`, `Response.sse`), WebSocket `send_json`, and every streaming
-frame.  Pass it once at factory time and every output path honours it.
-
-| Class | Dependency | Best for |
-|---|---|---|
-| `StdlibJSONEncoder` | Built-in `json` (always available) | Default, zero deps |
-| `OrjsonEncoder` | `orjson` C extension | Fastest for dict/list payloads |
-| `MsgspecEncoder` | `msgspec` | Fastest when returning `msgspec.Struct` directly |
-| `PydanticEncoder` | `pydantic` (v2) | Pydantic-heavy APIs; honours all `@field_serializer` / `model_config` rules; skips the intermediate `model_dump()` dict |
-| `JSONEncoder` | — | Protocol — implement `encode(obj) -> bytes` and `encode_compact(obj) -> bytes` |
-
-```python
-from lauren import LaurenFactory, PydanticEncoder, auto_encoder
-# Wire at build time — every output path inherits this encoder:
-app = LaurenFactory.create(AppModule, json_encoder=PydanticEncoder())
-
-# Or auto-select best available (orjson > msgspec > stdlib):
-enc = auto_encoder()
-enc.encode({"hello": "world"})
-```
-
-`PydanticEncoder` calls `model.model_dump_json()` / `TypeAdapter.dump_json(items)`
-directly so pydantic-core serialises model → bytes in one step, skipping the
-intermediate Python dict.  Non-Pydantic values (plain dicts, lists, primitives,
-`msgspec.Struct`, dataclasses) fall back to `StdlibJSONEncoder` transparently.
-
-### Per-route / per-controller encoder override — `@use_encoder`
-
-Individual routes or whole controllers can override the app-level encoder:
-
-```python
-from lauren import use_encoder, OrjsonEncoder, PydanticEncoder, controller, get
-
-# Every route on this controller uses OrjsonEncoder:
-@use_encoder(OrjsonEncoder())
-@controller("/fast")
-class FastController:
-    @get("/")
-    async def h(self) -> dict: ...
-
-# Only this one route uses PydanticEncoder; others use the app encoder:
-@controller("/mixed")
-class MixedController:
-    @get("/models")
-    @use_encoder(PydanticEncoder())
-    async def models(self) -> list[MyModel]: ...
-
-    @get("/plain")
-    async def plain(self) -> dict: ...
-```
-
-Precedence: **method-level > controller-level > app-level**.
-
-The override applies to handler response coercion, EventStream framing, and
-error responses for that route.  Route-not-found (404) and unhandled
-outer-layer exceptions always use the app-level encoder because no compiled
-handler is in scope at those points.
-
-`@use_encoder` must always be called with parentheses — `@use_encoder(enc)`,
-never bare `@use_encoder`.  Passing a class instead of an instance
-(`@use_encoder(OrjsonEncoder)`) is rejected at decoration time with a clear
-error.
-
----
-
-## Types & Connection Info
-
-`ClientInfo` and `ServerInfo` are `(host, port)` named-tuples
-available on `Request.client` and `Request.server` respectively.
-
-`MutableHeaders` is the writable headers mapping used when constructing
-or mutating a `Response`.
-
-`ByteStream` is the zero-copy streaming body extractor:
-`body: ByteStream` receives an async iterable of raw `bytes` chunks so
-the handler can process the body without buffering it into memory.
-
-`UploadFile` is the multipart file-upload extractor — FastAPI-compatible:
-
-```python
-from lauren import UploadFile
-
-@post("/upload")
-async def upload(self, file: UploadFile) -> dict:
-    content = await file.read()
-    return {"filename": file.filename, "size": len(content)}
-```
-
-`StateExtractor` is the typed extractor for `request.state` fields
-declared by guards or middleware.
+| `True` | Accept only `application/json` and `application/*+json` (case-insensitive; `charset` absent or UTF-8). Anything else, and a body announced by `Content-Length` > 0 or `Transfer-Encoding` without a `Content-Type`, raises `UnsupportedMediaTypeError` → 415 `{"error": {"code": "unsupported_media_type", "detail": {"content_type": <received or null>, "supported": ["application/json", "application/*+json"]}}}`. |
+| `"warn"` | Same check, but mismatches are accepted; the first occurrence of each media type per route is logged at WARN (app logger, context `"ContentPolicy"`, and the stdlib `"lauren"` logger; at most 16 media types remembered per route). |
+| `False` | No check. |
+| `None` (default) | `"warn"` when `sessions=` is configured, else `False`. Any explicit value silences the session startup warning. |
+
+An empty body without `Content-Type` still reaches the extractor (422
+`missing JSON body`, or the parameter default). `Bytes`, `ByteStream`, `Form`
+and `UploadFile` parameters are not gated. `Request.json()` called inside a
+handler is not gated. The 415 is an ordinary `HTTPError`: exception handlers
+can claim it. An invalid value (or a non-`ContentConfig` `content=`) raises
+`StartupError` with `detail["reason"] == "invalid_content_config"`.
 
 ---
 
@@ -2350,30 +2401,23 @@ declared by guards or middleware.
 `StaticFilesModule` serves a directory of static assets as a Lauren
 feature module:
 
-```python
+```python run
 from lauren.static_files import StaticFilesModule
 
 @module(imports=[StaticFilesModule.for_root("/assets", directory="./public")])
-class AppModule: ...
+class AssetsModule: ...
 ```
 
----
-
-## OpenAPI Security
-
-`openapi_security` attaches OpenAPI 3.1 security requirement objects to
-a guard class so the generated schema documents authentication schemes:
-
-```python
-from lauren import openapi_security
-
-@openapi_security([{"BearerAuth": []}])
-class JwtGuard:
-    async def can_activate(self, ctx) -> bool: ...
-```
-
-`OpenAPISecurityMeta` is the metadata dataclass stored on the guard by
-this decorator.
+`StaticFilesModule.for_root(path, *, directory, max_age=3600, dotfiles="allow_well_known")`.
+Path traversal → 403; missing file → empty 404; ETag + `If-None-Match` → 304.
+**Dotfiles are not served by default:** any path segment starting with `.`
+(`/.env`, `/.git/config`, `/a/.hidden/b.txt`) gets the same empty 404 as a
+missing file — judged on the request path *and* on the resolved path, so
+`/static/../public/.env` or a symlink into a dot-directory is hidden too.
+`dotfiles="allow_well_known"` (default) still serves
+`/.well-known/**` (but not dotfiles inside it); `"deny"` hides `/.well-known/`
+too; `"allow"` serves every dotfile (the previous default). Unknown values
+raise `ValueError` from `for_root`.
 
 ---
 
@@ -2388,41 +2432,6 @@ The `Request`-instance pool reuses objects via `Request.reset`, which clears
 the instance's entire `__dict__` before re-populating the canonical fields —
 so no attribute from a previous request (canonical or user-attached) can leak
 onto the next. This is a correctness invariant, not hygiene.
-
----
-
-## Errors: Decorator & Interceptor
-
-`DecoratorUsageError` is raised when a configurable decorator such as
-`@controller`, `@injectable`, or `@middleware` is used **bare** (without
-parentheses):
-
-```python
-# Wrong — raises DecoratorUsageError at startup:
-@controller          # missing ()
-class Broken: ...
-
-# Correct:
-@controller("/api")
-class Fine: ...
-```
-
-`InterceptorConfigError` is raised when an interceptor class is
-misconfigured at startup (e.g. no `intercept` method, wrong signature,
-or applied without parentheses).
-
----
-
-## Server-Sent Events Helpers
-
-`format_sse_event` formats a single SSE frame as its wire string without
-creating a full `ServerSentEvent` object — useful for low-level adapters:
-
-```python
-from lauren import format_sse_event
-line = format_sse_event(data="hello", event="ping", id="1")
-# → "id: 1\nevent: ping\ndata: hello\n\n"
-```
 
 ---
 
@@ -2464,6 +2473,15 @@ class PrivateGateway: ...
 Fields: `request` (`WsUpgradeRequest`), `connection` (live `WebSocket`),
 `handler_class`, `handler_func`, `route_template`, `metadata`.
 Method: `get_metadata(key, default=None)`.
+
+#### `WsMessageContext`
+
+`WsConnectionContext` subclass passed to guards and interceptors declared on an
+`@on_message` handler, once per frame. Adds `event: str` (the frame's event;
+`"__binary__"` for binary frames, the real name for wildcard handlers) and
+`payload: Any` (the validated payload; raw `bytes` for binary frames);
+`handler_func` is the handler and `metadata` merges class and method
+`@set_metadata` (method wins). Also importable from `lauren`.
 
 ### Cross-cutting concern readers
 
@@ -2557,7 +2575,7 @@ route = get_route_metadata(app, "GET", "/users/{id}")  # ReflectedRoute | None
 | Type | Key fields |
 |---|---|
 | `ReflectedRoute` | `method`, `path`, `full_path`, `summary`, `response_model`, `tags`, `deprecated`, `handler` |
-| `ReflectedWsMessage` | `event`, `payload_model`, `summary`, `handler` |
+| `ReflectedWsMessage` | `event`, `payload_model` (reserved — always `None` today), `summary`, `handler` |
 | `ReflectedController` | `cls`, `meta`, `guards`, `interceptors`, `middlewares`, `exception_handlers`, `routes` |
 | `ReflectedModule` | `cls`, `meta` |
 | `ReflectedWsGateway` | `cls`, `path_template`, `meta`, `guards`, `interceptors`, `middlewares`, `messages`, `owning_module` |
@@ -2578,11 +2596,276 @@ from lauren import reflect_routes, get_all_routes, ReflectedRoute
 `docs` is a module that exposes the bundled `llms.txt` and
 `llms-full.txt` files programmatically:
 
-```python
+```python run
 import lauren.docs as ld
-overview = ld.llms_txt()        # short overview (~2 KB)
-reference = ld.llms_full_txt()  # full reference (~25 KB)
+
+overview = ld.llms_txt()        # short overview (llmstxt.org format)
+reference = ld.llms_full_txt()  # this complete reference
+assert overview.startswith("# lauren") and "_End of reference._" in reference
 ```
-        # short overview (~2 KB)
-reference = ld.llms_full_txt()  # full reference (~25 KB)
+
+The documentation website also runs a public, read-only **MCP server** at
+`https://lauren-py.dev/api/mcp` (Streamable HTTP, JSON responses, no auth) with
+the tools `search_docs(query, limit?, section?)`, `get_doc(path, heading?)`,
+`list_docs(section?)` and `get_reference(variant?)`, plus every page as a
+`lauren-docs://docs/<path>` resource. Claude Code:
+`claude mcp add --transport http lauren-docs https://lauren-py.dev/api/mcp`;
+other clients: https://lauren-py.dev/mcp.
+
+---
+
+## Common Patterns & Anti-Patterns
+
+### Pattern: per-request DB session
+
+```python
+@injectable(scope=Scope.REQUEST)
+class DbSession:
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
+        self._s = None
+
+    @property
+    def s(self):
+        if self._s is None:
+            self._s = self._engine.session()
+        return self._s
+
+    async def aclose(self):                # called automatically by lauren
+        if self._s is not None:
+            await self._s.close()
+
+@controller("/x")
+class C:
+    def __init__(self, db: DbSession): ...
 ```
+
+Lauren's runtime awaits `aclose()` on every request-scoped instance after each request, so DB sessions close deterministically.
+
+### Pattern: extract the user at the handler level
+
+```python
+class CurrentUser(ExtractionMarker):
+    source = "app.current_user"
+
+    async def extract(self, execution_context: ExecutionContext, extraction: Extraction) -> object:
+        user = execution_context.request.state.get("user")   # set by an auth guard
+        if user is None:
+            raise UnauthorizedError("login required")
+        return user
+
+@controller("/me")
+class MeController:
+    @get("/")
+    async def me(self, user: CurrentUser) -> dict:
+        return {"id": user["id"]}
+```
+
+Better than threading an AuthContext through the controller constructor — the dependency is visible per-route.
+
+### Pattern: return tuple for non-default status
+
+```python
+@post("/")
+async def create(self, body: Json[CreateUser]):
+    user = await self._repo.create(body)
+    return user, 201, {"location": f"/users/{user.id}"}
+```
+
+### Anti-pattern: subclassing to "inherit" routes
+
+```python
+@controller("/a")
+class A:
+    @get("/")
+    async def idx(self): ...
+
+class B(A):  # NO - not a controller, startup raises MetadataInheritanceError
+    pass
+```
+
+Decorate B explicitly with `@controller(...)` to opt in.
+
+### Anti-pattern: singleton depending on request-scoped
+
+```python
+@injectable()  # SINGLETON
+class Bad:
+    def __init__(self, session: DbSession): ...  # DbSession is REQUEST \u2014 raises DIScopeViolationError
+```
+
+Either make `Bad` request-scoped too, or refactor so it receives the session per-method.
+
+### Pattern: sync handler wrapping a blocking library
+
+```python
+import httpx as _httpx  # sync client
+
+@controller("/proxy")
+class ProxyController:
+    @get("/data")
+    def fetch(self) -> dict:
+        # time.sleep / requests.get / blocking DB calls are all safe here —
+        # the sync handler runs in a thread pool, not on the event loop.
+        resp = _httpx.get("https://api.example.com/data")
+        return resp.json()
+```
+
+### Anti-pattern: calling asyncio primitives from a sync handler
+
+```python
+import asyncio
+
+_queue: asyncio.Queue = asyncio.Queue()
+
+@controller("/events")
+class EventController:
+    @post("/")
+    def push(self, body: Json[Event]) -> None:
+        # ❌ NOT safe — asyncio.Queue is not thread-safe
+        _queue.put_nowait(body)
+
+        # ✅ Safe — schedules work back on the event loop
+        asyncio.get_running_loop().call_soon_threadsafe(_queue.put_nowait, body)
+```
+
+### Anti-pattern: building `Response.json(...)` manually for every handler
+
+```python
+# Don't:
+@get("/")
+async def h(self) -> Response:
+    return Response.json({"ok": True})
+
+# Do:
+@get("/")
+async def h(self) -> dict:
+    return {"ok": True}
+```
+
+Lauren serializes the return value automatically.
+
+---
+
+## Companion Packages
+
+The framework stays small on purpose; cross-cutting concerns live in
+companion packages that depend on stock `lauren>=1.0`.
+
+### `lauren-middlewares`
+
+Production-grade middlewares, each as a factory function returning a
+`@middleware()`-decorated class:
+
+* `cors(...)` — W3C CORS with origin allow-lists, regex,
+  credentials, expose-headers, preflight short-circuit.
+* `rate_limit(...)` — token-bucket per IP/key, pluggable store,
+  429 + `Retry-After`.
+* `gzip(...)` — compress responses ≥ threshold for compressible types.
+* `security_headers(...)` — OWASP defaults (HSTS, XCTO, XFO,
+  Referrer-Policy, Permissions-Policy, COOP/CORP, optional CSP).
+* `request_id(...)` — generate / propagate `X-Request-ID`.
+* `trusted_hosts(...)` — `Host` header allow-list with subdomain
+  wildcards.
+* `request_log(...)` — structured access log.
+* `https_redirect(...)` — HTTP → HTTPS with `X-Forwarded-Proto`.
+* `body_size_limit(...)` — early 413 on oversize POSTs.
+* `timeout(...)` — `asyncio.wait_for` wrapper, 504 on expiry.
+
+```bash
+pip install lauren-middlewares
+```
+
+```python
+from lauren import LaurenFactory
+from lauren_middlewares import (
+    cors, rate_limit, gzip, security_headers, request_id,
+)
+
+app = LaurenFactory.create(
+    AppModule,
+    global_middlewares=[
+        request_id(),
+        security_headers(),
+        cors(allow_origins=["https://app.example.com"]),
+        rate_limit(per_minute=60),
+        gzip(),
+    ],
+)
+```
+
+### `lauren-logging`
+
+Configurable logging module modelled after NestJS's
+`LoggerModule.forRoot`. Processor pipeline, contextvars binding,
+request-logging middleware, pluggable backends.
+
+```bash
+pip install lauren-logging                  # core
+pip install lauren-logging[structlog]       # structlog backend
+pip install lauren-logging[otel]            # OpenTelemetry processor
+```
+
+```python
+from lauren_logging import (
+    LoggingModule, LoggingConfig, LoggingService, ConsoleBackend,
+    ContextvarsProcessor, RedactSecrets,
+)
+
+LogModule = LoggingModule.configure(
+    LoggingConfig(
+        backend=ConsoleBackend(),
+        processors=[ContextvarsProcessor(), RedactSecrets()],
+    ),
+)
+
+@module(imports=[LogModule], controllers=[BillingController])
+class AppModule: ...
+
+@injectable()
+class BillingService:
+    def __init__(self, log: LoggingService) -> None:
+        self.log = log
+    def charge(self, user_id: int) -> None:
+        self.log.info("charged", user_id=user_id)
+```
+
+Backends: `ConsoleBackend`, `StdlibBackend`, `StructlogBackend`
+(extra), `FileBackend`, `RotatingFileBackend`, `FanOutBackend`,
+`QueueBackend`, `NullBackend`, `InMemoryBackend`.
+
+Processors: `ContextvarsProcessor`, `RedactSecrets`, `Sampler`,
+`RateLimit`, `TimestampProcessor`, `OpenTelemetryProcessor` (extra).
+
+Drop-in `request_logging()` middleware propagates `X-Request-ID`,
+binds contextvars, and emits a structured request-summary line per
+request.
+
+---
+
+## Appendix: Cheat Sheet
+
+| Task | Pattern |
+|---|---|
+| Register a dependency | `@injectable()` on the class; add to `@module(providers=[...])` |
+| Declare a route | `@controller("/p")` on class, `@get("/x")` on method |
+| Extract URL param | `id: Path[int]` |
+| Extract query param | `q: Query[str] = QueryField(default="", ge=..., le=...)` |
+| Extract JSON body | `body: Json[MyPydanticModel]` |
+| Raise 404 in handler | define `class NotFound(HTTPError): status_code = 404; code = "not_found"`, then `raise NotFound("...")` |
+| Add a guard to one route | `@use_guards(MyGuard)` on the method |
+| Add a guard to all routes on a controller | `@use_guards(MyGuard)` on the class |
+| Override JSON encoder for one route | `@use_encoder(OrjsonEncoder())` on the method |
+| Override JSON encoder for all routes on a controller | `@use_encoder(MsgspecEncoder())` on the class |
+| Read per-route metadata in a guard | `ctx.get_metadata("key", default)` |
+| Attach a singleton explicitly | `app.container.set_singleton(MyCls, instance)` |
+| Run post-construct hook | `@post_construct` on an `async def` method of an `@injectable` |
+| Serve a file (auto MIME, streamed) | `return await Response.file("/path/to/file.pdf")` |
+| Serve a file with custom name | `return await Response.file(path, filename="report.pdf")` |
+| Serve a file inline (browser preview) | `return await Response.file(path, inline=True)` |
+| Serve XML | `return Response.xml("<root>...</root>")` |
+| Serve Server-Sent Events | `Response.sse(async_iterable_of_dicts)` |
+
+---
+
+_End of reference._

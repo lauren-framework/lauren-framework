@@ -328,15 +328,19 @@ For unit-testing an extractor in isolation, construct an `ExecutionContext` dire
 
 ```python
 import pytest
-from lauren.types import ExecutionContext
-from lauren.testing import make_request   # or any Request factory
+from lauren.extractors import Extraction
+from lauren.types import ExecutionContext, Headers, Request
 
 async def test_bad_tenant_header():
     repo = MockTenantRepository(returns=None)
     extractor = TenantId(repo=repo)
 
-    ctx = ExecutionContext(request=make_request(headers=[("x-tenant", "ghost")]))
-    ext = Extraction(name="tenant", source="app.tenant_id", ...)
+    request = Request(method="GET", path="/", headers=Headers([("x-tenant", "ghost")]))
+    ctx = ExecutionContext(request=request)
+    ext = Extraction(
+        name="tenant", source="app.tenant_id", inner_type=str,
+        field_descriptor=None, default=None, has_default=False,
+    )
 
     with pytest.raises(BadTenantError):
         await extractor.extract(ctx, ext)

@@ -20,7 +20,7 @@ FastAPI and Lauren share the "type-annotations-first" philosophy but differ in a
 | `Depends(fn)` | Constructor injection via `@injectable` | Services declared as class attributes / constructor params |
 | `@app.middleware("http")` | `@middleware()` class with `dispatch(req, call_next)` | Class-based, DI-aware |
 | `@app.on_event("startup")` | `@post_construct` on an `@injectable` | Lifecycle tied to individual services, not the whole app |
-| `HTTPException(status_code=404)` | `raise NotFoundError("msg")` | 28-class hierarchy; see `lauren/exceptions.py` |
+| `HTTPException(status_code=404)` | `raise NotFound("msg")` with `class NotFound(HTTPError): status_code = 404; code = "not_found"` | subclass `HTTPError`; built-ins in `lauren/exceptions.py` |
 | `Annotated[str, Query()]` | `q: Query[str]` (or bare `q: str`) | Extractors are type aliases, not annotations |
 | `response_model=` | Return the Pydantic model directly | Auto-serialized; declare return type for OpenAPI |
 | `Depends(get_db)` for request-scoped deps | `@injectable(scope=Scope.REQUEST)` | Scope is on the provider class, not the injection site |
@@ -127,11 +127,12 @@ class TimingMiddleware:
     async def dispatch(self, request: Request, call_next) -> Response:
         start = time.monotonic()
         response = await call_next(request)
-        response.headers["X-Time"] = str(time.monotonic() - start)
-        return response
+        # Responses are immutable: with_header() returns a new one.
+        return response.with_header("x-time", str(time.monotonic() - start))
 ```
 
-Pass to `Lauren(AppModule, global_middlewares=[TimingMiddleware])`.
+Pass to `LaurenFactory.create(AppModule, global_middlewares=[TimingMiddleware])`
+(or `Lauren(global_middlewares=[TimingMiddleware])`).
 
 See [middleware.md](middleware.md) for the full middleware + interceptor model.
 
@@ -149,7 +150,11 @@ async def get_item(id: int):
 
 **Lauren:**
 ```python
-from lauren.exceptions import NotFoundError
+from lauren.exceptions import HTTPError
+
+class NotFoundError(HTTPError):       # declare once, reuse everywhere
+    status_code = 404
+    code = "not_found"
 
 @get("/{id}")
 async def get_item(self, id: int) -> dict:
@@ -157,7 +162,10 @@ async def get_item(self, id: int) -> dict:
         raise NotFoundError("Item not found")  # → 404 JSON response
 ```
 
-Full error catalog: `lauren/exceptions.py`. Common HTTP-mapped classes:
-`BadRequestError` (400), `UnauthorizedError` (401), `ForbiddenError` (403),
-`NotFoundError` (404), `ConflictError` (409), `UnprocessableEntityError` (422),
-`InternalServerError` (500).
+Built-in HTTP-mapped classes include `UnauthorizedError` (401),
+`ForbiddenError` (403), `RouteNotFoundError` (404, for unmatched routes),
+`MethodNotAllowedError` (405), `RequestBodyTooLarge` (413),
+`UnsupportedMediaTypeError` (415) and `ExtractorError` / `ExtractorFieldError`
+(422) — full generated table in `docs/reference/errors.md`. There is no generic
+`NotFoundError` / `BadRequestError` / `ConflictError`: subclass `HTTPError` with
+your own `status_code` and `code`, as above.

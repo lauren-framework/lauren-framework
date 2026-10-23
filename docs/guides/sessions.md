@@ -159,24 +159,23 @@ app = LaurenFactory.create(
 
 ### A Redis backend (recipe)
 
-Implement the same Protocol as an injectable singleton and pass it in. Connection
-setup/teardown rides Lauren's lifecycle hooks:
+Implement the same Protocol and pass an **instance** via
+`SessionConfig(store=...)`. Lauren registers that instance as a value provider,
+so DI lifecycle hooks (`@post_construct` / `@pre_destruct`) never run on it:
+create the client in `__init__` (redis-py connects lazily, on first command)
+and close it from an `on_shutdown` callback.
 
 ```python
 from typing import Any, ClassVar
-from lauren import Scope, injectable, post_construct, pre_destruct, SessionConfig, use_value, SessionStore
 import redis.asyncio as redis
 
-@injectable(scope=Scope.SINGLETON)
 class RedisSessionStore:
     requires_secret: ClassVar[bool] = True
     client_side: ClassVar[bool] = False
 
-    @post_construct
-    async def connect(self) -> None:
-        self._r = redis.from_url("redis://localhost:6379")
+    def __init__(self, url: str = "redis://localhost:6379") -> None:
+        self._r = redis.from_url(url)          # no connection is opened yet
 
-    @pre_destruct
     async def close(self) -> None:
         await self._r.aclose()
 
@@ -195,6 +194,11 @@ class RedisSessionStore:
 
     async def delete(self, session_id: str) -> None:
         await self._r.delete(f"sess:{session_id}")
+
+
+store = RedisSessionStore()
+app = LaurenFactory.create(AppModule, sessions=SessionConfig(secret=SECRET, store=store))
+app.on_shutdown(store.close)
 ```
 
 Because the store is registered as a global provider, any service can inject
@@ -299,10 +303,45 @@ otherwise.
 | Forgery | HMAC-SHA256 signature, constant-time verify |
 | XSS theft | `HttpOnly` on |
 | Plaintext transport | `Secure` on |
-| CSRF | `SameSite=Lax` (pair with `lauren-guards.csrf` for state-changing flows) |
+| CSRF | `SameSite=Lax`; JSON routes log mismatched `Content-Type`s (`strict_content_type="warn"`) — set `True` or pair with `lauren-guards.csrf` |
 | Fixation | `regenerate_id()` at login |
 | Stale sessions | absolute `max_age` + optional `idle_timeout` / `rolling` |
 | Secret compromise | rotate by passing `secret=[new, old]` |
+
+### CSRF and JSON routes
+
+A cookie session turns every state-changing route into a CSRF target. A JSON
+body is parsed regardless of `Content-Type` unless you opt in, and a cross-site
+HTML form or a `fetch(..., {mode: "no-cors"})` can send `text/plain` **without a
+CORS preflight** — the browser attaches the session cookie (`SameSite=Lax` stops
+cross-*site* subresource requests, but not same-site attackers such as a taken-over
+subdomain, nor `SameSite=None` cookies). Close the gap by requiring a JSON
+`Content-Type`:
+
+```python
+from lauren import ContentConfig, LaurenFactory, SessionConfig
+
+app = LaurenFactory.create(
+    AppModule,
+    sessions=SessionConfig(secret=SECRET),
+    content=ContentConfig(strict_content_type=True),   # text/plain JSON → 415
+)
+```
+
+With `strict_content_type=True`, a `Json[T]` (or implicit model) body accepts
+only `application/json` / `application/*+json`; anything else — including a
+body announced by `Content-Length` or `Transfer-Encoding` without a
+`Content-Type` — is rejected with **415**
+`UnsupportedMediaTypeError` before the body is read. A browser can only send
+`application/json` cross-origin after a CORS preflight, which your CORS policy
+controls.
+
+Until you choose, session-enabled apps run in `"warn"` mode: mismatched
+requests are accepted and logged once per route and media type, and
+`LaurenFactory.create` logs one startup warning listing the JSON `POST` routes
+(PUT/PATCH/DELETE need a CORS preflight cross-site, so CORS already guards them). Setting `strict_content_type` explicitly — `True`, `"warn"`, or `False`
+(for example after installing `lauren-guards.csrf`) — silences the startup
+warning. Form-encoded routes still need CSRF tokens: use `lauren-guards.csrf`.
 
 ### What fails at startup
 

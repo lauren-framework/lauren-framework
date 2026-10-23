@@ -115,7 +115,7 @@ app = LaurenFactory.create(AppModule, global_middlewares=[CorsMiddleware, Loggin
 
 ### Request / Response API in middleware
 
-```python
+```python fragment
 # Reading from request
 request.method          # "GET", "POST", …
 request.path            # "/users/42"
@@ -126,7 +126,7 @@ request.state["user_id"] = uid  # set for downstream handlers
 # Building a response
 return Response.json({"error": "forbidden"}, status=403)
 return Response.text("ok")
-return Response(body=b"...", status=200, headers=[("content-type", "text/plain")])
+return Response(b"...", status=200, media_type="text/plain")
 ```
 
 ---
@@ -139,6 +139,7 @@ Exception handlers catch typed exceptions and return structured responses. Resol
 from lauren import exception_handler, use_exception_handlers
 from lauren.types import Request, Response
 
+# NotFoundError / ConflictError: your own HTTPError subclasses
 @exception_handler(NotFoundError, ConflictError)
 class DomainErrors:
     def __init__(self, log: Logger) -> None:  # DI-injected

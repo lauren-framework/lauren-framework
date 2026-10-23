@@ -71,7 +71,7 @@ See [extractors.md](extractors.md) for field descriptors, pipes, and upload file
 
 ## Auto-serialization return types
 
-```python
+```python fragment
 return {"ok": True}             # → JSON 200
 return "plain text"             # → text/plain 200
 return None                     # → 204 No Content
@@ -127,7 +127,7 @@ async def find_one(self, id: Path[int]) -> UserDto:
     return user
 ```
 
-See `lauren.exceptions` for the full 28-class catalog.
+See `docs/reference/errors.md` (generated from `lauren.exceptions`) for the full catalog.
 
 ---
 

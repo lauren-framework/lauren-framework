@@ -151,7 +151,7 @@ repos:
         entry: python scripts/check_llms_full.py
         language: python
         pass_filenames: false
-        files: ^(lauren/.*\.py|llms-full\.txt)$
+        files: ^(lauren/.*\.py|lauren/llms-full\.txt)$
         # No local path here, on purpose. prek 0.5.x resolves a relative
         # path in `additional_dependencies` against the temp dir it builds
         # the hook env in, which fails outright. The script puts the
@@ -159,6 +159,20 @@ repos:
         additional_dependencies:
           - "anyio>=4.0"
           - "pydantic>=2.0"
+
+      # Mirrors `nox -s docs_contract` — doc code blocks compile, `run`
+      # blocks execute, documented attributes exist, generated fact regions
+      # are current. Same import-from-checkout strategy as above.
+      - id: docs-contract
+        name: docs code blocks and claims hold (docs_contract)
+        entry: python scripts/check_docs_contract.py
+        language: python
+        pass_filenames: false
+        files: ^(lauren/.*\.(py|txt)|docs/.*\.md|skills/.*\.md|README\.md|docs_contract\.toml|scripts/(check_docs_contract|sync_doc_facts)\.py)$
+        additional_dependencies:
+          - "anyio>=4.0"
+          - "pydantic>=2.0"
+          - "msgspec>=0.18"
 
       # Quick smoke: noxfile.py and pyproject.toml are syntactically valid.
       - id: nox-list
@@ -173,4 +187,4 @@ ci:
   # us automatically — dependabot already does that on a schedule we
   # control. (Has no effect on local prek runs.)
   autoupdate_schedule: monthly
-  skip: [mypy, llms-full-txt-sync]  # too slow / installs deps in pre-commit.ci
+  skip: [mypy, llms-full-txt-sync, docs-contract]  # too slow / installs deps in pre-commit.ci

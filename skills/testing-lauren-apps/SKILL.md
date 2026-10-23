@@ -59,12 +59,13 @@ resp = client.post("/upload", content=b"\x00\x01\x02")
 ### TestResponse
 
 ```python
-resp.status_code   # int
-resp.json()        # parsed JSON body
-resp.text          # str body
-resp.content       # bytes body
-resp.headers       # dict-like (case-insensitive)
-resp.headers.get("content-type")
+resp.status_code              # int
+resp.json()                   # parsed JSON body
+resp.text                     # str body
+resp.body                     # bytes body (no .content)
+resp.headers                  # list[tuple[str, str]] — not a mapping
+resp.header("content-type")   # first value, case-insensitive (None if absent)
+resp.headers_all("set-cookie")  # every value
 ```
 
 ## Async client — httpx

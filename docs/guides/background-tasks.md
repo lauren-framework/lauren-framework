@@ -37,10 +37,23 @@ handle: TaskHandle = tasks.add_task(func, *args, **kwargs)
 `add_task` enqueues `func` to run after `_send_response` completes. It returns a
 `TaskHandle`:
 
-| Field | Type | Description |
+| Member | Type | Description |
 |---|---|---|
 | `task_id` | `str` | Random hex string, unique per task |
-| `status` | `str` | `"pending"` → `"running"` → `"done"` \| `"failed"` |
+| `status` | `str` | `"pending"` → `"running"` → `"done"` \| `"failed"` \| `"cancelled"` |
+| `done` | `bool` | `True` once the status is terminal |
+| `cancel()` | `-> bool` | Skip a task that has not started; `False` once it is running or finished |
+| `await result()` | `-> Any` | The task's return value; re-raises its exception (`concurrent.futures.CancelledError`, an ordinary `Exception`, if cancelled) |
+
+Tasks run only after the response is sent, so the request that queued a task
+cannot `await handle.result()` — that would never complete, and raises
+`RuntimeError` instead. Await it from another coroutine (a WebSocket handler, a
+test). If the request task is cancelled (shutdown, client disconnect) the
+interrupted and remaining tasks are marked `"cancelled"` — as are tasks that
+never started because the request was cancelled first.
+
+Only `task_id` and `status` are part of the handle's data, so returning a handle
+from a handler serializes as `{"task_id": ..., "status": ...}`.
 
 You can include `task_id` in the response body so clients can poll elsewhere:
 
@@ -237,7 +250,7 @@ def test_signal_on_failure(app, client):
 ## Non-goals
 
 Background tasks run in the **current process**. For deferred/scheduled/persistent
-task queues see the planned `lauren-tasks` companion package which will add:
+task queues see the planned `lauren-jobs` companion package which will add:
 
 - `delay=`, `run_at=` scheduling
 - Recurring tasks (`cron=`, `every=`)

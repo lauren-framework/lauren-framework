@@ -27,7 +27,7 @@
 
     ---
 
-    Structured JSON logging, graceful shutdown with POSIX signal integration, OpenAPI 3.1, deterministic teardown, and a 28-class error catalog with stable error codes.
+    Structured JSON logging, graceful shutdown with POSIX signal integration, OpenAPI 3.1, deterministic teardown, and a closed error catalog with stable error codes.
 
 </div>
 
@@ -119,7 +119,7 @@ Most Python frameworks claim it. Lauren earns it through four hard guarantees:
 |---|---|
 | **Validate-at-startup** | Misconfigured DI graphs, route conflicts, circular modules, scope violations and ambiguous Protocols all raise `StartupError` subclasses *before* the app accepts a single connection. |
 | **Deterministic shutdown** | A four-phase shutdown (drain → `on_shutdown` → `@pre_destruct` → goodbye) with bounded timeouts, idempotent re-entry, and full structured logging. SIGTERM/SIGINT integration is one function call. |
-| **Stable error contract** | A 28-class error catalog. Every HTTP error renders as `{"error": {"code": "...", "message": "...", "detail": {...}}}` with documented codes that downstream services can match against. |
+| **Stable error contract** | A closed [error catalog](reference/errors.md). Every HTTP error renders as `{"error": {"code": "...", "message": "...", "detail": {...}}}` with documented codes that downstream services can match against. |
 | **Zero runtime reflection** | The dispatch path never calls `inspect`, `get_type_hints`, or any reflective API. Performance is predictable across cold and hot paths because the work is all done once, at boot. |
 
 When the pager goes off at 3 a.m., the framework should be the boring part of the stack. Lauren is built to be exactly that.

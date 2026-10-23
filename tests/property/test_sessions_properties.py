@@ -9,8 +9,14 @@ import pytest
 
 hypothesis = pytest.importorskip("hypothesis")
 
-from hypothesis import assume, given  # noqa: E402
+from hypothesis import HealthCheck, assume, given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
+
+# The recursive JSON strategy is slow to draw from and signing does real HMAC
+# work, so on a busy machine examples trip Hypothesis' deadline and "too slow"
+# health check without any bug. (The built-in "ci" profile GitHub Actions
+# loads relaxes both.)
+_TOLERANT = settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
 
 # JSON-compatible values (no NaN/Infinity so the round-trip is exact).
 _json_scalars = (
@@ -31,6 +37,7 @@ _json_dicts = st.dictionaries(st.text(max_size=10), _json_values, max_size=8)
 
 
 class TestSerializerProperties:
+    @_TOLERANT
     @given(data=_json_dicts)
     def test_roundtrip(self, data):
         from lauren.sessions import JSONSessionSerializer
@@ -40,6 +47,7 @@ class TestSerializerProperties:
 
 
 class TestSigningProperties:
+    @_TOLERANT
     @given(value=st.text(min_size=1, max_size=200), secret=st.binary(min_size=1, max_size=64))
     def test_sign_unsign_roundtrip(self, value, secret):
         from lauren._sessions._signing import Signer
@@ -47,6 +55,7 @@ class TestSigningProperties:
         signer = Signer((secret,))
         assert signer.unsign(signer.sign(value)) == value
 
+    @_TOLERANT
     @given(
         value=st.text(min_size=1, max_size=80),
         secret=st.binary(min_size=1, max_size=32),
@@ -64,6 +73,7 @@ class TestSigningProperties:
         # A single-byte mutation can never validate (collision prob ~2**-256).
         assert signer.unsign(mutated) is None
 
+    @_TOLERANT
     @given(secret=st.binary(min_size=1, max_size=32))
     def test_new_id_roundtrips_and_has_no_separator(self, secret):
         from lauren._sessions._signing import Signer
@@ -77,6 +87,7 @@ class TestSigningProperties:
 
 
 class TestSessionProperties:
+    @_TOLERANT
     @given(data=_json_dicts)
     def test_session_never_crashes_on_arbitrary_payload(self, data):
         from lauren.sessions import Session

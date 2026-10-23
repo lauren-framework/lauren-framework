@@ -31,8 +31,13 @@ That's it. Any controller or other injectable in the same module — or any modu
 from lauren import injectable, Scope
 
 @injectable(scope=Scope.SINGLETON)    # default — one per app
+class Clock: ...
+
 @injectable(scope=Scope.REQUEST)      # one per request
+class RequestContext: ...
+
 @injectable(scope=Scope.TRANSIENT)    # new every resolve
+class IdGenerator: ...
 ```
 
 Pick by lifetime:

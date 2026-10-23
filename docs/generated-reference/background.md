@@ -56,4 +56,38 @@ Tracks the lifecycle of a single background task. The
 :attr:`task_id` is a random hex string that callers may include in
 response bodies so clients can poll for completion status elsewhere.
 :attr:`status` progresses ``"pending"`` → ``"running"`` →
-``"done"`` | ``"failed"``.
+``"done"`` | ``"failed"`` | ``"cancelled"``.
+
+Background tasks run only *after* the response has been sent, so
+:meth:`result` cannot be awaited by the request that queued the task
+(that would deadlock — it raises :class:`RuntimeError` instead); await
+it from another coroutine, e.g. a WebSocket handler or a test.
+
+Only ``task_id`` and ``status`` are dataclass fields, so returning a
+handle from a handler serializes to ``{"task_id": ..., "status": ...}``
+and handles pickle; the waiting machinery is runtime-only state.
+
+#### `TaskHandle.cancel`
+
+```python
+def cancel(self) -> bool
+```
+
+Cancel the task if it has not started; return whether it was cancelled.
+
+A ``"pending"`` task is marked ``"cancelled"`` and skipped when the
+queue runs. A task that is running or finished cannot be cancelled
+(``False``) — background tasks share the request's ``asyncio.Task``.
+
+#### `TaskHandle.result`
+
+```python
+def result(self) -> Any
+```
+
+Wait for the task and return its return value.
+
+Raises the task's exception if it failed, and
+:class:`concurrent.futures.CancelledError` (an ordinary
+``Exception``, unlike :class:`asyncio.CancelledError`) if it was
+cancelled.

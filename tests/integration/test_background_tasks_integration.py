@@ -642,3 +642,66 @@ class TestBackgroundTasksAdditional:
         client = TestClient(app)
         client.post("/")
         assert results == ["done"]
+
+
+class TestTaskHandleAcrossTheRequest:
+    def test_returning_a_handle_serializes_its_public_fields(self) -> None:
+        # Regression: the handle's runtime state leaked into the response
+        # (async handlers failed with "cannot pickle '_asyncio.Task'").
+        @controller("/jobs")
+        class Jobs:
+            @post("/async")
+            async def start_async(self, tasks: BackgroundTasks) -> Any:
+                return tasks.add_task(lambda: None)
+
+            @post("/sync")
+            def start_sync(self, tasks: BackgroundTasks) -> Any:
+                return {"job": tasks.add_task(lambda: None)}
+
+        @module(controllers=[Jobs])
+        class JobsModule:
+            pass
+
+        client = TestClient(LaurenFactory.create(JobsModule))
+        async_body = client.post("/jobs/async").json()
+        sync_body = client.post("/jobs/sync").json()
+
+        assert set(async_body) == {"task_id", "status"} and async_body["status"] == "pending"
+        assert set(sync_body["job"]) == {"task_id", "status"}
+
+    def test_handles_are_cancelled_when_the_request_is_cancelled_first(self) -> None:
+        import asyncio
+
+        handles: list[Any] = []
+
+        @controller("/doomed")
+        class Doomed:
+            @post("/")
+            async def create(self, tasks: BackgroundTasks) -> dict:
+                handles.append(tasks.add_task(lambda: None))
+                raise asyncio.CancelledError()  # e.g. the client disconnected
+
+        @module(controllers=[Doomed])
+        class DoomedModule:
+            pass
+
+        app = LaurenFactory.create(DoomedModule)
+
+        async def run() -> None:
+            await app.startup()
+
+            async def receive() -> dict:
+                return {"type": "http.request", "body": b"", "more_body": False}
+
+            async def send(message: dict) -> None:
+                pass
+
+            scope = {"type": "http", "method": "POST", "path": "/doomed/", "headers": [], "query_string": b""}
+            try:
+                await app(scope, receive, send)
+            except asyncio.CancelledError:
+                pass
+
+        asyncio.run(run())
+
+        assert [h.status for h in handles] == ["cancelled"]

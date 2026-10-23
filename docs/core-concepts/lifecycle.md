@@ -1,6 +1,6 @@
 # Lifecycle Hooks
 
-> Lauren runs your providers' lifecycle hooks **deterministically** — `@post_construct` in topological order at startup, `@pre_destruct` in reverse topological order at shutdown, both with bounded timeouts.
+> Lauren runs your providers' lifecycle hooks **deterministically** — `@post_construct` in topological order at startup, `@pre_destruct` in reverse topological order at shutdown, the latter with a bounded per-hook timeout.
 
 ## The two hooks
 
@@ -18,7 +18,7 @@ class Db:
         await self.pool.close()
 ```
 
-Hooks may be `async def` or plain `def`. The lifecycle scheduler awaits coroutine results and offloads sync hooks to a worker thread, so blocking startup or shutdown work does not freeze the event loop.
+Hooks may be `async def` or plain `def`. A sync `@post_construct` runs inline on the event loop (keep it quick, or make it `async`); a sync `@pre_destruct` is offloaded to a worker thread so blocking teardown work cannot freeze the loop. Declare at most one `@post_construct` and one `@pre_destruct` per class — only the first one found is honoured.
 
 ## When they run
 
@@ -31,7 +31,8 @@ sequenceDiagram
     participant D as @pre_destruct hooks (reverse topological)
     participant S as Shutdown
 
-    F->>L: Phase 6 (lifecycle)
+    F->>L: Phase 6 computes the order
+    App->>L: startup() (ASGI lifespan)
     L->>A: deps first
     A-->>App: ready
     App-->>S: drain begins
@@ -39,7 +40,7 @@ sequenceDiagram
     D-->>S: complete
 ```
 
-* **Startup** — phase 6 of `LaurenFactory.create(...)`. Singletons are constructed, then `@post_construct` hooks run in **topological order** (a dependency's hook completes before its dependent's hook starts).
+* **Startup** — phase 6 of `LaurenFactory.create(...)` only *computes* the order. Singletons are constructed and their `@post_construct` hooks run in `LaurenApp.startup()` — triggered by the ASGI lifespan `startup` event (or by `TestClient`; call `await app.startup()` yourself without lifespan) — in **topological order** (a dependency's hook completes before its dependent's hook starts). There is no timeout on `@post_construct`.
 * **Shutdown** — `app.shutdown(drain_timeout=...)` runs in four logged phases: drain in-flight requests, run `on_shutdown` callbacks (LIFO), then run `@pre_destruct` hooks in **reverse topological order** (dependents teardown first).
 
 ## Topological ordering, with a picture
@@ -57,7 +58,7 @@ This is what makes lifecycle ordering *correct*: a `Repo` whose `@post_construct
 
 ## Timeouts and best-effort teardown
 
-`@pre_destruct` hooks run with a configurable timeout (default 10 seconds). If one hangs, Lauren logs a `DestructTimeoutError`, abandons that hook, and moves on to the next. **Teardown never aborts halfway through** — every other hook still runs. The same timeout protection now applies consistently to both `async def` and plain `def` hooks because sync work runs in a thread instead of inline on the loop.
+`@pre_destruct` hooks run with a per-hook timeout (default 10 seconds). If one hangs, Lauren logs a `DestructTimeoutError`, abandons that hook, and moves on to the next. **Teardown never aborts halfway through** — every other hook still runs. The timeout applies to both `async def` and plain `def` hooks because sync teardown runs in a thread instead of inline on the loop.
 
 ```python
 await app.shutdown(drain_timeout=10.0)   # drain phase capped at 10s
@@ -68,7 +69,7 @@ Inside the four-phase shutdown:
 | Phase | Bounded by | What runs |
 |---|---|---|
 | Drain | `drain_timeout` | In-flight requests get a chance to finish. |
-| `on_shutdown` callbacks | per-callback timeout | User hooks registered via `app.on_shutdown(fn)` (LIFO order). |
+| `on_shutdown` callbacks | — (no timeout; keep them short) | User hooks registered via `app.on_shutdown(fn)` (LIFO order). |
 | `@pre_destruct` hooks | per-hook timeout | Provider teardown in reverse topological order. |
 | Goodbye | — | Final log line confirming clean shutdown. |
 

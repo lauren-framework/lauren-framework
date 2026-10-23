@@ -76,7 +76,8 @@ class BulkProcessor:
 ## Controller
 
 ```python
-from lauren import controller, post, get, module, Bytes, Query
+from lauren import controller, post, get, module, Bytes, Query, QueryField
+from lauren.exceptions import ExtractorFieldError
 from lauren.types import Response
 
 @controller("/bulk")
@@ -85,7 +86,7 @@ class BulkController:
         self._processor = processor
 
     @post("/import")
-    async def import_data(self, body: Bytes, fmt: str = Query(default="csv")) -> dict:
+    async def import_data(self, body: Bytes, fmt: Query[str] = QueryField(default="csv")) -> dict:
         if fmt == "csv":
             records = self._processor.import_csv(body)
         elif fmt == "json":
@@ -93,12 +94,11 @@ class BulkController:
         elif fmt == "excel":
             records = self._processor.import_excel(body)
         else:
-            from lauren.exceptions import BadRequestError
-            raise BadRequestError(f"Unknown format: {fmt}")
+            raise ExtractorFieldError(f"Unknown format: {fmt}", detail={"field": "fmt"})
         return {"count": len(records), "records": records}
 
     @get("/export")
-    async def export_data(self, fmt: str = Query(default="csv")) -> Response:
+    async def export_data(self, fmt: Query[str] = QueryField(default="csv")) -> Response:
         records = [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
         if fmt == "csv":
             data = self._processor.export_csv(records)
@@ -110,9 +110,8 @@ class BulkController:
             data = self._processor.export_excel(records)
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         else:
-            from lauren.exceptions import BadRequestError
-            raise BadRequestError(f"Unknown format: {fmt}")
-        return Response(content=data, media_type=media_type)
+            raise ExtractorFieldError(f"Unknown format: {fmt}", detail={"field": "fmt"})
+        return Response(data, media_type=media_type)
 
 @module(controllers=[BulkController], providers=[BulkProcessor])
 class BulkModule:

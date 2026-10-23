@@ -58,6 +58,8 @@ class ReflectedWsMessage:
 
     event: str
     payload_model: Any | None
+    """Reserved: always ``None`` today (``@on_message`` does not record it);
+    read the handler's ``Json[...]`` annotation for the payload type."""
     summary: str | None
     description: str | None
     handler: Any

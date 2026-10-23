@@ -259,7 +259,9 @@ class AppModule: pass
 ## Broadcasting with `BroadcastGroup`
 
 Socket.IO controllers share the `BroadcastGroup` provider with plain WebSocket
-gateways. Inject it via the constructor:
+gateways. Register one shared subclass with `@injectable(provides=[BroadcastGroup])`
+in the module's `providers=` (see [WebSockets → BroadcastGroup](websockets.md)), then
+inject it via the constructor:
 
 ```python
 from lauren import BroadcastGroup

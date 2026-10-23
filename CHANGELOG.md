@@ -7,6 +7,170 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-23
+
+### Security
+
+- **WebSocket message-level guards are enforced.** `@use_guards` on an
+  `@on_message` handler used to be accepted and never run, so a "protected"
+  event (`admin.*`, `billing.*`) was open to every connected client. Guards on
+  `@on_message` handlers now run for every frame routed to the handler (after
+  payload validation) with a new `WsMessageContext`; a denial answers with a
+  `forbidden` error frame, skips the handler and keeps the connection open.
+  `@use_interceptors` on `@on_message` handlers now wrap that handler, and
+  guards/interceptors on `@on_connect` run after the gateway-level ones.
+- **Unsupported placements fail at startup instead of being ignored:**
+  `@use_middlewares` on any WebSocket hook (`MiddlewareConfigError`),
+  `@use_guards` / `@use_interceptors` on `@on_disconnect` / `@on_error`
+  (`GuardConfigError` / `InterceptorConfigError`), `@use_exception_handlers` /
+  `@use_encoder` on any WebSocket hook (`ExceptionHandlerConfigError` /
+  `DecoratorUsageError`), and guards, interceptors or middlewares on Socket.IO
+  `@on_socketio_event` handlers.
+- **`StaticFilesModule` no longer serves dotfiles** (except `/.well-known/`) by
+  default: `/.env`, `/.git/config`, `/a/.hidden/b.txt` now answer an empty 404 —
+  judged on both the request path and the resolved path, so paths that leave
+  and re-enter the root (`/static/../public/.env`) and symlinks into
+  dot-directories are covered.
+  New `dotfiles=` option: `"allow_well_known"` (default), `"deny"`, or `"allow"`
+  to restore the previous behaviour.
+- **Content-type posture for cookie-session apps.** New
+  `ContentConfig(strict_content_type=...)` (`LaurenFactory.create(content=...)`,
+  `Lauren(content=...)`): with `True`, JSON body parameters reject non-JSON or
+  missing `Content-Type`s with 415 before the body is read, closing the
+  cross-site "simple request" CSRF path. Apps with `sessions=` default to
+  `"warn"` (accept, log once per route and media type) and get a one-time
+  startup warning until they set a policy explicitly; other apps default to no
+  check.
+
+### Added
+
+- `ContentConfig` (`lauren`, `lauren.types`) and `UnsupportedMediaTypeError`
+  (415, `code="unsupported_media_type"`), the 30th user-facing error class.
+- `WsMessageContext` (`lauren`, `lauren.reflect`): the per-frame context passed
+  to `@on_message` guards and interceptors (`event`, validated `payload`,
+  merged class + method `@set_metadata`).
+
+### Added — documentation contract and small API completions
+
+- **Docs-as-tests:** `nox -s docs_contract` (`scripts/check_docs_contract.py`,
+  also a prek hook and a CI job) compiles every fenced `python` block in
+  `lauren/llms-full.txt`, `lauren/llms.txt`, `README.md`, `docs/` and `skills/`,
+  executes the blocks marked `run` (55 canonical examples in `llms-full.txt`,
+  including real `LaurenFactory.create` + `TestClient` round-trips), verifies
+  the attribute claims listed in `docs_contract.toml`, lints the structure of
+  `llms-full.txt`, and checks that generated fact regions are current.
+- **Generated facts:** `scripts/sync_doc_facts.py` writes the error-catalog
+  table and hierarchy (from the class docstrings in `lauren/exceptions.py`) into
+  `docs/reference/errors.md` and `llms-full.txt`; `nox -s docs` runs it.
+- **`TaskHandle`** gains the surface the docs promised: `done`, `cancel()` (for
+  a task that has not started) and `await result()` (re-raises the task's
+  exception; awaiting it from the request that queued the task raises
+  `RuntimeError` instead of deadlocking), plus a `"cancelled"` status.
+- **`Lauren(...)` parity with `LaurenFactory.create`:** `global_ws_guards`,
+  `global_ws_interceptors`, `json_encoder`, `error_format`, `root_path`,
+  `mounts`, `signals`, `arena`, `arena_capacity` (and `content`), and a
+  buffered `Lauren.mount(path, asgi_app)`. `Lauren(debug=True)` now logs that
+  the flag is reserved and has no effect yet.
+
+### Fixed — framework behaviour found while auditing the docs
+
+- `TestClient` now starts `Lauren` apps (on their first request, so routes
+  added after creating the client still count) — it used to skip them, so
+  singleton `@post_construct` hooks never ran under test. `Lauren.startup()`
+  still only compiles the app and runs `on_startup` hooks.
+- Interceptor chains of two or more interceptors on WebSocket gateways no
+  longer recurse into themselves (`lauren.reflect.apply_interceptors` bound its
+  loop variables late); class-level plus `@on_connect` interceptors compose.
+- Guards, interceptors, middlewares, routes and metadata declared on *both*
+  sides of `@staticmethod` / `@classmethod` now all apply; previously the ones
+  above the wrapper were dropped when the function carried its own.
+- A connect-time WebSocket guard that closes the socket itself no longer
+  causes a second close frame.
+- Request logging uses the public `Logger` protocol (`log_record`) and can no
+  longer turn a response into a 500; a custom protocol-only logger used to
+  break every 4xx/5xx response.
+- Request-scoped dependencies are torn down after global middleware and outer
+  error rendering finish, so a global exception handler never receives an
+  already-closed (or never-closed) request-scoped instance.
+- `handle()` always returns a rendered response: a handler result that cannot
+  be encoded is reported as a handler failure (logged once, 500), an
+  `HTTPError` whose `detail` cannot be encoded keeps its status and code, and
+  a middleware that returns something other than a `Response` is a logged 500.
+- Background-task handles serialize as `{"task_id", "status"}` (runtime state
+  is no longer a dataclass field), pickle again, settle safely from worker
+  threads, and are marked `"cancelled"` when the request ends before they run;
+  `result()` on a cancelled task raises `concurrent.futures.CancelledError`.
+- `@use_interceptors` and `@use_encoder` applied to an `@app.get(...)`-style
+  route function are no longer silently dropped.
+- A cancelled background-task run (shutdown, client disconnect) marks the
+  interrupted and remaining handles `"cancelled"` instead of leaving them
+  `"pending"` / `"running"`.
+- `lauren.exceptions.__all__` now lists `InterceptorConfigError`,
+  `DecoratorUsageError` and `UnsupportedMediaTypeError`; every exception class
+  has a docstring.
+- Startup-time type-hint resolution in the OpenAPI generator, the validation
+  schema helpers and discriminator lookup goes through
+  `lauren._typing.resolve_type_hints`.
+- The Swagger UI page no longer hotlinks FastAPI's favicon.
+- The `llms-full-txt-sync` prek hook now triggers on `lauren/llms-full.txt`.
+
+### Fixed — documentation (the AI-facing reference)
+
+- Corrected the false claims the docs audit found, among them: bare
+  `@middleware`; `global_exception_filters=`; `TaskHandle`, `UploadFile` and
+  `TestResponse` members; `Lauren.build()` (the app is the ASGI callable) and
+  its parity with the factory; `response_model` "must be Pydantic"; the legacy
+  extractor pattern; `httpx` / `python-multipart` requirements and orjson
+  "auto-detection" (the default encoder is `StdlibJSONEncoder`); startup timing
+  and idempotency; `application/json-seq` and the default stream format (JSON
+  Lines); `RequestComplete` timing (emitted before the response is sent);
+  `BroadcastGroup` wiring (subclass it with
+  `@injectable(provides=[BroadcastGroup])`) and the non-existent automatic
+  `unsubscribe_all`; 413 vs 422 for oversize bodies; `Form[T]` with multipart
+  bodies; imports of exception classes that do not exist (`NotFoundError`,
+  `BadRequestError`, `UnprocessableEntityError`, …); `@controller`'s default
+  scope (singleton); sync `@post_construct` and the lifecycle page; the Redis
+  session-store recipe; `@openapi_security` arguments; `format_sse_event` field
+  order; companion-package middleware usage in the skills.
+- `llms-full.txt` restructured: one table of contents generated from its
+  headings, the sections appended after the old end marker folded into their
+  parents, a single `_End of reference._` at the end, and the duplicated tail
+  removed. `llms.txt` example links now point at real `llms-full.txt` anchors.
+- Hard-coded error-class counts and file sizes are gone from the prose; the
+  catalog table is generated.
+
+### Fixed — WebSocket guards and interceptors resolve without a provider entry
+
+- Guard and interceptor classes named in `@use_guards` / `@use_interceptors` on
+  a gateway, or in `global_ws_guards` / `global_ws_interceptors`, are now
+  registered with the DI container at startup, like HTTP route guards.
+  Previously a guard not also listed in a module's `providers` raised
+  `MissingProviderError` on every connection and the connection was rejected.
+  `global_ws_guards` / `global_ws_interceptors` entries are also validated at
+  startup (`GuardConfigError` / `InterceptorConfigError`).
+
+### Fixed — Errors raised outside the route boundary are rendered, not dropped
+
+- An `HTTPError` raised by a **global** middleware — before or after `call_next` —
+  now renders its own status and envelope (e.g. `401 unauthorized`) instead of a
+  `500 internal_error` with `Connection: close`. The same middleware now behaves
+  identically whether it is registered globally, on a controller, or on a route.
+- `global_exception_handlers` now apply to errors raised by global middleware and
+  by the session engine (route- and controller-level handlers do not: those
+  errors happen outside any route).
+- An exception handler whose `catch` raises is logged together with the error it
+  was handling (`origin="exception_handler"`) and answered with a
+  `500 internal_error`. Previously, with no global middleware configured, the
+  failure surfaced as an `UnboundLocalError` that was swallowed without any log.
+- Unhandled errors are logged with their traceback and the component that raised
+  them (`origin`, e.g. `global middleware ApiKeyAuth`); error log lines no longer
+  name the wrong middleware.
+- A route- or controller-level middleware that fails to resolve through DI is now
+  handled by the route's exception handlers.
+- `RequestComplete` and the request log line now fire for these requests too.
+
+## [1.9.0] - 2026-10-13
+
 ### Fixed — Pooled `Request` no longer leaks attributes across requests
 
 - `Request.reset()` now clears the instance's **entire** `__dict__` before
@@ -26,6 +190,39 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Docs (`docs/core-concepts/request-response.md`, `llms-full.txt`, `CLAUDE.md`)
   now state the pooling contract: don't retain a `Request`, use `request.state`
   for request-scoped data.
+
+## [1.8.1] - 2026-06-29
+
+### Added
+
+- **Revocation (opt-in)** — pass `SessionConfig(revocation_store=...)` to make
+  even the stateless `SignedCookieSessionStore` revocable. `invalidate()` /
+  `regenerate_id()` deny-list the prior cookie token (a replayed cookie is
+  rejected), and an injectable `RevocationStore.revoke_user(user_id)` provides
+  "log out everywhere" / force-logout-on-password-change across the cookie store
+  and server-side stores alike. `InMemoryRevocationStore` is the dev default;
+  revocation stays off (and the cookie store truly stateless) unless enabled, and
+  requires a finite `max_age`.
+- New public symbols: `RevocationStore`, `InMemoryRevocationStore`.
+
+### Changed
+
+- **Stacked `@exception_handler` now accumulates** exception types instead of
+  silently keeping only the outermost decorator's. `@exception_handler(A)`
+  over `@exception_handler(B)` registers a handler for both `A` and `B`
+  (de-duplicated, top-first), exactly like the single-call
+  `@exception_handler(A, B)` form — aligning it with every other metadata
+  decorator (route verbs, `@use_*`), which already accumulate when stacked.
+  This is a behaviour change from the prior overwrite semantics (which
+  dropped the inner types with no error).
+
+### Fixed
+
+- `@exception_handler` decorators stacked on one handler no longer silently
+  discard all but the top one — the previous behaviour meant a handler
+  written for, e.g., both `UnauthorizedError` and `ForbiddenError` only ever
+  caught one of them. Reading the target's own metadata preserves the strict
+  inheritance rule for class-form handlers. (Reported against 1.7.0.)
 
 ## [1.8.0] - 2026-06-27
 
@@ -56,38 +253,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   (`SameSite=None` without `Secure`, missing secret, prefix misuse,
   non-positive lifetimes, or a `Session` injected with sessions disabled)
   are rejected inside `LaurenFactory.create` — at startup, never at runtime.
-- **Revocation (opt-in)** — pass `SessionConfig(revocation_store=...)` to make
-  even the stateless `SignedCookieSessionStore` revocable. `invalidate()` /
-  `regenerate_id()` deny-list the prior cookie token (a replayed cookie is
-  rejected), and an injectable `RevocationStore.revoke_user(user_id)` provides
-  "log out everywhere" / force-logout-on-password-change across the cookie store
-  and server-side stores alike. `InMemoryRevocationStore` is the dev default;
-  revocation stays off (and the cookie store truly stateless) unless enabled, and
-  requires a finite `max_age`.
 - New public symbols: `Session`, `SessionConfig`, `SessionStore`,
-  `InMemorySessionStore`, `SignedCookieSessionStore`, `SessionSerializer`,
-  `RevocationStore`, `InMemoryRevocationStore`.
+  `InMemorySessionStore`, `SignedCookieSessionStore`, `SessionSerializer`.
 
 ### Changed
 
 - Error catalog grows to 29 user-facing classes with `SessionConfigError`
   (a `StartupError` subclass), joining the existing `*ConfigError` family.
-- **Stacked `@exception_handler` now accumulates** exception types instead of
-  silently keeping only the outermost decorator's. `@exception_handler(A)`
-  over `@exception_handler(B)` registers a handler for both `A` and `B`
-  (de-duplicated, top-first), exactly like the single-call
-  `@exception_handler(A, B)` form — aligning it with every other metadata
-  decorator (route verbs, `@use_*`), which already accumulate when stacked.
-  This is a behaviour change from the prior overwrite semantics (which
-  dropped the inner types with no error).
-
-### Fixed
-
-- `@exception_handler` decorators stacked on one handler no longer silently
-  discard all but the top one — the previous behaviour meant a handler
-  written for, e.g., both `UnauthorizedError` and `ForbiddenError` only ever
-  caught one of them. Reading the target's own metadata preserves the strict
-  inheritance rule for class-form handlers. (Reported against 1.7.0.)
 
 ## [1.7.0] - 2026-06-10
 
@@ -620,7 +792,13 @@ Seven framework source files migrated from direct pydantic calls to
   complete reference) shipped inside the wheel.
 - **`TestClient` / `WsTestClient`** — in-process ASGI test clients.
 
-[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.10.0
+[1.9.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.9.0
+[1.8.1]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.8.1
+[1.8.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.8.0
+[1.7.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.7.0
+[1.6.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.6.0
 [1.5.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.5.0
 [1.4.2]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.4.2
 [1.4.1]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.4.1

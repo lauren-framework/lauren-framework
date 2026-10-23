@@ -184,7 +184,11 @@ would flip the body into buffered mode and defeat any downstream
 class RequestComplete(timestamp: float = time.monotonic(), request: Any = None, response: Any = None, status: int = 0, duration_s: float = 0.0, error: BaseException | None = None)
 ```
 
-Fired after the response has been fully sent to the client.
+Fired once the request pipeline has produced its final response.
+
+Emitted just *before* the response is written to the client (the
+status, headers and body are final at this point), so listeners add
+to the request's latency.
 
 Fires on both success and error paths. When the handler raised
 an exception that escaped the middleware chain, the exception

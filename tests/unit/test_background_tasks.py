@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
+import dataclasses
+import pickle
+import threading
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -301,3 +306,141 @@ class TestBackgroundTasksSignals:
 class TestBackgroundTasksAttr:
     def test_bg_tasks_attr_constant_value(self) -> None:
         assert _BG_TASKS_ATTR == "_lauren_bg_tasks"
+
+
+# ---------------------------------------------------------------------------
+# TaskHandle surface: done / cancel() / result()
+# ---------------------------------------------------------------------------
+
+
+class TestTaskHandleSurface:
+    @pytest.mark.parametrize(
+        "status,done",
+        [("pending", False), ("running", False), ("done", True), ("failed", True), ("cancelled", True)],
+    )
+    def test_done_reflects_terminal_status(self, status: str, done: bool) -> None:
+        handle = TaskHandle(task_id="t", status=status)
+        assert handle.done is done
+
+    async def test_result_returns_the_async_task_value(self) -> None:
+        async def compute(x: int) -> int:
+            return x * 2
+
+        bg = BackgroundTasks()
+        handle = bg.add_task(compute, 21)
+        await _run(bg)
+        assert await handle.result() == 42
+
+    async def test_result_returns_the_sync_task_value(self) -> None:
+        bg = BackgroundTasks()
+        handle = bg.add_task(lambda: "sync-value")
+        await _run(bg)
+        assert await handle.result() == "sync-value"
+
+    async def test_result_raises_the_task_exception(self) -> None:
+        async def boom() -> None:
+            raise ValueError("bad input")
+
+        bg = BackgroundTasks()
+        handle = bg.add_task(boom)
+        await _run(bg)
+        with pytest.raises(ValueError, match="bad input"):
+            await handle.result()
+
+    async def test_cancel_skips_a_pending_task(self) -> None:
+        calls: list[str] = []
+        bg = BackgroundTasks()
+        skipped = bg.add_task(lambda: calls.append("skipped"))
+        kept = bg.add_task(lambda: calls.append("kept"))
+
+        assert skipped.cancel() is True
+        await _run(bg)
+
+        assert calls == ["kept"]
+        assert (skipped.status, kept.status) == ("cancelled", "done")
+        # An ordinary Exception (not asyncio.CancelledError), so app-level
+        # error handling still sees it when another request awaits the handle.
+        with pytest.raises(concurrent.futures.CancelledError):
+            await skipped.result()
+
+    @pytest.mark.parametrize("status", ["running", "done", "failed", "cancelled"])
+    def test_cancel_after_start_is_refused(self, status: str) -> None:
+        handle = TaskHandle(task_id="t", status=status)
+        assert handle.cancel() is False
+        assert handle.status == status
+
+    async def test_awaiting_result_in_the_queueing_task_raises(self) -> None:
+        bg = BackgroundTasks()
+        handle = bg.add_task(lambda: None)
+        with pytest.raises(RuntimeError, match="would never complete"):
+            await handle.result()
+
+    async def test_result_from_another_task_waits_for_the_run(self) -> None:
+        bg = BackgroundTasks()
+        handle = bg.add_task(lambda: "later")
+
+        waiter = asyncio.create_task(handle.result())
+        await asyncio.sleep(0)
+        assert not waiter.done()
+
+        await _run(bg)
+        assert await asyncio.wait_for(waiter, 1) == "later"
+
+    async def test_cancelled_run_leaves_no_handle_pending(self) -> None:
+        started = asyncio.Event()
+
+        async def slow() -> None:
+            started.set()
+            await asyncio.sleep(10)
+
+        bg = BackgroundTasks()
+        first = bg.add_task(slow)
+        second = bg.add_task(lambda: None)
+
+        runner = asyncio.create_task(_run(bg))
+        await started.wait()
+        runner.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await runner
+
+        assert (first.status, second.status) == ("cancelled", "cancelled")
+        assert first.done and second.done
+
+    def test_only_public_fields_serialize(self) -> None:
+        # Regression: runtime-only state (an asyncio.Event, the owning Task)
+        # leaked into dataclasses.asdict, so returning a handle from a handler
+        # failed with "cannot pickle '_asyncio.Task'".
+        bg = BackgroundTasks()
+        handle = bg.add_task(lambda: None)
+
+        assert dataclasses.asdict(handle) == {"task_id": handle.task_id, "status": "pending"}
+        assert repr(handle) == f"TaskHandle(task_id={handle.task_id!r}, status='pending')"
+
+    async def test_handles_pickle(self) -> None:
+        bg = BackgroundTasks()
+        handle = bg.add_task(lambda: "value")
+        await _run(bg)
+
+        restored = pickle.loads(pickle.dumps(handle))
+
+        assert (restored.task_id, restored.status, restored.done) == (handle.task_id, "done", True)
+
+    def test_cancel_pending_settles_handles_that_never_ran(self) -> None:
+        bg = BackgroundTasks()
+        first, second = bg.add_task(lambda: None), bg.add_task(lambda: None)
+
+        bg._cancel_pending()
+
+        assert (first.status, second.status) == ("cancelled", "cancelled")
+
+    async def test_cancel_from_a_worker_thread_wakes_the_waiter(self) -> None:
+        # Regression: Event.set() from a thread did not wake the loop.
+        bg = BackgroundTasks()
+        handle = bg.add_task(lambda: None)
+        waiter = asyncio.create_task(handle.result())
+        await asyncio.sleep(0)
+
+        threading.Thread(target=handle.cancel).start()
+
+        with pytest.raises(concurrent.futures.CancelledError):
+            await asyncio.wait_for(waiter, timeout=1.0)

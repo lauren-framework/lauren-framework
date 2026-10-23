@@ -30,6 +30,15 @@ Path traversal is blocked: the resolved file path must remain inside the
 configured directory.  Paths that escape (``../../`` tricks) receive a 403.
 Missing files return a plain 404 with an empty body.
 
+Dotfiles are not served by default: a request whose path has *any* segment
+starting with ``.`` (``/.env``, ``/.git/config``, ``/a/.hidden/b.txt``) gets
+the same empty 404 as a missing file, so existence is not revealed. The
+policy is checked on the request path and again on the resolved path, so
+``..`` detours and symlinks into dot-directories are covered.  The
+``dotfiles=`` option of :meth:`StaticFilesModule.for_root` selects the policy:
+``"allow_well_known"`` (default) still serves ``/.well-known/**`` (RFC 8615),
+``"deny"`` blocks it too, and ``"allow"`` serves every dotfile.
+
 Caching
 -------
 An ``ETag`` derived from the MD5 hash of the file contents is set on every
@@ -43,11 +52,35 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import os
+import posixpath
 from pathlib import Path as _FSPath
+from typing import Literal
 
 from .decorators import controller, get, module
 from .extractors import Path as PathParam
 from .types import Request, Response
+
+
+DotfilesPolicy = Literal["deny", "allow_well_known", "allow"]
+
+_DOTFILES_POLICIES: frozenset[str] = frozenset({"deny", "allow_well_known", "allow"})
+
+
+def _is_hidden(relative: str, *, allow_well_known: bool) -> bool:
+    """Return whether *relative* names a dotfile path the policy must hide.
+
+    Applied twice: to the normalized URL path before the filesystem is
+    touched, and to the resolved path relative to the served root, which is
+    what actually decides. A request path that escapes the root (``../x``)
+    passes the first check and is judged after resolution — it either lands
+    outside the root (403) or back inside it, where its real segments count.
+    """
+    segments = posixpath.normpath(relative.replace("\\", "/")).split("/")
+    if segments[0] == "..":
+        return False
+    if allow_well_known and segments[0] == ".well-known":
+        segments = segments[1:]
+    return any(segment.startswith(".") for segment in segments)
 
 
 def _serve_file(
@@ -55,15 +88,21 @@ def _serve_file(
     relative: str,
     request: Request,
     max_age: int,
+    *,
+    dotfiles: DotfilesPolicy = "allow_well_known",
 ) -> Response:
     """Resolve *relative* inside *base_dir* and return the appropriate response.
 
     Returns 200 with the file body, 304 when the ETag matches
-    ``If-None-Match``, 403 on path traversal, or 404 for missing files.
+    ``If-None-Match``, 403 on path traversal, or 404 for missing files and
+    for dotfile paths the *dotfiles* policy hides.
     """
     if not relative or relative in ("/", ""):
         relative = "index.html"
     relative = relative.lstrip("/")
+
+    if dotfiles != "allow" and _is_hidden(relative, allow_well_known=dotfiles == "allow_well_known"):
+        return Response(b"", status=404)
 
     try:
         file_path = (base_dir / relative).resolve()
@@ -71,9 +110,16 @@ def _serve_file(
         return Response(b"", status=404)
 
     try:
-        file_path.relative_to(base_dir)
+        resolved = file_path.relative_to(base_dir)
     except ValueError:
         return Response(b"", status=403)
+
+    # Judge the path that will actually be read: ``/../public/.env`` or a
+    # symlink into a dot-directory must not get past the policy.
+    if dotfiles != "allow" and _is_hidden(
+        resolved.as_posix(), allow_well_known=dotfiles == "allow_well_known"
+    ):
+        return Response(b"", status=404)
 
     if not file_path.is_file():
         return Response(b"", status=404)
@@ -116,6 +162,7 @@ class StaticFilesModule:
         *,
         directory: str | os.PathLike[str],
         max_age: int = 3600,
+        dotfiles: DotfilesPolicy = "allow_well_known",
     ) -> type:
         """Return a configured module that serves *directory* at *path*.
 
@@ -131,6 +178,11 @@ class StaticFilesModule:
         max_age:
             Seconds for ``Cache-Control: public, max-age=<max_age>``.
             Defaults to 3600 (one hour).  Pass ``0`` to omit caching headers.
+        dotfiles:
+            What to do with paths that have a segment starting with ``.``:
+            ``"allow_well_known"`` (default) serves ``/.well-known/**`` and
+            answers 404 for every other dotfile path; ``"deny"`` answers 404
+            for all of them; ``"allow"`` serves them like any other file.
 
         Returns
         -------
@@ -138,11 +190,16 @@ class StaticFilesModule:
             A ``@module``-decorated class suitable for
             ``@module(imports=[...])``.
         """
+        if dotfiles not in _DOTFILES_POLICIES:
+            raise ValueError(
+                f"StaticFilesModule.for_root(dotfiles={dotfiles!r}) is not a valid policy; "
+                'use "allow_well_known" (default), "deny" or "allow"'
+            )
         _base = _FSPath(directory).resolve()
         _prefix = path.rstrip("/") or "/"
 
         # ------------------------------------------------------------------
-        # Generated controller — closed over _base, _prefix, max_age.
+        # Generated controller — closed over _base, _prefix, max_age, dotfiles.
         # Two routes:
         #   GET /           → serve index.html at the root of the prefix
         #   GET /{*filepath} → serve any file below the prefix
@@ -152,7 +209,7 @@ class StaticFilesModule:
         class _StaticFilesController:
             @get("/", include_in_schema=False)
             async def serve_index(self, request: Request) -> Response:
-                return _serve_file(_base, "index.html", request, max_age)
+                return _serve_file(_base, "index.html", request, max_age, dotfiles=dotfiles)
 
             @get("/{*filepath}", include_in_schema=False)
             async def serve_file(
@@ -160,7 +217,7 @@ class StaticFilesModule:
                 filepath: PathParam[str],  # type: ignore[type-arg]
                 request: Request,  # type: ignore[arg-type]
             ) -> Response:
-                return _serve_file(_base, filepath, request, max_age)  # type: ignore[arg-type]
+                return _serve_file(_base, filepath, request, max_age, dotfiles=dotfiles)  # type: ignore[arg-type]
 
         # ------------------------------------------------------------------
         # Generated module — each call returns a unique class so multiple

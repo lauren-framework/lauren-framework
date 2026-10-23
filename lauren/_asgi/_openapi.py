@@ -15,8 +15,9 @@ controllers and routes) and supports caller-supplied ``info`` / ``servers`` /
 from __future__ import annotations
 
 import inspect as _inspect
-from typing import Any, TYPE_CHECKING, get_args, get_origin, get_type_hints
+from typing import Any, ForwardRef, TYPE_CHECKING, get_args, get_origin
 
+from .._typing import resolve_type_hints
 from ..decorators import OPENAPI_SECURITY_META, ControllerMeta, RouteMeta
 from ..extractors import FieldDescriptor, Extraction
 from ..streaming import (
@@ -604,9 +605,10 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
         return_annotation: Any = None
         if compiled is not None:
             try:
-                hints = get_type_hints(compiled.handler_fn)
+                hints = resolve_type_hints(compiled.handler_fn, include_extras=False)
                 ret = hints.get("return", _inspect.Parameter.empty)
-                if ret is not _inspect.Parameter.empty:
+                # An unresolvable return annotation is skipped, as before.
+                if ret is not _inspect.Parameter.empty and not isinstance(ret, (ForwardRef, str)):
                     return_annotation = ret
             except Exception:
                 pass

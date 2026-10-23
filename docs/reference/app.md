@@ -38,7 +38,7 @@ The top-level entry points for creating and running a Lauren application.
 
 ::: lauren.Lauren
 
-FastAPI-inspired imperative API. Routes are registered via decorator methods (`@app.get`, `@app.post`, etc.) and compiled lazily on first request or explicit `startup()`.
+FastAPI-inspired imperative API. Routes are registered via decorator methods (`@app.get`, `@app.post`, etc.) and compiled lazily — by the ASGI lifespan, `await app.startup()`, or the first request. `await app.startup()` only compiles (and runs `on_startup` hooks); the ASGI lifespan — and `TestClient`, on its first request — also start the app: singletons are built and their `@post_construct` hooks run.
 
 ```python
 from lauren import Lauren, Path

@@ -124,7 +124,12 @@ class ChatGateway:
 Register in a module just like an HTTP controller:
 
 ```python
-@module(controllers=[ChatGateway], providers=[BroadcastGroup])
+from lauren import BroadcastGroup, injectable, module
+
+@injectable(provides=[BroadcastGroup])   # BroadcastGroup itself is not @injectable
+class Rooms(BroadcastGroup): ...
+
+@module(controllers=[ChatGateway], providers=[Rooms])
 class ChatModule:
     pass
 ```

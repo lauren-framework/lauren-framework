@@ -128,15 +128,21 @@ async def apply_interceptors(
             framework_values=framework_values,
             owning_module=owning_module,
         )
-
-        # Capture loop variables so each closure is independent.
-        _inst = inter_inst
-        _ctx = ctx
-        _next = call_handler
-
-        async def _invoke() -> Any:
-            return await _inst.intercept(_ctx, _next)
-
-        call_handler = CallHandler(_invoke)
+        call_handler = _layer(inter_inst, ctx, call_handler)
 
     return await call_handler.handle()
+
+
+def _layer(interceptor: Any, ctx: Any, next_handler: "CallHandler") -> "CallHandler":
+    """Wrap *next_handler* in one interceptor layer.
+
+    A separate function so each layer's closure binds its own interceptor and
+    successor — closures created inline in the loop would all see the last
+    iteration's values and recurse into themselves.
+    """
+    from ..types import CallHandler  # noqa: PLC0415
+
+    async def _invoke() -> Any:
+        return await interceptor.intercept(ctx, next_handler)
+
+    return CallHandler(_invoke)

@@ -25,14 +25,16 @@ from lauren.types import Request, Response
 @injectable(scope=Scope.SINGLETON)
 class LoggingMiddleware:
     async def dispatch(self, request: Request, call_next) -> Response:
-        print(f"→ {request.method} {request.url.path}")
+        print(f"→ {request.method} {request.path}")   # Request.url is a str
         response = await call_next(request)
         print(f"← {response.status_code}")
         return response
 ```
 
-Register globally: `Lauren(AppModule, global_middlewares=[LoggingMiddleware])`
-Or per-module/controller: `@module(middlewares=[LoggingMiddleware])`
+Register globally: `LaurenFactory.create(AppModule, global_middlewares=[LoggingMiddleware])`
+(or `Lauren(global_middlewares=[LoggingMiddleware])`).
+Or per controller / route: `@use_middlewares(LoggingMiddleware)` — `@module` has no
+middleware option.
 
 ## Interceptors (no FastAPI equivalent)
 
@@ -92,9 +94,11 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"])
 
 **Lauren (via `lauren-middlewares`):**
 ```python
-from lauren_middlewares import CorsMiddleware
+from lauren import LaurenFactory
+from lauren_middlewares import cors
 
-app = Lauren(AppModule, global_middlewares=[
-    CorsMiddleware(allow_origins=["*"], allow_methods=["*"])
+# cors(...) returns a configured middleware class; pass the class, not an instance.
+app = LaurenFactory.create(AppModule, global_middlewares=[
+    cors(allow_origins=["*"], allow_methods=["*"]),
 ])
 ```

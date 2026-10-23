@@ -1,0 +1,45 @@
+# Attribute claims checked by `nox -s docs_contract` (scripts/check_docs_contract.py).
+#
+# Every attribute the AI-facing docs promise is listed here and verified with
+# `hasattr` (dataclass fields and __slots__ without defaults count too). When a
+# doc page starts promising an attribute, add it here; remove an entry only
+# together with the docs that mention it.
+
+[attributes]
+"lauren.background.TaskHandle" = ["task_id", "status", "done", "result", "cancel"]
+"lauren.testing.TestResponse" = ["status_code", "headers", "body", "text", "json", "header", "headers_all"]
+"lauren.testing.TestClient" = ["get", "post", "put", "patch", "delete", "options", "head", "request", "arequest"]
+"lauren.types.UploadFile" = ["filename", "content_type", "headers", "name", "size", "read", "read_sync"]
+"lauren.types.Headers" = ["get", "getall", "items", "keys", "values"]
+"lauren.types.State" = ["get", "set", "has", "get_typed", "require", "asdict"]
+"lauren.types.ContentConfig" = ["strict_content_type"]
+"lauren.Response" = [
+    "status", "status_code", "headers", "body",
+    "with_header", "with_headers", "with_body", "with_cookie", "delete_cookie",
+    "json", "text", "html", "bytes", "xml", "file", "empty", "redirect", "stream", "sse",
+]
+"lauren.Lauren" = [
+    "get", "post", "put", "patch", "delete", "head",
+    "include_module", "add_middleware", "add_guard", "add_interceptor",
+    "add_exception_handler", "add_provider", "mount", "on_startup", "on_shutdown",
+    "startup", "shutdown", "openapi", "routes", "container", "state", "debug",
+]
+"lauren.LaurenApp" = [
+    "router", "container", "app_state", "routes", "openapi",
+    "startup", "shutdown", "on_shutdown", "mount", "mounts",
+]
+"lauren.websockets.BroadcastGroup" = [
+    "subscribe", "unsubscribe", "unsubscribe_all", "broadcast", "groups", "members", "member_count",
+]
+"lauren.WsConnectionContext" = [
+    "request", "connection", "handler_class", "handler_func", "route_template", "metadata", "get_metadata",
+]
+"lauren.WsMessageContext" = [
+    "request", "connection", "handler_class", "handler_func", "route_template", "metadata", "get_metadata",
+    "event", "payload",
+]
+"lauren.types.ExecutionContext" = ["request", "handler_class", "handler_func", "route_template", "metadata", "get_metadata"]
+"lauren.SessionConfig" = [
+    "secret", "store", "cookie_name", "max_age", "idle_timeout", "rolling", "path", "domain",
+    "secure", "http_only", "same_site", "serializer", "autoload", "revocation_store", "user_id_key",
+]

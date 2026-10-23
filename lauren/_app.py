@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from typing import Any, Awaitable, Callable
 
 from .decorators import controller, module
@@ -77,7 +78,17 @@ class Lauren:
         global_interceptors: list[type] | None = None,
         global_exception_handlers: list[Any] | None = None,
         global_providers: list[Any] | None = None,
+        global_ws_guards: list[type] | None = None,
+        global_ws_interceptors: list[type] | None = None,
         sessions: Any | None = None,
+        content: Any | None = None,
+        json_encoder: Any | None = None,
+        error_format: str = "default",
+        root_path: str = "",
+        mounts: dict[str, Any] | None = None,
+        signals: Any | None = None,
+        arena: Any | None = None,
+        arena_capacity: int | None = None,
     ) -> None:
         self._title = title
         self._version = version
@@ -101,7 +112,24 @@ class Lauren:
         self._interceptors: list[type] = list(global_interceptors or [])
         self._exception_filters: list[Any] = list(global_exception_handlers or [])
         self._global_providers: list[Any] = list(global_providers or [])
+        self._ws_guards: list[type] = list(global_ws_guards or [])
+        self._ws_interceptors: list[type] = list(global_ws_interceptors or [])
         self._sessions = sessions
+        self._content = content
+        self._json_encoder = json_encoder
+        self._error_format = error_format
+        self._root_path = root_path
+        self._mounts: dict[str, Any] = dict(mounts or {})
+        self._signals = signals
+        self._arena = arena
+        self._arena_capacity = arena_capacity
+        if debug:
+            # Reserved until debug error pages land; say so rather than
+            # silently accepting a flag that changes nothing.
+            message = "Lauren(debug=True) has no effect yet; the flag is reserved for future debug pages"
+            logging.getLogger("lauren").warning(message)
+            if logger is not None:
+                logger.warn(message, context="Lauren")
         self._startup_handlers: list[Callable[[], Any]] = []
         self._shutdown_handlers: list[Callable[[], Any]] = []
 
@@ -128,6 +156,7 @@ class Lauren:
 
     @property
     def debug(self) -> bool:
+        """The ``debug`` constructor flag. Reserved: it has no effect yet."""
         return self._debug
 
     # ------------------------------------------------------------------
@@ -286,16 +315,29 @@ class Lauren:
         if provider not in self._global_providers:
             self._global_providers.append(provider)
 
+    def mount(self, path: str, app: Any) -> None:
+        """Mount an ASGI sub-application at *path* (see :meth:`LaurenApp.mount`).
+
+        Buffered until the application compiles, like routes and modules;
+        calling it afterwards raises :class:`LifecycleViolationError`.
+        """
+        self._assert_not_compiled("mount a sub-application")
+        if not path:
+            raise ValueError("mount path must not be empty")
+        self._mounts[path] = app
+
     # ------------------------------------------------------------------
     # Lifecycle hooks
     # ------------------------------------------------------------------
 
     def on_startup(self, fn: Callable[[], Any]) -> Callable[[], Any]:
-        """Register a callable to run during application startup.
+        """Register a callable to run when the application compiles.
 
-        Accepts both sync and async callables. Hooks run after the DI
-        graph is built and after all ``@post_construct`` hooks have fired,
-        but before any request is dispatched.
+        Accepts both sync and async callables. Hooks run right after
+        ``LaurenFactory.create`` has built the app — the DI graph is
+        compiled, but singletons are not instantiated yet, so
+        ``@post_construct`` hooks (which run in ``LaurenApp.startup()``)
+        have **not** fired — and before any request is dispatched.
         """
         self._assert_not_compiled("register an on_startup handler")
         self._startup_handlers.append(fn)
@@ -327,13 +369,26 @@ class Lauren:
             )
 
     async def startup(self) -> Any:
-        """Compile the application and run all startup hooks.
+        """Compile the application and run its ``on_startup`` hooks.
 
-        Safe to call multiple times \u2014 subsequent invocations are
-        no-ops that return the already-compiled :class:`LaurenApp`.
-        Returns the underlying :class:`LaurenApp` so tests can introspect it.
+        Safe to call multiple times — later calls return the already-compiled
+        :class:`LaurenApp`. Starting the app (building singletons, running
+        ``@post_construct``) is the ASGI lifespan's job;
+        :class:`~lauren.testing.TestClient` compiles and starts the app on its
+        first request. Returns the underlying :class:`LaurenApp` so tests can
+        introspect it.
         """
         return await self._compile()
+
+    async def _ensure_started(self) -> Any:
+        """Compile and start the app exactly once (used by ``TestClient``)."""
+        compiled = await self._compile()
+        if self._compile_lock is None:
+            self._compile_lock = asyncio.Lock()
+        async with self._compile_lock:
+            if not compiled._started:
+                await compiled.startup()
+        return compiled
 
     async def shutdown(self, *, drain_timeout: float = 10.0) -> None:
         """Gracefully stop the underlying :class:`LaurenApp`.
@@ -383,6 +438,8 @@ class Lauren:
             global_interceptors=list(self._interceptors),
             global_exception_handlers=list(self._exception_filters),
             global_providers=list(self._global_providers),
+            global_ws_guards=list(self._ws_guards),
+            global_ws_interceptors=list(self._ws_interceptors),
             max_body_size=self._max_body_size,
             app_state=self._app_state,
             logger=self._logger,
@@ -393,6 +450,14 @@ class Lauren:
             docs_url=self._docs_url,
             redoc_url=self._redoc_url,
             sessions=self._sessions,
+            content=self._content,
+            json_encoder=self._json_encoder,
+            error_format=self._error_format,
+            root_path=self._root_path,
+            mounts=dict(self._mounts) or None,
+            signals=self._signals,
+            arena=self._arena,
+            arena_capacity=self._arena_capacity,
         )
         # --- Run user-provided startup hooks now that DI is live ---------
         for hook in self._startup_handlers:
@@ -561,14 +626,16 @@ def _wrap_function_as_method(fn: Callable[..., Any]) -> Callable[..., Any]:
     method.__wrapped__ = fn  # type: ignore[attr-defined]
     method.__name__ = fn.__name__
     method.__doc__ = fn.__doc__
-    # Forward lauren's marker attributes so decorators applied to the user
-    # function before @app.get (e.g. @use_guards, @use_middlewares,
-    # @use_exception_handlers, @set_metadata, @post_construct) survive the
-    # wrap and reach Phase 5.
+    # Forward lauren's marker attributes so the per-route decorators applied
+    # to the user function (@use_guards, @use_middlewares, @use_interceptors,
+    # @use_exception_handlers, @use_encoder, @set_metadata) survive the wrap
+    # and reach Phase 5.
     for marker in (
         "__lauren_use_guards__",
         "__lauren_use_middlewares__",
+        "__lauren_use_interceptors__",
         "__lauren_use_exception_handlers__",
+        "__lauren_use_encoder__",
         "__lauren_metadata__",
     ):
         if hasattr(fn, marker):

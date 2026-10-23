@@ -176,3 +176,31 @@ Path traversal is blocked at the controller level: any path that resolves
 outside the configured directory returns **403 Forbidden**.  The router also
 normalises `..` segments before they reach the controller, so most traversal
 attempts never reach the handler at all.
+
+### Dotfiles
+
+Build pipelines routinely leave dotfiles in the served tree — `.env.production`,
+`.git/`, `.htpasswd`, `.DS_Store`, editor swap files. `StaticFilesModule` does
+**not** serve them: a request whose path has *any* segment starting with `.`
+(`/static/.env`, `/static/.git/config`, `/static/a/.hidden/b.txt`) gets the
+same empty **404** as a missing file, so their existence is not revealed.
+`/.well-known/` (RFC 8615 — ACME challenges, `security.txt`, app links) keeps
+working. The `dotfiles=` option selects the policy:
+
+```python
+StaticFilesModule.for_root("/s", directory="./dist")                      # "allow_well_known" (default)
+StaticFilesModule.for_root("/s", directory="./dist", dotfiles="deny")     # also hide /.well-known/
+StaticFilesModule.for_root("/s", directory="./dist", dotfiles="allow")    # serve every dotfile (old default)
+```
+
+| Request | `"allow_well_known"` (default) | `"deny"` | `"allow"` |
+|---|---|---|---|
+| `/s/.env`, `/s/.git/config`, `/s/a/.hidden/b.txt` | 404 | 404 | 200 |
+| `/s/.well-known/security.txt` | 200 | 404 | 200 |
+| `/s/.well-known/.secret` | 404 | 404 | 200 |
+
+The policy is applied to the normalised request path before the filesystem is
+touched, and again to the resolved path, so `/s/../dist/.env` (which leaves the
+root and comes back) and symlinks into dot-directories are hidden as well. An
+unknown value raises `ValueError` from `for_root`. Only reach for
+`dotfiles="allow"` when every dotfile in the directory is meant to be public.

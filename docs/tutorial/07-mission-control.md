@@ -83,6 +83,7 @@ Scrambling the quinjet takes a moment, and the dispatcher shouldn't have to star
 spinner while it happens. Declare a `BackgroundTasks` parameter, queue the slow work, and
 return a `202 Accepted` **now** — Lauren runs the task *after* the response is sent.
 
+<!-- docs-contract: fragment -->
 ```python title="hero_hq/mission_control.py (continued)"
     @post("/dispatch")
     async def dispatch(self, hero: str, tasks: BackgroundTasks) -> tuple[dict, int]:

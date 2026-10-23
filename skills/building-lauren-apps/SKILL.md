@@ -104,7 +104,7 @@ class AppModule:
 app = LaurenFactory.create(AppModule)
 ```
 
-`for_root(path, directory, max_age=3600)` returns a `@module` class that generates a controller with two routes: `GET /` (serves `index.html`) and `GET /{*filepath}` (serves any file). Path traversal is blocked (403). ETag + `Cache-Control` headers are set automatically.
+`for_root(path, directory, max_age=3600, dotfiles="allow_well_known")` returns a `@module` class that generates a controller with two routes: `GET /` (serves `index.html`) and `GET /{*filepath}` (serves any file). Path traversal is blocked (403). Dotfile paths (`/.env`, `/.git/config` — any segment starting with `.`) get an empty 404 by default while `/.well-known/**` is still served; `dotfiles="deny"` hides `/.well-known/` too and `dotfiles="allow"` serves everything. ETag + `Cache-Control` headers are set automatically.
 
 Multiple mounts are supported — each `for_root()` call returns a unique class:
 

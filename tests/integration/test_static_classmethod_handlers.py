@@ -336,3 +336,67 @@ class TestNonCallableDescriptor:
         r = client.get("/stacked/stacked")
         assert r.status_code == 200
         assert r.json() == {"binding": "stacked"}
+
+
+# ---------------------------------------------------------------------------
+# Decorators on both sides of @staticmethod / @classmethod accumulate
+# ---------------------------------------------------------------------------
+
+
+def _recording_guard(name: str, consulted: list[str], *, allow: bool) -> type:
+    class Guard:
+        async def can_activate(self, ctx: Any) -> bool:
+            consulted.append(name)
+            return allow
+
+    Guard.__name__ = Guard.__qualname__ = name
+    return Guard
+
+
+def test_guards_above_and_below_staticmethod_both_apply() -> None:
+    # Regression: only the guards applied below the wrapper were kept, so a
+    # denying guard stacked above @staticmethod was silently dropped.
+    from lauren import use_guards
+
+    consulted: list[str] = []
+    rate_limit = _recording_guard("RateLimit", consulted, allow=True)
+    admin_only = _recording_guard("AdminOnly", consulted, allow=False)
+
+    @controller("/admin")
+    class Admin:
+        @use_guards(admin_only)
+        @staticmethod
+        @use_guards(rate_limit)
+        @get("/purge")
+        async def purge() -> dict:
+            return {"purged": True}
+
+    @module(controllers=[Admin])
+    class AdminModule:
+        pass
+
+    response = TestClient(LaurenFactory.create(AdminModule)).get("/admin/purge")
+
+    assert response.status_code == 403
+    assert consulted == ["RateLimit", "AdminOnly"]
+
+
+def test_metadata_above_and_below_classmethod_merges() -> None:
+    from lauren import set_metadata
+
+    @controller("/meta")
+    class Meta:
+        @set_metadata("outer", 1)
+        @classmethod
+        @set_metadata("inner", 2)
+        @get("/")
+        async def show(cls) -> dict:
+            return {}
+
+    from lauren._asgi import _unwrap_handler_descriptor
+
+    fn, binding = _unwrap_handler_descriptor(Meta.__dict__["show"])
+    _unwrap_handler_descriptor(Meta.__dict__["show"])  # idempotent
+
+    assert binding == "classmethod"
+    assert fn.__lauren_metadata__ == {"inner": 2, "outer": 1}

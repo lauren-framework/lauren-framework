@@ -11,9 +11,10 @@ underscore-prefixed private module.
 from __future__ import annotations
 
 # Re-export from canonical location.
-from .._ws_runtime import WsConnectionContext, WsUpgradeRequest
+from .._ws_runtime import WsConnectionContext, WsMessageContext, WsUpgradeRequest
 
 __all__ = [
     "WsConnectionContext",
+    "WsMessageContext",
     "WsUpgradeRequest",
 ]

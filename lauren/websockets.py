@@ -169,9 +169,9 @@ class WsMessageMeta:
     """
 
     event: str
-    #: Optional Pydantic model / discriminated union the incoming payload
-    #: must validate against. If ``None`` the handler receives the raw
-    #: ``dict`` (after JSON decoding) plus the ``event`` string.
+    #: Reserved — ``@on_message`` does not populate it yet, so it is always
+    #: ``None``. The payload type is taken from the handler's ``Json[...]``
+    #: parameter at startup.
     payload_model: Any = None
     summary: str | None = None
     description: str | None = None
@@ -645,9 +645,9 @@ class BroadcastGroup:
 
     Usage::
 
-        @injectable()
+        @injectable(provides=[BroadcastGroup])
         class BroadcastRegistry(BroadcastGroup):
-            pass  # BroadcastGroup is already a subclassable provider
+            pass  # register this in a module's providers=[...]
 
         @ws_controller("/chat/{room_id}")
         class ChatGateway:
@@ -693,9 +693,10 @@ class BroadcastGroup:
     async def unsubscribe_all(self, ws: WebSocket) -> None:
         """Remove ``ws`` from every group it's a member of.
 
-        Called automatically by the runtime on disconnect so leaked
-        subscriptions don't accumulate after clients drop off — but
-        controllers can also invoke it eagerly during cleanup logic.
+        The runtime does **not** call it for you: invoke it from the
+        gateway's ``@on_disconnect`` hook so subscriptions don't leak after
+        clients drop off (dead sockets are also pruned lazily by
+        :meth:`broadcast`).
         """
         async with self._lock:
             empty: list[str] = []

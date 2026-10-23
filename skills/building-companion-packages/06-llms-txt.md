@@ -45,7 +45,7 @@ inject `CacheService` anywhere `@injectable` is resolved.
 Placed at `src/<package>/llms-full.txt` (served at the package level) **and**
 at repo root.  Format: free-form Markdown with one section per public symbol.
 
-```markdown
+````markdown
 # lauren-cache — complete reference
 
 ## CacheModule
@@ -110,7 +110,7 @@ async def delete(self, key: str) -> None
 ```
 
 Removes `key` from the cache.  No-op if not present.
-```
+````
 
 ## `scripts/check_llms_full.py`
 

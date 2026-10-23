@@ -84,7 +84,14 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, TypeVar
 
 from . import _socketio as _proto
-from .exceptions import DecoratorUsageError, LaurenError
+from .decorators import USE_GUARDS, USE_INTERCEPTORS, USE_MIDDLEWARES
+from .exceptions import (
+    DecoratorUsageError,
+    GuardConfigError,
+    InterceptorConfigError,
+    LaurenError,
+    MiddlewareConfigError,
+)
 from .websockets import (
     WebSocket,
     WebSocketError,
@@ -433,6 +440,7 @@ def socketio_controller(
                 raise DecoratorUsageError(
                     f"Duplicate @on_socketio_event({meta.event_name!r}) on {cls.__name__}"
                 )
+            _reject_event_policies(cls, member, meta.event_name)
             events[meta.event_name] = member
 
         sio_meta = SocketIOControllerMeta(
@@ -610,6 +618,36 @@ def socketio_controller(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _reject_event_policies(cls: type, fn: Callable[..., Any], event: str) -> None:
+    """Refuse method-level guards, interceptors and middlewares on a Socket.IO event.
+
+    Socket.IO events are dispatched by the adapter itself, not by the
+    WebSocket frame runtime, so these decorators would be accepted and never
+    run — an authorization check that silently does nothing.
+    """
+    where = f"{cls.__name__}.{getattr(fn, '__name__', event)}"
+    detail = {"controller": cls.__name__, "event": event}
+    hint = (
+        "Put guards on the @socketio_controller class (checked once at connect) "
+        "or authorize inside the event handler."
+    )
+    if getattr(fn, USE_GUARDS, None):
+        raise GuardConfigError(
+            f"@use_guards on Socket.IO event handler {where} ({event!r}) is not supported. {hint}",
+            detail=detail,
+        )
+    if getattr(fn, USE_INTERCEPTORS, None):
+        raise InterceptorConfigError(
+            f"@use_interceptors on Socket.IO event handler {where} ({event!r}) is not supported. {hint}",
+            detail=detail,
+        )
+    if getattr(fn, USE_MIDDLEWARES, None):
+        raise MiddlewareConfigError(
+            f"@use_middlewares on Socket.IO event handler {where} ({event!r}) is not supported. {hint}",
+            detail=detail,
+        )
 
 
 async def _invoke_user_event_hook(

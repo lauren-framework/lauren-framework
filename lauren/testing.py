@@ -52,8 +52,11 @@ class TestClient:
         # before the first request, matching what the ASGI lifespan protocol
         # delivers in production (uvicorn, hypercorn, …).
         # Guard against reusing the same app across multiple TestClient
-        # instances — startup() is idempotent once the app is running.
-        if hasattr(app, "startup") and not getattr(app, "_started", True):
+        # instances — a second startup() raises under strict_lifecycle.
+        # A ``Lauren`` app compiles lazily: start it on the first request so
+        # routes registered after the client was created still count.
+        self._ensure_started = getattr(app, "_ensure_started", None)
+        if self._ensure_started is None and hasattr(app, "startup") and not getattr(app, "_started", True):
             self._run_sync(app.startup())
 
     def _run_sync(self, coro: Any) -> None:
@@ -91,6 +94,8 @@ class TestClient:
         params: Mapping[str, Any] | None = None,
         cookies: Mapping[str, str] | None = None,
     ) -> TestResponse:
+        if self._ensure_started is not None:
+            await self._ensure_started()
         parts = urlsplit(url)
         path = parts.path or "/"
         query = parts.query

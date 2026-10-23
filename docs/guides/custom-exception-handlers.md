@@ -13,6 +13,7 @@ from lauren import exception_handler
 from lauren.logging import Logger
 from lauren.types import Response, Request
 
+# NotFoundError / ConflictError: your own HTTPError subclasses
 @exception_handler(NotFoundError, ConflictError)
 class DomainErrors:
     def __init__(self, log: Logger) -> None:
@@ -117,7 +118,20 @@ Lauren's exception handlers fire whenever a matching exception escapes:
 * a route handler,
 * an extractor (e.g. JSON validation failures, missing headers),
 * a guard (e.g. `UnauthorizedError`, `ForbiddenError`),
-* downstream middleware that re-raises.
+* downstream middleware that re-raises,
+* a **global** middleware or the session engine — but only **global**
+  handlers apply there, because the error was raised outside any controller or
+  route:
+
+| Where the exception is raised | Handlers consulted |
+|---|---|
+| Handler, extractor, guard, interceptor, route/controller middleware | route → controller → global |
+| Global middleware (before or after `call_next`), the session engine | global only |
+| An exception handler's own `catch` | none |
+
+A handler whose `catch` raises is a bug: Lauren logs its exception together
+with the error it was handling (`origin="exception_handler"`, `handler=…`,
+`cause=…`) and responds with a `500 internal_error` envelope.
 
 What handlers **do not** see:
 
@@ -126,7 +140,7 @@ What handlers **do not** see:
 
 ## Composing with built-in `HTTPError`s
 
-Lauren ships a 28-class error catalog. Most domain errors should subclass `HTTPError`:
+Lauren ships a closed [error catalog](../reference/errors.md). Most domain errors should subclass `HTTPError`:
 
 ```python
 from lauren.exceptions import HTTPError
@@ -307,4 +321,4 @@ async def test_audited_billing_logs_and_responds():
 
 * [Custom Guards](custom-guards.md) — for raising auth errors that handlers will catch.
 * [Custom Middleware](custom-middleware.md) — for cross-cutting concerns that aren't exception-driven.
-* [Reference → Error Catalog](../reference/errors.md) — the 28 built-in error classes you can subclass and handle.
+* [Reference → Error Catalog](../reference/errors.md) — every built-in error class you can subclass and handle.

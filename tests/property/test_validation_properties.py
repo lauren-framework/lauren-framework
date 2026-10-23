@@ -4,8 +4,13 @@ import dataclasses
 import pytest
 
 hypothesis = pytest.importorskip("hypothesis")
-from hypothesis import given, assume  # noqa: E402
+from hypothesis import HealthCheck, assume, given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
+
+# Each discriminated example builds fresh classes, so a GC or scheduler pause
+# on a busy machine can push one past Hypothesis' 200 ms deadline without any
+# bug. (The built-in "ci" profile GitHub Actions loads relaxes both checks.)
+_TOLERANT = settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
 
 
 @dataclasses.dataclass
@@ -54,6 +59,7 @@ class TestValidateAsProperties:
 
 
 class TestDiscriminatedProperties:
+    @_TOLERANT
     @given(
         name=st.text(min_size=1, max_size=50),
         kind=st.sampled_from(["cat", "dog"]),
@@ -77,6 +83,7 @@ class TestDiscriminatedProperties:
         result = validate_native_discriminated({"kind": kind, "name": name}, DType, "body")
         assert type(result).__name__.lower() == kind
 
+    @_TOLERANT
     @given(kind=st.text().filter(lambda s: s not in ("cat", "dog")))
     def test_unknown_tag_always_raises(self, kind: str):
         from typing import Literal

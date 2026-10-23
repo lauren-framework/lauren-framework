@@ -98,6 +98,7 @@ nox.options.sessions = [
     "build",
     "build_check",
     "llms_check",
+    "docs_contract",
     "prek",
 ]
 nox.options.reuse_existing_virtualenvs = True
@@ -428,6 +429,7 @@ def docs(session: nox.Session) -> None:
     # this explicit install makes the requirement visible in the session log.
     session.install("griffe")
     session.run("python", "scripts/generate_api_docs.py")
+    session.run("python", "scripts/sync_doc_facts.py")
     args = session.posargs or ["--strict"]
     session.run("mkdocs", "build", *args)
 
@@ -712,6 +714,23 @@ def llms_check(session: nox.Session) -> None:
     )
 
 
+@nox.session(python=PRIMARY_PYTHON, reuse_venv=True, name="docs_contract")
+def docs_contract(session: nox.Session) -> None:
+    """Docs-as-tests: compile every doc code block, run the `run` ones, check claims.
+
+    Covers ``lauren/llms-full.txt``, ``lauren/llms.txt``, ``README.md``,
+    ``docs/**/*.md`` and ``skills/**/*.md`` (see ``scripts/check_docs_contract.py``):
+    every fenced ``python`` block must compile, blocks marked ``run`` execute,
+    every attribute listed in ``docs_contract.toml`` must exist, the reference
+    file's structure must hold, and the generated fact regions
+    (``scripts/sync_doc_facts.py``) must be current. Pass ``-- --no-run`` to
+    skip executing blocks.
+    """
+    # `full` brings pydantic + msgspec, which several canonical examples use.
+    session.install("-e", ".[full]")
+    session.run("python", str(ROOT / "scripts" / "check_docs_contract.py"), *session.posargs)
+
+
 # ---------------------------------------------------------------------------
 # Pre-commit / prek
 # ---------------------------------------------------------------------------
@@ -747,7 +766,7 @@ def ci(session: nox.Session) -> None:
     full matrix can take several minutes. Most of the time you only need
     the default ``nox`` (which is ``lint`` + ``tests`` + ``typecheck``).
     """
-    sessions = ["lint", "tests", "typecheck", "docs", "llms_check"]
+    sessions = ["lint", "tests", "typecheck", "docs", "llms_check", "docs_contract"]
     nox_bin = shutil.which("nox") or "nox"
     for s in sessions:
         session.log(f"--- nox -s {s} ---")
@@ -798,6 +817,7 @@ def help_session(session: nox.Session) -> None:
                 "ver_dec",
                 "clean",
                 "llms_check",
+                "docs_contract",
                 "prek",
                 "ci",
                 "help_session",
@@ -829,6 +849,7 @@ __all__ = [
     "help_session",
     "lint",
     "llms_check",
+    "docs_contract",
     "prek",
     "release",
     "release_test",

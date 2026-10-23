@@ -66,6 +66,28 @@ public API:
 Adding a public name without updating both counts as an incomplete
 change.
 
+### Docs are tests
+
+`nox -s docs_contract` (`scripts/check_docs_contract.py`) treats the docs as
+code. Every fenced `python` block in `lauren/llms-full.txt`, `lauren/llms.txt`,
+`README.md`, `docs/**/*.md` and `skills/**/*.md` must **compile**; blocks marked
+`run` **execute** (in order, one namespace per file, `from __future__ import
+annotations` in effect — so `LaurenFactory.create(...)` and `TestClient`
+assertions really run). Mark blocks like this:
+
+| File kind | Runnable example | Intentional excerpt (not compiled) |
+|---|---|---|
+| `llms*.txt`, `README.md`, `skills/` | ```` ```python run ```` | ```` ```python fragment ```` |
+| MkDocs pages under `docs/` | `<!-- docs-contract: run -->` on the line before the fence | `<!-- docs-contract: fragment -->` |
+
+(MkDocs' superfences rejects extra info-string words, hence the comment form.)
+Blocks made of `--8<--` snippet includes and `>>>` sessions are skipped
+automatically. The same run also checks the attribute claims in
+`docs_contract.toml`, the structure of `llms-full.txt` (one table of contents
+matching its `##` headings, a single `_End of reference._` at the end, working
+`#anchor` links) and the generated fact regions — regenerate those with
+`python scripts/sync_doc_facts.py` instead of editing them by hand.
+
 ## 6. Code Style
 
 - Black-compatible formatting. No separate formatter required; the
@@ -82,7 +104,8 @@ change.
 3. If the feature can be misused at startup, add a specific error
    subclass in `exceptions.py` and a test that triggers it.
 4. Export the new name from `lauren/__init__.py::__all__`.
-5. Document the name in `llms-full.txt` with at least one example.
+5. Document the name in `llms-full.txt` with at least one example — mark it
+   `run` so CI executes it (see *Docs are tests*).
 6. Mention the name in `README.md` if it's likely to appear in a
    user's first hour with the framework.
 

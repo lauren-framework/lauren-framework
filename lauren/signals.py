@@ -35,8 +35,9 @@ Five built-in events are fired by the framework:
   finished; the app is ready to accept traffic.
 * :class:`RequestReceived` — a new HTTP request has been decoded;
   the router has NOT run yet.
-* :class:`RequestComplete` — the response has been fully sent. Also
-  fires on error paths, with the captured exception on the event.
+* :class:`RequestComplete` — the request pipeline has produced the final
+  response, which is sent right after the listeners return. Also fires on
+  error paths, with the captured exception on the event.
 * :class:`ShutdownBegin` — a ``lifespan.shutdown`` message arrived
   or a graceful-shutdown signal was received.
 
@@ -141,7 +142,11 @@ class RequestReceived(LifecycleEvent):
 
 @dataclass
 class RequestComplete(LifecycleEvent):
-    """Fired after the response has been fully sent to the client.
+    """Fired once the request pipeline has produced its final response.
+
+    Emitted just *before* the response is written to the client (the
+    status, headers and body are final at this point), so listeners add
+    to the request's latency.
 
     Fires on both success and error paths. When the handler raised
     an exception that escaped the middleware chain, the exception

@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import pytest
 
 from lauren import LaurenFactory, Response, controller, get, module
 from lauren.static_files import StaticFilesModule
@@ -216,3 +217,121 @@ def test_path_traversal_blocked(tmp_path: Path) -> None:
     resp = client.request("GET", "/files/../secret.txt")
     assert resp.status_code in (403, 404)
     assert b"TOP SECRET" not in resp.body
+
+
+# ---------------------------------------------------------------------------
+# Security: dotfiles (D03 §5.2)
+# ---------------------------------------------------------------------------
+
+
+def _dotfile_tree(root: Path) -> Path:
+    static_dir = root / "public"
+    (static_dir / ".git").mkdir(parents=True)
+    (static_dir / "a" / ".hidden").mkdir(parents=True)
+    (static_dir / ".well-known").mkdir()
+    (static_dir / ".env").write_bytes(b"SECRET_KEY=hunter2\n")
+    (static_dir / ".git" / "config").write_bytes(b"[core]\n")
+    (static_dir / "a" / ".hidden" / "b.txt").write_bytes(b"hidden")
+    (static_dir / ".well-known" / "security.txt").write_bytes(b"Contact: mailto:sec@example.com\n")
+    (static_dir / ".well-known" / ".secret").write_bytes(b"nested dotfile")
+    (static_dir / "app.css").write_bytes(b"body{}")
+    return static_dir
+
+
+def _client(static_dir: Path, **kwargs: object) -> TestClient:
+    @module(imports=[StaticFilesModule.for_root("/static", directory=static_dir, **kwargs)])
+    class _App:
+        pass
+
+    return TestClient(LaurenFactory.create(_App))
+
+
+_DOTFILE_PATHS = ["/static/.env", "/static/.git/config", "/static/a/.hidden/b.txt"]
+
+
+@pytest.mark.parametrize("url", _DOTFILE_PATHS)
+def test_dotfiles_are_not_served_by_default(tmp_path: Path, url: str) -> None:
+    client = _client(_dotfile_tree(tmp_path))
+
+    resp = client.get(url)
+
+    assert resp.status_code == 404
+    assert resp.body == b""
+
+
+def test_denied_dotfile_looks_like_a_missing_file(tmp_path: Path) -> None:
+    client = _client(_dotfile_tree(tmp_path))
+
+    denied, missing = client.get("/static/.env"), client.get("/static/.nope")
+
+    assert (denied.status_code, denied.body, denied.header("etag")) == (
+        missing.status_code,
+        missing.body,
+        missing.header("etag"),
+    )
+
+
+def test_well_known_is_served_by_default(tmp_path: Path) -> None:
+    client = _client(_dotfile_tree(tmp_path))
+
+    resp = client.get("/static/.well-known/security.txt")
+
+    assert resp.status_code == 200
+    assert resp.body.startswith(b"Contact:")
+
+
+def test_dotfile_inside_well_known_stays_hidden(tmp_path: Path) -> None:
+    client = _client(_dotfile_tree(tmp_path))
+
+    assert client.get("/static/.well-known/.secret").status_code == 404
+
+
+def test_deny_policy_blocks_well_known_too(tmp_path: Path) -> None:
+    client = _client(_dotfile_tree(tmp_path), dotfiles="deny")
+
+    assert client.get("/static/.well-known/security.txt").status_code == 404
+    assert client.get("/static/app.css").status_code == 200
+
+
+@pytest.mark.parametrize("url", _DOTFILE_PATHS + ["/static/.well-known/security.txt"])
+def test_allow_policy_restores_dotfile_serving(tmp_path: Path, url: str) -> None:
+    client = _client(_dotfile_tree(tmp_path), dotfiles="allow")
+
+    assert client.get(url).status_code == 200
+
+
+def test_unknown_dotfiles_policy_is_rejected_at_for_root(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="dotfiles='ignore'"):
+        StaticFilesModule.for_root("/static", directory=tmp_path, dotfiles="ignore")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("policy", ["allow_well_known", "deny"])
+@pytest.mark.parametrize("url", ["/static/../public/.env", "/static/x/../../public/.git/config"])
+def test_dotfile_reached_by_leaving_and_reentering_the_root_is_hidden(
+    tmp_path: Path, policy: str, url: str
+) -> None:
+    # Regression: the request path starts with ".." so the pre-filesystem
+    # check skipped it, but it resolves back inside the root.
+    client = _client(_dotfile_tree(tmp_path), dotfiles=policy)
+
+    response = client.get(url)
+
+    assert response.status_code == 404
+    assert b"SECRET" not in response.body
+
+
+def test_symlink_into_a_dot_directory_is_hidden(tmp_path: Path) -> None:
+    static_dir = _dotfile_tree(tmp_path)
+    try:
+        (static_dir / "settings").symlink_to(static_dir / ".git", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available on this platform")
+
+    assert _client(static_dir).get("/static/settings/config").status_code == 404
+    assert _client(static_dir, dotfiles="allow").get("/static/settings/config").status_code == 200
+
+
+def test_well_known_reached_through_dot_segments_is_still_served(tmp_path: Path) -> None:
+    client = _client(_dotfile_tree(tmp_path))
+
+    assert client.get("/static/x/../.well-known/security.txt").status_code == 200

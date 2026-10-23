@@ -1,6 +1,6 @@
 # Error Catalog
 
-Lauren ships a closed catalog of **28 error classes**, all rooted at `LaurenError`. Every HTTP-mapped error renders with the same envelope:
+Lauren ships a **closed catalog** of error classes, all rooted at `LaurenError` — the [table below](#the-catalog) is generated from `lauren.exceptions`, so it is always complete. Every HTTP-mapped error renders with the same envelope:
 
 ```json
 {
@@ -16,91 +16,99 @@ This stability — same shape, same code field, every time — is what enables d
 
 ## Hierarchy
 
-```
+<!-- lauren:facts:error-hierarchy -->
+```text
 LaurenError
-├── StartupError                 # raised in LaurenFactory.create — never HTTP-mapped
+├── StartupError
 │   ├── RouterConflictError
 │   ├── CircularDependencyError
 │   ├── CircularModuleError
 │   ├── MissingProviderError
 │   ├── ProtocolAmbiguityError
 │   ├── ModuleExportViolation
+│   ├── LifecycleConfigError
 │   ├── MetadataInheritanceError
 │   ├── DuplicateBindingError
 │   ├── UnresolvableParameterError
 │   ├── DIScopeViolationError
 │   ├── MiddlewareConfigError
 │   ├── GuardConfigError
+│   ├── InterceptorConfigError
 │   ├── ExceptionHandlerConfigError
-│   ├── DecoratorUsageError
+│   ├── SessionConfigError
 │   ├── OpenAPISchemaError
-│   └── LifecycleConfigError
-├── HTTPError                    # raised at request time — HTTP-mapped
-│   ├── ExtractorError           → 422  code=extractor_error
-│   ├── ExtractorFieldError      → 422  code=extractor_error
-│   ├── RouteNotFoundError       → 404  code=route_not_found
-│   ├── MethodNotAllowedError    → 405  code=method_not_allowed (sets Allow header)
-│   ├── RequestBodyTooLarge      → 413  code=request_body_too_large
-│   ├── UnauthorizedError        → 401  code=unauthorized
-│   ├── ForbiddenError           → 403  code=forbidden
-│   ├── MissingStateError        → 500  code=missing_state
-│   └── StateTypeError           → 500  code=state_type_error
+│   └── DecoratorUsageError
+├── HTTPError  → 500  code=http_error
+│   ├── ExtractorError  → 422  code=extractor_error
+│   │   └── ExtractorFieldError  → 422  code=extractor_field_error
+│   ├── RouteNotFoundError  → 404  code=route_not_found
+│   ├── MethodNotAllowedError  → 405  code=method_not_allowed
+│   ├── RequestBodyTooLarge  → 413  code=request_body_too_large
+│   ├── UnsupportedMediaTypeError  → 415  code=unsupported_media_type
+│   ├── UnauthorizedError  → 401  code=unauthorized
+│   ├── ForbiddenError  → 403  code=forbidden
+│   ├── MissingStateError  → 500  code=missing_state
+│   └── StateTypeError  → 500  code=state_type_error
 └── LifecycleError
     ├── LifecycleViolationError
     ├── DestructError
     ├── DestructTimeoutError
     └── DrainTimeoutError
 ```
+<!-- /lauren:facts -->
 
-## Startup errors (not HTTP-mapped)
+## The catalog
 
-These are caught in `LaurenFactory.create(...)` and never reach the request path. Each is fixed by changing your declarations.
+Generated from the class docstrings in `lauren/exceptions.py` by
+`python scripts/sync_doc_facts.py` (`nox -s docs_contract` fails when it is
+stale). **Startup errors** (`StartupError` subclasses) are raised by
+`LaurenFactory.create(...)` — or at decoration time — and never reach the
+request path; fix them by changing your declarations. **HTTP errors**
+(`HTTPError` subclasses) can be raised from handlers, extractors, guards,
+interceptors or middleware and render with the envelope above.
+**Lifecycle errors** are reported through the structured logger; teardown is
+best-effort, so they are collected rather than aborting shutdown.
 
-| Class | Meaning |
-|---|---|
-| `RouterConflictError` | Two routes share the same `(method, path)`. |
-| `CircularDependencyError` | The DI graph contains a cycle. |
-| `CircularModuleError` | The module-import graph contains a cycle. |
-| `MissingProviderError` | A constructor parameter has no visible provider in this module's scope. |
-| `ProtocolAmbiguityError` | Two providers fight over the same scalar token without `multi=True`. |
-| `ModuleExportViolation` | A module exports a token it neither declares nor imports. |
-| `MetadataInheritanceError` | A subclass uses a parent's decoration without re-declaring (controllers, injectables, modules, middleware, exception handlers). |
-| `DuplicateBindingError` | The same token is registered twice. |
-| `UnresolvableParameterError` | A handler/provider parameter has no annotation and no default. |
-| `DIScopeViolationError` | A `SINGLETON` depends on a `REQUEST`-scoped class (or other narrowing violation). |
-| `MiddlewareConfigError` | A middleware class is missing `dispatch(request, call_next)`. |
-| `GuardConfigError` | A guard class is missing `can_activate(ctx)`. |
-| `ExceptionHandlerConfigError` | `@exception_handler` was used with no arguments / non-exception arguments / a class form missing `catch`. |
-| `DecoratorUsageError` | A custom-provider helper was called incorrectly (`use_value`/`use_class`/`use_factory`/`use_existing`). |
-| `OpenAPISchemaError` | OpenAPI generation failed to construct the schema. |
-| `LifecycleConfigError` | Misuse of `@post_construct` / `@pre_destruct`. |
-
-## HTTP-mapped errors
-
-These can be raised from handlers, extractors, guards, or downstream middleware. Lauren maps them to HTTP responses with the standard envelope.
-
-| Class | Status | `code` | Notes |
-|---|---|---|---|
-| `ExtractorError` | 422 | `extractor_error` | Thrown by Pydantic validation in `Json[Model]`, missing extractors, etc. |
-| `ExtractorFieldError` | 422 | `extractor_error` | A specific field failed (constraints from `QueryField(...)`, etc.). |
-| `RouteNotFoundError` | 404 | `route_not_found` | No route matched the request path. |
-| `MethodNotAllowedError` | 405 | `method_not_allowed` | The path matched, but not for the request's HTTP method. The `Allow` response header is populated. |
-| `RequestBodyTooLarge` | 413 | `request_body_too_large` | Request exceeds `LaurenFactory.create(..., max_body_size=N)`. |
-| `UnauthorizedError` | 401 | `unauthorized` | Missing or invalid authentication. Idiomatic for guards. |
-| `ForbiddenError` | 403 | `forbidden` | Authenticated but not authorized. |
-| `MissingStateError` | 500 | `missing_state` | `request.state.require(key)` called for an absent key. |
-| `StateTypeError` | 500 | `state_type_error` | `request.state.get_typed(key, T)` found a value of the wrong type. |
-
-## Lifecycle errors
-
-Reported through the structured logger. Teardown is best-effort — these errors are collected but never abort the rest of shutdown.
-
-| Class | Meaning |
-|---|---|
-| `LifecycleViolationError` | A `@post_construct` is declared on an unsupported scope (e.g. transient). |
-| `DestructError` | A `@pre_destruct` hook raised an exception. |
-| `DestructTimeoutError` | A `@pre_destruct` hook exceeded its per-hook timeout. |
-| `DrainTimeoutError` | The shutdown drain phase exceeded `drain_timeout`. |
+<!-- lauren:facts:error-catalog -->
+| Class | Base | HTTP status | `code` | Meaning |
+|---|---|---|---|---|
+| `LaurenError` | `Exception` | — | `lauren_error` | Base class for all lauren framework errors. |
+| `StartupError` | `LaurenError` | — | `startup_error` | Base class for configuration errors raised by `LaurenFactory.create` (never HTTP-mapped). |
+| `RouterConflictError` | `StartupError` | — | `router_conflict` | Two routes share the same (method, path) signature. |
+| `CircularDependencyError` | `StartupError` | — | `circular_dependency` | A cycle was detected in the DI graph. |
+| `CircularModuleError` | `StartupError` | — | `circular_module` | A cycle was detected in the module import graph. |
+| `MissingProviderError` | `StartupError` | — | `missing_provider` | No provider is registered for a requested token. |
+| `ProtocolAmbiguityError` | `StartupError` | — | `protocol_ambiguity` | A protocol has multiple providers but `multi=False` was requested. |
+| `ModuleExportViolation` | `StartupError` | — | `module_export_violation` | A module exports a provider it neither declares nor imports. |
+| `LifecycleConfigError` | `StartupError` | — | `lifecycle_config` | `@post_construct` / `@pre_destruct` decorates something other than a method. |
+| `MetadataInheritanceError` | `StartupError` | — | `metadata_inheritance` | Injectable metadata was inherited from a base class (forbidden). |
+| `DuplicateBindingError` | `StartupError` | — | `duplicate_binding` | The same class or token is registered twice in one container. |
+| `UnresolvableParameterError` | `StartupError` | — | `unresolvable_parameter` | A handler or provider parameter cannot be resolved to an extractor or dep. |
+| `DIScopeViolationError` | `StartupError` | — | `di_scope_violation` | A singleton depends on a request-scoped provider (or similar). |
+| `MiddlewareConfigError` | `StartupError` | — | `middleware_config` | A middleware lacks `dispatch(request, call_next)`, or `@use_middlewares` cannot run where placed. |
+| `GuardConfigError` | `StartupError` | — | `guard_config` | A guard lacks `can_activate(context)`, or `@use_guards` cannot run where placed. |
+| `InterceptorConfigError` | `StartupError` | — | `interceptor_config` | An interceptor lacks `intercept(ctx, call_handler)`, or `@use_interceptors` cannot run where placed. |
+| `ExceptionHandlerConfigError` | `StartupError` | — | `exception_handler_config` | An `@exception_handler` / `@use_exception_handlers` was misused. |
+| `SessionConfigError` | `StartupError` | — | `session_config` | A `SessionConfig` was invalid, or a `Session` was injected into a handler in an app that did not enable sessions. |
+| `OpenAPISchemaError` | `StartupError` | — | `openapi_schema` | Reserved for strict OpenAPI generation — not raised yet. |
+| `DecoratorUsageError` | `StartupError` | — | `decorator_usage` | A decorator or provider helper was used incorrectly — most often without parentheses. |
+| `HTTPError` | `LaurenError` | 500 | `http_error` | Base class for errors mapped to HTTP responses. |
+| `ExtractorError` | `HTTPError` | 422 | `extractor_error` | A request value could not be extracted or validated. |
+| `ExtractorFieldError` | `ExtractorError` | 422 | `extractor_field_error` | One parameter is missing or violates a field constraint. |
+| `RouteNotFoundError` | `HTTPError` | 404 | `route_not_found` | No route matches the request path. |
+| `MethodNotAllowedError` | `HTTPError` | 405 | `method_not_allowed` | The path matches, but not for this HTTP method (the response sets `Allow`). |
+| `RequestBodyTooLarge` | `HTTPError` | 413 | `request_body_too_large` | The request body exceeds `max_body_size`. |
+| `UnsupportedMediaTypeError` | `HTTPError` | 415 | `unsupported_media_type` | The request body's `Content-Type` is not one the route accepts. |
+| `UnauthorizedError` | `HTTPError` | 401 | `unauthorized` | Authentication is missing or invalid. |
+| `ForbiddenError` | `HTTPError` | 403 | `forbidden` | The caller is not allowed — also what a guard returning `False` raises. |
+| `MissingStateError` | `HTTPError` | 500 | `missing_state` | `request.state.require(key, T)` found no value for `key`. |
+| `StateTypeError` | `HTTPError` | 500 | `state_type_error` | A `request.state` value has the wrong type for `get_typed` / `require`. |
+| `LifecycleError` | `LaurenError` | — | `lifecycle_error` | Base class for errors around startup, shutdown and lifecycle hooks. |
+| `LifecycleViolationError` | `LifecycleError` | — | `lifecycle_violation` | A lifecycle operation was used in the wrong state (`startup()` twice, a mutator after compile). |
+| `DestructError` | `LifecycleError` | — | `destruct_error` | A `@pre_destruct` hook raised during shutdown (collected; shutdown continues). |
+| `DestructTimeoutError` | `LifecycleError` | — | `destruct_timeout` | A `@pre_destruct` hook exceeded its timeout (collected; shutdown continues). |
+| `DrainTimeoutError` | `LifecycleError` | — | `drain_timeout` | Reserved: not raised — a drain timeout at shutdown is logged as a warning. |
+<!-- /lauren:facts -->
 
 ## Subclassing `HTTPError` for domain errors
 

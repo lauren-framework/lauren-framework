@@ -57,10 +57,11 @@ class UserService:
 ## Request logging middleware
 
 ```python
-from lauren import Lauren
-from lauren_logging import RequestLogMiddleware
+from lauren import LaurenFactory
+from lauren_logging.middleware import request_logging
 
-app = Lauren(AppModule, global_middlewares=[RequestLogMiddleware()])
+# request_logging(...) is a factory: it returns a configured middleware *class*.
+app = LaurenFactory.create(AppModule, global_middlewares=[request_logging()])
 ```
 
 Emits one structured log record per request with method, path, status code, and duration.

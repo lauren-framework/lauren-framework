@@ -57,6 +57,7 @@ from ..exceptions import (
     MethodNotAllowedError,
     RouteNotFoundError,
     StartupError,
+    UnsupportedMediaTypeError,
 )
 from ..extractors import (
     FieldDescriptor,
@@ -80,6 +81,7 @@ from ..sse import EventStream
 from ..logging import (
     Logger,
     LogLevel,
+    LogRecord,
     NullLogger,
     format_duration_ms,
 )
@@ -88,6 +90,7 @@ from ..types import (
     CallHandler,
     CallNext,
     ClientInfo,
+    ContentConfig,
     ExecutionContext,
     Headers,
     Request,
@@ -102,6 +105,31 @@ from .._sessions import (
 )
 
 logger = logging.getLogger("lauren")
+
+#: Last-resort 500 body when no encoder can render the error envelope.
+_STATIC_INTERNAL_ERROR_BODY = (
+    b'{"error":{"code":"internal_error","message":"internal server error","detail":{}}}'
+)
+
+
+class _ExceptionHandlerFailure(Exception):
+    """An ``@exception_handler``'s ``catch`` raised while handling an error.
+
+    Private to the dispatcher: it is raised by
+    :meth:`LaurenApp._dispatch_exception_handlers` and always caught by the
+    two error boundaries (route and request), which log both exceptions and
+    render a 500. It never reaches user middleware or user code.
+    """
+
+    def __init__(self, handler: Any, original: BaseException, handler_error: BaseException) -> None:
+        name = getattr(handler, "__qualname__", None) or getattr(handler, "__name__", None) or repr(handler)
+        super().__init__(
+            f"exception handler {name} failed while handling "
+            f"{type(original).__name__}: {type(handler_error).__name__}: {handler_error}"
+        )
+        self.handler_name = name
+        self.original = original
+        self.handler_error = handler_error
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +191,54 @@ class CompiledHandler:
     #: means fall through to the app-level encoder (``LaurenApp._json_encoder``).
     #: Method-level wins over controller-level; both win over app-level.
     encoder: Any = None
+    #: ``True`` when a parameter reads the body as JSON (``Json[T]``, an
+    #: implicit model body, ``Discriminated[...]``). Such routes are subject
+    #: to ``ContentConfig.strict_content_type``.
+    json_body: bool = False
+
+
+#: Media types a JSON body parameter accepts under ``strict_content_type``.
+_JSON_MEDIA_TYPES: tuple[str, ...] = ("application/json", "application/*+json")
+
+#: The only method of a cross-site "simple" request that carries a body
+#: (forms and ``no-cors`` fetches; PUT/PATCH/DELETE need a CORS preflight).
+_SIMPLE_REQUEST_BODY_METHODS: frozenset[str] = frozenset({"POST"})
+
+#: Cap on remembered media types *per route* in ``strict_content_type="warn"``
+#: mode — the media type is client-chosen, so memory must stay bounded, and a
+#: flood on one route must not silence the others.
+_CONTENT_TYPE_WARN_LIMIT = 16
+
+
+def _json_content_type_problem(headers: Headers) -> str | None:
+    """Return why a JSON body parameter may not accept this request, or ``None``.
+
+    ``application/json`` and ``application/*+json`` with no charset or UTF-8
+    pass. A missing ``Content-Type`` is only a problem when the request
+    announces a body (``Content-Length`` above zero, or ``Transfer-Encoding``);
+    an empty body falls through to the usual "missing JSON body" handling.
+    """
+    raw = headers.get("content-type")
+    if raw is None or not raw.strip():
+        if headers.get("transfer-encoding") is not None:
+            return "no Content-Type"
+        length = headers.get("content-length")
+        if length is None:
+            return None
+        try:
+            return "no Content-Type" if int(length) > 0 else None
+        except ValueError:
+            return "no Content-Type"
+    media, _, params = raw.partition(";")
+    media = media.strip().lower()
+    if media != "application/json" and not (media.startswith("application/") and media.endswith("+json")):
+        return media
+    for param in params.split(";"):
+        name, _, value = param.partition("=")
+        charset = value.strip().strip('"').lower()
+        if name.strip().lower() == "charset" and charset not in ("utf-8", "utf8"):
+            return f"{media}; charset={charset}"
+    return None
 
 
 def _compile_handler_signature(
@@ -578,12 +654,28 @@ def _unwrap_handler_descriptor(
     )
 
     def _merge_markers(descriptor: Any, func: Any) -> None:
+        # Decorators may sit on both sides of the wrapper (``@use_guards(A)
+        # @staticmethod @use_guards(B)``): stacking accumulates, so merge
+        # rather than keep one side. Entries applied below the wrapper ran
+        # first and stay first; ``@set_metadata`` keys applied above win.
+        # Idempotent — this runs every time the class is inspected.
         for marker in _MARKER_ATTRS:
-            if hasattr(descriptor, marker) and not hasattr(func, marker):
-                try:
-                    setattr(func, marker, getattr(descriptor, marker))
-                except (AttributeError, TypeError):
-                    pass
+            outer = getattr(descriptor, marker, None)
+            if outer is None:
+                continue
+            inner = getattr(func, marker, None)
+            if inner is None:
+                merged = outer
+            elif isinstance(inner, list) and isinstance(outer, list):
+                merged = inner + [item for item in outer if item not in inner]
+            elif isinstance(inner, dict) and isinstance(outer, dict):
+                merged = {**inner, **outer}
+            else:
+                merged = inner or outer
+            try:
+                setattr(func, marker, merged)
+            except (AttributeError, TypeError):
+                pass
 
     if isinstance(raw, staticmethod):
         fn = raw.__func__
@@ -672,6 +764,7 @@ class LaurenApp:
         global_providers: list[Any] | None = None,
         global_ws_guards: list[type] | None = None,
         global_ws_interceptors: list[type] | None = None,
+        strict_content_type: bool | str = False,
     ) -> None:
         self._router = router
         self._container = container
@@ -685,6 +778,11 @@ class LaurenApp:
         self._global_providers: list[Any] = list(global_providers or [])
         self._global_ws_guards: list[type] = list(global_ws_guards or [])
         self._global_ws_interceptors: list[type] = list(global_ws_interceptors or [])
+        # Effective ``ContentConfig.strict_content_type`` (``None`` already
+        # resolved by the factory) and the warn-once memory for "warn" mode,
+        # keyed by (method, route template) → media types already reported.
+        self._strict_content_type: bool | str = strict_content_type
+        self._content_type_warned: dict[tuple[str, str], set[str]] = {}
         self._app_state = app_state
         self._strict_lifecycle = strict_lifecycle
         self._max_body_size = max_body_size
@@ -990,7 +1088,7 @@ class LaurenApp:
         request_cache: dict[type, Any],
         framework_values: dict[type, Any],
         owning_module: type | None,
-        compiled: "CompiledHandler",
+        compiled: "CompiledHandler | None",
     ) -> Response | None:
         """Find and invoke the first matching ``@exception_handler``.
 
@@ -1005,6 +1103,12 @@ class LaurenApp:
         (its return value is coerced through :func:`_coerce_to_response`
         so handlers may also return dicts / Pydantic models / tuples /
         ``None`` like normal route functions).
+
+        ``compiled`` is ``None`` when the error was raised outside any
+        route (global middleware, the session engine); the app-level
+        encoder is used then. A handler whose ``catch`` raises is reported
+        as :class:`_ExceptionHandlerFailure` so the caller can log both
+        exceptions and render a 500.
         """
         if not handlers:
             return None
@@ -1044,13 +1148,211 @@ class LaurenApp:
                     result = handler(exc, request)
                 if inspect.isawaitable(result):
                     result = await result
-            except Exception:
-                # A failing handler is a bug; let it propagate so the
-                # caller's outer ``except Exception`` safety net turns
-                # it into a 500. Logging is handled there too.
-                raise
-            return _coerce_to_response(result, encoder=compiled.encoder or self._json_encoder)
+                encoder = (compiled.encoder if compiled is not None else None) or self._json_encoder
+                return _coerce_to_response(result, encoder=encoder)
+            except Exception as handler_error:
+                # A failing handler is a bug — including one that returns a
+                # value that cannot be rendered. Report it with both the
+                # handler's exception and the one it was handling so the
+                # calling boundary can log them together and render a 500
+                # (without offering the new error to the handlers again).
+                raise _ExceptionHandlerFailure(handler, exc, handler_error) from handler_error
         return None
+
+    # -- Error rendering (route and request boundaries) --------------------
+
+    def _internal_error_response(self, exc: BaseException, *, encoder: JSONEncoder | None = None) -> Response:
+        """The canonical ``internal_error`` 500 envelope for ``exc``.
+
+        Never raises: if the configured encoder cannot render even this
+        envelope, the stdlib encoder is used, and failing that a static body.
+        """
+        error = LaurenError("internal server error", detail={"type": type(exc).__name__})
+        for candidate in (encoder or self._json_encoder, StdlibJSONEncoder()):
+            try:
+                return _error_response(
+                    error,
+                    status=500,
+                    code="internal_error",
+                    error_format=self._error_format,
+                    encoder=candidate,
+                )
+            except Exception:
+                continue
+        return Response(_STATIC_INTERNAL_ERROR_BODY, status=500, media_type="application/json")
+
+    def _render_http_error(
+        self,
+        exc: HTTPError,
+        *,
+        request: Request,
+        encoder: JSONEncoder | None,
+        origin: str,
+    ) -> Response:
+        """Render ``exc``'s own envelope, never raising.
+
+        If its ``detail`` cannot be encoded, the error is logged and rendered
+        with the same status and ``code`` but no detail; if even that fails,
+        the response is the internal-error 500.
+        """
+        try:
+            resp = _error_response(
+                exc, error_format=self._error_format, encoder=encoder or self._json_encoder
+            )
+        except Exception as render_error:
+            self._log_unhandled(render_error, request, origin=f"{origin} (rendering {type(exc).__name__})")
+            try:
+                resp = _error_response(
+                    LaurenError(str(exc.message)),
+                    status=exc.status_code,
+                    code=exc.code,
+                    error_format=self._error_format,
+                    encoder=StdlibJSONEncoder(),
+                )
+            except Exception:
+                return self._internal_error_response(render_error, encoder=encoder)
+        if isinstance(exc, MethodNotAllowedError) and exc.allow:
+            resp = resp.with_header("allow", ", ".join(exc.allow))
+        return resp
+
+    def _enforce_json_content_type(self, request: Request, compiled: CompiledHandler) -> None:
+        """Apply ``strict_content_type`` to a request bound for a JSON body parameter.
+
+        Strict mode raises :class:`UnsupportedMediaTypeError` (415) before any
+        body byte is read; "warn" mode logs the first occurrence of each media
+        type per route (up to a bounded number per route) and lets the request
+        through.
+        """
+        problem = _json_content_type_problem(request.headers)
+        if problem is None:
+            return
+        method, route = request.method, compiled.path_template
+        if self._strict_content_type is True:
+            received = request.headers.get("content-type")
+            raise UnsupportedMediaTypeError(
+                f"{method} {route} expects a JSON body (application/json), got {problem}",
+                detail={"content_type": received, "supported": list(_JSON_MEDIA_TYPES)},
+            )
+        seen = self._content_type_warned.setdefault((method, route), set())
+        if problem in seen or len(seen) >= _CONTENT_TYPE_WARN_LIMIT:
+            return
+        seen.add(problem)
+        message = (
+            f"{method} {route} accepted a JSON body with {problem}; "
+            "set ContentConfig(strict_content_type=True) to reject such requests with 415"
+        )
+        logger.warning(message)
+        self._logger.warn(message, context="ContentPolicy", method=method, path=route, content_type=problem)
+
+    def _log_unhandled(self, exc: BaseException, request: Request, *, origin: str) -> None:
+        """Log an exception that no handler claimed, with its traceback."""
+        logger.error(
+            "Unhandled error in %s (%s %s)",
+            origin,
+            request.method,
+            request.path,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        self._logger.error(
+            f"Unhandled exception in {origin}: {type(exc).__name__}: {exc}",
+            context="Request",
+            method=request.method,
+            path=request.path,
+            error=type(exc).__name__,
+            origin=origin,
+        )
+
+    def _log_handler_failure(self, failure: _ExceptionHandlerFailure, request: Request) -> None:
+        """Log an ``@exception_handler`` that raised, naming what it was handling."""
+        err = failure.handler_error
+        logger.error(
+            "Exception handler %s failed while handling %s (%s %s)",
+            failure.handler_name,
+            type(failure.original).__name__,
+            request.method,
+            request.path,
+            exc_info=(type(err), err, err.__traceback__),
+        )
+        self._logger.error(
+            f"Exception handler {failure.handler_name} failed while handling "
+            f"{type(failure.original).__name__}: {type(err).__name__}: {err}",
+            context="Request",
+            method=request.method,
+            path=request.path,
+            error=type(err).__name__,
+            origin="exception_handler",
+            handler=failure.handler_name,
+            cause=type(failure.original).__name__,
+        )
+
+    async def _render_outer_error(
+        self,
+        exc: Exception,
+        *,
+        request: Request,
+        request_cache: dict[type, Any],
+        framework_values: dict[type, Any],
+        origin: str,
+    ) -> Response:
+        """Render an exception that escaped the route boundary.
+
+        Errors raised by a global middleware (before or after ``call_next``),
+        by global-middleware resolution, or by the session engine land here.
+        Only *global* exception handlers apply: the error was raised outside
+        any controller or route, so route- and controller-level handlers are
+        not in force. An unclaimed ``HTTPError`` renders its own status; any
+        other exception is logged with its traceback and becomes a 500.
+        """
+        try:
+            handled = await self._dispatch_exception_handlers(
+                exc,
+                request=request,
+                handlers=self._global_exception_handlers,
+                request_cache=request_cache,
+                framework_values=framework_values,
+                owning_module=None,
+                compiled=None,
+            )
+        except _ExceptionHandlerFailure as failure:
+            self._log_handler_failure(failure, request)
+            return self._internal_error_response(failure.handler_error)
+        if handled is not None:
+            return handled
+        if isinstance(exc, HTTPError):
+            return self._render_http_error(exc, request=request, encoder=self._json_encoder, origin=origin)
+        self._log_unhandled(exc, request, origin=origin)
+        return self._internal_error_response(exc)
+
+    async def _finalize_request_scope(self, request_cache: dict[type, Any]) -> None:
+        """Finalize request-scoped instances: ``@pre_destruct``, then ``aclose()``.
+
+        Runs in reverse insertion order so the most recently constructed
+        instance tears down first — analogous to the LIFO order used by the
+        application-level scheduler at shutdown. The keys are snapshotted
+        while the arena lease still holds the pooled dict.
+        """
+        if not request_cache:
+            return
+        providers_by_cls = {p.cls: p for p in self._container.all_providers()}
+        request_scoped_instances = [(cls, request_cache[cls]) for cls in reversed(list(request_cache.keys()))]
+        for cls, instance in request_scoped_instances:
+            provider = providers_by_cls.get(cls)
+            if provider is not None and provider.pre_destruct is not None:
+                try:
+                    bound = getattr(instance, provider.pre_destruct.__name__)
+                    res = bound()
+                    if inspect.isawaitable(res):
+                        await res
+                except Exception:
+                    logger.exception("Error in @pre_destruct on %s", cls.__name__)
+            aclose = getattr(instance, "aclose", None)
+            if callable(aclose):
+                try:
+                    aclose_result = aclose()
+                    if inspect.isawaitable(aclose_result):
+                        await aclose_result
+                except Exception:
+                    logger.exception("Error closing request-scoped instance %r", instance)
 
     # -- Request logging --------------------------------------------------
 
@@ -1066,30 +1368,36 @@ class LaurenApp:
 
         Applications that don't want per-request logs simply keep the logger
         at INFO or above — records below the threshold are dropped cheaply.
+        Goes through the public :class:`~lauren.logging.Logger` protocol
+        (``level`` + ``log_record``) and never raises: a broken logger must
+        not turn a computed response into a 500.
         """
-        status = response.status if response is not None else 0
-        duration = time.perf_counter() - started_at
-        # Pick an appropriate level based on status class.
-        if status >= 500:
-            level = LogLevel.ERROR
-        elif status >= 400:
-            level = LogLevel.WARN
-        else:
-            level = LogLevel.DEBUG
-        # Avoid building extras when the record would be filtered anyway.
-        if int(level) < int(self._logger.level):
-            return
-        msg_handler = f" → {handler}" if handler else ""
-        message = f"{request.method} {request.path} {status} {format_duration_ms(duration)}{msg_handler}"
-        extra: dict[str, Any] = {
-            "method": request.method,
-            "path": request.path,
-            "status": status,
-            "duration_ms": round(duration * 1000, 3),
-        }
-        if handler:
-            extra["handler"] = handler
-        self._logger._emit(level, message, "Request", extra)  # type: ignore[attr-defined]
+        try:
+            status = response.status if response is not None else 0
+            duration = time.perf_counter() - started_at
+            # Pick an appropriate level based on status class.
+            if status >= 500:
+                level = LogLevel.ERROR
+            elif status >= 400:
+                level = LogLevel.WARN
+            else:
+                level = LogLevel.DEBUG
+            # Avoid building extras when the record would be filtered anyway.
+            if int(level) < int(self._logger.level):
+                return
+            msg_handler = f" → {handler}" if handler else ""
+            message = f"{request.method} {request.path} {status} {format_duration_ms(duration)}{msg_handler}"
+            extra: dict[str, Any] = {
+                "method": request.method,
+                "path": request.path,
+                "status": status,
+                "duration_ms": round(duration * 1000, 3),
+            }
+            if handler:
+                extra["handler"] = handler
+            self._logger.log_record(LogRecord(level=level, message=message, context="Request", extra=extra))
+        except Exception:
+            logger.exception("Request logging failed (%s %s)", request.method, request.path)
 
     # -- Request dispatch -------------------------------------------------
 
@@ -1245,6 +1553,12 @@ class LaurenApp:
                                     detail={"guard": guard_cls.__name__},
                                 )
 
+                        # Content-type gate: right after guards (401/403 still
+                        # win), before interceptors and before any body byte
+                        # is read.
+                        if compiled.json_body and self._strict_content_type is not False:
+                            self._enforce_json_content_type(req2, compiled)
+
                         # ------------ inner invocation (wrapped by interceptors) ---
                         async def _invoke_handler() -> Any:
                             # Instantiate controller + extract args
@@ -1363,145 +1677,133 @@ class LaurenApp:
                             else _coerce_to_response(result, encoder=effective_encoder)
                         )
 
-                    # Per-route onion chain (global mw already wraps _route_and_run)
-                    chain: CallNext = run_handler
-                    for mw_cls in reversed(mw_classes):
-                        # Middleware declared on the controller resolves within that
-                        # controller's module; global middleware resolves with no
-                        # module restriction (it is application-wide).
-                        mw_owning = owning_module if mw_cls in compiled.middleware_chain else None
-                        mw_instance = await self._container.resolve(
-                            mw_cls,
-                            framework_values=framework_values,
-                            owning_module=mw_owning,
-                        )
-                        chain = _wrap_middleware(mw_instance, chain)
+                    async def _render_route_error(e: Exception) -> Response:
+                        """The route boundary: route → controller → global handlers.
+
+                        Gives user-declared handlers a chance to claim the
+                        error before falling back to lauren's built-in
+                        envelope — e.g. a filter may override the status of
+                        a ForbiddenError, or turn a ValueError into a clean
+                        response. An unclaimed HTTPError renders its own
+                        status; anything else is logged and becomes a 500. A
+                        handler whose ``catch`` raises is logged together with
+                        the error it was handling and also becomes a 500.
+                        """
+                        nonlocal captured_error
+                        try:
+                            handled = await self._dispatch_exception_handlers(
+                                e,
+                                request=req,
+                                handlers=effective_exception_handlers,
+                                request_cache=request_cache,
+                                framework_values=framework_values,
+                                owning_module=owning_module,
+                                compiled=compiled,
+                            )
+                        except _ExceptionHandlerFailure as failure:
+                            captured_error = failure.handler_error
+                            self._log_handler_failure(failure, req)
+                            return self._internal_error_response(
+                                failure.handler_error, encoder=effective_encoder
+                            )
+                        captured_error = e
+                        if handled is not None:
+                            return handled
+                        route_origin = f"handler {handler_qualname or compiled.path_template}"
+                        if isinstance(e, HTTPError):
+                            return self._render_http_error(
+                                e, request=req, encoder=effective_encoder, origin=route_origin
+                            )
+                        self._log_unhandled(e, req, origin=route_origin)
+                        return self._internal_error_response(e, encoder=effective_encoder)
 
                     try:
-                        try:
-                            return await chain(req)
-                        except HTTPError as e:
-                            # Give user-declared handlers a chance to claim
-                            # the error before falling back to lauren's
-                            # built-in error envelope. This lets a custom
-                            # filter override (for example) the status code
-                            # of a ForbiddenError, while leaving the default
-                            # behaviour identical when no filter matches.
-                            handled = await self._dispatch_exception_handlers(
-                                e,
-                                request=req,
-                                handlers=effective_exception_handlers,
-                                request_cache=request_cache,
+                        # Per-route onion chain (global mw already wraps
+                        # _route_and_run). Built inside the route boundary
+                        # so a middleware that fails to resolve (e.g. a
+                        # REQUEST-scoped dependency raising) is handled like
+                        # any other route error. Request-scoped instances are
+                        # torn down by ``handle`` once the whole request —
+                        # global middleware and outer error rendering
+                        # included — is done with them.
+                        chain: CallNext = run_handler
+                        for mw_cls in reversed(mw_classes):
+                            # Middleware declared on the controller resolves
+                            # within that controller's module.
+                            mw_owning = owning_module if mw_cls in compiled.middleware_chain else None
+                            mw_instance = await self._container.resolve(
+                                mw_cls,
                                 framework_values=framework_values,
-                                owning_module=owning_module,
-                                compiled=compiled,
+                                owning_module=mw_owning,
                             )
-                            captured_error = e
-                            if handled is not None:
-                                return handled
-                            return _error_response(
-                                e, error_format=self._error_format, encoder=effective_encoder
-                            )
-                        except Exception as e:  # pragma: no cover - final safety net
-                            # Try user handlers first — a non-HTTP exception
-                            # like ValueError can be turned into a clean
-                            # response by a registered filter. Only when no
-                            # filter matches do we emit the generic 500.
-                            handled = await self._dispatch_exception_handlers(
-                                e,
-                                request=req,
-                                handlers=effective_exception_handlers,
-                                request_cache=request_cache,
-                                framework_values=framework_values,
-                                owning_module=owning_module,
-                                compiled=compiled,
-                            )
-                            captured_error = e
-                            if handled is not None:
-                                return handled
-                            logger.exception("Unhandled handler error")
-                            self._logger.error(
-                                f"Unhandled exception: {type(e).__name__}: {e}",
-                                context="Request",
-                                method=req.method,
-                                path=req.path,
-                                error=type(e).__name__,
-                            )
-                            from ..exceptions import LaurenError
-
-                            return _error_response(
-                                LaurenError(
-                                    "internal server error",
-                                    detail={"type": type(e).__name__},
-                                ),
-                                status=500,
-                                code="internal_error",
-                                error_format=self._error_format,
-                                encoder=effective_encoder,
-                            )
-                    finally:
-                        # Finalize any request-scoped instances: run their
-                        # @pre_destruct hook (if declared) and then any
-                        # aclose() coroutine. Hooks run in reverse insertion
-                        # order so the most recently constructed instance
-                        # tears down first — analogous to the LIFO order used
-                        # by the application-level scheduler at shutdown.
-                        providers_by_cls = {p.cls: p for p in self._container.all_providers()}
-                        # Snapshot the cache keys *before* the arena clears
-                        # the pooled dict; otherwise we'd iterate an empty
-                        # mapping as soon as the lease exits.
-                        request_scoped_instances = [
-                            (cls, request_cache[cls]) for cls in reversed(list(request_cache.keys()))
-                        ]
-                        for cls, instance in request_scoped_instances:
-                            provider = providers_by_cls.get(cls)
-                            if provider is not None and provider.pre_destruct is not None:
-                                try:
-                                    bound = getattr(instance, provider.pre_destruct.__name__)
-                                    res = bound()
-                                    if inspect.isawaitable(res):
-                                        await res
-                                except Exception:
-                                    logger.exception("Error in @pre_destruct on %s", cls.__name__)
-                            aclose = getattr(instance, "aclose", None)
-                            if callable(aclose):
-                                try:
-                                    aclose_result = aclose()
-                                    if inspect.isawaitable(aclose_result):
-                                        await aclose_result
-                                except Exception:
-                                    logger.exception(
-                                        "Error closing request-scoped instance %r",
-                                        instance,
-                                    )
+                            chain = _wrap_middleware(mw_instance, chain)
+                        return await chain(req)
+                    except Exception as e:
+                        return await _render_route_error(e)
 
                 # Build global middleware onion around _route_and_run.
                 # Global middlewares see every request before routing, so they
                 # can intercept OPTIONS preflight, add CORS headers to 404
                 # responses, and so on.
-                global_chain: CallNext = _route_and_run
-                for mw_cls in reversed(self._global_middlewares):
-                    mw_instance = await self._container.resolve(
-                        mw_cls,
-                        framework_values=framework_values,
-                        owning_module=None,
-                    )
-                    global_chain = _wrap_middleware(mw_instance, global_chain)
-                response: Response | None = None
+                #
+                # The whole onion — including resolving each global middleware
+                # — runs inside the request-wide error boundary below, so an
+                # error raised outside the route (an auth middleware raising
+                # UnauthorizedError, a failing session store, …) is rendered
+                # like any route error instead of escaping ``handle``.
+                # ``attribution`` records which component raised: the
+                # innermost wrapper that sees an exception claims it.
+                attribution: list[Any] = [None, "request pipeline"]
+
+                def _attribute(exc: BaseException, origin: str) -> None:
+                    if attribution[0] is not exc:
+                        attribution[0] = exc
+                        attribution[1] = origin
+
+                response: Response
                 try:
-                    response = await global_chain(request)
-                    self._log_request(request, response, t0, handler=handler_qualname)
-                except Exception as err:
-                    mw_name = getattr(mw_cls, "__name__", getattr(mw_cls, "__qualname__", "unknown"))
-                    self._logger.error(
-                        context="Request",
-                        message=f"Error in running global middleware = {mw_name}",
-                        method=request.method,
-                        path=request.path,
-                        error=type(err).__name__,
-                    )
+                    try:
+                        global_chain: CallNext = _route_and_run
+                        if self._global_middlewares:
+                            global_chain = _wrap_attributed(_route_and_run, "request pipeline", _attribute)
+                        for mw_cls in reversed(self._global_middlewares):
+                            mw_name = getattr(mw_cls, "__qualname__", None) or getattr(
+                                mw_cls, "__name__", repr(mw_cls)
+                            )
+                            try:
+                                mw_instance = await self._container.resolve(
+                                    mw_cls,
+                                    framework_values=framework_values,
+                                    owning_module=None,
+                                )
+                            except Exception as resolve_err:
+                                _attribute(resolve_err, f"global middleware {mw_name} (resolution)")
+                                raise
+                            global_chain = _wrap_attributed(
+                                _wrap_middleware(mw_instance, global_chain),
+                                f"global middleware {mw_name}",
+                                _attribute,
+                            )
+                        response = await global_chain(request)
+                    except Exception as err:  # noqa: BLE001 — the request-wide error boundary
+                        captured_error = err
+                        origin = attribution[1] if attribution[0] is err else "request pipeline"
+                        response = await self._render_outer_error(
+                            err,
+                            request=request,
+                            request_cache=request_cache,
+                            framework_values=framework_values,
+                            origin=origin,
+                        )
+                finally:
+                    # Tear down request-scoped instances only now, so global
+                    # middleware (after ``call_next``) and global exception
+                    # handlers never see a finalized dependency or create one
+                    # that is never closed.
+                    await self._finalize_request_scope(request_cache)
+                self._log_request(request, response, t0, handler=handler_qualname)
                 final_response = response
-                return response  # type: ignore[return-value]
+                return response
         finally:
             # Fire RequestComplete on every exit path (success, handled
             # HTTPError, internal error, routing miss). Skipped only
@@ -1604,15 +1906,38 @@ class LaurenApp:
         except asyncio.CancelledError:
             # Task was cancelled (client disconnect or server shutdown).
             # No response can be sent — re-raise so the ASGI server can
-            # close the connection cleanly.
+            # close the connection cleanly. Background tasks that never
+            # started will not run: settle their handles.
+            _cancel_background_tasks(request)
             raise
-        except BaseException:
+        except BaseException as exc:
+            _cancel_background_tasks(request)
             # An unexpected exception escaped handle() (e.g. a BaseException
             # from a misbehaving signal listener that was not caught by the
-            # try/except inside handle(), or any other exotic error).
-            # Attempt a best-effort 500 response with Connection: close so
-            # the client is not left hanging and the keep-alive pool is not
-            # poisoned with a connection that received no bytes.
+            # try/except inside handle(), or a failure while rendering an
+            # error response). handle() has its own error boundary, so this
+            # is a true last resort: log it with its traceback — never swallow
+            # silently — then attempt a best-effort 500 response with
+            # Connection: close so the client is not left hanging and the
+            # keep-alive pool is not poisoned with a connection that received
+            # no bytes.
+            logger.error(
+                "Unhandled error escaped LaurenApp.handle (%s %s)",
+                scope.get("method"),
+                scope.get("path"),
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            try:
+                self._logger.error(
+                    f"Unhandled error escaped the request pipeline: {type(exc).__name__}: {exc}",
+                    context="Request",
+                    method=scope.get("method"),
+                    path=scope.get("path"),
+                    error=type(exc).__name__,
+                    response_sent=_response_sent,
+                )
+            except Exception:
+                pass  # a broken logger must not prevent the fallback response
             if not _response_sent:
                 try:
                     _fallback = _error_response(
@@ -1731,9 +2056,49 @@ class LaurenApp:
                 return
 
 
+def _cancel_background_tasks(request: Request) -> None:
+    """Settle the request's never-started background tasks as ``"cancelled"``."""
+    try:
+        background = request.state.get(_BG_TASKS_ATTR)
+    except Exception:  # pragma: no cover - state unavailable
+        return
+    if background is not None:
+        background._cancel_pending()
+
+
 def _wrap_middleware(instance: Any, next_call: CallNext) -> CallNext:
     async def wrapped(request: Request) -> Response:
-        return await instance.dispatch(request, next_call)
+        response = await instance.dispatch(request, next_call)
+        if not isinstance(response, Response):
+            raise TypeError(
+                f"middleware {type(instance).__qualname__}.dispatch returned "
+                f"{type(response).__name__}; it must return a Response"
+            )
+        return response
+
+    return wrapped
+
+
+def _wrap_attributed(
+    call: CallNext,
+    origin: str,
+    attribute: Callable[[BaseException, str], None],
+) -> CallNext:
+    """Report exceptions escaping ``call`` to the request's error attribution.
+
+    Wrapped around each global middleware (and around the route boundary when
+    global middleware exists) so the request-wide error boundary can name the
+    component that raised. Attribution is first-wins per exception object: the
+    innermost wrapper an exception passes through claims it, so an outer
+    middleware that merely lets the error propagate does not steal it.
+    """
+
+    async def wrapped(request: Request) -> Response:
+        try:
+            return await call(request)
+        except Exception as exc:
+            attribute(exc, origin)
+            raise
 
     return wrapped
 
@@ -2108,6 +2473,7 @@ class LaurenFactory:
         root_path: str = "",
         mounts: dict[str, Any] | None = None,
         sessions: SessionConfig | None = None,
+        content: ContentConfig | None = None,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -2128,8 +2494,29 @@ class LaurenFactory:
         raises (handlers). Per-route ``@use_guards`` and
         ``@use_exception_handlers`` declarations compose with these globals —
         route handlers are tried first, then globals.
+
+        ``content`` sets the request-body content policy
+        (:class:`~lauren.types.ContentConfig`). Left unset, apps with
+        ``sessions=`` log mismatched JSON ``Content-Type`` values ("warn")
+        and other apps do not check them.
         """
         _log: Logger = logger or NullLogger()
+        content_config = content if content is not None else ContentConfig()
+        if not isinstance(content_config, ContentConfig):
+            raise StartupError(
+                f"content= expects a ContentConfig, got {type(content).__name__}",
+                detail={"reason": "invalid_content_config", "got": type(content).__name__},
+            )
+        declared_strict = content_config.strict_content_type
+        if not (declared_strict is None or isinstance(declared_strict, bool) or declared_strict == "warn"):
+            raise StartupError(
+                f"ContentConfig(strict_content_type={declared_strict!r}) is invalid; "
+                'use True, False, "warn" or None',
+                detail={"reason": "invalid_content_config", "strict_content_type": repr(declared_strict)},
+            )
+        effective_strict_content_type: bool | str = (
+            declared_strict if declared_strict is not None else ("warn" if sessions is not None else False)
+        )
 
         effective_global_middlewares = list(global_middlewares or [])
         effective_global_guards = list(global_guards or [])
@@ -2229,6 +2616,31 @@ class LaurenFactory:
 
                 raise InterceptorConfigError(
                     f"global interceptor {getattr(inter, '__name__', repr(inter))} "
+                    "must define 'intercept(context, call_handler)'",
+                )
+            if inter not in {pp.cls for pp in container.all_providers()}:
+                _ensure_injectable(inter)
+                container.register(inter)
+        # Global WebSocket guards / interceptors resolve through DI at
+        # connect time — validate and register them here too, so a bad
+        # entry fails startup instead of rejecting every connection.
+        for g in effective_global_ws_guards:
+            if not hasattr(g, "can_activate"):
+                from ..exceptions import GuardConfigError
+
+                raise GuardConfigError(
+                    f"global WebSocket guard {getattr(g, '__name__', repr(g))} "
+                    "must define 'can_activate(context)'",
+                )
+            if g not in {pp.cls for pp in container.all_providers()}:
+                _ensure_injectable(g)
+                container.register(g)
+        for inter in effective_global_ws_interceptors:
+            if not hasattr(inter, "intercept"):
+                from ..exceptions import InterceptorConfigError
+
+                raise InterceptorConfigError(
+                    f"global WebSocket interceptor {getattr(inter, '__name__', repr(inter))} "
                     "must define 'intercept(context, call_handler)'",
                 )
             if inter not in {pp.cls for pp in container.all_providers()}:
@@ -2429,6 +2841,7 @@ class LaurenFactory:
                         raw_descriptor=raw,
                         # Method-level encoder wins over controller-level.
                         encoder=fn_encoder or ctrl_encoder or None,
+                        json_body=any(ext.source == "json" for ext in extractions),
                     )
                     compiled_handlers[(entry.method, entry.path_template)] = compiled
                     _log.log(
@@ -2478,6 +2891,29 @@ class LaurenFactory:
                                 "reason": "sessions_disabled",
                             },
                         )
+
+        # Cookie sessions make cross-site "simple" requests (HTML forms,
+        # ``no-cors`` fetches) dangerous for state-changing JSON routes: the
+        # browser attaches the session cookie and a ``text/plain`` body is
+        # parsed as JSON. Until the app chooses a content policy, say so once.
+        if sessions is not None and declared_strict is None:
+            exposed = sorted(
+                f"{method} {path_t}"
+                for (method, path_t), ch in compiled_handlers.items()
+                if ch.json_body and method in _SIMPLE_REQUEST_BODY_METHODS
+            )
+            if exposed:
+                message = (
+                    f"cookie-authenticated JSON POST routes accept cross-site simple requests "
+                    f"({len(exposed)} route(s), e.g. {', '.join(exposed[:3])}); set "
+                    "content=ContentConfig(strict_content_type=True) (or install "
+                    "lauren-guards csrf and set strict_content_type explicitly). "
+                    "Mismatched Content-Types are only logged until then."
+                )
+                # ``logger`` is this function's parameter here; use the
+                # stdlib "lauren" logger by name.
+                logging.getLogger("lauren").warning(message)
+                _log.warn(message, context="LaurenFactory", routes=exposed)
 
         # ---- Phase 5b: WebSocket gateway compilation ----
         # The WS compiler walks the same module graph, picks every
@@ -2548,6 +2984,7 @@ class LaurenFactory:
             error_format=error_format,
             global_ws_guards=effective_global_ws_guards or None,
             global_ws_interceptors=effective_global_ws_interceptors or None,
+            strict_content_type=effective_strict_content_type,
         )
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via

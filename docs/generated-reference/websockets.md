@@ -226,9 +226,9 @@ auto-created on first reference — no extra ceremony.
 
 Usage::
 
-    @injectable()
+    @injectable(provides=[BroadcastGroup])
     class BroadcastRegistry(BroadcastGroup):
-        pass  # BroadcastGroup is already a subclassable provider
+        pass  # register this in a module's providers=[...]
 
     @ws_controller("/chat/{room_id}")
     class ChatGateway:
@@ -270,9 +270,10 @@ def unsubscribe_all(self, ws: WebSocket) -> None
 
 Remove ``ws`` from every group it's a member of.
 
-Called automatically by the runtime on disconnect so leaked
-subscriptions don't accumulate after clients drop off — but
-controllers can also invoke it eagerly during cleanup logic.
+The runtime does **not** call it for you: invoke it from the
+gateway's ``@on_disconnect`` hook so subscriptions don't leak after
+clients drop off (dead sockets are also pruned lazily by
+:meth:`broadcast`).
 
 #### `BroadcastGroup.broadcast`
 

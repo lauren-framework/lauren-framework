@@ -1,4 +1,7 @@
-"""lauren exception hierarchy — the 28-type Error Catalog.
+"""lauren exception hierarchy — the closed error catalog.
+
+The canonical, generated table of every class (base, HTTP status, ``code``)
+lives in ``docs/reference/errors.md``.
 
 All framework errors inherit from :class:`LaurenError`. Runtime errors that
 reach the ASGI boundary are converted to structured JSON responses of the
@@ -42,6 +45,8 @@ class LaurenError(Exception):
 
 
 class StartupError(LaurenError):
+    """Base class for configuration errors raised by ``LaurenFactory.create`` (never HTTP-mapped)."""
+
     code = "startup_error"
 
 
@@ -82,6 +87,8 @@ class ModuleExportViolation(StartupError):
 
 
 class LifecycleConfigError(StartupError):
+    """``@post_construct`` / ``@pre_destruct`` decorates something other than a method."""
+
     code = "lifecycle_config"
 
 
@@ -92,6 +99,8 @@ class MetadataInheritanceError(StartupError):
 
 
 class DuplicateBindingError(StartupError):
+    """The same class or token is registered twice in one container."""
+
     code = "duplicate_binding"
 
 
@@ -108,14 +117,20 @@ class DIScopeViolationError(StartupError):
 
 
 class MiddlewareConfigError(StartupError):
+    """A middleware lacks ``dispatch(request, call_next)``, or ``@use_middlewares`` cannot run where placed."""
+
     code = "middleware_config"
 
 
 class GuardConfigError(StartupError):
+    """A guard lacks ``can_activate(context)``, or ``@use_guards`` cannot run where placed."""
+
     code = "guard_config"
 
 
 class InterceptorConfigError(StartupError):
+    """An interceptor lacks ``intercept(ctx, call_handler)``, or ``@use_interceptors`` cannot run where placed."""
+
     code = "interceptor_config"
 
 
@@ -158,11 +173,17 @@ class SessionConfigError(StartupError):
 
 
 class OpenAPISchemaError(StartupError):
+    """Reserved for strict OpenAPI generation — not raised yet.
+
+    A schema that cannot be generated currently degrades to a generic
+    ``{"type": "object"}`` entry instead of failing startup.
+    """
+
     code = "openapi_schema"
 
 
 class DecoratorUsageError(StartupError):
-    """A configurable decorator was used without parentheses.
+    """A decorator or provider helper was used incorrectly — most often without parentheses.
 
     ``@controller``, ``@injectable``, ``@module``, and the HTTP verb
     decorators (``@get``, ``@post``, ...) must be invoked with arguments
@@ -189,20 +210,28 @@ class HTTPError(LaurenError):
 
 
 class ExtractorError(HTTPError):
+    """A request value could not be extracted or validated."""
+
     status_code = 422
     code = "extractor_error"
 
 
 class ExtractorFieldError(ExtractorError):
+    """One parameter is missing or violates a field constraint."""
+
     code = "extractor_field_error"
 
 
 class RouteNotFoundError(HTTPError):
+    """No route matches the request path."""
+
     status_code = 404
     code = "route_not_found"
 
 
 class MethodNotAllowedError(HTTPError):
+    """The path matches, but not for this HTTP method (the response sets ``Allow``)."""
+
     status_code = 405
     code = "method_not_allowed"
 
@@ -212,26 +241,48 @@ class MethodNotAllowedError(HTTPError):
 
 
 class RequestBodyTooLarge(HTTPError):
+    """The request body exceeds ``max_body_size``."""
+
     status_code = 413
     code = "request_body_too_large"
 
 
+class UnsupportedMediaTypeError(HTTPError):
+    """The request body's ``Content-Type`` is not one the route accepts.
+
+    Raised before the body is read when
+    ``ContentConfig(strict_content_type=True)`` is in effect and a JSON body
+    parameter receives a non-JSON (or missing) ``Content-Type``.
+    """
+
+    status_code = 415
+    code = "unsupported_media_type"
+
+
 class UnauthorizedError(HTTPError):
+    """Authentication is missing or invalid."""
+
     status_code = 401
     code = "unauthorized"
 
 
 class ForbiddenError(HTTPError):
+    """The caller is not allowed — also what a guard returning ``False`` raises."""
+
     status_code = 403
     code = "forbidden"
 
 
 class MissingStateError(HTTPError):
+    """``request.state.require(key, T)`` found no value for ``key``."""
+
     status_code = 500
     code = "missing_state"
 
 
 class StateTypeError(HTTPError):
+    """A ``request.state`` value has the wrong type for ``get_typed`` / ``require``."""
+
     status_code = 500
     code = "state_type_error"
 
@@ -242,22 +293,32 @@ class StateTypeError(HTTPError):
 
 
 class LifecycleError(LaurenError):
+    """Base class for errors around startup, shutdown and lifecycle hooks."""
+
     code = "lifecycle_error"
 
 
 class LifecycleViolationError(LifecycleError):
+    """A lifecycle operation was used in the wrong state (``startup()`` twice, a mutator after compile)."""
+
     code = "lifecycle_violation"
 
 
 class DestructError(LifecycleError):
+    """A ``@pre_destruct`` hook raised during shutdown (collected; shutdown continues)."""
+
     code = "destruct_error"
 
 
 class DestructTimeoutError(LifecycleError):
+    """A ``@pre_destruct`` hook exceeded its timeout (collected; shutdown continues)."""
+
     code = "destruct_timeout"
 
 
 class DrainTimeoutError(LifecycleError):
+    """Reserved: not raised — a drain timeout at shutdown is logged as a warning."""
+
     code = "drain_timeout"
 
 
@@ -279,14 +340,17 @@ __all__ = [
     "DIScopeViolationError",
     "MiddlewareConfigError",
     "GuardConfigError",
+    "InterceptorConfigError",
     "ExceptionHandlerConfigError",
     "SessionConfigError",
     "OpenAPISchemaError",
+    "DecoratorUsageError",
     "ExtractorError",
     "ExtractorFieldError",
     "RouteNotFoundError",
     "MethodNotAllowedError",
     "RequestBodyTooLarge",
+    "UnsupportedMediaTypeError",
     "UnauthorizedError",
     "ForbiddenError",
     "MissingStateError",

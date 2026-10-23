@@ -173,7 +173,7 @@ PAGES: dict[str, list[str | tuple[str, str]]] = {
     ],
     "exceptions.md": [
         (
-            "# Exception Catalog\n\nAll 28 typed exception classes exported by the framework.",
+            "# Exception Catalog\n\nEvery typed exception class exported by the framework.",
             "",
         ),
         ("## Base classes", ""),

@@ -35,6 +35,7 @@ from lauren import (
     middleware,
     module,
     pipe,
+    post_construct,
 )
 from lauren.exceptions import DecoratorUsageError, LifecycleViolationError
 from lauren.testing import TestClient
@@ -268,7 +269,73 @@ class TestAddMiddleware:
 # ---------------------------------------------------------------------------
 
 
+class _Warmed:
+    """A singleton whose ``@post_construct`` records that it ran."""
+
+    events: list[str] = []
+
+
+@injectable()
+class WarmService:
+    @post_construct
+    async def warm(self) -> None:
+        _Warmed.events.append("post_construct")
+
+
 class TestLifecycleHooks:
+    def test_test_client_runs_post_construct_for_lauren_apps(self):
+        # Regression: TestClient used to skip startup for Lauren apps, so
+        # singleton @post_construct hooks never ran under test.
+        _Warmed.events = []
+        app = Lauren()
+        app.add_provider(WarmService)
+
+        @app.get("/")
+        async def root(svc: WarmService) -> dict:
+            return {"events": list(_Warmed.events)}
+
+        assert TestClient(app).get("/").json() == {"events": ["post_construct"]}
+
+    @pytest.mark.asyncio
+    async def test_startup_compiles_without_starting(self):
+        # ``await app.startup()`` (e.g. before ``app.openapi()``) compiles and
+        # runs on_startup hooks only; building singletons is the lifespan's job.
+        _Warmed.events = []
+        app = Lauren()
+        app.add_provider(WarmService)
+
+        first = await app.startup()
+        second = await app.startup()
+
+        assert first is second
+        assert first._started is False
+        assert _Warmed.events == []
+
+    def test_test_client_starts_the_app_once(self):
+        _Warmed.events = []
+        app = Lauren()
+        app.add_provider(WarmService)
+
+        @app.get("/")
+        async def root(svc: WarmService) -> dict:
+            return {"events": list(_Warmed.events)}
+
+        client = TestClient(app)
+        client.get("/")
+        client.get("/")
+
+        assert _Warmed.events == ["post_construct"]
+
+    def test_routes_added_after_creating_the_client_still_work(self):
+        app = Lauren()
+        client = TestClient(app)
+
+        @app.get("/late")
+        async def late() -> dict:
+            return {"late": True}
+
+        assert client.get("/late").json() == {"late": True}
+
     @pytest.mark.asyncio
     async def test_on_startup_runs_before_first_request(self):
         events: list[str] = []

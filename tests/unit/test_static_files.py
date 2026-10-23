@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import pytest
 
 from lauren import LaurenFactory, module
 from lauren.static_files import StaticFilesModule
@@ -186,3 +187,73 @@ def test_serve_file_unknown_type_octet_stream(tmp_path: Path) -> None:
     (tmp_path / "data.xyzzy").write_bytes(b"\xff")
     resp = _serve_file(tmp_path, "data.xyzzy", _fake_request(), max_age=0)
     assert resp.headers.get("content-type", "").startswith("application/octet-stream")
+
+
+# ---------------------------------------------------------------------------
+# Dotfile policy (D03 §5.2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "relative,allow_well_known,hidden",
+    [
+        (".env", True, True),
+        (".git/config", True, True),
+        ("a/.hidden/b.txt", True, True),
+        ("a/b/.DS_Store", True, True),
+        (".well-known/security.txt", True, False),
+        (".well-known/acme-challenge/token", True, False),
+        (".well-known/.secret", True, True),
+        (".well-known/security.txt", False, True),
+        ("a/../.env", True, True),
+        ("./.env", True, True),
+        ("a\\.env", True, True),
+        ("app.css", True, False),
+        ("sub/page.html", True, False),
+        ("file.with.dots.txt", True, False),
+        ("../secret.txt", True, False),
+    ],
+)
+def test_is_hidden(relative: str, allow_well_known: bool, hidden: bool) -> None:
+    from lauren._staticfiles import _is_hidden
+
+    assert _is_hidden(relative, allow_well_known=allow_well_known) is hidden
+
+
+def test_serve_file_hides_dotfiles_by_default(tmp_path: Path) -> None:
+    from lauren._staticfiles import _serve_file
+
+    (tmp_path / ".env").write_bytes(b"SECRET")
+    resp = _serve_file(tmp_path, ".env", _fake_request(), max_age=0)
+    assert resp.status == 404
+    assert resp.body == b""
+
+
+def test_serve_file_allow_policy_serves_dotfiles(tmp_path: Path) -> None:
+    from lauren._staticfiles import _serve_file
+
+    (tmp_path / ".env").write_bytes(b"SECRET")
+    resp = _serve_file(tmp_path, ".env", _fake_request(), max_age=0, dotfiles="allow")
+    assert resp.status == 200
+
+
+def test_serve_file_traversal_is_still_403_under_every_policy(tmp_path: Path) -> None:
+    from lauren._staticfiles import _serve_file
+
+    (tmp_path / "secret.txt").write_bytes(b"TOP SECRET")
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    for policy in ("deny", "allow_well_known", "allow"):
+        resp = _serve_file(static_dir, "../secret.txt", _fake_request(), max_age=0, dotfiles=policy)  # type: ignore[arg-type]
+        assert resp.status == 403
+
+
+def test_serve_file_judges_the_resolved_path(tmp_path: Path) -> None:
+    from lauren._staticfiles import _serve_file
+
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / ".env").write_bytes(b"SECRET")
+    resp = _serve_file(static_dir, "../static/.env", _fake_request(), max_age=0)
+    assert resp.status == 404
+    assert resp.body == b""

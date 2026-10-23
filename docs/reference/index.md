@@ -7,7 +7,7 @@ Quick-lookup material — error codes, cheat sheets, and one-page recipes.
 -   :material-alert-octagon: [__Error Catalog__](errors.md)
 
     ---
-    All 28 error classes, their HTTP status codes (where applicable), and what each one means.
+    Every error class, its HTTP status code (where applicable), and what it means — generated from the code.
 
 -   :material-clipboard-list: [__Cheat Sheet__](cheat-sheet.md)
 
@@ -52,6 +52,6 @@ For programmatic doc consumption (`llms.txt` / `llms-full.txt`):
 
 ```python
 from lauren import docs
-print(docs.llms_txt())          # short overview (~2 KB)
-print(docs.llms_full_txt())     # complete reference (~25 KB)
+print(docs.llms_txt())          # short overview
+print(docs.llms_full_txt())     # complete reference
 ```

@@ -108,7 +108,11 @@ The second argument is a [`PipeContext`](#pipecontext) carrying the request, par
 
 ```python
 from lauren.extractors import pipe, PipeContext
-from lauren.exceptions import NotFoundError
+from lauren.exceptions import HTTPError
+
+class NotFoundError(HTTPError):       # define your own domain errors
+    status_code = 404
+    code = "not_found"
 
 @pipe()
 async def lookup_user(value: int, ctx: PipeContext):
@@ -346,7 +350,11 @@ Always pass `request_cache` to avoid creating a second instance of a request-sco
 Raise any `HTTPError` subclass from a pipe to short-circuit the request with the matching status:
 
 ```python
-from lauren.exceptions import NotFoundError, UnprocessableEntityError
+from lauren.exceptions import ExtractorFieldError, HTTPError
+
+class NotFoundError(HTTPError):       # define your own domain errors
+    status_code = 404
+    code = "not_found"
 
 @pipe()
 async def lookup(value: int, ctx: PipeContext) -> Article:
@@ -358,7 +366,7 @@ async def lookup(value: int, ctx: PipeContext) -> Article:
 @pipe()
 def validate_positive(value: int, ctx: PipeContext) -> int:
     if value <= 0:
-        raise UnprocessableEntityError(
+        raise ExtractorFieldError(                      # built-in 422
             f"{ctx.name} must be positive",
             detail={"field": ctx.name, "value": value},
         )
@@ -402,7 +410,7 @@ def trim_and_lower(v: str) -> str:
 @pipe()
 def validate_email(v: str, ctx: PipeContext) -> str:
     if "@" not in v:
-        raise UnprocessableEntityError(
+        raise ExtractorFieldError(
             "invalid email", detail={"field": ctx.name}
         )
     return v
@@ -420,7 +428,7 @@ Put reusable pipes in a module-level file so every controller can import them:
 ```python
 # app/pipes.py
 from lauren.extractors import Pipe, pipe, PipeContext
-from lauren.exceptions import NotFoundError
+from app.errors import NotFoundError   # your HTTPError subclass (status_code = 404)
 
 @pipe()
 class LookupUser(Pipe):
@@ -461,7 +469,7 @@ def parse_date(value: str, ctx: PipeContext):
     try:
         return datetime.strptime(value, fmt).date()
     except ValueError as e:
-        raise UnprocessableEntityError(str(e), detail={"field": ctx.name})
+        raise ExtractorFieldError(str(e), detail={"field": ctx.name})
 ```
 
 ### Optional parameter with a pipe
@@ -500,10 +508,10 @@ For unit-testing a pipe function in isolation, call it directly:
 ```python
 import pytest
 from app.pipes import validate_email
-from lauren.exceptions import UnprocessableEntityError
+from lauren.exceptions import ExtractorFieldError
 
 def test_validate_email_rejects_no_at():
-    with pytest.raises(UnprocessableEntityError):
+    with pytest.raises(ExtractorFieldError):
         validate_email("notanemail", ctx=None)
 ```
 

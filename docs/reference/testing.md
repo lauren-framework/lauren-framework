@@ -1,12 +1,15 @@
 # Testing
 
-In-process ASGI test clients for unit and integration tests. The test suite contains 2967+ tests across 173 test files, split between `tests/unit/` and `tests/integration/`. All tests use `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"`).
+In-process ASGI test clients for unit and integration tests. Lauren's own suite uses them throughout (`tests/unit/`, `tests/integration/`, `tests/e2e/`), with `pytest` and `pytest-asyncio` (`asyncio_mode = "auto"`).
 
 ## TestClient
 
 ::: lauren.testing.TestClient
 
-Synchronous-friendly HTTP test client. Drives a `LaurenApp` via ASGI directly — no socket or server needed.
+Synchronous-friendly HTTP test client. Drives a `LaurenApp` (or `Lauren`) via ASGI directly — no socket or server needed.
+
+* It starts the app for you, so singletons are built and `@post_construct` hooks run — what the ASGI lifespan does in production. A `LaurenApp` is started when the client is created; a `Lauren` app is compiled and started on the first request, so routes added after creating the client still count.
+* It passes the URL path to the app **as written**: it does not percent-decode it the way ASGI servers do, so `/files/a%2Fb` reaches a handler as `a%2Fb` under `TestClient` but as `a/b` under uvicorn. Avoid encoded path separators in tests, or assert on the decoded value only in an end-to-end test against a real server.
 
 ### HTTP methods
 
