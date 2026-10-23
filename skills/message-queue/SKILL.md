@@ -77,8 +77,16 @@ class RabbitMQBroker(MessageBroker):
             )
 
     def subscribe(self, topic: str, callback: Callable) -> None:
-        # For RabbitMQ, wire consumers via @post_construct instead
-        raise NotImplementedError("Use on_startup consumer registration")
+        # For RabbitMQ, consume from a @hosted_service instead (see below)
+        raise NotImplementedError("consume from a @hosted_service")
+
+    async def consume(self, topic: str):
+        async with self._connection.channel() as channel:
+            queue = await channel.declare_queue(topic, durable=True)
+            async with queue.iterator() as messages:
+                async for message in messages:
+                    async with message.process():
+                        yield json.loads(message.body)
 ```
 
 ## Producer service
@@ -97,7 +105,10 @@ class OrderService:
         return order
 ```
 
-## Consumer registration at startup
+## In-process subscribers
+
+For the in-memory broker a subscription made in `@post_construct` is enough —
+nothing runs in the background:
 
 ```python
 from lauren import injectable, Scope, post_construct
@@ -120,6 +131,44 @@ class OrderProcessor:
         return list(self._processed)
 ```
 
+## Long-running consumers: `@hosted_service`
+
+A real broker consumer is a loop. Make it a hosted service — never
+`asyncio.create_task(...)` in `@post_construct`. The framework starts it after
+every `@post_construct` (so `RabbitMQBroker.connect` already ran), restarts it
+with backoff when it crashes, and stops it **before** the broker's
+`@pre_destruct` closes the connection:
+
+```python
+from lauren import Scope, injectable
+from lauren.scheduling import ServiceContext, hosted_service
+
+
+@injectable(scope=Scope.REQUEST)
+class OrderRepository:
+    async def aclose(self) -> None: ...       # e.g. release the DB session
+
+
+@hosted_service(restart="on-failure", max_restarts=10, backoff=(1.0, 60.0), stop_timeout=15.0)
+class OrderConsumer:
+    def __init__(self, broker: RabbitMQBroker) -> None:
+        self._broker = broker
+
+    async def run(self, ctx: ServiceContext) -> None:
+        async for message in self._broker.consume("orders.created"):
+            async with ctx.scope() as scope:              # one unit of work per message
+                repo = await scope.resolve(OrderRepository)
+                ctx.log.info("order processed", id=message["id"], repo=type(repo).__name__)
+            if ctx.stop_requested:
+                break
+```
+
+Shutdown cancels the service after `stop_timeout` if it is blocked waiting for
+the next message, so the loop does not need its own timeout. Tests build the
+app with `LaurenFactory.create(..., hosted_services=False)` and call the
+handler directly, or drive `await app.startup()` / `await app.shutdown()` in
+one event loop.
+
 ## Module wiring
 
 ```python
@@ -128,11 +177,16 @@ from lauren import module
 @module(providers=[InMemoryBroker, OrderService, OrderProcessor])
 class MessagingModule:
     pass
+
+
+@module(providers=[RabbitMQBroker, OrderService, OrderConsumer, OrderRepository])
+class ProductionMessagingModule:
+    pass
 ```
 
 ## Key points
 
 - `provides=(MessageBroker,)` on `InMemoryBroker` means any service that declares `broker: MessageBroker` receives the in-memory instance.
 - For production, replace `InMemoryBroker` with a `RabbitMQBroker` or `KafkaProducerBroker` in `global_providers`.
-- Subscribers registered in `@post_construct` are automatically torn down when `@pre_destruct` runs at shutdown.
+- In-memory subscriptions made in `@post_construct` need no teardown; broker consumers are `@hosted_service` loops, stopped before `@pre_destruct`.
 - Keep message payloads JSON-serialisable dicts so they are transport-agnostic.

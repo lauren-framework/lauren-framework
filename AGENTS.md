@@ -106,6 +106,8 @@ nox -s ver_dec -- --patch
 | `lauren/_di/_scope.py`            | Shared request-scope finaliser (`finalize_scope`) used by HTTP, WebSocket and `OperationScope`; `register_framework_value` |
 | `lauren/_discovery.py`            | Startup discovery pass (Phase 6a): marker registry, `DiscoveryIndex`, compiled `CallPlan`s for provider methods |
 | `lauren/context.py`               | `OperationScope` (public; built by `app.scope()`) |
+| `lauren/scheduling.py`            | Public hosted-service / scheduling surface (`@hosted_service`, `@interval`, `@cron`, `@run_once`, `ScheduleModule`, `SchedulerRegistry`, `CronExpression`, `SchedulerLock`, `ManualClock`) |
+| `lauren/_scheduling/`             | Decorators + discovery markers (`_decorators`), supervisor (`_supervisor`), scheduler + registry (`_scheduler`), cron parser (`_cron`), clocks (`_clock`), contexts (`_context`), locks (`_lock`), `ScheduleModule` + factory phases (`_module`) |
 | `lauren/_discriminated.py`        | `Discriminated[A\|B,"key"]` — detection, validation, OpenAPI schema |
 | `lauren/_encoders/`               | Optional encoder backends (e.g. `pydantic.py`) |
 | `lauren/_routing/__init__.py`     | Radix-tree router                            |
@@ -280,6 +282,7 @@ Welcome aboard.
 | Serve static files | `lauren/_staticfiles.py` | `skills/building-lauren-apps/` §Static files |
 | Write unit or integration tests | `tests/integration/test_di.py` | `skills/testing-lauren-apps/` |
 | Add a background task | `lauren/background.py` | `skills/building-lauren-background-tasks/` |
+| Run a hosted service or a scheduled job | `lauren/scheduling.py` | `skills/building-lauren-scheduling/` |
 | Add session state | `lauren/sessions.py` | `skills/building-lauren-sessions/` |
 | Read typed configuration / secrets | `lauren/config.py` | `skills/building-lauren-config/` |
 | Debug a startup error | `lauren/exceptions.py` | **Common Errors** section below |
@@ -297,6 +300,7 @@ Welcome aboard.
 | Guards, interceptors, middleware | `skills/building-lauren-guards/` |
 | SSE, WebSocket gateways, `StreamingResponse` | `skills/building-lauren-streaming/` |
 | `BackgroundTasks`, `TaskHandle` | `skills/building-lauren-background-tasks/` |
+| Hosted services, `@interval` / `@cron` / `@run_once`, `ScheduleModule` | `skills/building-lauren-scheduling/` |
 | Sessions: signed cookies, `Session` injection, pluggable store | `skills/building-lauren-sessions/` |
 | Typed configuration: `ConfigModule`, sources, profiles, `Secret[T]` | `skills/building-lauren-config/` |
 | `TestClient`, async tests, mock providers | `skills/testing-lauren-apps/` |
@@ -324,6 +328,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | SSE / streaming | `docs/guides/sse.md` |
 | Session management | `docs/guides/sessions.md` |
 | Typed configuration | `docs/guides/configuration.md` |
+| Hosted services & scheduled jobs | `docs/guides/scheduling.md` |
 | Custom response subclasses and response factories | `docs/guides/custom-responses.md` / `docs/guides/file-responses.md` |
 | Testing playbook | `skills/testing-lauren-apps/SKILL.md` |
 | Release / versioning process | `docs/development/release.md` / `docs/development/versioning.md` |
@@ -338,6 +343,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | `DecoratorUsageError` | `@middleware` / `@injectable` used bare without `()` | Change to `@middleware()` / `@injectable()` |
 | `DuplicateRouteError` | Two handlers registered on the same method + path | Rename one route |
 | `UnresolvableProviderError` | Type not registered anywhere, or owning module not imported | Import the owning module in the consumer module |
+| `LifecycleConfigError` | A scheduled job without `ScheduleModule.for_root()`, a hosted service / job on a non-singleton provider, or a hook on a non-method | Import `ScheduleModule.for_root()`; make the provider a singleton; decorate methods only |
 | `SessionConfigError` | Sessions misconfigured, or `Session` injected with sessions disabled | Pass `sessions=SessionConfig(...)` / fix the unsafe cookie config |
 | `ConfigValidationError` | A settings key is missing or invalid, or the profile is unknown (every problem listed in `detail["errors"]`) | Set the listed keys in the environment / `.env` / config files; tests pass `environ=` to `ConfigModule.for_root` |
 | `StartupError` (generic) | Missing required parameter in constructor injection | Add the type as a `@module` provider or import its module |

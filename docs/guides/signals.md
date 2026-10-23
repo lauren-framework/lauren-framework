@@ -70,6 +70,18 @@ Three additional events relate to background tasks:
 | `BackgroundTaskComplete` | After successful completion | `task_id`, `func`, `duration_s` |
 | `BackgroundTaskFailed` | After an exception is raised | `task_id`, `func`, `error` |
 
+Hosted services and scheduled jobs ([Scheduling & Hosted Services](scheduling.md)) add:
+
+| Event | When fired | Key fields |
+|---|---|---|
+| `HostedServiceStarted` | Each time a hosted service's `run()` starts (restarts too) | `name` |
+| `HostedServiceStopped` | The service ended for good (stopped, returned, out of restarts) | `name`, `duration_s` |
+| `HostedServiceFailed` | `run()` raised | `name`, `error`, `restart_count`, `will_restart` |
+| `JobStarted` | A scheduled run begins | `name`, `scheduled_at` |
+| `JobCompleted` | The run returned | `name`, `duration_s`, `scheduled_at` |
+| `JobFailed` | The run raised, timed out (`TimeoutError`) or was cancelled at shutdown | `name`, `error`, `duration_s`, `scheduled_at` |
+| `JobSkipped` | A fire did not run | `name`, `reason` (`overlap`, `locked`, `misfire`, `disabled`), `scheduled_at` |
+
 All events inherit from `LifecycleEvent` which carries a `timestamp: float` (monotonic)
 so listeners can compute deltas without recording wall-clock time themselves.
 
@@ -485,7 +497,7 @@ received. `wait_for_shutdown` is a thin wrapper for `await event.wait()`.
 
 The handlers are idempotent — multiple signals don't trigger multiple shutdowns.
 
-See also the [Lifecycle Hooks](../core-concepts/lifecycle.md) guide for the four-phase
+See also the [Lifecycle Hooks](../core-concepts/lifecycle.md) guide for the full
 shutdown sequence.
 
 ---
@@ -494,5 +506,6 @@ shutdown sequence.
 
 * [WebSockets](websockets.md) — the gateway, `EventForwarder`, and token service from the real-world example above.
 * [Background Tasks](background-tasks.md) — `BackgroundTaskStarted/Complete/Failed` signals.
+* [Scheduling & Hosted Services](scheduling.md) — `HostedService*` and `Job*` signals.
 * [Lifecycle Hooks](../core-concepts/lifecycle.md) — `@post_construct` / `@pre_destruct` and shutdown phases.
 * [Reference → Cheat Sheet](../reference/cheat-sheet.md) — one-line signal patterns.

@@ -162,6 +162,11 @@ core ideas:
   response is sent. `TaskHandle` exposes `status`, `done`, `cancel()` (before
   the task starts) and `await result()` (from another coroutine). Signals
   notify on start, complete, and failure.
+* **Hosted services & scheduling** — `@hosted_service()` long-running loops
+  that start after `@post_construct`, restart with backoff and stop before
+  `@pre_destruct`; `@interval` / `@cron` / `@run_once` jobs on singleton
+  methods with overlap control, jitter, timeouts, misfire handling, a DI scope
+  per run, IANA time zones and a `ManualClock` for tests.
 * **Sessions** — first-class signed-cookie sessions via
   `LaurenFactory.create(..., sessions=SessionConfig(...))`. A mutable
   `session: Session` is injected into handlers at zero per-request cost; the
@@ -441,6 +446,36 @@ Values come from `.env`, `.env.{profile}` and the environment (the environment
 always wins; `os.environ` is never written). Profiles, TOML / YAML / secret-file
 sources, feature-scoped settings and `load_settings(...)` for factory kwargs:
 see the [Typed Configuration guide](https://lauren-py.dev/guides/configuration/).
+
+## Hosted services & scheduling
+
+```python
+from lauren import injectable, module
+from lauren.scheduling import ScheduleModule, ServiceContext, cron, hosted_service, interval
+
+@hosted_service(restart="on-failure")
+class OutboxRelay:
+    async def run(self, ctx: ServiceContext) -> None:
+        while await ctx.sleep(1.0):          # False once shutdown asks it to stop
+            ...                              # relay one batch
+
+@injectable()
+class Maintenance:
+    @interval(seconds=60, jitter=5)
+    async def warm_cache(self) -> None: ...
+
+    @cron("0 3 * * *", tz="Europe/Paris", timeout=300)
+    async def purge_sessions(self) -> None: ...
+
+@module(imports=[ScheduleModule.for_root()], providers=[OutboxRelay, Maintenance])
+class AppModule:
+    pass
+```
+
+Services start after `@post_construct` and stop, in reverse order, before
+`@pre_destruct`; jobs fire once the app is ready. Bad cron expressions, missing
+`ScheduleModule`, non-singleton providers and duplicate names fail at startup.
+See the [Scheduling guide](https://lauren-py.dev/guides/scheduling/).
 
 ## Performance
 

@@ -13,7 +13,7 @@ Produces :class:`LaurenApp` instances via the 7-phase pipeline.
 #### `LaurenFactory.create`
 
 ```python
-def create(root_module: type, strict_lifecycle: bool = True, global_middlewares: Iterable[type] | None = None, global_guards: Iterable[type] | None = None, global_interceptors: Iterable[type] | None = None, global_exception_handlers: Iterable[Any] | None = None, global_providers: Iterable[Any] | None = None, global_ws_guards: Iterable[type] | None = None, global_ws_interceptors: Iterable[type] | None = None, max_body_size: int = 1048576, app_state: AppState | None = None, logger: Logger | None = None, openapi_info: dict[str, Any] | None = None, openapi_servers: list[dict[str, Any]] | None = None, openapi_security_schemes: dict[str, Any] | None = None, openapi_url: str | None = None, docs_url: str | None = None, redoc_url: str | None = None, arena: RequestArena | None = None, arena_capacity: int | None = None, json_encoder: JSONEncoder | None = None, signals: SignalBus | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, sessions: SessionConfig | None = None, content: ContentConfig | None = None) -> LaurenApp
+def create(root_module: type, strict_lifecycle: bool = True, global_middlewares: Iterable[type] | None = None, global_guards: Iterable[type] | None = None, global_interceptors: Iterable[type] | None = None, global_exception_handlers: Iterable[Any] | None = None, global_providers: Iterable[Any] | None = None, global_ws_guards: Iterable[type] | None = None, global_ws_interceptors: Iterable[type] | None = None, max_body_size: int = 1048576, app_state: AppState | None = None, logger: Logger | None = None, openapi_info: dict[str, Any] | None = None, openapi_servers: list[dict[str, Any]] | None = None, openapi_security_schemes: dict[str, Any] | None = None, openapi_url: str | None = None, docs_url: str | None = None, redoc_url: str | None = None, arena: RequestArena | None = None, arena_capacity: int | None = None, json_encoder: JSONEncoder | None = None, signals: SignalBus | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, sessions: SessionConfig | None = None, content: ContentConfig | None = None, hosted_services: bool = True, scheduler: bool = True) -> LaurenApp
 ```
 
 Build a :class:`LaurenApp` from a root ``@module`` class.
@@ -41,10 +41,15 @@ route handlers are tried first, then globals.
 ``sessions=`` log mismatched JSON ``Content-Type`` values ("warn")
 and other apps do not check them.
 
+``hosted_services=False`` discovers and validates ``@hosted_service``
+classes but does not start them; ``scheduler=False`` does the same for
+scheduled jobs (``SchedulerRegistry.trigger`` still works). Tests and
+one-off commands use them to build the full app without background work.
+
 ### `Lauren`
 
 ```python
-class Lauren(title: str = 'lauren application', version: str = '1.0.0', description: str | None = None, openapi_url: str | None = '/openapi.json', docs_url: str | None = '/docs', redoc_url: str | None = '/redoc', servers: list[dict[str, Any]] | None = None, security_schemes: dict[str, Any] | None = None, debug: bool = False, max_body_size: int = 1048576, strict_lifecycle: bool = True, app_state: AppState | None = None, logger: Any | None = None, global_middlewares: list[type] | None = None, global_guards: list[type] | None = None, global_interceptors: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, sessions: Any | None = None, content: Any | None = None, json_encoder: Any | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, signals: Any | None = None, arena: Any | None = None, arena_capacity: int | None = None)
+class Lauren(title: str = 'lauren application', version: str = '1.0.0', description: str | None = None, openapi_url: str | None = '/openapi.json', docs_url: str | None = '/docs', redoc_url: str | None = '/redoc', servers: list[dict[str, Any]] | None = None, security_schemes: dict[str, Any] | None = None, debug: bool = False, max_body_size: int = 1048576, strict_lifecycle: bool = True, app_state: AppState | None = None, logger: Any | None = None, global_middlewares: list[type] | None = None, global_guards: list[type] | None = None, global_interceptors: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, sessions: Any | None = None, content: Any | None = None, json_encoder: Any | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, signals: Any | None = None, arena: Any | None = None, arena_capacity: int | None = None, hosted_services: bool = True, scheduler: bool = True)
 ```
 
 A FastAPI-inspired ASGI application over lauren's module pipeline.
@@ -386,10 +391,14 @@ Gracefully stop the application.
 
 Steps (each logged as an event):
 
-1. Mark the app not-running — no new request scheduling.
+1. Mark the app not-running — no new request scheduling; the
+   scheduler stops firing (hosted services keep running).
 2. Drain in-flight requests (up to ``drain_timeout`` seconds).
-3. Invoke user-registered ``on_shutdown`` callbacks in reverse order.
-4. Run ``@pre_destruct`` hooks in reverse topological order.
+3. Await in-flight scheduled runs (``ScheduleModule`` ``job_drain_timeout``,
+   default what is left of ``drain_timeout``), then cancel them.
+4. Stop hosted services in reverse start order.
+5. Invoke user-registered ``on_shutdown`` callbacks in reverse order.
+6. Run ``@pre_destruct`` hooks in reverse topological order.
 
 Idempotent: concurrent or repeated calls return as soon as the first
 shutdown has completed.
