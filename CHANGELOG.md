@@ -15,6 +15,24 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   exit (`@pre_destruct`, then generator teardown, newest first); `values=` seeds
   framework values; teardown errors are collected on `scope.teardown_errors` and
   never raised.
+- **Typed configuration** (`lauren.config`): settings classes (frozen dataclasses,
+  pydantic models, `msgspec.Struct`, delegated pydantic-settings `BaseSettings`)
+  registered with `ConfigModule.for_root(...)` (global) or
+  `ConfigModule.for_feature(...)` (module-scoped), loaded from layered sources
+  (`DotenvSource`, `TomlSource`, `YamlSource` via `lauren[yaml]`,
+  `SecretsDirSource`, `EnvSource`, async `AsyncSource`) and validated inside
+  `LaurenFactory.create` (Phase 2b). The environment always wins over files, and
+  `os.environ` is never written.
+- `ConfigValidationError` (`StartupError`, `code="config_validation"`): one error
+  that lists every missing or invalid key across all settings classes, with the key,
+  source and searched sources in `detail["errors"]`.
+- `Secret[T]`: redacted in `repr`/`str`, logs, JSON encoding (also pydantic
+  `SecretStr`/`SecretBytes`) and error messages; usable as a pydantic field.
+- Profiles: `for_root(profile=...)` / `LAUREN_PROFILE`, validated against
+  `profiles=`, `{profile}` substitution in source paths, injectable `Profile`.
+- `load_settings(...)` / `aload_settings(...)` for values needed before the
+  factory runs; `Env("NAME", ...)` field aliases; `overrides=` and `environ=` for
+  tests. New optional extra `lauren[yaml]`.
 
 ### Changed
 
@@ -22,6 +40,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   request-scope finaliser built on a provider index computed once at startup,
   instead of a provider map rebuilt on every request. Teardown error log messages
   now name the scope kind.
+- `SessionConfig(secret=...)` accepts `Secret[str]` / `Secret[bytes]` (or a list of
+  them).
+- Settings that list an `AsyncSource` finish loading at the start of
+  `LaurenApp.startup()`, before `@post_construct`.
 
 ### Fixed
 
