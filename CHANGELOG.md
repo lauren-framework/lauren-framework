@@ -178,6 +178,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - `strict_request_scope=True` on `LaurenFactory.create` / `Lauren(...)`: resolving a
   `Scope.REQUEST` provider outside a request, WebSocket connection or `app.scope()`
   raises `DIScopeViolationError` (`reason="no_active_scope"`).
+- Stores (`lauren.stores`): an async key-value `Store` protocol (bytes values, TTLs, atomic `incr` / `set_if_absent` / `delete_if_equal`, namespaces), the bounded `MemoryStore`, `PrefixedStore`, `Lock`, `StoresModule.for_root(default=..., named=...)` with lifecycle-managed per-app stores, `StoreToken` and `StoreRegistry`. Any `Store` works as `SessionConfig(store=..., revocation_store=...)` through `StoreSessionStore` / `StoreRevocationStore`.
+- Caching (`lauren.cache`): `CacheModule.for_root()` and `Cache`, with `get_or_set` (single-flight, `lock=`, `stale_ttl=`), typed decoding (`type=`, `cache.typed(T)`) and O(1) tag invalidation.
+- `@cache_response(ttl=..., vary=..., key=..., tags=..., query=..., allow_authenticated=...)`: server-side response caching for GET/HEAD. Guards run first. Responses with `Set-Cookie`, `private` / `no-store` / `no-cache`, streamed bodies or an uncovered `Vary` are never stored. Cached responses carry `Age` / `X-Cache`, and OpenAPI gets `x-cache-ttl`.
+- `@idempotent(...)`: `Idempotency-Key` replay with `Idempotent-Replayed: true`. A request whose key is still in flight answers 409, a payload mismatch 422, and a missing key 400.
+- `lauren.testing.store_contract.run_store_contract` for testing store backends.
+- `StartupError` reasons `cache_module_missing`, `duplicate_store_name`, `invalid_store` and `conflicting_cache_options`.
 
 ### Changed
 
@@ -221,6 +227,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Resolving a `Scope.REQUEST` provider outside any scope logs a one-time warning per
   provider (it still falls back to an untracked transient; 2.0 makes strict mode
   the default).
+- `InMemorySessionStore` / `InMemoryRevocationStore` are bounded (`max_entries=100_000`), sweep expired entries, accept `clock=` and no longer hold an `asyncio.Lock` tied to one event loop. The revocation store logs a warning the first time it evicts a live entry.
+- Pre-built singletons (value providers) start before any constructed provider and stop after them.
 
 ### Deprecated
 
@@ -257,6 +265,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `@post_construct` hook and before hosted services start, as documented; they
   used to run at compile time, before any singleton existed.
   `await lauren_app.startup()` on a `Lauren` app now only compiles it.
+- A store passed as `SessionConfig(store=...)` / `revocation_store=` now gets its `@post_construct` / `@pre_destruct` (or `startup()` / `aclose()`) hooks run. The documented Redis recipe used to answer 500 on the first request.
 
 ## [1.10.0] - 2026-10-23
 
