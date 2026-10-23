@@ -159,6 +159,25 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   indicators, and the `HealthChanged` signal.
 - `PUBLIC_METADATA_KEY`: the well-known metadata key for public routes (set on the
   probe routes) that global guards can honour.
+- **Standalone application contexts:** `LaurenFactory.create_context(AppModule,
+  ...)`, `LaurenApp.context()` and `ApplicationContext.from_lauren()` run the app's
+  DI graph and lifecycle without HTTP (`async with ... as ctx:` with `ctx.get`,
+  `ctx.resolve`, `ctx.scope`, `ctx.run_command`, `ctx.commands`,
+  `ctx.lifecycle_state` and `ctx.wait_for_shutdown_signal`). Hosted services and the
+  scheduler are off unless enabled.
+- **DI-aware commands** (`lauren.commands`): `@command("db:seed")` on any provider
+  method, `Opt(short=, env=, help=)`, `CommandContext` (`echo`, `error`, `confirm`,
+  `fail`, `log`), `CommandResult` and `CommandInfo`. Commands are discovered and
+  validated in `LaurenFactory.create`, their arguments are derived from the
+  signature and parsed with stdlib `argparse`, and each run gets its own
+  `OperationScope`.
+- `python -m lauren exec | commands | console` with `pkg.module:attr` /
+  `$LAUREN_TARGET` targets (module class, `LaurenApp`, `Lauren`, context or
+  factory), defined exit codes (0/1/2/3, 130/143) and graceful SIGINT/SIGTERM
+  cancellation.
+- `strict_request_scope=True` on `LaurenFactory.create` / `Lauren(...)`: resolving a
+  `Scope.REQUEST` provider outside a request, WebSocket connection or `app.scope()`
+  raises `DIScopeViolationError` (`reason="no_active_scope"`).
 
 ### Changed
 
@@ -199,6 +218,9 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   the app `FAILED`.
 - The application event bus follows `app.lifecycle_state` instead of keeping its
   own copy.
+- Resolving a `Scope.REQUEST` provider outside any scope logs a one-time warning per
+  provider (it still falls back to an untracked transient; 2.0 makes strict mode
+  the default).
 
 ### Deprecated
 
@@ -231,6 +253,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `from __future__ import annotations`.
 - Docs: sync `@post_construct` hooks run inline on the event loop, not in a worker
   thread.
+- `Lauren.on_startup` hooks run inside `LaurenApp.startup()`, after every
+  `@post_construct` hook and before hosted services start, as documented; they
+  used to run at compile time, before any singleton existed.
+  `await lauren_app.startup()` on a `Lauren` app now only compiles it.
 
 ## [1.10.0] - 2026-10-23
 
