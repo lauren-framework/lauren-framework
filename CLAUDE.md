@@ -42,8 +42,8 @@ nox -s docs_contract                # docs-as-tests: compile doc code blocks, ru
                                     # check docs_contract.toml claims + generated facts
 python scripts/sync_doc_facts.py    # regenerate fact regions (error catalog table/tree)
 
-# Release helpers
-nox -s ver_inc -- --minor          # suggest the next minor tag + git tag command
+# Release helpers (full procedure: §13 Releasing)
+nox -s ver_inc -- --minor          # print the next tag after the latest v* tag + the tag/push commands
 nox -s ver_dec -- --patch          # inspect the previous patch tag
 ```
 
@@ -603,3 +603,47 @@ app = LaurenFactory.create(
 `Lauren` exposes the same via `global_providers=` constructor arg and
 `app.add_provider(provider)` imperative method. See
 `tests/integration/test_global_providers.py` for the full test suite.
+
+## 13. Releasing
+
+`dev` is the integration branch and `main` the release branch. The version
+comes from the git tag through setuptools-scm, so there is no version string to
+edit. Pushing a `v<major>.<minor>.<patch>` tag runs
+`.github/workflows/release.yml`, which builds the distributions, runs
+`nox -s llms_check`, publishes to PyPI (Trusted Publishing) and creates the
+GitHub Release. **The tag is the release** — create it only at the end of the
+steps below, and only when the maintainer asks you to release.
+
+1. **Prepare the release on `dev`.**
+   - Pick the version: `git fetch --tags`, then `nox -s ver_inc -- --minor`
+     (new public API or a behaviour change) or `-- --patch` (fixes only, the
+     default) prints the next tag after the latest `v*` tag.
+   - `CHANGELOG.md`: rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`
+     (the release date) and add a new empty `## [Unreleased]` above it. Check
+     the list against `git log v<previous>..dev` so every user-visible change
+     is there. At the bottom, point `[Unreleased]` at `compare/vX.Y.Z...HEAD`
+     and add the `[X.Y.Z]` link.
+   - Bring README.md, `docs/`, `skills/`, `lauren/llms.txt` and
+     `lauren/llms-full.txt` up to date with the release: new APIs, changed
+     defaults, removed behaviour. Regenerate what is generated:
+     `python scripts/sync_doc_facts.py`, and `nox -s docs`, which also rewrites
+     `docs/generated-reference/`. Never write the version number into prose.
+   - Run the gates: `nox -s tests docs_contract llms_check lint typecheck docs`.
+   - Commit to `dev` (`meta: prepare release vX.Y.Z`) and push `dev`.
+2. **Open the release PR from `dev` into `main`**
+   (`gh pr create --base main --head dev`) and wait until every GitHub Actions
+   check on it passes. Fix failures on `dev`; never tag a red build.
+3. **After the PR is merged, tag the merge commit on `main` and push the tag:**
+
+   ```bash
+   git switch main && git pull --ff-only && git fetch --tags
+   nox -s ver_inc -- --minor     # prints the tag and the exact commands below
+   git tag -a vX.Y.Z -m "Release vX.Y.Z"
+   git push origin vX.Y.Z
+   ```
+
+4. **Watch the `release` workflow** (`gh run list --workflow release.yml`,
+   then `gh run watch <id>`). When it succeeds the package is on PyPI and the
+   GitHub Release exists. If the release contains security fixes, publish the
+   GitHub Security Advisory (with its CVE) at the same time, as `SECURITY.md`
+   requires.

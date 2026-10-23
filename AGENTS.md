@@ -219,6 +219,30 @@ A change is ready for merge when:
 - [ ] Commit messages follow `<scope>: <imperative>` format.
 - [ ] No TODO / FIXME / XXX strings remain in the diff.
 
+## Releasing
+
+Releases go `dev` → PR → `main` → tag → PyPI. The version comes from the git
+tag (setuptools-scm); pushing a `vX.Y.Z` tag runs the `release` workflow, which
+publishes to PyPI and creates the GitHub Release. Only release when the
+maintainer asks. Full procedure: `CLAUDE.md` §13.
+
+- [ ] On `dev`: `git fetch --tags` and `nox -s ver_inc -- --minor` (or
+      `--patch` for fixes only) to get the next version.
+- [ ] `CHANGELOG.md`: `## [Unreleased]` becomes `## [X.Y.Z] - YYYY-MM-DD`, a
+      new empty `## [Unreleased]` goes above it, and the link references at
+      the bottom are updated.
+- [ ] README.md, `docs/`, `skills/`, `lauren/llms.txt` and
+      `lauren/llms-full.txt` describe the release; run
+      `python scripts/sync_doc_facts.py` and `nox -s docs`.
+- [ ] `nox -s tests docs_contract llms_check lint typecheck docs` passes;
+      commit (`meta: prepare release vX.Y.Z`) and push `dev`.
+- [ ] Open the PR from `dev` into `main`; wait for every GitHub Actions check
+      to pass, then merge.
+- [ ] On `main`: `git tag -a vX.Y.Z -m "Release vX.Y.Z"` and
+      `git push origin vX.Y.Z` (the commands `ver_inc` prints).
+- [ ] Watch the `release` workflow until PyPI has the new version; publish
+      any security advisory together with the release.
+
 ## A Quick Tour for New Agents
 
 If you've never touched this codebase before, this is the fastest
