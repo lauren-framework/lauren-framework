@@ -267,3 +267,9 @@ def test_empty_value_cookie_is_present() -> None:
     jar, _ = _jar()
     _store(jar, "flag=")
     assert "flag" in jar
+
+
+def test_empty_attributes_are_ignored() -> None:
+    jar, _ = _jar()
+    _store(jar, "sid=abc; ; Path=/x")
+    assert next(iter(jar)).path == "/x"

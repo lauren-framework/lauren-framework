@@ -164,3 +164,19 @@ def test_plugin_is_not_auto_registered(project: pytest.Pytester) -> None:
     project.makepyfile(test_it="def test_hello(lauren_client):\n    pass\n")
     result = project.runpytest("-p", "no:cacheprovider")
     result.stdout.fnmatch_lines(["*fixture 'lauren_client' not found*"])
+
+
+def test_load_app_helper_builds_module_targets(project: pytest.Pytester) -> None:
+    import sys
+
+    from lauren import LaurenApp
+    from lauren.testing.pytest_plugin import _needs_pytest_asyncio, load_app
+
+    sys.path.insert(0, str(project.path))
+    try:
+        assert isinstance(load_app("myapp:AppModule"), LaurenApp)
+    finally:
+        sys.path.remove(str(project.path))
+        sys.modules.pop("myapp", None)
+    with pytest.raises(pytest.UsageError, match="pytest-asyncio"):
+        _needs_pytest_asyncio()

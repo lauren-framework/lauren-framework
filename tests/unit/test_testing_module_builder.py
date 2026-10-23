@@ -169,3 +169,33 @@ def test_override_plan_is_scoped_to_the_build_block() -> None:
 
 def test_override_plan_get_tolerates_unhashable_tokens() -> None:
     assert OverridePlan().get([]) is None
+
+
+def test_container_rejects_a_non_class_use_class_override() -> None:
+    from lauren._di import DIContainer
+    from lauren.exceptions import UnresolvableParameterError
+
+    plan = OverridePlan(providers={Repo: ProviderOverride(token=Repo, kind="class", use_class=42)})  # type: ignore[arg-type]
+    with pytest.raises(UnresolvableParameterError, match="needs a class"):
+        DIContainer(overrides=plan).register(Repo)
+
+
+async def test_factory_override_with_an_optional_dependency() -> None:
+    from lauren._di import DIContainer
+    from lauren._di.custom import OptionalDep
+
+    plan = OverridePlan(
+        providers={
+            Repo: ProviderOverride(
+                token=Repo,
+                kind="factory",
+                factory=lambda missing: ("built", missing),
+                injects=(OptionalDep("NOPE"),),
+            )
+        }
+    )
+    container = DIContainer(overrides=plan)
+    container.register(Repo)
+    container.compile()
+    assert await container.resolve(Repo) == ("built", None)
+    assert container.applied_overrides() == frozenset({Repo})

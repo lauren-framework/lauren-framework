@@ -247,3 +247,76 @@ def test_sync_call_inside_a_running_loop_warns_once(monkeypatch) -> None:
     client.close()
     assert len(caught) == 1
     assert "AsyncTestClient" in str(caught[0].message)
+
+
+def test_stopped_portal_refuses_work() -> None:
+    portal = Portal(name="lauren-testclient-stopped")
+    portal.stop()
+
+    async def nothing() -> None:
+        return None
+
+    with pytest.raises(RuntimeError, match="closed"):
+        portal.call(nothing)
+    with pytest.raises(RuntimeError, match="closed"):
+        portal.submit(nothing)
+
+
+def test_portal_can_be_stopped_from_inside_its_loop() -> None:
+    portal = Portal(name="lauren-testclient-inside")
+
+    async def stop_from_inside() -> list[str]:
+        return portal.stop()
+
+    assert portal.call(stop_from_inside) == []
+    portal.thread.join(timeout=30)
+    assert portal.loop.is_closed()
+
+
+def test_errors_from_async_context_calls_propagate() -> None:
+    portal = Portal(name="lauren-testclient-async-error")
+
+    async def boom() -> None:
+        raise LookupError("from the portal")
+
+    async def caller() -> None:
+        portal.call(boom)
+
+    with pytest.raises(LookupError, match="from the portal"):
+        asyncio.run(caller())
+    portal.stop()
+
+
+def test_closing_after_the_portal_died_only_cleans_up() -> None:
+    client = TestClient(_app())
+    client._driver.portal.stop()
+    client.close()
+    assert client._driver.closed
+
+
+def test_timeout_property_is_settable() -> None:
+    client = TestClient(_app())
+    assert client.timeout is None
+    client.timeout = 3
+    assert client.timeout == 3
+    client.close()
+
+
+def test_unhashable_apps_are_supported() -> None:
+    class UnhashableApp:
+        __hash__ = None  # type: ignore[assignment]
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                return
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+    with TestClient(UnhashableApp()) as client:
+        assert client.get("/").status_code == 204
+
+
+def test_uvloop_backend_option() -> None:
+    uvloop = pytest.importorskip("uvloop")
+    with TestClient(_app(), backend_options={"use_uvloop": True}) as client:
+        assert isinstance(client._driver.portal.loop, uvloop.Loop)

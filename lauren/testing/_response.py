@@ -454,9 +454,7 @@ class StreamingTestResponse(TestResponse):
             text = decoder.decode(chunk)
             if text:
                 yield text
-        tail = decoder.decode(b"", final=True)
-        if tail:
-            yield tail
+        decoder.decode(b"", final=True)  # raises on a truncated multi-byte sequence
 
     def iter_lines(self) -> Iterator[str]:
         """Yield body lines without their line terminators."""
@@ -507,9 +505,7 @@ class StreamingTestResponse(TestResponse):
             text = decoder.decode(chunk)
             if text:
                 yield text
-        tail = decoder.decode(b"", final=True)
-        if tail:
-            yield tail
+        decoder.decode(b"", final=True)  # raises on a truncated multi-byte sequence
 
     async def aiter_lines(self) -> AsyncIterator[str]:
         pending = ""

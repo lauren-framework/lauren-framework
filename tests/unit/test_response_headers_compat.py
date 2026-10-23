@@ -276,3 +276,49 @@ async def test_async_iteration_variants() -> None:
     await closing.aclose()
     await closing.aclose()
     assert closing.is_closed
+
+
+def test_non_charset_content_type_parameters_are_skipped() -> None:
+    assert (
+        _response(headers=[("content-type", "text/plain; format=flowed; charset=ascii")]).encoding == "ascii"
+    )
+
+
+def test_malformed_set_cookie_values_are_skipped() -> None:
+    response = _response(headers=[("set-cookie", "novalue"), ("set-cookie", "=x"), ("set-cookie", "ok=1")])
+    assert response.cookies == {"ok": "1"}
+
+
+def test_split_lines_flushes_a_final_lone_cr() -> None:
+    assert _split_lines("a\r", final=True) == (["a"], "")
+
+
+def test_iter_sse_ignores_leading_blank_lines_and_bare_fields() -> None:
+    events = list(_stream([b"\n\ndata\n\n"]).iter_sse())
+    assert [e.data for e in events] == [""]
+
+
+def test_streaming_body_setter_replaces_the_parts() -> None:
+    response = _stream([b"x"])
+    response.body = b"replaced"
+    assert response.content == b"replaced"
+
+
+def test_iterating_a_consumed_stream_yields_nothing() -> None:
+    response = _stream([b"x"])
+    response.read()
+    assert list(response.iter_bytes()) == []
+
+
+def test_truncated_utf8_at_the_end_raises() -> None:
+    with pytest.raises(UnicodeDecodeError):
+        list(_stream(["é".encode()[:1]], headers=[("content-type", "text/plain")]).iter_text())
+
+
+async def test_async_iteration_edge_cases() -> None:
+    consumed = _stream([b"x"])
+    await consumed.aread()
+    assert [c async for c in consumed.aiter_bytes()] == []
+    data = "é".encode()
+    assert [t async for t in _stream([data[:1], data[1:]]).aiter_text()] == ["é"]
+    assert [line async for line in _stream([b"a\nb"]).aiter_lines()] == ["a", "b"]

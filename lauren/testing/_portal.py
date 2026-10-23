@@ -44,16 +44,28 @@ async def _invoke(fn: Callable[[], Awaitable[T]]) -> T:
     return await fn()
 
 
-async def _cancel_leftover_tasks() -> list[str]:
-    """Cancel every other task on the running loop; return their names."""
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    """The event loop running in the current thread, or ``None``."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
+def _cancel_leftover_tasks(loop: asyncio.AbstractEventLoop) -> list[str]:
+    """Cancel every task still pending on the stopped ``loop``; return their names.
+
+    Runs with the loop *stopped*: Python 3.14 tracks tasks per thread, and
+    ``asyncio.all_tasks()`` called inside a running loop misses tasks another
+    thread created while it was running the loop.
+    """
     # Let tasks the app already cancelled (e.g. in ``@pre_destruct``) finish first.
-    await asyncio.sleep(0)
-    current = asyncio.current_task()
-    tasks = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+    loop.run_until_complete(asyncio.sleep(0))
+    tasks = [t for t in asyncio.all_tasks(loop) if not t.done()]
     for task in tasks:
         task.cancel()
     if tasks:
-        await asyncio.wait(tasks, timeout=_STOP_TIMEOUT_S)
+        loop.run_until_complete(asyncio.wait(tasks, timeout=_STOP_TIMEOUT_S))
     return [t.get_name() for t in tasks]
 
 
@@ -94,7 +106,7 @@ class Portal:
 
     def in_loop(self) -> bool:
         """Whether the current thread is executing inside this portal's loop."""
-        return self._loop is not None and asyncio._get_running_loop() is self._loop
+        return self._loop is not None and _running_loop() is self._loop
 
     # -- calls -------------------------------------------------------------------
 
@@ -105,7 +117,7 @@ class Portal:
                 "a TestClient method was called from inside the app's own event loop "
                 "(a handler or listener calling the client?); it would deadlock"
             )
-        if asyncio._get_running_loop() is None and threading.current_thread() is not self.thread:
+        if _running_loop() is None and threading.current_thread() is not self.thread:
             return self._drive(fn)
         future = self.submit(fn)
         try:
@@ -213,7 +225,7 @@ class Portal:
                     self._release()
             # Closing: this thread holds the loop for the final teardown.
             try:
-                self._leftovers = loop.run_until_complete(_cancel_leftover_tasks())
+                self._leftovers = _cancel_leftover_tasks(loop)
                 loop.run_until_complete(loop.shutdown_asyncgens())
                 loop.run_until_complete(loop.shutdown_default_executor())
             finally:

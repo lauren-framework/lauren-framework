@@ -214,7 +214,10 @@ class Exchange:
 
     async def send(self, message: dict[str, Any]) -> None:
         if self.client_gone.is_set():
-            return  # the client went away: drop it, as servers do
+            # The client went away: drop the message, as servers do — but
+            # yield, so an app that keeps sending can still be cancelled.
+            await asyncio.sleep(0)
+            return
         kind = message.get("type")
         if kind == "http.response.start":
             if self.response_started.is_set():
@@ -371,8 +374,6 @@ class Exchange:
         except (StopAsyncIteration, StopIteration):
             self._body_done = True
             return {"type": "http.request", "body": b"", "more_body": False}
-        if self.client_gone.is_set():
-            return None
         return {"type": "http.request", "body": _as_bytes(chunk), "more_body": True}
 
     async def _race_client_gone(self, awaitable: Awaitable[Any]) -> Any:

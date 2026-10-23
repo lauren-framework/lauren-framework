@@ -12,6 +12,7 @@ from lauren import (
     Response,
     Scope,
     Token,
+    WebSocket,
     controller,
     exception_handler,
     get,
@@ -19,6 +20,7 @@ from lauren import (
     interceptor,
     middleware,
     module,
+    on_connect,
     post_construct,
     pre_destruct,
     use_class,
@@ -27,6 +29,7 @@ from lauren import (
     use_interceptors,
     use_middlewares,
     use_value,
+    ws_controller,
 )
 from lauren._di import INJECTABLE_META
 from lauren.exceptions import DIScopeViolationError, MissingProviderError, StartupError
@@ -594,3 +597,25 @@ def test_overriding_a_module_that_is_not_imported_fails() -> None:
     with pytest.raises(StartupError) as info:
         builder.compile()
     assert info.value.detail["reason"] == "override_target_missing"
+
+
+def test_websocket_gateway_guard_override() -> None:
+    @ws_controller("/ws")
+    @use_guards(AuthGuard)
+    class GuardedGateway:
+        @on_connect
+        async def joined(self, ws: WebSocket) -> None:
+            await ws.accept()
+
+    @module(controllers=[GuardedGateway])
+    class WsModule:
+        pass
+
+    denied = Test.create_testing_module(WsModule).compile()
+    with TestClient(denied) as client:
+        with client.websocket_connect("/ws") as ws:
+            assert not ws.accepted
+    allowed = Test.create_testing_module(WsModule).override_guard(AuthGuard).allow().compile()
+    with TestClient(allowed) as client:
+        with client.websocket_connect("/ws") as ws:
+            assert ws.accepted
