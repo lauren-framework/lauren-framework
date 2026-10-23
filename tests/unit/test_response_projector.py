@@ -253,6 +253,10 @@ def test_optional_none_stays_none() -> None:
     assert _projector(User | None)(None) is None
 
 
+def test_optional_leaf_passes_through_in_filter_mode() -> None:
+    assert _projector(int | None)("not-an-int") == "not-an-int"
+
+
 def test_optional_model_is_projected() -> None:
     assert _projector(User | None)(UserInDB(1, "a", "h")) == {"id": 1, "name": "a"}
 
