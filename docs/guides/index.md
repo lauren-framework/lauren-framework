@@ -114,6 +114,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Signed-cookie sessions: `sessions=SessionConfig(...)`, `session: Session` injection, pluggable `SessionStore` (in-memory, stateless cookie, Redis), secure-by-default cookies, `regenerate_id()` / `invalidate()`, and startup-validated config.
 
+-   :material-tune-variant: [__Typed Configuration__](configuration.md)
+
+    ---
+    Settings classes validated inside `LaurenFactory.create`: `ConfigModule.for_root` / `for_feature`, layered `.env` / TOML / environment sources, profiles, `Secret[T]` redaction, and one aggregated `ConfigValidationError`.
+
 -   :material-sync: [__Sync vs Async Handlers__](sync-handlers.md)
 
     ---
