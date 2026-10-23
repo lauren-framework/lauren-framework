@@ -549,9 +549,6 @@ class CommandRegistry:
         self._commands: dict[str, CompiledCommand] = dict(commands or {})
         self._aliases: dict[str, str] = dict(aliases or {})
 
-    def __len__(self) -> int:
-        return len(self._commands)
-
     def lookup(self, name: str) -> CompiledCommand | None:
         """The command called ``name`` (or aliased so), else ``None``."""
         found = self._commands.get(name)

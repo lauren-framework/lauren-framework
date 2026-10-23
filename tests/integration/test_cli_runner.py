@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import os
+import runpy
 import signal
 import sys
 from collections.abc import Iterator
@@ -109,6 +110,30 @@ def test_usage_errors_exit_2(argv: list[str], message: str) -> None:
     assert result.code == 2
     assert result.stderr.startswith("usage: python -m lauren exec")
     assert message in result.stderr
+
+
+def test_python_dash_m_lauren_runs_main(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["lauren", "--help"])
+
+    with pytest.raises(SystemExit) as info:
+        runpy.run_module("lauren.__main__", run_name="__main__")
+
+    assert info.value.code == 0
+    assert "usage: python -m lauren exec" in capsys.readouterr().out
+
+
+class _ClosedStream:
+    def isatty(self) -> bool:
+        raise ValueError("I/O operation on closed file")
+
+
+@pytest.mark.parametrize(
+    ("stream", "expected"), [(_ClosedStream(), False), (object(), False), (io.StringIO(), False)]
+)
+def test_isatty_is_false_for_closed_or_plain_streams(stream: Any, expected: bool) -> None:
+    assert _runner._isatty(stream) is expected
 
 
 def test_the_working_directory_is_put_on_sys_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:

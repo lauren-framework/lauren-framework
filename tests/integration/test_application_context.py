@@ -227,6 +227,16 @@ async def test_body_exception_propagates_after_shutdown() -> None:
     assert "Database.pre_destruct" in events
 
 
+async def test_leaving_twice_shuts_down_once() -> None:
+    ctx = LaurenFactory.create_context(AppModule)
+    await ctx.__aenter__()
+
+    await ctx.__aexit__(None, None, None)
+    await ctx.__aexit__(None, None, None)
+
+    assert EVENTS.count("Database.pre_destruct") == 1
+
+
 async def test_contexts_are_single_use() -> None:
     t = _build(EVENTS)
     ctx = LaurenFactory.create_context(t["AppModule"])
