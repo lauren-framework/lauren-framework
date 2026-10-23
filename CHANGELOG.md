@@ -100,6 +100,30 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - `Request.extensions` (the read-only ASGI `scope["extensions"]`),
   `LaurenFactory.create(lazy_startup=True)` / `Lauren(lazy_startup=True)`, and
   `WsTestClient.connect(server_timeout=)` with `send_event()` / `receive_event()`.
+- **Hosted services:** `@hosted_service()` long-running `run(ctx)` loops started
+  after `@post_construct` in dependency order, supervised (restart `never` /
+  `on-failure` / `always`, `max_restarts` within `restart_window`, exponential
+  backoff with full jitter, `on_exhausted`), optionally awaited at startup
+  (`wait_ready`), and stopped in reverse order after the request drain and before
+  `@pre_destruct` (`stop_timeout`). `ServiceContext` offers `stop_requested`,
+  `sleep()`, `wait_stopped()`, `mark_ready()` and `scope()`.
+- **Scheduled jobs:** `@interval`, `@cron` and `@run_once` on singleton methods,
+  enabled by `ScheduleModule.for_root(timezone=, lock=, enabled=, clock=,
+  job_drain_timeout=)`: overlap `skip` / `queue` / `allow`, `max_instances`,
+  `timeout`, `jitter`, misfire `coalesce` / `skip`, `exclusive`, and a fresh DI
+  scope per run with `JobContext`. Misuse fails in `LaurenFactory.create` or at
+  decoration time.
+- `CronExpression`: five- or six-field cron with names, macros, IANA zones and a
+  defined DST policy; `next_after()` / `iter_from()` preview schedules.
+- `SchedulerRegistry` (`jobs`, `job`, `services`, `trigger`, `pause`, `resume`,
+  `remove`, `add_interval`, `add_cron`), the `SchedulerLock` protocol with
+  `InMemorySchedulerLock`, and `ManualClock` (`advance`, `jump`) for deterministic
+  tests.
+- `LaurenFactory.create(..., hosted_services=, scheduler=)` and the same options
+  on `Lauren(...)`, to build an app without starting background work.
+- Lifecycle events `HostedServiceStarted` / `HostedServiceStopped` /
+  `HostedServiceFailed` and `JobStarted` / `JobCompleted` / `JobFailed` /
+  `JobSkipped`.
 
 ### Changed
 
@@ -123,6 +147,9 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   instead of a new loop per request, and `receive()` blocks after the body until
   the response completes, then reports `http.disconnect`. `lauren.testing` is now a
   package; import paths are unchanged.
+- `LaurenApp.shutdown()` now stops the scheduler firing, drains requests, awaits
+  (then cancels) scheduled runs, stops hosted services and drains event handlers
+  before the `on_shutdown` callbacks and `@pre_destruct`.
 
 ### Deprecated
 
@@ -143,6 +170,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   reference error classes that do not exist.
 - `WebSocketTestSession` no longer leaks `CancelledError` when the server task
   misses its wind-down timeout.
+- Every `@post_construct` / `@pre_destruct` hook of a class runs — base class
+  first for `@post_construct`, subclass first for `@pre_destruct`, definition
+  order within a class, including classes substituted by `use_class` test
+  overrides. Additional hooks used to be silently ignored.
 
 ## [1.10.0] - 2026-10-23
 
