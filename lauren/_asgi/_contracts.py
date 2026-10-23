@@ -24,6 +24,7 @@ raises :class:`ResponseContractViolation`, which the route boundary renders as a
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import types
 import typing
@@ -31,6 +32,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any, Callable, Union, get_args, get_origin
 
+from .._pagination._openapi import page_type
 from .._schema._compiler import TypeCompiler, split_annotated, type_name
 from .._schema._contract import Projector, build_projector
 from .._schema._issues import ValidationIssue, _Invalid, make_issue
@@ -494,6 +496,36 @@ def _compile_projector(
     return build_projector(compiled.node, strict=strict, limit=compiler.max_issues)
 
 
+def _page_projector(page_cls: type, items: Projector | None) -> Projector:
+    """Project a ``Page[T]`` / ``CursorPage[T]`` by its items, keeping it a page.
+
+    The page stays the value the dispatcher renders (envelope, ``Link`` and
+    ``X-Total-Count``); only ``items`` is projected onto ``list[T]``, with
+    issues rooted at ``("items", n)``.
+    """
+
+    def project(value: Any) -> Any:
+        if not isinstance(value, page_cls):
+            got = type(value).__name__
+            raise _Invalid(
+                [make_issue("value_error", ctx={"error": f"expected a {page_cls.__name__}, got {got}"})]
+            )
+        if items is None:
+            return value
+        page: Any = value
+        try:
+            projected_items = items(list(page.items))
+        except _Invalid as exc:
+            raise _Invalid([issue.prefixed("items") for issue in exc.issues]) from None
+        projected = dataclasses.replace(page, items=projected_items)
+        paging = page.__dict__.get("_paging")
+        if paging is not None:
+            object.__setattr__(projected, "_paging", paging)
+        return projected
+
+    return project
+
+
 def compile_response_plan(
     table: ResponseTable,
     *,
@@ -518,9 +550,27 @@ def compile_response_plan(
         key = id(body)
         built = cache.get(key)
         if built is None:
-            built = cache[key] = _compile_projector(
-                body, strict=strict, compiler=compiler, controller_cls=controller_cls, fn=fn, mode=mode
-            )
+            page = page_type(body)
+            if page is not None:
+                # A page is a wrapper, not a body: project its items only.
+                page_cls, item = page
+                items = (
+                    None
+                    if item is None
+                    else _compile_projector(
+                        list[item],  # type: ignore[valid-type]
+                        strict=strict,
+                        compiler=compiler,
+                        controller_cls=controller_cls,
+                        fn=fn,
+                        mode=mode,
+                    )
+                )
+                built = cache[key] = _page_projector(page_cls, items)
+            else:
+                built = cache[key] = _compile_projector(
+                    body, strict=strict, compiler=compiler, controller_cls=controller_cls, fn=fn, mode=mode
+                )
         return built
 
     handler = f"{controller_cls.__name__}.{getattr(fn, '__name__', repr(fn))}"

@@ -320,6 +320,25 @@ class CurrentUser(ExtractionMarker):
 | `(body, status)` | body + status |
 | `(body, status, headers)` | body + status + headers |
 | `Response.json(...)` etc. | passed through |
+| `Page[T]` / `CursorPage[T]` | the app's page envelope + `Link` (and `X-Total-Count`) headers |
+
+## Pagination
+
+```python
+from lauren import CursorPage, CursorPagination, OffsetPagination, Page, PaginationConfig
+
+@get("/users")
+async def users(self, paging: OffsetPagination) -> Page[UserOut]:          # ?limit=&offset= (422 above max)
+    rows, total = await self.repo.list(limit=paging.limit, offset=paging.offset)
+    return Page.of(rows, paging, total=total)                              # or Page.from_rows(limit + 1 rows)
+
+@get("/events")
+async def events(self, paging: CursorPagination[EventKey]) -> CursorPage[EventOut]:
+    rows = await self.repo.page(paging.cursor, paging.direction, paging.limit + 1)
+    return CursorPage.from_rows(rows, paging, key=lambda e: EventKey(id=e.id))
+
+app = LaurenFactory.create(AppModule, pagination=PaginationConfig(max_limit=200, cursor_secret=key))
+```
 
 ## HTTP errors
 

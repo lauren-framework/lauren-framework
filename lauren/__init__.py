@@ -302,6 +302,15 @@ from .reflect import (
 from ._staticfiles import StaticFilesModule
 from .health import HealthModule
 from .responses import Accepted, Created, NoContent, Ok, Status
+from .pagination import (
+    CursorPage,
+    CursorPagination,
+    OffsetPagination,
+    Page,
+    PageNumberPagination,
+    PaginationConfig,
+    paginate_sequence,
+)
 from .config import ConfigModule, Secret
 from .scheduling import (
     CronExpression,
@@ -444,6 +453,14 @@ __all__ = [
     "raises",
     # static files
     "StaticFilesModule",
+    # pagination (lauren.pagination)
+    "OffsetPagination",
+    "PageNumberPagination",
+    "CursorPagination",
+    "PaginationConfig",
+    "Page",
+    "CursorPage",
+    "paginate_sequence",
     # typed configuration (the rest lives in lauren.config)
     "ConfigModule",
     "Secret",

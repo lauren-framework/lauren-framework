@@ -42,6 +42,7 @@ from .._discriminated import (
     is_native_discriminated_union,
     openapi_schema_for_discriminated,
 )
+from .._pagination._openapi import contribute_openapi as _contribute_pagination
 
 
 DEFAULT_INFO: dict[str, Any] = {"title": "lauren application", "version": "1.0.0"}
@@ -801,6 +802,23 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
         if cache_policy is not None:
             # Server-side response caching (``@cache_response``) — seconds.
             op["x-cache-ttl"] = cache_policy.ttl
+        if compiled is not None:
+            # Pagination parameters and Page[T] / CursorPage[T] bodies (one
+            # seam, picked up by F06's generic-schema naming later).
+            page_response: Any = rmeta.response_model
+            if page_response is None:
+                page_response = (
+                    table.bare.body if table is not None and table.bare is not None else return_annotation
+                )
+            _contribute_pagination(
+                op,
+                extractions=compiled.extractions,
+                response_type=page_response,
+                status=str(table.default_status) if table is not None else "200",
+                components=components,
+                app_config=app._pagination,
+                item_schema=_resolve_item_schema,
+            )
 
         # Calculates the OpenAPI `security` requirements for this operation by inspecting
         # the compiled handler's guards and the app's global guards. Resolution rules:

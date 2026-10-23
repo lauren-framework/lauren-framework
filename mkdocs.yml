@@ -168,6 +168,7 @@ nav:
     - Dependency Injection — Complete Reference: guides/dependency-injection.md
     - Implicit Parameter Extraction: guides/implicit-params.md
     - Validation: guides/validation.md
+    - Pagination: guides/pagination.md
     - Sync vs Async Handlers: guides/sync-handlers.md
     - Custom Extractors: guides/custom-extractors.md
     - Pipes: guides/pipes.md
@@ -214,6 +215,7 @@ nav:
     - Extractors: reference/extractors.md
     - Validation: reference/validation.md
     - Responses: reference/responses.md
+    - Pagination: reference/pagination.md
     - WebSockets: reference/websockets.md
     - Reflect: reference/reflect.md
     - SSE & Streaming: reference/sse.md

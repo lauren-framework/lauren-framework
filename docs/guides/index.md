@@ -24,6 +24,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Native validation of dataclasses, `TypedDict` and `NamedTuple` (no pydantic needed), `Annotated` constraints, the structured `issues` 422 payload, `ValidationPolicy` and `TypeCompiler`.
 
+-   :material-book-open-page-variant: [__Pagination__](pagination.md)
+
+    ---
+    `OffsetPagination` / `PageNumberPagination` / `CursorPagination[C]` parameters, `Page[T]` / `CursorPage[T]` responses, one envelope per app, RFC 8288 `Link` headers and signed, rotatable cursors.
+
 -   :material-magnify-plus: [__Custom Extractors__](custom-extractors.md)
 
     ---

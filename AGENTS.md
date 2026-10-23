@@ -138,12 +138,15 @@ nox -s ver_dec -- --patch
 | `lauren/sessions.py`              | Public session surface (`Session`, `SessionConfig`, stores) |
 | `lauren/config.py`                | Public typed-configuration surface (`ConfigModule`, `Secret`, sources, `Profile`, `load_settings`) |
 | `lauren/_config/`                 | Settings loader: coercion table (`_coerce`), sources + `.env` parser (`_sources`), layered resolution + aggregated errors (`_loader`), `ConfigModule` + factory Phase 2b (`_module`), `Secret` (`_secret`) |
-| `lauren/_sessions/`               | Session engine, stores, HMAC signing, serializer, config; `_adapters` (sessions / revocation on any `Store`) |
+| `lauren/_sessions/`               | Session engine, stores, serializer, config (signing re-exported from `lauren/_signing.py`); `_adapters` (sessions / revocation on any `Store`) |
 | `lauren/stores.py`                | Public store surface (`Store`, `MemoryStore`, `PrefixedStore`, `StoresModule`, `StoreToken`, `StoreRegistry`, `Lock`, `StoreSessionStore`, `StoreRevocationStore`) |
 | `lauren/_stores/`                 | Store protocol + checks (`_protocol`), bounded `TTLMap` / `MemoryStore` (`_memory`), `PrefixedStore`, `Lock`, `StoresModule` + Phase 2 `install_stores` (`_module`), lifecycle adoption (`_lifecycle`) |
 | `lauren/cache.py`                 | Public caching surface (`Cache`, `TypedCache`, `CacheModule`, `CacheCodec`, `JsonCacheCodec`, `cache_response`, `idempotent`, policies) |
 | `lauren/_cache/`                  | `Cache` service (`_service`), entry layout (`_entry`), codecs + typed decode (`_codec`), decorators (`_policy`), response-cache keying / store rules / interceptor (`_response`), idempotency interceptor (`_idempotency`), `CacheModule` + factory hooks (`_module`) |
 | `lauren/testing/store_contract.py` | Shared `Store` contract suite (`run_store_contract`, `STORE_CONTRACT_CHECKS`) for core and companion backends |
+| `lauren/_signing.py`              | The shared HMAC signer: key rotation, constant-time verify, per-feature `namespace` (sessions, pagination cursors, signed URLs) |
+| `lauren/pagination.py`            | Public pagination surface (`OffsetPagination`, `PageNumberPagination`, `CursorPagination`, `PaginationConfig`, `Page`, `CursorPage`, `paginate_sequence`) |
+| `lauren/_pagination/`             | Pagination internals: config resolution (`_config`), paging values + `PaginationPlan` (`_params`, the `"pagination"` extraction source), cursor codec (`_cursor`), `Link` URLs (`_links`), page rendering (`_page`), OpenAPI contribution (`_openapi`) |
 | `lauren/streaming.py`             | StreamingResponse[T], Stream, StreamReader   |
 | `lauren/sse.py`                   | EventStream, ServerSentEvent, last_event_id  |
 | `lauren/types.py`                 | Request, Response, State, Headers, Scope, `Discriminated`, … |
@@ -311,6 +314,7 @@ Welcome aboard.
 | Run code outside HTTP / add an admin command | `lauren/context.py`, `lauren/commands.py` | `skills/building-lauren-commands/` |
 | Add session state | `lauren/sessions.py` | `skills/building-lauren-sessions/` |
 | Cache data or responses, idempotency keys, shared stores | `lauren/cache.py`, `lauren/stores.py` | `skills/building-lauren-caching/` |
+| Paginate a list endpoint (offset, page number, cursor) | `lauren/pagination.py` | `skills/rest-crud-endpoints/` §Pagination |
 | Read typed configuration / secrets | `lauren/config.py` | `skills/building-lauren-config/` |
 | Add field constraints / validate payloads | `lauren/validation.py`, `lauren/_schema/` | `skills/building-lauren-controllers/` §Validation |
 | Debug a startup error | `lauren/exceptions.py` | **Common Errors** section below |
@@ -361,6 +365,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | SSE / streaming | `docs/guides/sse.md` |
 | Session management | `docs/guides/sessions.md` |
 | Stores, caching, response caching, idempotency keys | `docs/guides/caching.md` |
+| Pagination, envelopes, `Link` headers, signed cursors | `docs/guides/pagination.md` |
 | Domain events between modules | `docs/guides/events.md` |
 | Health probes, lifecycle state, draining | `docs/guides/health-checks.md` |
 | Typed configuration | `docs/guides/configuration.md` |
@@ -393,6 +398,8 @@ Full index: [`skills/README.md`](skills/README.md)
 | `UnresolvableParameterError` (`reason="bad_constraint"` / `"bad_pattern"` / `"unsupported_type"`) | A validation marker that cannot apply (`Ge` on a `str`, `MinLen > MaxLen`), an invalid `Pattern` regex, or (under `stdlib_models="enforce"`) a model field type the engine does not know | Fix the annotation named by `detail["class"]` / `["handler"]` / `["param"]` / `["field"]` |
 | `StartupError` (`reason="cache_module_missing"`) | A route uses `@cache_response` / `@idempotent` but no `Cache` is provided | Import `CacheModule.for_root()` into the app |
 | `StartupError` (`reason="duplicate_store_name"` / `"invalid_store"`) | Two default stores / one store name registered twice, or a store factory that returned a non-`Store` | Configure each store once in `StoresModule.for_root(...)` |
+| `StartupError` (`reason="pagination_secret_missing"`) | A route takes `CursorPagination` but no cursor secret is configured | `LaurenFactory.create(..., pagination=PaginationConfig(cursor_secret=...))` with a dedicated key (never the session secret) |
+| `StartupError` (`reason="invalid_pagination_config"`) | A `PaginationConfig` value is invalid (`default_limit > max_limit` at one level, duplicate parameter names, `envelope` set per parameter, …) — `detail["field"]` names it | Fix the field; `envelope` / `meta_keys` belong on the app-level config |
 | `StartupError` (generic) | Missing required parameter in constructor injection | Add the type as a `@module` provider or import its module |
 
 ## Interceptor `CallHandler.handle()` contract (v1.4.2+)

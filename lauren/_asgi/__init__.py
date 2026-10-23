@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 import logging
 import time
@@ -133,6 +134,16 @@ from .._sessions import (
     SessionConfig,
     configure_sessions,
 )
+from .._pagination import (
+    PageResponse as _PageResponse,
+    PaginationConfig,
+    ResolvedPagination,
+    build_plan as _build_pagination_plan,
+    is_paging_annotation as _is_paging_annotation,
+    resolve_app as _resolve_pagination,
+)
+from .._pagination._config import BUILTIN_DEFAULTS as _PAGINATION_DEFAULTS
+from .._pagination._links import ROOT_PATH_ATTR as _ROOT_PATH_ATTR
 from ._problem import instance_reference as _instance_reference, problem_payload as _problem_payload
 from ._contracts import (
     ResponseContractViolation,
@@ -300,6 +311,7 @@ def _compile_handler_signature(
     *,
     validation: ValidationRuntime | None = None,
     route: str = "",
+    pagination: ResolvedPagination | None = None,
 ) -> tuple[tuple[Extraction, ...], list[str]]:
     """Introspect a handler and produce its extraction plan.
 
@@ -318,6 +330,11 @@ def _compile_handler_signature(
     With ``validation`` (the app's validation runtime) every path / query /
     header / cookie / JSON / form-model / stream parameter also gets its
     compiled validation plan (``Extraction.compiled``).
+
+    Pagination parameters (``OffsetPagination``, ``PageNumberPagination``,
+    ``CursorPagination[C]``) become the ``"pagination"`` source; their plan —
+    the effective ``PaginationConfig`` (``pagination`` is the app's), integer
+    validators and the cursor codec — is compiled here.
     """
     sig = inspect.signature(fn)
     hints = _safe_type_hints(fn)
@@ -468,6 +485,50 @@ def _compile_handler_signature(
                 )
                 param_names.append(name)
                 continue
+            # Pagination parameters — a built-in source. The effective config
+            # (annotation layers over the app's), the integer validators and
+            # the cursor codec are compiled once, here.
+            if _is_paging_annotation(ann):
+                paging_plan = _build_pagination_plan(
+                    ann,
+                    pagination if pagination is not None else _PAGINATION_DEFAULTS,
+                    validation.compiler if validation is not None else TypeCompiler(),
+                    include_input=validation.include_input if validation is not None else False,
+                    where={
+                        "class": controller_cls.__name__,
+                        "handler": fn.__name__,
+                        "param": name,
+                        "route": route,
+                    },
+                )
+                if fd is not None:
+                    from ..exceptions import UnresolvableParameterError
+
+                    raise UnresolvableParameterError(
+                        f"Parameter {name!r} in {controller_cls.__name__}.{fn.__name__} is a "
+                        "pagination parameter and takes no field descriptor; configure it with "
+                        "Annotated[..., PaginationConfig(...)]",
+                        detail={
+                            "class": controller_cls.__name__,
+                            "handler": fn.__name__,
+                            "param": name,
+                            "reason": "pagination_field_descriptor",
+                        },
+                    )
+                extractions.append(
+                    Extraction(
+                        name=name,
+                        source="pagination",
+                        inner_type=ann,
+                        field_descriptor=None,
+                        default=default,
+                        has_default=has_default,
+                        pipes=pipes,
+                        compiled=paging_plan,
+                    )
+                )
+                param_names.append(name)
+                continue
             # Resolve via DI — restricted to providers visible to the
             # controller's declaring module when one is known. Accepts
             # class tokens, function tokens (function providers
@@ -599,6 +660,8 @@ def _compile_handler_signature(
         param_names.append(name)
     if validation is not None:
         for ext in extractions:
+            if ext.source == "pagination":
+                continue  # compiled above
             ext.compiled = build_param_plan(
                 ext,
                 annotations.get(ext.name),
@@ -971,6 +1034,9 @@ class LaurenApp:
         self._mounts: list[tuple[str, Any]] = []
         # Provider-discovery index (Phase 6a of LaurenFactory.create).
         self._discovery: DiscoveryIndex = DiscoveryIndex.empty()
+        # App-wide pagination config (``pagination=``); renders pages built
+        # without a paging parameter. Set by the factory.
+        self._pagination: ResolvedPagination = _PAGINATION_DEFAULTS
         # The application event bus (``lauren.events``); set by the factory.
         self._events: EventBus | None = None
         # Hosted services + scheduler (``lauren.scheduling``); ``None`` when
@@ -2188,7 +2254,9 @@ class LaurenApp:
                                 )
                             if _plan is not None:
                                 return _plan.coerce(raw, _captured_effective_encoder)
-                            return _coerce_to_response(raw, encoder=_captured_effective_encoder)
+                            return _coerce_to_response(
+                                raw, encoder=_captured_effective_encoder, pagination=self._pagination
+                            )
 
                         call_handler: CallHandler = CallHandler(_coerced_invoke)
                         for inter_cls in reversed(effective_interceptors):
@@ -2206,7 +2274,9 @@ class LaurenApp:
                         return (
                             result
                             if isinstance(result, Response)
-                            else _coerce_to_response(result, encoder=effective_encoder)
+                            else _coerce_to_response(
+                                result, encoder=effective_encoder, pagination=self._pagination
+                            )
                         )
 
                     async def _render_route_error(e: Exception) -> Response:
@@ -2418,10 +2488,20 @@ class LaurenApp:
         # empty and the full prefixed path in ``scope["path"]``.
         _own_root = getattr(self, "_root_path", "")
         raw_path = scope["path"]
-        if _own_root and not scope.get("root_path") and raw_path.startswith(_own_root):
+        scope_root = scope.get("root_path")
+        if _own_root and not scope_root and raw_path.startswith(_own_root):
             effective_path = raw_path[len(_own_root) :] or "/"
+            public_root = _own_root
         else:
             effective_path = raw_path
+            # A server-stripped prefix (``uvicorn --root-path``, a mount) is
+            # part of the public URL unless the path already carries it.
+            public_root = (
+                scope_root
+                if scope_root
+                and not (raw_path == scope_root or raw_path.startswith(scope_root.rstrip("/") + "/"))
+                else ""
+            )
         # Acquire a Request through the arena so pooled instances are
         # reused where possible. ``acquire_request`` dispatches to
         # :meth:`Request.reset` for pooled instances and to the
@@ -2440,6 +2520,10 @@ class LaurenApp:
             max_body_size=self._max_body_size,
             extensions=scope.get("extensions"),
         )
+        if public_root:
+            # The public path prefix (proxy root path / mount prefix), read
+            # by pagination links; ``Request.reset`` clears it.
+            setattr(request, _ROOT_PATH_ATTR, public_root)
         task = asyncio.current_task()
         if task is not None:
             self._in_flight.add(task)
@@ -2687,17 +2771,21 @@ def _wrap_interceptor(instance: Any, ctx: ExecutionContext, next_handler: CallHa
     return CallHandler(fn)
 
 
-def _coerce_to_response(value: Any, *, encoder: JSONEncoder | None = None) -> Response:
+def _coerce_to_response(
+    value: Any, *, encoder: JSONEncoder | None = None, pagination: ResolvedPagination | None = None
+) -> Response:
     """Convert a handler return value into a :class:`Response`.
 
     ``encoder`` lets the dispatcher pipe its per-app encoder through
     every recursive call so JSON emission uses the configured
     backend; when omitted, :meth:`Response.json` falls back to the
-    process-wide default.
+    process-wide default. ``pagination`` is the app's pagination config,
+    used for pages built without a paging parameter.
 
     Accepted shapes (in priority order):
 
-    1. An existing :class:`Response` is passed through.
+    1. An existing :class:`Response` is passed through; a ``Page`` /
+       ``CursorPage`` renders its envelope and ``Link`` headers.
     2. A ``(body, status)`` tuple, e.g. ``return user, 201``.
     3. A ``(body, status, headers)`` tuple.
     4. ``None`` → 204 No Content.
@@ -2720,7 +2808,7 @@ def _coerce_to_response(value: Any, *, encoder: JSONEncoder | None = None) -> Re
         status = value[1]
         headers = value[2] if len(value) == 3 else None
         if isinstance(status, int):
-            resp = _coerce_to_response(body_val, encoder=encoder).with_status(status)
+            resp = _coerce_to_response(body_val, encoder=encoder, pagination=pagination).with_status(status)
             if headers:
                 resp = resp.with_headers(headers)
             return resp
@@ -2729,6 +2817,10 @@ def _coerce_to_response(value: Any, *, encoder: JSONEncoder | None = None) -> Re
         if encoder is not None and isinstance(value, EventStream):
             value._reframe(encoder)
         return value
+    # Private hook until F01's response-conversion protocol lands: pages
+    # render their envelope plus ``Link`` / ``X-Total-Count`` headers.
+    if isinstance(value, _PageResponse):
+        return value._lauren_response(encoder, pagination)
     if value is None:
         return Response.no_content()
     if isinstance(value, (bytes, bytearray)):
@@ -3133,6 +3225,7 @@ class LaurenFactory:
         strict_request_scope: bool = False,
         response_validation: str = "off",
         json_fallback: str = "warn",
+        pagination: PaginationConfig | None = None,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -3204,6 +3297,12 @@ class LaurenFactory:
         an encoder does with an object it has no rule for: ``"dict"`` sends its
         public attributes, ``"warn"`` (the default) does too and logs once per
         type, ``"error"`` fails the response with a 500.
+
+        ``pagination`` (a :class:`~lauren.pagination.PaginationConfig`) sets the
+        app-wide paging defaults, maxima, parameter names, page envelope and
+        cursor secret; ``Annotated[OffsetPagination, PaginationConfig(...)]``
+        overrides per parameter. A route using ``CursorPagination`` without a
+        cursor secret fails here (``reason="pagination_secret_missing"``).
         """
         _log: Logger = logger or NullLogger()
         if response_validation not in RESPONSE_VALIDATION_MODES:
@@ -3252,6 +3351,7 @@ class LaurenFactory:
                 f"validation= expects a ValidationPolicy, got {type(validation).__name__}",
                 detail={"reason": "invalid_validation_policy", "got": type(validation).__name__},
             )
+        pagination_config = _resolve_pagination(pagination)
         validation_runtime = ValidationRuntime(
             TypeCompiler(policy),
             include_input=policy.include_input
@@ -3596,6 +3696,7 @@ class LaurenFactory:
                         owning_module=ctrl_owning_module,
                         validation=validation_runtime,
                         route=f"{rmeta.method} {entry.path_template}",
+                        pagination=pagination_config,
                     )
                     # Resolve the handler's return annotation once at
                     # startup so the request path stays reflection-free.
@@ -3625,7 +3726,7 @@ class LaurenFactory:
                         response_table,
                         mode=route_mode,
                         compiler=validation_runtime.compiler,
-                        coerce=_coerce_to_response,
+                        coerce=functools.partial(_coerce_to_response, pagination=pagination_config),
                         controller_cls=ctrl_cls,
                         fn=fn,
                         route=route_label,
@@ -3900,6 +4001,7 @@ class LaurenFactory:
             health_runtime._bind(app)
         app._config_pending = config_pending
         app._commands = commands
+        app._pagination = pagination_config
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via
         # ``lauren.serialization.set_active_encoder``). Pinning the
