@@ -46,9 +46,10 @@ cache, and the process-wide default encoder otherwise.
 
 Cache the route's responses server-side for ``ttl`` seconds.
 
-The key covers the method (``HEAD`` shares ``GET``), the route template,
-the path parameters, the query string (order-insensitive), the request
-headers named in ``vary`` and the result of ``key(ctx)``. ``key`` must
+The key covers the method (``HEAD`` reads, never writes, the ``GET``
+entry), the route template, the path parameters, the query string
+(order-insensitive), the request headers named in ``vary`` and the
+result of ``key(ctx)``. ``key`` must
 be given for per-user data; returning ``None`` from it bypasses the
 cache for that request. ``tags`` (names, or a callable of the context)
 let ``Cache.invalidate_tags`` evict entries.

@@ -117,6 +117,15 @@ async def test_corrupt_entries_are_misses() -> None:
     assert await cache.get("j") is None
 
 
+async def test_entries_the_codec_cannot_decode_are_misses() -> None:
+    from lauren._cache._entry import encode_entry
+
+    cache, store, _ = make_cache()
+    await store.set("val:k", encode_entry(b"{not json", written_at=0.0, gens={}))
+    assert await cache.get("k") is None
+    assert await cache.get_or_set("k", lambda: "recomputed") == "recomputed"
+
+
 async def test_codec_uses_the_given_json_encoder() -> None:
     codec = JsonCacheCodec(StdlibJSONEncoder())
     assert codec.encoder is not None

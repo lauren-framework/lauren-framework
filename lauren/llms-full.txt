@@ -3275,7 +3275,7 @@ a framework interceptor that is the route's **innermost** interceptor — after
 guards (authorization always runs before a lookup) and inside user
 interceptors (they observe hits). Routes without a policy pay nothing.
 
-- **Key:** method (`HEAD` shares `GET`) + route template + path params + query
+- **Key:** method (`HEAD` reads the `GET` entry, never writes it) + route template + path params + query
   (order-insensitive across names, repeated values keep their order) + the
   request headers named in `vary` + `key(ctx)`, hashed into
   `resp:<route template>:<sha256>`. `key=` is **mandatory for per-user data**;

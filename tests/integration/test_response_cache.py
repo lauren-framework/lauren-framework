@@ -285,6 +285,14 @@ def test_head_shares_the_get_entry(client: TestClient) -> None:
     assert calls(client, "both") == 1
 
 
+def test_a_head_request_never_populates_the_get_entry(client: TestClient) -> None:
+    client.head("/c/both")
+    client.get("/c/both")
+    assert calls(client, "both") == 2
+    client.get("/c/both")
+    assert calls(client, "both") == 2
+
+
 def test_client_no_cache_forces_a_refresh_when_allowed(client: TestClient) -> None:
     client.get("/c/fresh")
     assert client.get("/c/fresh", headers={"cache-control": "no-cache"}).json() == {"n": 2}

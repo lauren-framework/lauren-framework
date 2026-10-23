@@ -291,11 +291,11 @@ the route's **innermost** interceptor. Guards therefore run before every lookup
 (an unauthorised request never sees a cached response) and your own
 interceptors still observe hits. Routes without the decorator pay nothing.
 
-**The key** is the method (`HEAD` shares `GET`), the route template, the path
-parameters, the query string (parameter order does not matter), the request
-headers named in `vary`, and whatever `key(ctx)` returns. Use `key=` for
-anything user-specific; returning `None` from it skips the cache for that
-request.
+**The key** is the method, the route template, the path parameters, the query
+string (parameter order does not matter), the request headers named in `vary`,
+and whatever `key(ctx)` returns. A `HEAD` request reads the `GET` entry but
+never writes it (its response may have no body). Use `key=` for anything
+user-specific; returning `None` from it skips the cache for that request.
 
 **A response is stored only when every rule holds** — anything else is a normal
 miss, never an error:

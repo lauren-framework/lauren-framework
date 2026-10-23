@@ -164,6 +164,11 @@ class ResponseCacheInterceptor:
             entry = await self._cache.read_entry(key)
             if entry is not None:
                 return self._replay(entry, policy)
+        if request.method == "HEAD":
+            # A HEAD response may carry no body: HEAD reads the GET entry but
+            # never writes it.
+            response = await call_handler.handle()
+            return response.with_header("x-cache", "MISS") if policy.debug_header else response
 
         loop = asyncio.get_running_loop()
         flight = (loop, key)

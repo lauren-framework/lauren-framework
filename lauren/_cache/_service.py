@@ -338,10 +338,9 @@ class Cache:
         is_stale = entry.soft_expiry is not None and self._clock() >= entry.soft_expiry
         if is_stale and not allow_stale:
             return _MISS
-        data = self._codec.decode(entry.payload)
         try:
-            value = decode(data)
-        except Exception as exc:  # noqa: BLE001 — stale schema: recompute instead of failing
+            value = decode(self._codec.decode(entry.payload))
+        except Exception as exc:  # noqa: BLE001 — stale schema / codec change: recompute instead of failing
             if not isinstance(exc, TypeMismatch):
                 _log.debug("cached value for %r no longer validates (%s); treating it as a miss", key, exc)
             return _MISS
