@@ -23,6 +23,7 @@ docs_contract``) exits 1 when a region is stale instead of rewriting it.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import inspect
 import re
 import sys
@@ -40,11 +41,21 @@ _ROLE_RE = re.compile(r":[a-z]+:`~?(?:[\w.]+\.)?(?P<name>\w+)`")
 
 
 def _import_exceptions():  # noqa: ANN202 - module object
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
-    import lauren.exceptions as exceptions  # noqa: PLC0415
+    """Return ``lauren.exceptions`` without importing the ``lauren`` package.
 
-    return exceptions
+    ``nox -s docs`` runs this script in a virtualenv that has the docs tooling
+    but not lauren's runtime dependencies (``anyio``, ...), and the module only
+    needs the standard library, so load the file directly. An already-imported
+    module (as under pytest) is reused so its classes stay the framework's own.
+    """
+    loaded = sys.modules.get("lauren.exceptions")
+    if loaded is not None:
+        return loaded
+    spec = importlib.util.spec_from_file_location("lauren.exceptions", ROOT / "lauren" / "exceptions.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _catalog() -> list[type]:
