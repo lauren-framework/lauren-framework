@@ -211,6 +211,7 @@ Attributes & methods:
 - `await app.shutdown(drain_timeout=10.0)` — runs `@pre_destruct` hooks, awaits in-flight requests.
 - `await app(scope, receive, send)` — standard ASGI callable (HTTP + lifespan).
 - `app.mount(path, app)` — mount a sub-ASGI application at a path prefix.
+- `app.scope(name="operation", *, values=None)` — open an `OperationScope` for request-scoped providers outside a request (see [Operation scopes](#operation-scopes-appscope)).
 
 ### Mounting Sub-Applications
 
@@ -700,7 +701,7 @@ class LegacyUser(ExtractionMarker):
 ### Scopes and their constraints
 
 - `SINGLETON` can depend on `SINGLETON` only (depending on request-scoped raises `DIScopeViolationError` at compile).
-- `REQUEST` can depend on `SINGLETON` or `REQUEST`.
+- `REQUEST` can depend on `SINGLETON` or `REQUEST`. One instance per HTTP request, WebSocket connection or `app.scope()` block.
 - `TRANSIENT` produces a new instance each resolution; can depend on anything.
 
 ### Protocols and multi-bindings
@@ -791,7 +792,7 @@ async def async_client():               # async generator — awaitable setup/te
 | Scope | Teardown trigger |
 |---|---|
 | `SINGLETON` | `app.shutdown()` / `LifecycleScheduler.run_pre_destruct()` |
-| `REQUEST` | After ASGI response is sent (automatic via `aclose()` protocol) |
+| `REQUEST` | When the HTTP request, WebSocket connection or `app.scope()` block ends (automatic via `aclose()` protocol) |
 | `TRANSIENT` | ❌ Raises `StartupError` — transient instances are not tracked |
 
 Use `try/finally` for guaranteed cleanup even when handlers raise 500 errors.
@@ -807,6 +808,69 @@ class Settings:
     database_url: str = "sqlite:///:memory:"
     jwt_secret: str = "dev"
 ```
+
+
+### Operation scopes (`app.scope()`)
+
+`app.scope(name="operation", *, values=None) -> OperationScope` opens the request scope without a request, for scripts, scheduled work and other non-HTTP code. Use it as an `async with` block while the app is running (after `await app.startup()`); `Lauren()` apps have the same method once compiled (before that it raises `LifecycleViolationError`).
+
+```python run
+import asyncio
+
+from lauren import LaurenFactory, OperationScope, Scope, injectable, module, pre_destruct
+
+
+@injectable(scope=Scope.REQUEST)
+class DbSession:
+    def __init__(self) -> None:
+        self.closed = False
+
+    @pre_destruct
+    async def close(self) -> None:
+        self.closed = True
+
+
+@injectable()
+class Reports:
+    async def nightly(self, db: DbSession) -> str:
+        return "ok"
+
+
+@module(providers=[DbSession, Reports])
+class ReportsModule:
+    pass
+
+
+async def main() -> None:
+    app = LaurenFactory.create(ReportsModule)
+    await app.startup()
+    async with app.scope("nightly-report") as scope:
+        assert isinstance(scope, OperationScope)
+        db = await scope.resolve(DbSession)  # Scope.REQUEST: one instance per scope
+        assert db is await scope.resolve(DbSession)
+        reports = await scope.resolve(Reports)  # singletons: shared as usual
+        assert await reports.nightly(db) == "ok"
+    assert db.closed and scope.teardown_errors == ()  # torn down on exit
+    await app.shutdown()
+
+
+asyncio.run(main())
+```
+
+`OperationScope` members:
+
+- `await scope.resolve(token, *, owning_module=None)` — resolve within the scope. Visibility is global by default; pass a module class to see only what that module can see. Raises `LifecycleViolationError` outside the `async with` block.
+- `scope.name` — the label passed to `app.scope()`; `scope.values` — read-only view of the seeded values; `scope.active` — `True` inside the block.
+- `scope.teardown_errors` — `tuple[DestructError, ...]` collected on exit (empty until then); each has `__cause__` set and `detail` keys `class`, `stage` (`"pre_destruct"` / `"aclose"`), `origin`, `cause`.
+
+Rules:
+
+- `Scope.REQUEST` instances are cached per scope; singletons come from the container; transients are new on every resolution and are not tracked (never torn down).
+- `values={Type: obj}` seeds framework values: `scope.resolve(Type)` returns `obj`, and a provider constructor parameter of that type receives it. Startup validation only accepts such a parameter for registered providers and for context types the framework declares; give your own types a provider or a default.
+- On exit, every request-scoped instance is torn down newest first: `@pre_destruct`, then `aclose()` (generator providers' teardown). HTTP requests and WebSocket connections use the same finaliser. Teardown errors are logged on the `lauren` logger and collected, never raised; an exception from the block propagates unchanged after teardown.
+- Scopes are single-use (entering twice raises `LifecycleViolationError`), do not nest or inherit, and belong to the app's container, so two apps never share instances.
+- Several coroutines of one operation may share a scope; two of them resolving the same request-scoped token for the first time concurrently may each build an instance, exactly as within one HTTP request.
+- **Outside any request or scope**, resolving a `Scope.REQUEST` provider through the container (`await app.container.resolve(DbSession)`) falls back to transient behaviour: a new instance per call that is never torn down. Resolve request-scoped providers only inside a request or `app.scope()`.
 
 ---
 
@@ -2640,7 +2704,7 @@ class C:
     def __init__(self, db: DbSession): ...
 ```
 
-Lauren's runtime awaits `aclose()` on every request-scoped instance after each request, so DB sessions close deterministically.
+Lauren's runtime awaits `aclose()` on every request-scoped instance after each request, so DB sessions close deterministically. Outside a request (a script, a background job), open `async with app.scope() as scope:` and `await scope.resolve(DbSession)` to get the same per-scope instance and teardown.
 
 ### Pattern: extract the user at the handler level
 

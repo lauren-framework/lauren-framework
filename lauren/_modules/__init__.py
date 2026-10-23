@@ -171,6 +171,11 @@ class ModuleGraph:
         self.modules: dict[type, CompiledModule] = {}
         self.root: type | None = None
         self.all_providers: set[Any] = set()
+        #: The same tokens in declaration order (imported modules first),
+        #: so provider registration — and everything ordered by it:
+        #: multi-binding lists, lifecycle ties, startup discovery — does
+        #: not depend on set iteration order.
+        self._provider_order: dict[Any, None] = {}
         self.all_controllers: list[type] = []
         #: provider token -> declaring module class. Populated during compile.
         self._provider_owner: dict[Any, type] = {}
@@ -255,6 +260,7 @@ class ModuleGraph:
             for p in m.meta.providers:
                 token = normalise_provider_token(p)
                 self.all_providers.add(token)
+                self._provider_order.setdefault(token, None)
                 if isinstance(p, CustomProvider):
                     self._custom_providers.setdefault(token, []).append(p)
                 # The first module that declares a provider owns it.
@@ -284,7 +290,8 @@ class ModuleGraph:
     # ------------------------------------------------------------------
 
     def iter_providers(self) -> Iterable[Any]:
-        return iter(self.all_providers)
+        """Provider tokens in declaration order, imported modules first."""
+        return iter(self._provider_order)
 
     def iter_controllers(self) -> Iterable[type]:
         return iter(self.all_controllers)

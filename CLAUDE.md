@@ -88,7 +88,8 @@ lauren/                      — framework package
 ├── _app.py                  — high-level orchestration (Lauren class)
 ├── _arena/                  — per-request allocation arena (private)
 ├── _asgi/                   — ASGI adapter, OpenAPI, docs
-├── _di/                     — dependency injection container + custom providers
+├── _di/                     — dependency injection container + custom providers; _scope.py = shared scope finaliser
+├── _discovery.py            — startup discovery pass over provider methods/classes (Phase 6a, private)
 ├── _discriminated.py        — Discriminated[A|B,"key"] runtime (detection, validation, OpenAPI)
 ├── _encoders/               — optional encoder backends (pydantic)
 ├── _lifecycle/              — post_construct / pre_destruct machinery
@@ -111,6 +112,7 @@ lauren/                      — framework package
 ├── logging.py               — built-in NestJS-style logger
 ├── serialization.py         — JSON encoders (stdlib, orjson, msgspec, pydantic)
 ├── background.py            — BackgroundTasks, TaskHandle (fire-and-forget after response)
+├── context.py               — OperationScope (request scope outside HTTP, via app.scope())
 ├── signals.py               — POSIX signal integration + on_shutdown hooks
 ├── streaming.py             — StreamingResponse[T], Stream, StreamReader
 ├── sse.py                   — EventStream, ServerSentEvent, last_event_id
@@ -174,7 +176,10 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
    scheduled for removal:* the pipe / extractor instance caches in
    `extractors.py`, the validation-adapter cache in `streaming.py`, and
    `_add_ws_route` temporarily widening `Router.HTTP_METHODS`. Do not add
-   more.
+   more. The import-time declaration registries (`lauren._discovery`
+   markers, `lauren._di._scope.register_framework_value`) are not
+   exceptions: they record which framework decorators and context types
+   exist, append-only, and never hold per-app data.
 
 6. **Async-first, but not async-only.** Handlers may be sync (`def`) or
    async (`async def`); the dispatch engine adapts.  Sync handlers are
@@ -228,6 +233,7 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Inject a typed value into a handler parameter | Custom `Extractor` (`extractors.py`) |
 | Share state across a single request | `Scope.REQUEST` injectable |
 | Share state for the app lifetime | `Scope.SINGLETON` injectable |
+| Use request-scoped providers outside a request (script, job, worker) | `async with app.scope("name") as scope:` + `await scope.resolve(T)` |
 | Persist state across requests for one client | Sessions (`sessions=SessionConfig(...)`; inject `session: Session`) |
 | Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
 | Copy Lauren metadata (guards, interceptors, …) to another class/fn | `@propagate_metadata(source)` |
@@ -282,6 +288,33 @@ See `docs/concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md` for d
   target's **own** `__dict__` so the strict-inheritance rule holds). A new
   decorator that stores a single value must merge with any value already on
   the target rather than clobbering it.
+
+**Decorators the framework must find on providers at startup** (a scheduled
+job method, a health check, an event handler, a command, a hosted-service
+class) hook into the shared discovery pass in `lauren/_discovery.py` — never
+add another MRO walk:
+
+1. At import of the feature's public module, call
+   `register_marker(MarkerSpec("__lauren_<feature>__", ...))`:
+   `kind="class"` for class markers, `framework_types=(MyContext,)` for
+   parameters the feature supplies, `extra_params="collect"` when leftover
+   parameters are the feature's own (CLI arguments). If constructors may
+   receive the context too, also call
+   `lauren._di._scope.register_framework_value(MyContext)`.
+2. `LaurenFactory.create` Phase 6a (after the final DI compile, before the
+   lifecycle order) builds `app._discovery`, an immutable `DiscoveryIndex`.
+   Method markers follow the route rule (first MRO definition wins, so an
+   undecorated override drops the marker); class markers are own-`__dict__`
+   only (`MetadataInheritanceError` otherwise); order is provider
+   registration order, then MRO; function / value / factory / alias
+   providers are skipped, `use_class` scans the implementation class.
+3. The consumer reads `app._discovery.methods[name]` /
+   `.classes[name]` and runs an entry with `entry.invoke(instance, scope,
+   values=...)`: the `CallPlan` was compiled at startup (annotations via
+   `resolve_type_hints`, DI parameters validated against the provider's
+   module, `UnresolvableParameterError` naming method and parameter), so
+   nothing reflects at run time. Open the scope with `app.scope(...)` when
+   `entry.plan.needs_scope`.
 
 ## 7. WebSocket and SSE Conventions
 
@@ -414,6 +447,14 @@ deterministic).
   returns, before tasks run. Capture plain values (IDs, strings) or
   `Scope.SINGLETON` instances instead. The same applies to a `Session`:
   capture `session.as_dict()` or specific values, never the live object.
+- ❌ Resolving a `Scope.REQUEST` provider outside a request, a WebSocket
+  connection or `app.scope()` (e.g. `await app.container.resolve(DbSession)`
+  in a script or job). It silently falls back to transient: a new instance per
+  call that is never torn down (no `@pre_destruct`, no generator teardown).
+  Use `async with app.scope("job") as scope: await scope.resolve(DbSession)`.
+- ❌ Writing another request-scope teardown loop. HTTP, WebSocket and
+  `OperationScope` all call `lauren._di._scope.finalize_scope`, which finds
+  providers through the container's precomputed `instance_index()`.
 - ❌ Injecting `session: Session` (or reading `request.state.session`)
   without `sessions=SessionConfig(...)` on the factory — raises
   `SessionConfigError` at startup, not at runtime.
@@ -537,6 +578,11 @@ deterministic).
 - `lauren/_di/__init__.py` — provider graph & cycle detection.
 - `lauren/_di/custom.py` — `use_value` / `use_class` / `use_factory`
   / `use_existing` recipes, `Token`, `Inject`.
+- `lauren/_di/_scope.py` — `finalize_scope` (the one request-scope teardown)
+  and `register_framework_value`.
+- `lauren/context.py` — `OperationScope`; `LaurenApp.scope()` builds one.
+- `lauren/_discovery.py` — Phase 6a discovery: `register_marker`,
+  `MarkerSpec`, `DiscoveryIndex`, `DiscoveredMethod`, `CallPlan`.
 - `lauren/_ws_runtime.py` — `WsConnectionContext`, `WsUpgradeRequest`, `CompiledGateway`, `handle_websocket`.
 - `lauren/websockets.py` — gateway runtime + `BroadcastGroup`.
 - `lauren/reflect/` — full metadata introspection API: `reflect_routes`, `reflect_controller`, `get_all_routes`, `get_controller_metadata`, `propagate_metadata` targets this module's readers.

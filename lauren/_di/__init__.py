@@ -71,6 +71,7 @@ registry; this preserves backward compatibility and keeps test setup concise.
 from __future__ import annotations
 
 import inspect
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -272,6 +273,13 @@ class DIContainer:
         #: callers that specify a module not present here fall back to global
         #: resolution (used by unit tests that bypass ModuleGraph).
         self._visible: dict[type, frozenset[type]] = {}
+        #: Every provider in registration order, keyed by ``id(provider)``.
+        #: Unlike ``_providers`` (keyed by token), multi-bound siblings that
+        #: share a token all appear here.
+        self._registered: dict[int, Provider] = {}
+        #: Instance-cache key -> provider, for scope teardown. Built by
+        #: :meth:`compile` and rebuilt lazily after a late registration.
+        self._instance_index: dict[Any, Provider] | None = None
 
     # -- Registration ------------------------------------------------------
 
@@ -371,6 +379,8 @@ class DIContainer:
 
     def _bind_token(self, token: Any, provider: Provider) -> None:
         self._token_bindings.setdefault(token, []).append(provider)
+        self._registered.setdefault(id(provider), provider)
+        self._instance_index = None
 
     # ------------------------------------------------------------------
     # Custom-provider registration
@@ -799,10 +809,12 @@ class DIContainer:
             return [chosen]
 
         # Framework-provided types that are resolved by the runtime rather
-        # than by DI (Request, etc.). These are skipped during dep resolution.
+        # than by DI (Request, plus the context types features seed into
+        # operation scopes). These are skipped during dep resolution.
         from ..types import Request as _Request
+        from ._scope import framework_value_types
 
-        framework_tokens = {_Request}
+        framework_tokens = {_Request, *framework_value_types()}
 
         def visit(provider: Provider) -> None:
             tok = provider.cls
@@ -888,6 +900,9 @@ class DIContainer:
                     },
                 )
 
+        # Precompute the teardown index once so scope finalisation never
+        # rebuilds a provider map per request.
+        self.instance_index()
         self._compiled = True
 
     # -- Resolution --------------------------------------------------------
@@ -933,6 +948,33 @@ class DIContainer:
 
     def all_providers(self) -> list[Provider]:
         return list(self._providers.values())
+
+    def registered_providers(self) -> tuple[Provider, ...]:
+        """Return every provider in registration order.
+
+        Includes each multi-bound sibling, which :meth:`all_providers` (keyed
+        by token) collapses to the last one registered.
+        """
+        return tuple(self._registered.values())
+
+    def instance_index(self) -> Mapping[Any, Provider]:
+        """Map each instance-cache key to the provider that produced it.
+
+        A request-scoped instance is cached under ``provider.cls`` — or under
+        ``id(provider)`` for multi-bound providers, which share their token.
+        The scope finaliser uses this map to find an instance's
+        ``@pre_destruct`` hook. It is built by :meth:`compile` and rebuilt on
+        first use after a late registration.
+        """
+        index = self._instance_index
+        if index is None:
+            index = {}
+            for provider in self._registered.values():
+                if provider.provider_kind == "existing":
+                    continue  # aliases redirect; they never own a cached instance
+                index.setdefault(id(provider) if provider.multi else provider.cls, provider)
+            self._instance_index = index
+        return index
 
     async def resolve(
         self,

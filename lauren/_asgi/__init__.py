@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Iterable
 
@@ -15,7 +16,9 @@ from .._typing import resolve_type_hints
 
 from .._arena import RequestArena
 from .._di import INJECTABLE_META, DIContainer, InjectableMeta
+from .._di._scope import finalize_scope
 from .._di.custom import CustomProvider
+from .._discovery import DiscoveryIndex, build_discovery_index, registered_markers
 from ..serialization import (
     JSONEncoder,
     StdlibJSONEncoder,
@@ -31,6 +34,7 @@ from ..signals import (
     get_default_bus,
 )
 from ..background import BackgroundTasks as _BackgroundTasks, _BG_TASKS_ATTR
+from ..context import OperationScope
 from .._lifecycle import LifecycleScheduler
 from .._modules import ModuleGraph
 from .._routing import RouteEntry, Router
@@ -847,6 +851,8 @@ class LaurenApp:
         # Mounted sub-applications, ordered by descending prefix length so the
         # most-specific prefix wins when multiple prefixes could match.
         self._mounts: list[tuple[str, Any]] = []
+        # Provider-discovery index (Phase 6a of LaurenFactory.create).
+        self._discovery: DiscoveryIndex = DiscoveryIndex.empty()
 
     # -- Introspection -----------------------------------------------------
 
@@ -973,6 +979,24 @@ class LaurenApp:
     def mounts(self) -> list[tuple[str, Any]]:
         """Read-only snapshot of ``(path_prefix, sub_app)`` pairs."""
         return list(self._mounts)
+
+    # -- Operation scopes --------------------------------------------------
+
+    def scope(self, name: str = "operation", *, values: Mapping[Any, Any] | None = None) -> OperationScope:
+        """Open a DI scope for work outside an HTTP request or WebSocket connection.
+
+        Returns a single-use :class:`~lauren.context.OperationScope` to use as
+        an async context manager. ``Scope.REQUEST`` providers resolved through
+        it get one instance per scope, torn down on exit (``@pre_destruct``,
+        then ``aclose()``, newest first). ``values`` seeds framework values
+        (``{JobContext: ctx}``) that constructors and :meth:`OperationScope.resolve`
+        receive as-is. Use it while the app is running (after
+        :meth:`startup`), so singletons have had their ``@post_construct``::
+
+            async with app.scope("backfill") as scope:
+                db = await scope.resolve(DbSession)
+        """
+        return OperationScope(self._container, name, values=values)
 
     # -- Startup / Shutdown ------------------------------------------------
 
@@ -1326,33 +1350,12 @@ class LaurenApp:
     async def _finalize_request_scope(self, request_cache: dict[type, Any]) -> None:
         """Finalize request-scoped instances: ``@pre_destruct``, then ``aclose()``.
 
-        Runs in reverse insertion order so the most recently constructed
-        instance tears down first — analogous to the LIFO order used by the
-        application-level scheduler at shutdown. The keys are snapshotted
-        while the arena lease still holds the pooled dict.
+        Delegates to the shared finaliser (:func:`lauren._di._scope.finalize_scope`)
+        used by WebSocket connections and :class:`~lauren.context.OperationScope`
+        too: newest instance first, errors logged and never raised. The keys
+        are snapshotted while the arena lease still holds the pooled dict.
         """
-        if not request_cache:
-            return
-        providers_by_cls = {p.cls: p for p in self._container.all_providers()}
-        request_scoped_instances = [(cls, request_cache[cls]) for cls in reversed(list(request_cache.keys()))]
-        for cls, instance in request_scoped_instances:
-            provider = providers_by_cls.get(cls)
-            if provider is not None and provider.pre_destruct is not None:
-                try:
-                    bound = getattr(instance, provider.pre_destruct.__name__)
-                    res = bound()
-                    if inspect.isawaitable(res):
-                        await res
-                except Exception:
-                    logger.exception("Error in @pre_destruct on %s", cls.__name__)
-            aclose = getattr(instance, "aclose", None)
-            if callable(aclose):
-                try:
-                    aclose_result = aclose()
-                    if inspect.isawaitable(aclose_result):
-                        await aclose_result
-                except Exception:
-                    logger.exception("Error closing request-scoped instance %r", instance)
+        await finalize_scope(self._container, request_cache, origin="request")
 
     # -- Request logging --------------------------------------------------
 
@@ -2941,6 +2944,21 @@ class LaurenFactory:
             ws_gateways=len(ws_gateways),
         )
 
+        # ---- Phase 6a: Provider discovery ----
+        # One scan over every registered provider for the markers features
+        # registered (scheduled jobs, health checks, event handlers, …). Runs
+        # after the final DI compile so every provider is in the container,
+        # and before the lifecycle order so consumers can rely on the index.
+        # See ``lauren/_discovery.py`` for the rules.
+        t0 = time.perf_counter()
+        discovery = build_discovery_index(container, registered_markers())
+        _log.verbose(
+            f"Phase 6a provider discovery: {sum(map(len, discovery.methods.values()))} method(s), "
+            f"{sum(map(len, discovery.classes.values()))} class(es) "
+            f"({format_duration_ms(time.perf_counter() - t0)})",
+            context="Discovery",
+        )
+
         # ---- Phase 6: Lifecycle execution ----
         lifecycle = LifecycleScheduler(container)
         lifecycle.compute_order()
@@ -2986,6 +3004,8 @@ class LaurenFactory:
             global_ws_interceptors=effective_global_ws_interceptors or None,
             strict_content_type=effective_strict_content_type,
         )
+        # The immutable Phase 6a index; feature consumers read their markers.
+        app._discovery = discovery
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via
         # ``lauren.serialization.set_active_encoder``). Pinning the

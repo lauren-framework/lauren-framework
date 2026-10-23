@@ -38,6 +38,19 @@ class TestModuleGraph:
         assert ServiceA in g.all_providers
         assert ControllerA in g.all_controllers
 
+    def test_iter_providers_follows_declaration_order_imports_first(self):
+        # Regression: providers were iterated from a set, so registration
+        # order (multi-binding lists, lifecycle ties, discovery) varied run
+        # to run. Forty classes make an accidental match practically impossible.
+        services = [injectable()(type(f"Service{i}", (), {})) for i in range(40)]
+        shared = module(providers=services[:20], exports=services[:20])(type("Shared", (), {}))
+        app = module(imports=[shared], providers=services[20:])(type("App", (), {}))
+
+        g = ModuleGraph()
+        g.compile(app)
+
+        assert list(g.iter_providers()) == services
+
     def test_module_imports_exports(self):
         @module(providers=[ServiceA], exports=[ServiceA])
         class SharedModule: ...

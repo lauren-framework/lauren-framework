@@ -22,12 +22,13 @@
     "get", "post", "put", "patch", "delete", "head",
     "include_module", "add_middleware", "add_guard", "add_interceptor",
     "add_exception_handler", "add_provider", "mount", "on_startup", "on_shutdown",
-    "startup", "shutdown", "openapi", "routes", "container", "state", "debug",
+    "startup", "shutdown", "openapi", "routes", "container", "scope", "state", "debug",
 ]
 "lauren.LaurenApp" = [
     "router", "container", "app_state", "routes", "openapi",
-    "startup", "shutdown", "on_shutdown", "mount", "mounts",
+    "startup", "shutdown", "on_shutdown", "mount", "mounts", "scope",
 ]
+"lauren.OperationScope" = ["name", "values", "active", "teardown_errors", "resolve"]
 "lauren.websockets.BroadcastGroup" = [
     "subscribe", "unsubscribe", "unsubscribe_all", "broadcast", "groups", "members", "member_count",
 ]

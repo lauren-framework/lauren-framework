@@ -273,6 +273,17 @@ Before compilation this reflects buffered routes as a list of
 underlying :class:`LaurenApp`'s :class:`RouteEntry` objects for
 parity with the classic API.
 
+#### `Lauren.scope`
+
+```python
+def scope(self, name: str = 'operation', values: Mapping[Any, Any] | None = None) -> OperationScope
+```
+
+Open an :class:`~lauren.context.OperationScope` on the compiled app.
+
+Same as :meth:`LaurenApp.scope`. Raises
+:class:`LifecycleViolationError` before the app has compiled.
+
 ### `LaurenApp`
 
 ```python
@@ -339,6 +350,25 @@ Example::
 
 The same result can be achieved at build time via
 ``LaurenFactory.create(..., mounts={"/legacy": legacy_asgi_app})``.
+
+#### `LaurenApp.scope`
+
+```python
+def scope(self, name: str = 'operation', values: Mapping[Any, Any] | None = None) -> OperationScope
+```
+
+Open a DI scope for work outside an HTTP request or WebSocket connection.
+
+Returns a single-use :class:`~lauren.context.OperationScope` to use as
+an async context manager. ``Scope.REQUEST`` providers resolved through
+it get one instance per scope, torn down on exit (``@pre_destruct``,
+then ``aclose()``, newest first). ``values`` seeds framework values
+(``{JobContext: ctx}``) that constructors and :meth:`OperationScope.resolve`
+receive as-is. Use it while the app is running (after
+:meth:`startup`), so singletons have had their ``@post_construct``::
+
+    async with app.scope("backfill") as scope:
+        db = await scope.resolve(DbSession)
 
 #### `LaurenApp.startup`
 
