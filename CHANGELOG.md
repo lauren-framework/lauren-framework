@@ -191,6 +191,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - `response_headers=` documents success-response headers.
 - `json_fallback="dict" | "warn" | "error"` on the factory, and `fallback=` on the built-in encoders.
 - `ReflectedResponse`; `ReflectedRoute.status_code`, `.responses_typed` and `.raises`; `LaurenApp.response_validation` and `.json_fallback`.
+- Pagination (`lauren.pagination`, also exported from `lauren`): `OffsetPagination` (`?limit=&offset=`), `PageNumberPagination` (`?page=&per_page=`) and `CursorPagination[C]` (`?cursor=&limit=`) handler parameters, validated by the native engine with hard maxima (a 422 on `loc: ["query", "limit"]`). `Page[T]` / `CursorPage[T]` come with `Page.of`, `Page.from_rows` (the limit + 1 probe), `CursorPage.from_rows` and `paginate_sequence`.
+- `PaginationConfig`, set app-wide (`LaurenFactory.create(pagination=...)`, `Lauren(pagination=...)`) or per parameter (`Annotated[OffsetPagination, PaginationConfig(...)]`). It covers defaults and maxima, parameter names, one envelope per app (`"items"`, JSON:API-style `"data"`, GitHub-style `"bare"`), snake/camel `meta` keys, `X-Total-Count`, `base_url`, `cursor_secret` (with rotation; `Secret` accepted) and `cursor_max_age`.
+- RFC 8288 `Link` headers on page responses, built from the request URL (other query parameters keep their order, and the root path is included).
+- Opaque, versioned, HMAC-signed cursors. A tampered, expired or outdated cursor answers 400 `invalid_cursor`; a `CursorPagination` route without a secret fails startup (`reason="pagination_secret_missing"`).
+- OpenAPI: pagination parameters with minimum/maximum/default, named page components (`UserOutPage`, `UserOutNumberedPage`, `EventOutCursorPage`) and documented `Link` / `X-Total-Count` headers.
+- Under `response_validation="filter"` / `"strict"` a `Page[T]` / `CursorPage[T]` stays a page: only its `items` are projected onto `T`, and a route's `status_code=` applies to the page response.
 
 ### Changed
 
@@ -240,6 +246,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - `json_fallback` defaults to `"warn"`: serializing an object through its `__dict__` logs one warning per type.
 - `response_model=` with the contract off logs one startup warning listing those routes.
 - Status and type contradictions (a 204/304 route with a body type, `status_code=` disagreeing with a typed result, duplicate statuses) fail at startup with `DecoratorUsageError`.
+- The session HMAC signer moved to a shared private module (`lauren/_signing.py`, with per-feature namespaces) used by sessions and cursors. Session cookies are unchanged.
 
 ### Deprecated
 
