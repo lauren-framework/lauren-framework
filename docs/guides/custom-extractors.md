@@ -4,7 +4,7 @@
 
 ## Why custom extractors?
 
-Built-in extractors handle the *transport-level* shape of a request — path segments, query strings, headers, JSON bodies. Custom extractors handle the **domain-level** shape: the *current user*, the *active tenant*, the *parsed pagination cursor*, the *idempotency key*, and so on.
+Built-in extractors handle the *transport-level* shape of a request — path segments, query strings, headers, JSON bodies. Custom extractors handle the **domain-level** shape: the *current user*, the *active tenant*, the *idempotency key*, and so on.
 
 Compare:
 
@@ -364,10 +364,12 @@ Custom extractors thrive when each application has a small `extractors.py` modul
 class CurrentUser(ExtractionMarker): ...
 class TenantId(ExtractionMarker): ...
 class IdempotencyKey(ExtractionMarker): ...
-class Pagination(ExtractionMarker): ...
+class ClientLocale(ExtractionMarker): ...
 ```
 
-Now any new handler that wants the current user, tenant, idempotency key, or pagination cursor just imports and annotates. No copy-pasted authorization logic. No "did I forget to fetch the user this time?" bugs.
+Now any new handler that wants the current user, tenant, idempotency key, or locale just imports and annotates. No copy-pasted authorization logic. No "did I forget to fetch the user this time?" bugs.
+
+Pagination does not need a custom extractor: declare `paging: OffsetPagination` (or `PageNumberPagination` / `CursorPagination[C]`) — see the [Pagination guide](pagination.md).
 
 ## See also
 

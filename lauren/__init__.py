@@ -27,10 +27,24 @@ Core capabilities
 * Middleware (onion model), guards, interceptors and exception handlers,
   attachable globally, to controllers, or to routes.
 * WebSocket gateways, Server-Sent Events, typed streaming and sessions.
+* Typed application events: ``@on_event`` handlers on providers, validated at
+  startup, published through ``EventBus`` / the request-scoped ``EventPublisher``.
+* A public lifecycle state (``app.lifecycle_state``, ``app.begin_draining()``)
+  and Kubernetes-style health probes: ``HealthModule.for_root()`` plus
+  ``@health_check`` methods (``lauren.health``).
+* Standalone contexts (``LaurenFactory.create_context``) and DI-aware
+  ``@command`` methods run with ``python -m lauren exec`` — the app's graph
+  and lifecycle without HTTP.
+* Stores & caching: one async key-value ``Store`` protocol (bounded
+  ``MemoryStore`` in core) behind sessions, the ``Cache`` service,
+  ``@cache_response`` and ``@idempotent``.
 * OpenAPI 3.1 generation from return annotations and ``response_model``
   (any of the supported model kinds).
 * Auto-serialization: return dicts, models, dataclasses, or
   ``(body, status)`` tuples; lauren builds the Response.
+* Response contracts: ``status_code=`` and typed results (``Ok``,
+  ``Created``, ``Accepted``, ``NoContent``) declare a route's statuses;
+  ``response_validation="filter"`` keeps undeclared fields off the wire.
 * Strict inheritance: subclasses are controllers / injectables only when
   re-decorated explicitly.
 
@@ -70,6 +84,9 @@ from .background import BackgroundTasks, TaskHandle
 from ._app import Lauren
 from ._arena import RequestAllocation, RequestArena
 from ._asgi import LaurenApp, LaurenFactory
+from .commands import CommandContext, CommandResult, Opt, command
+from .context import ApplicationContext, OperationScope
+from .events import EmitResult, EventBus, EventContext, EventPublisher, on_event
 from ._di import DIContainer
 from ._di.custom import (
     Inject,
@@ -106,6 +123,7 @@ from .decorators import (
     post_construct,
     pre_destruct,
     put,
+    raises,
     set_metadata,
     use_encoder,
     use_exception_handlers,
@@ -114,10 +132,14 @@ from .decorators import (
     use_middlewares,
     propagate_metadata,
     OpenAPISecurityMeta,
+    PUBLIC_METADATA_KEY,
 )
 from .exceptions import (
+    BadRequestError,
     CircularDependencyError,
+    ConflictError,
     CircularModuleError,
+    ConfigValidationError,
     DecoratorUsageError,
     DestructError,
     DestructTimeoutError,
@@ -128,6 +150,7 @@ from .exceptions import (
     ExtractorError,
     ExtractorFieldError,
     ForbiddenError,
+    GoneError,
     GuardConfigError,
     HTTPError,
     InterceptorConfigError,
@@ -141,14 +164,20 @@ from .exceptions import (
     MissingProviderError,
     MissingStateError,
     ModuleExportViolation,
+    NotAcceptableError,
+    NotFoundError,
     OpenAPISchemaError,
+    PreconditionFailedError,
     ProtocolAmbiguityError,
     RequestBodyTooLarge,
+    RequestTimeoutError,
     RouteNotFoundError,
     RouterConflictError,
+    ServiceUnavailableError,
     SessionConfigError,
     StartupError,
     StateTypeError,
+    TooManyRequestsError,
     UnauthorizedError,
     UnresolvableParameterError,
     UnsupportedMediaTypeError,
@@ -179,10 +208,21 @@ from .extractors import (
     pipe,
 )
 from .signals import (
+    AppLifecycleState,
     BackgroundTaskComplete,
     BackgroundTaskFailed,
     BackgroundTaskStarted,
+    EventHandlerFailed,
+    HealthChanged,
+    HostedServiceFailed,
+    HostedServiceStarted,
+    HostedServiceStopped,
+    JobCompleted,
+    JobFailed,
+    JobSkipped,
+    JobStarted,
     LifecycleEvent,
+    LifecycleStateChanged,
     RequestComplete,
     RequestReceived,
     ShutdownBegin,
@@ -249,13 +289,43 @@ from .reflect import (
     get_all_ws_gateways,
     get_route_metadata,
     # result types
+    ReflectedResponse,
     ReflectedRoute,
     ReflectedWsMessage,
     ReflectedController,
     ReflectedModule,
     ReflectedWsGateway,
+    ReflectedError,
+    # error catalog
+    error_catalog,
 )
 from ._staticfiles import StaticFilesModule
+from .health import HealthModule
+from .responses import Accepted, Created, NoContent, Ok, Status
+from .pagination import (
+    CursorPage,
+    CursorPagination,
+    OffsetPagination,
+    Page,
+    PageNumberPagination,
+    PaginationConfig,
+    paginate_sequence,
+)
+from .config import ConfigModule, Secret
+from .scheduling import (
+    CronExpression,
+    JobContext,
+    ScheduleModule,
+    SchedulerLock,
+    SchedulerRegistry,
+    ServiceContext,
+    cron,
+    hosted_service,
+    interval,
+    run_once,
+)
+from .cache import Cache, CacheModule, cache_response, idempotent
+from .stores import Lock, MemoryStore, Store, StoreRegistry, StoresModule
 from .sessions import (
     InMemoryRevocationStore,
     InMemorySessionStore,
@@ -272,6 +342,7 @@ from .types import (
     CallNext,
     ClientInfo,
     ContentConfig,
+    DebugConfig,
     Discriminated,
     ExecutionContext,
     GuardProtocol,
@@ -285,6 +356,7 @@ from .types import (
     ServerInfo,
     State,
 )
+from .validation import ValidationIssue, ValidationPolicy, validation_config
 
 try:
     from importlib.metadata import PackageNotFoundError, version as _pkg_version
@@ -300,11 +372,30 @@ __all__ = [
     "BackgroundTaskStarted",
     "BackgroundTaskComplete",
     "BackgroundTaskFailed",
+    # application events (the rest lives in lauren.events)
+    "EventBus",
+    "EventPublisher",
+    "on_event",
+    "EventContext",
+    "EmitResult",
+    "EventHandlerFailed",
     # app
     "Lauren",
     "LaurenApp",
     "LaurenFactory",
     "DIContainer",
+    "OperationScope",
+    # lifecycle state and health probes (the rest lives in lauren.health)
+    "AppLifecycleState",
+    "LifecycleStateChanged",
+    "HealthChanged",
+    "HealthModule",
+    "ApplicationContext",
+    # DI-aware commands (the rest lives in lauren.commands)
+    "command",
+    "Opt",
+    "CommandContext",
+    "CommandResult",
     # Custom providers (NestJS-style)
     "Token",
     "Inject",
@@ -349,11 +440,58 @@ __all__ = [
     "exception_handler",
     "use_exception_handlers",
     "set_metadata",
+    "PUBLIC_METADATA_KEY",
     "propagate_metadata",
     "openapi_security",
     "OpenAPISecurityMeta",
+    # responses
+    "Ok",
+    "Created",
+    "Accepted",
+    "NoContent",
+    "Status",
+    "raises",
     # static files
     "StaticFilesModule",
+    # pagination (lauren.pagination)
+    "OffsetPagination",
+    "PageNumberPagination",
+    "CursorPagination",
+    "PaginationConfig",
+    "Page",
+    "CursorPage",
+    "paginate_sequence",
+    # typed configuration (the rest lives in lauren.config)
+    "ConfigModule",
+    "Secret",
+    # hosted services & scheduling (the rest lives in lauren.scheduling)
+    "hosted_service",
+    "interval",
+    "cron",
+    "run_once",
+    "ScheduleModule",
+    "SchedulerRegistry",
+    "JobContext",
+    "ServiceContext",
+    "CronExpression",
+    "SchedulerLock",
+    "HostedServiceStarted",
+    "HostedServiceStopped",
+    "HostedServiceFailed",
+    "JobStarted",
+    "JobCompleted",
+    "JobFailed",
+    "JobSkipped",
+    # stores & caching (the rest lives in lauren.stores / lauren.cache)
+    "Store",
+    "MemoryStore",
+    "StoresModule",
+    "StoreRegistry",
+    "Lock",
+    "Cache",
+    "CacheModule",
+    "cache_response",
+    "idempotent",
     # sessions
     "Session",
     "SessionConfig",
@@ -374,6 +512,10 @@ __all__ = [
     "ClientInfo",
     "ServerInfo",
     "ContentConfig",
+    "DebugConfig",
+    "ValidationPolicy",
+    "ValidationIssue",
+    "validation_config",
     "CallNext",
     "CallHandler",
     "MiddlewareProtocol",
@@ -458,10 +600,14 @@ __all__ = [
     "get_route_metadata",
     # reflect — result types
     "ReflectedRoute",
+    "ReflectedResponse",
     "ReflectedWsMessage",
     "ReflectedController",
     "ReflectedModule",
     "ReflectedWsGateway",
+    "ReflectedError",
+    # reflect — error catalog
+    "error_catalog",
     "BroadcastGroup",
     "WebSocketError",
     "WebSocketDisconnect",
@@ -493,13 +639,23 @@ __all__ = [
     "InterceptorConfigError",
     "ExceptionHandlerConfigError",
     "SessionConfigError",
+    "ConfigValidationError",
     "OpenAPISchemaError",
     "ExtractorError",
     "ExtractorFieldError",
+    "BadRequestError",
+    "NotFoundError",
     "RouteNotFoundError",
     "MethodNotAllowedError",
+    "NotAcceptableError",
+    "ConflictError",
+    "GoneError",
+    "PreconditionFailedError",
     "RequestBodyTooLarge",
     "UnsupportedMediaTypeError",
+    "TooManyRequestsError",
+    "ServiceUnavailableError",
+    "RequestTimeoutError",
     "UnauthorizedError",
     "ForbiddenError",
     "MissingStateError",

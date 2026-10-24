@@ -172,8 +172,9 @@ def coverage(session: nox.Session) -> None:
     live ASGI server, spending its time in I/O rather than in code the
     integration layer does not already reach. The third exclusion is
     ``tests/benchmarks/``: those tests assert on wall-clock timings that do not
-    survive coverage instrumentation overhead. The figure is informational only;
-    nothing in this repo (or in CI) enforces a coverage threshold.
+    survive coverage instrumentation overhead. The session fails below 90 %
+    branch coverage (``--cov-fail-under=90``), locally and in the CI ``coverage``
+    job that runs it.
 
     Arguments passed after ``--`` *replace* that default list instead of
     extending it, so leaving a path unnamed makes pytest fall back to its
@@ -195,6 +196,7 @@ def coverage(session: nox.Session) -> None:
         "pytest",
         "--cov=lauren",
         "--cov-branch",
+        "--cov-fail-under=90",
         *args,
         "-q",
     )

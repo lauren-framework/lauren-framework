@@ -9,11 +9,11 @@
 The class form is preferred when you need dependencies — a logger, a metrics client, a tracing span:
 
 ```python
-from lauren import exception_handler
+from lauren import ConflictError, NotFoundError, exception_handler
 from lauren.logging import Logger
 from lauren.types import Response, Request
 
-# NotFoundError / ConflictError: your own HTTPError subclasses
+# Built-in HTTP errors: the handler also claims their subclasses (UserNotFound, …)
 @exception_handler(NotFoundError, ConflictError)
 class DomainErrors:
     def __init__(self, log: Logger) -> None:
@@ -140,13 +140,15 @@ What handlers **do not** see:
 
 ## Composing with built-in `HTTPError`s
 
-Lauren ships a closed [error catalog](../reference/errors.md). Most domain errors should subclass `HTTPError`:
+Lauren ships a closed [error catalog](../reference/errors.md) that includes the
+everyday HTTP errors (`BadRequestError`, `NotFoundError`, `ConflictError`,
+`GoneError`, `TooManyRequestsError`, …). Domain errors should subclass the
+matching built-in and set a domain `code`:
 
 ```python
-from lauren.exceptions import HTTPError
+from lauren import NotFoundError
 
-class UserNotFound(HTTPError):
-    status_code = 404
+class UserNotFound(NotFoundError):     # status 404 comes from NotFoundError
     code = "user_not_found"
 
 # In a handler:
@@ -158,6 +160,23 @@ Without any custom exception handler, this already serializes as:
 ```json
 {"error": {"code": "user_not_found", "message": "user does not exist", "detail": {"id": 7}}}
 ```
+
+A handler declared for a built-in claims its subclasses too:
+`@exception_handler(NotFoundError)` also catches `UserNotFound` (and a
+manually raised `RouteNotFoundError`).
+
+!!! note "Handler responses own their headers"
+    Errors can carry response headers (`UnauthorizedError(challenge=...)`,
+    `TooManyRequestsError(retry_after=...)`, `headers={...}`). When Lauren
+    renders the error itself, those headers are sent. When an exception handler
+    returns its own `Response`, the handler owns it and the error's headers are
+    **not** merged — copy what you need from `exc.headers`:
+
+    ```python
+    @exception_handler(TooManyRequestsError)
+    def throttled(exc: TooManyRequestsError, request: Request) -> Response:
+        return Response.json({"retry": True}, status=429).with_headers(dict(exc.headers))
+    ```
 
 Custom handlers are most valuable when you want to:
 

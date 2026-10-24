@@ -35,12 +35,14 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
+from collections.abc import Mapping
 from typing import Any, Awaitable, Callable
 
+from .context import OperationScope
 from .decorators import controller, module
-from .exceptions import LifecycleViolationError, StartupError
-from .types import AppState
+from .exceptions import LifecycleViolationError
+from .signals import AppLifecycleState
+from .types import AppState, DebugConfig
 
 
 class Lauren:
@@ -68,7 +70,7 @@ class Lauren:
         redoc_url: str | None = "/redoc",
         servers: list[dict[str, Any]] | None = None,
         security_schemes: dict[str, Any] | None = None,
-        debug: bool = False,
+        debug: bool | DebugConfig = False,
         max_body_size: int = 1_048_576,
         strict_lifecycle: bool = True,
         app_state: AppState | None = None,
@@ -84,11 +86,20 @@ class Lauren:
         content: Any | None = None,
         json_encoder: Any | None = None,
         error_format: str = "default",
+        problem_type_base: str | None = None,
         root_path: str = "",
         mounts: dict[str, Any] | None = None,
         signals: Any | None = None,
         arena: Any | None = None,
         arena_capacity: int | None = None,
+        lazy_startup: bool = True,
+        hosted_services: bool = True,
+        scheduler: bool = True,
+        validation: Any | None = None,
+        strict_request_scope: bool = False,
+        response_validation: str = "off",
+        json_fallback: str = "warn",
+        pagination: Any | None = None,
     ) -> None:
         self._title = title
         self._version = version
@@ -118,18 +129,20 @@ class Lauren:
         self._content = content
         self._json_encoder = json_encoder
         self._error_format = error_format
+        self._problem_type_base = problem_type_base
         self._root_path = root_path
         self._mounts: dict[str, Any] = dict(mounts or {})
         self._signals = signals
         self._arena = arena
         self._arena_capacity = arena_capacity
-        if debug:
-            # Reserved until debug error pages land; say so rather than
-            # silently accepting a flag that changes nothing.
-            message = "Lauren(debug=True) has no effect yet; the flag is reserved for future debug pages"
-            logging.getLogger("lauren").warning(message)
-            if logger is not None:
-                logger.warn(message, context="Lauren")
+        self._lazy_startup = lazy_startup
+        self._hosted_services = hosted_services
+        self._scheduler = scheduler
+        self._validation = validation
+        self._strict_request_scope = strict_request_scope
+        self._response_validation = response_validation
+        self._json_fallback = json_fallback
+        self._pagination = pagination
         self._startup_handlers: list[Callable[[], Any]] = []
         self._shutdown_handlers: list[Callable[[], Any]] = []
 
@@ -156,8 +169,12 @@ class Lauren:
 
     @property
     def debug(self) -> bool:
-        """The ``debug`` constructor flag. Reserved: it has no effect yet."""
-        return self._debug
+        """Whether development error pages are enabled (``debug=True`` or a ``DebugConfig``).
+
+        The value is forwarded to :meth:`LaurenFactory.create` when the app
+        compiles, which validates it and logs a warning when it is on.
+        """
+        return self._debug is not False and self._debug is not None
 
     # ------------------------------------------------------------------
     # Route registration \u2014 FastAPI-style method decorators
@@ -177,6 +194,10 @@ class Lauren:
 
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             self._assert_not_compiled("register a route")
+            # Route options fail here, at decoration time, like ``@get(...)``.
+            from .decorators import _validate_route_options
+
+            _validate_route_options(f"app.{method.lower()}", fn, kwargs)
             self._route_buffer.append(_PendingRoute(method=method, path=path, fn=fn, kwargs=kwargs))
             return fn
 
@@ -331,13 +352,13 @@ class Lauren:
     # ------------------------------------------------------------------
 
     def on_startup(self, fn: Callable[[], Any]) -> Callable[[], Any]:
-        """Register a callable to run when the application compiles.
+        """Register a callable to run when the application starts.
 
-        Accepts both sync and async callables. Hooks run right after
-        ``LaurenFactory.create`` has built the app — the DI graph is
-        compiled, but singletons are not instantiated yet, so
-        ``@post_construct`` hooks (which run in ``LaurenApp.startup()``)
-        have **not** fired — and before any request is dispatched.
+        Accepts both sync and async callables. Hooks run in registration order
+        inside ``LaurenApp.startup()`` (the ASGI lifespan, ``TestClient``, an
+        ``ApplicationContext``) after all ``@post_construct`` hooks have fired
+        and before hosted services start or any request is dispatched. A
+        failing hook aborts startup with a :class:`StartupError`.
         """
         self._assert_not_compiled("register an on_startup handler")
         self._startup_handlers.append(fn)
@@ -369,14 +390,14 @@ class Lauren:
             )
 
     async def startup(self) -> Any:
-        """Compile the application and run its ``on_startup`` hooks.
+        """Compile the application without starting it.
 
         Safe to call multiple times — later calls return the already-compiled
         :class:`LaurenApp`. Starting the app (building singletons, running
-        ``@post_construct``) is the ASGI lifespan's job;
-        :class:`~lauren.testing.TestClient` compiles and starts the app on its
-        first request. Returns the underlying :class:`LaurenApp` so tests can
-        introspect it.
+        ``@post_construct`` and then ``on_startup`` hooks) is the ASGI
+        lifespan's job; :class:`~lauren.testing.TestClient` compiles and
+        starts the app on its first request. Returns the underlying
+        :class:`LaurenApp` so tests can introspect it.
         """
         return await self._compile()
 
@@ -400,17 +421,15 @@ class Lauren:
         await self._compiled.shutdown(drain_timeout=drain_timeout)
 
     async def _compile(self) -> Any:
-        if self._compiled is not None:
-            return self._compiled
-        if self._compile_lock is None:
-            self._compile_lock = asyncio.Lock()
-        async with self._compile_lock:
-            if self._compiled is not None:
-                return self._compiled
-            self._compiled = await self._build_compiled()
+        return self._compile_now()
+
+    def _compile_now(self) -> Any:
+        """Compile synchronously (once); building the app never awaits."""
+        if self._compiled is None:
+            self._compiled = self._build_compiled()
         return self._compiled
 
-    async def _build_compiled(self) -> Any:
+    def _build_compiled(self) -> Any:
         # Import locally to avoid circular imports at package load time.
         from ._asgi import LaurenFactory
 
@@ -453,23 +472,25 @@ class Lauren:
             content=self._content,
             json_encoder=self._json_encoder,
             error_format=self._error_format,
+            problem_type_base=self._problem_type_base,
+            debug=self._debug,
             root_path=self._root_path,
             mounts=dict(self._mounts) or None,
             signals=self._signals,
             arena=self._arena,
             arena_capacity=self._arena_capacity,
+            lazy_startup=self._lazy_startup,
+            hosted_services=self._hosted_services,
+            scheduler=self._scheduler,
+            validation=self._validation,
+            strict_request_scope=self._strict_request_scope,
+            response_validation=self._response_validation,
+            json_fallback=self._json_fallback,
+            pagination=self._pagination,
         )
-        # --- Run user-provided startup hooks now that DI is live ---------
-        for hook in self._startup_handlers:
-            try:
-                res = hook()
-                if inspect.isawaitable(res):
-                    await res
-            except Exception as exc:
-                raise StartupError(
-                    f"on_startup handler {getattr(hook, '__name__', repr(hook))} failed: {exc}",
-                    detail={"handler": getattr(hook, "__name__", repr(hook))},
-                ) from exc
+        # --- Startup hooks run inside LaurenApp.startup(), after every
+        # @post_construct hook (not here, before singletons exist) ---------
+        app._startup_hooks.extend(self._startup_handlers)
         # --- Attach user shutdown hooks to the underlying LaurenApp ------
         for hook in self._shutdown_handlers:
             app.on_shutdown(hook)
@@ -521,6 +542,32 @@ class Lauren:
         if self._compiled is None:
             raise LifecycleViolationError("container is only available after startup()")
         return self._compiled.container
+
+    def scope(self, name: str = "operation", *, values: Mapping[Any, Any] | None = None) -> OperationScope:
+        """Open an :class:`~lauren.context.OperationScope` on the compiled app.
+
+        Same as :meth:`LaurenApp.scope`. Raises
+        :class:`LifecycleViolationError` before the app has compiled.
+        """
+        if self._compiled is None:
+            raise LifecycleViolationError("scope() is only available after startup()")
+        scope: OperationScope = self._compiled.scope(name, values=values)
+        return scope
+
+    @property
+    def lifecycle_state(self) -> AppLifecycleState:
+        """The compiled app's :attr:`LaurenApp.lifecycle_state` (``CREATED`` before it compiles)."""
+        if self._compiled is None:
+            return AppLifecycleState.CREATED
+        state: AppLifecycleState = self._compiled.lifecycle_state
+        return state
+
+    def begin_draining(self, *, reason: str = "") -> bool:
+        """Same as :meth:`LaurenApp.begin_draining`; ``False`` before the app has compiled."""
+        if self._compiled is None:
+            return False
+        changed: bool = self._compiled.begin_draining(reason=reason)
+        return changed
 
 
 # ---------------------------------------------------------------------------
@@ -637,6 +684,7 @@ def _wrap_function_as_method(fn: Callable[..., Any]) -> Callable[..., Any]:
         "__lauren_use_exception_handlers__",
         "__lauren_use_encoder__",
         "__lauren_metadata__",
+        "__lauren_raises__",
     ):
         if hasattr(fn, marker):
             setattr(method, marker, getattr(fn, marker))

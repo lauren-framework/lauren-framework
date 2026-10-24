@@ -55,11 +55,6 @@ class TestDiscriminatedWithExtractorPipeline:
 
 
 class TestDiscriminatedWithStreamingAdapter:
-    def setup_method(self):
-        from lauren.streaming import _ADAPTER_CACHE
-
-        _ADAPTER_CACHE.clear()
-
     def test_build_adapter_accepts_discriminated_type(self):
         from lauren.streaming import _build_adapter
 
@@ -88,7 +83,7 @@ class TestDiscriminatedWithStreamingAdapter:
         pytest.importorskip("pydantic")
         from pydantic import BaseModel, Field
         from typing import Annotated, Union
-        from lauren.streaming import _build_adapter, _ADAPTER_CACHE
+        from lauren.streaming import _build_adapter
 
         class PCard(BaseModel):
             method: Literal["card"] = "card"
@@ -98,7 +93,6 @@ class TestDiscriminatedWithStreamingAdapter:
             method: Literal["cash"] = "cash"
 
         PPayment = Annotated[Union[PCard, PCash], Field(discriminator="method")]
-        _ADAPTER_CACHE.clear()
         adapter = _build_adapter(PPayment)
         assert adapter is not None
         result = adapter.validate_python({"method": "card", "last4": "0000"})

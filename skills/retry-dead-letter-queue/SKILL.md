@@ -131,5 +131,5 @@ class QueueModule:
   durability use Redis Streams, RabbitMQ, or AWS SQS.
 - The backoff multiplier (`0.01`) is small for tests; use `1.0` in production
   for proper exponential backoff (1 s, 2 s, 4 s, …).
-- Integrate `RetryQueue.drain` with `SchedulerService` (see `cron-interval-jobs`
-  skill) to process tasks on a fixed interval.
+- Call `RetryQueue.drain` from an `@interval(seconds=...)` job (see the
+  `cron-interval-jobs` skill) to process tasks on a fixed interval.

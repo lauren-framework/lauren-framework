@@ -5,6 +5,7 @@ from __future__ import annotations
 import enum
 import json as jsonlib
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import (
     Annotated,
     Any,
@@ -277,6 +278,53 @@ class ContentConfig:
     strict_content_type: bool | Literal["warn"] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DebugConfig:
+    """Development error pages, enabled with ``LaurenFactory.create(..., debug=...)``.
+
+    ``debug=True`` is shorthand for ``debug=DebugConfig()``. When an exception
+    reaches the framework unhandled (a 500), an allowed client gets a
+    read-only report — exception chain, traceback with source context, the
+    matched route and its middleware / guard / interceptor chain, the
+    extraction plan and a redacted request summary. Clients whose ``Accept``
+    prefers ``text/html`` get a self-contained HTML page; others get the
+    normal error envelope plus a top-level ``debug`` member.
+
+    * ``include_4xx`` — also attach ``debug.raised_at`` (where the error was
+      raised, plus a short traceback) to rendered :class:`~lauren.HTTPError`
+      responses of any status.
+    * ``allow_remote`` — serve debug output to every client. By default only
+      loopback clients (``127.0.0.0/8``, ``::1``) get it; behind a reverse
+      proxy on the same host every request looks like loopback, so this is
+      **not** a security boundary.
+    * ``redact_headers`` / ``redact_query_keys`` — header names and query
+      keys whose values are replaced with ``[redacted]``; a name matches when
+      it contains one of the entries (case-insensitive).
+    * ``source_context`` — source lines shown around each frame's line.
+    * ``max_frames`` — innermost frames kept per traceback.
+    * ``include_locals`` — show each frame's local variables (``repr``,
+      truncated; names matching ``redact_query_keys`` are redacted). Off by
+      default because locals routinely hold secrets.
+
+    Never enable debug pages in production: ``create()`` logs a warning
+    whenever they are on.
+    """
+
+    include_4xx: bool = False
+    allow_remote: bool = False
+    redact_headers: tuple[str, ...] = (
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "proxy-authorization",
+        "x-api-key",
+    )
+    redact_query_keys: tuple[str, ...] = ("token", "password", "secret", "api_key")
+    source_context: int = 5
+    max_frames: int = 40
+    include_locals: bool = False
+
+
 class Request:
     """Incoming HTTP request.
 
@@ -304,6 +352,7 @@ class Request:
         receive: Callable[[], Awaitable[dict[str, Any]]] | None = None,
         app_state: AppState | None = None,
         max_body_size: int = 1_048_576,
+        extensions: dict[str, Any] | None = None,
     ) -> None:
         self._method = method.upper()
         self._path = path
@@ -326,6 +375,10 @@ class Request:
         self._route_template: str | None = None
         # Cookies cache
         self._cookies: dict[str, str] | None = None
+        # ASGI ``scope["extensions"]``: stored only when the server sent some,
+        # so the common case adds no attribute (see the ``extensions`` property).
+        if extensions:
+            self._extensions = extensions
 
     # -- Arena support ----------------------------------------------------
 
@@ -341,6 +394,7 @@ class Request:
         receive: Callable[[], Awaitable[dict[str, Any]]],
         app_state: AppState,
         max_body_size: int,
+        extensions: dict[str, Any] | None = None,
     ) -> None:
         """Re-initialise this :class:`Request` in place for reuse.
 
@@ -403,6 +457,8 @@ class Request:
         self._handler_func = None
         self._route_template = None
         self._cookies = None
+        if extensions:
+            self._extensions = extensions
 
     # -- Core properties ---------------------------------------------------
 
@@ -466,6 +522,22 @@ class Request:
     @property
     def app_state(self) -> AppState:
         return self._app_state
+
+    @property
+    def extensions(self) -> Mapping[str, Any]:
+        """The ASGI ``scope["extensions"]`` of this request, read-only.
+
+        Servers advertise optional protocol features here (``"tls"``,
+        ``"http.response.trailers"``, …); in-process drivers such as
+        :class:`lauren.testing.TestClient` use it to correlate a request with
+        the test that sent it. Empty when the server sent no extensions.
+        """
+        # ``reset()`` cleared ``__dict__``, so an absent attribute reliably
+        # means "this request carried no extensions".
+        ext = self.__dict__.get("_extensions")
+        if not ext:
+            return _EMPTY_EXTENSIONS
+        return MappingProxyType(ext)
 
     # -- Body consumption --------------------------------------------------
 
@@ -545,6 +617,9 @@ class Request:
 
     def get_matched_route(self) -> Any | None:
         return self._matched_route
+
+
+_EMPTY_EXTENSIONS: Mapping[str, Any] = MappingProxyType({})
 
 
 async def _empty_receive() -> dict[str, Any]:
@@ -1147,7 +1222,7 @@ class Response:
         return self.with_cookie(key, "", max_age=0, path=path)
 
 
-def _json_default(obj: Any) -> Any:
+def _json_default(obj: Any, fallback: Any = None) -> Any:
     """Fallback JSON encoder covering common rich types.
 
     Lauren's default response builder invokes this via :func:`json.dumps`
@@ -1155,7 +1230,13 @@ def _json_default(obj: Any) -> Any:
     It knows how to handle Pydantic v2 models, standard-library datetimes,
     :class:`enum.Enum`, :class:`uuid.UUID`, :class:`pathlib.PurePath`,
     :class:`decimal.Decimal`, :class:`set` / :class:`frozenset`, and
-    dataclass instances.
+    dataclass instances. Secrets (:class:`lauren.config.Secret`, pydantic
+    ``SecretStr`` / ``SecretBytes``) encode as ``"**********"``.
+
+    Any other object with a ``__dict__`` goes through the ``json_fallback``
+    policy: ``fallback`` (an encoder's pinned policy) or else the policy of the
+    app handling the current request; outside an app its public attributes
+    are dumped (the historical behaviour).
     """
     import enum
     import dataclasses
@@ -1163,6 +1244,8 @@ def _json_default(obj: Any) -> Any:
     import decimal
     import pathlib
     import uuid
+
+    from ._config._secret import REDACTED, is_secret
 
     # Pydantic v2 models
     if hasattr(obj, "model_dump") and callable(getattr(obj, "model_dump")):
@@ -1184,6 +1267,10 @@ def _json_default(obj: Any) -> Any:
         return list(obj)
     if isinstance(obj, bytes):
         return obj.decode("utf-8", errors="replace")
+    # Secrets (lauren.config.Secret, pydantic SecretStr / SecretBytes) never
+    # leak; checked after the common rich types so they pay nothing for it.
+    if is_secret(obj):
+        return REDACTED
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return dataclasses.asdict(obj)
     # msgspec.Struct — detected via __struct_fields__ without importing msgspec.
@@ -1191,9 +1278,11 @@ def _json_default(obj: Any) -> Any:
     if hasattr(obj, "__struct_fields__"):
         return {field: getattr(obj, field) for field in obj.__struct_fields__}
     if hasattr(obj, "__dict__"):
-        # Last-resort: return the instance dict (filtering out private attrs
-        # and non-data attributes).
-        return {k: v for k, v in obj.__dict__.items() if not k.startswith("_") and not callable(v)}
+        # Last resort: the instance's public data attributes — subject to the
+        # json_fallback policy ("dict" / "warn" / "error").
+        from .serialization import _object_fallback
+
+        return _object_fallback(obj, fallback)
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 

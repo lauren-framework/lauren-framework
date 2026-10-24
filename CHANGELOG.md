@@ -7,6 +7,289 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-10-24
+
+### Added
+
+- `OperationScope` and `app.scope(name="operation", *, values=None)` (also on
+  `Lauren`): the request scope without a request, for scripts and background
+  work. `Scope.REQUEST` providers get one instance per scope and are torn down on
+  exit (`@pre_destruct`, then generator teardown, newest first); `values=` seeds
+  framework values; teardown errors are collected on `scope.teardown_errors` and
+  never raised.
+- **Typed configuration** (`lauren.config`): settings classes (frozen dataclasses,
+  pydantic models, `msgspec.Struct`, delegated pydantic-settings `BaseSettings`)
+  registered with `ConfigModule.for_root(...)` (global) or
+  `ConfigModule.for_feature(...)` (module-scoped), loaded from layered sources
+  (`DotenvSource`, `TomlSource`, `YamlSource` via `lauren[yaml]`,
+  `SecretsDirSource`, `EnvSource`, async `AsyncSource`) and validated inside
+  `LaurenFactory.create` (Phase 2b). The environment always wins over files, and
+  `os.environ` is never written.
+- `ConfigValidationError` (`StartupError`, `code="config_validation"`): one error
+  that lists every missing or invalid key across all settings classes, with the key,
+  source and searched sources in `detail["errors"]`.
+- `Secret[T]`: redacted in `repr`/`str`, logs, JSON encoding (also pydantic
+  `SecretStr`/`SecretBytes`) and error messages; usable as a pydantic field.
+- Profiles: `for_root(profile=...)` / `LAUREN_PROFILE`, validated against
+  `profiles=`, `{profile}` substitution in source paths, injectable `Profile`.
+- `load_settings(...)` / `aload_settings(...)` for values needed before the
+  factory runs; `Env("NAME", ...)` field aliases; `overrides=` and `environ=` for
+  tests. New optional extra `lauren[yaml]`.
+- **Built-in HTTP errors:** `BadRequestError` (400), `NotFoundError` (404),
+  `NotAcceptableError` (406), `ConflictError` (409), `GoneError` (410),
+  `PreconditionFailedError` (412), `TooManyRequestsError` (429),
+  `ServiceUnavailableError` (503) and `RequestTimeoutError` (504, code
+  `request_timeout`). `RouteNotFoundError` now subclasses `NotFoundError`.
+- Errors carry response headers: `headers=` on every error,
+  `UnauthorizedError(challenge=...)` (`WWW-Authenticate`), `retry_after=` on
+  429/503/504 (seconds, `timedelta` or an aware `datetime`), and
+  `MethodNotAllowedError(allow=...)` sends `Allow` wherever it is raised. Invalid
+  headers are rejected when the error is constructed.
+- `HTTPError(..., status_code=, code=)` instance overrides; the `problem_type` and
+  `problem_title` class attributes are documented.
+- `error_format="rfc9457"`: RFC 9457 problem details with an `about:blank` default
+  type, `instance`, `context` and a validation `errors` array with JSON Pointers,
+  plus `problem_type_base=` on the factory and `Lauren`.
+- Guard `deny_error` (an `HTTPError` subclass or a zero-argument factory),
+  validated at startup; WebSocket denials use it for the error frame and as the
+  1008 close reason. `apply_guards(on_denied=)`.
+- **Debug error pages:** `LaurenFactory.create(debug=True | DebugConfig(...))` and
+  `Lauren(debug=...)` render an HTML page or a JSON `debug` member for unhandled
+  errors — loopback-only by default, redacted, announced at startup, and refused
+  when the configuration profile is production.
+- `lauren.reflect.error_catalog()` and `ReflectedError`.
+- **Application event bus** (`lauren.events`): typed in-process domain events.
+  `@on_event(event_type=None, *, mode="inline" | "concurrent" | "background",
+  priority=0, errors="propagate" | "isolate", enabled=True)` on any provider
+  method; the event class can be inferred from the annotation and base-class
+  handlers receive subclasses. Handlers are discovered and validated in
+  `LaurenFactory.create` (`UnresolvableParameterError` with `detail["reason"]`).
+- `EventBus` (per-app singleton) and the request-scoped `EventPublisher` — inline
+  handlers share the request's or WebSocket connection's DI scope, `background`
+  handlers run after the response — plus `EmitResult`, `EventContext`,
+  `emit(wait=True)`, `EventPublisher.emit_threadsafe()` and
+  `EventPublisher.emit(after=TransactionPhase.COMMIT)` with the `UnitOfWork`
+  protocol.
+- `EventsModule.for_root(max_depth=16, drain_timeout=None)`; shutdown awaits, then
+  cancels, running handler tasks after the request drain; emitting after shutdown
+  raises `LifecycleViolationError`.
+- `EventHandlerFailed` lifecycle signal, and test aids `bus.recording()`,
+  `bus.drain()`, `bus.disabled()` and `bus.handlers_for()`.
+- **Testing toolkit** (`lauren.testing`): `TestClient` keeps one persistent event
+  loop per client and supports `with TestClient(app)` lifespan (startup on enter;
+  drain → `on_shutdown` → `@pre_destruct` → generator teardown on exit), a
+  browser-like `CookieJar`, `data=` / `files=` / streamed `content=`, `base_url` /
+  `host` / `root_path`, `follow_redirects`, per-request `timeout`,
+  `disconnect_after=` client aborts, `client.stream(...)` with
+  `iter_bytes` / `iter_text` / `iter_lines` / `iter_sse`, `websocket_connect(...)`
+  carrying the jar's cookies, `resolve()`, `capture()`, `set_session()`,
+  `new_session()` and `raise_server_exceptions`.
+- `AsyncTestClient` (the same surface on the caller's loop) and
+  `lauren.testing.lifespan(app)` for third-party clients.
+- `Test.create_testing_module(AppModule, ...)`: startup-validated provider, guard,
+  interceptor, middleware, exception-handler and module overrides
+  (`override_provider(X).use_value/use_class/use_factory/use_existing/use_values`,
+  `.allow()` / `.deny()`, `.passthrough()`, `.with_module()`, `.optional()`, and a
+  declarative `overrides=[...]`).
+- Opt-in pytest plugin `lauren.testing.pytest_plugin` (`lauren_app`,
+  `lauren_client`, `lauren_aclient`, `lauren_ws`, `lauren_capture`; ini options
+  `lauren_app` and `lauren_client_scope`).
+- `TestResponse` gains `content`, `cookies`, `is_success` / `is_redirect` /
+  `is_client_error` / `is_server_error`, `raise_for_status()`
+  (`HTTPStatusAssertionError`), `aborted`, `url`, `request`, `elapsed` and
+  `history`; `ResponseHeaders` keeps the list shape and adds case-insensitive
+  `get` / `getall` / `[]` / `keys` / `in`.
+- `Request.extensions` (the read-only ASGI `scope["extensions"]`),
+  `LaurenFactory.create(lazy_startup=True)` / `Lauren(lazy_startup=True)`, and
+  `WsTestClient.connect(server_timeout=)` with `send_event()` / `receive_event()`.
+- **Hosted services:** `@hosted_service()` long-running `run(ctx)` loops started
+  after `@post_construct` in dependency order, supervised (restart `never` /
+  `on-failure` / `always`, `max_restarts` within `restart_window`, exponential
+  backoff with full jitter, `on_exhausted`), optionally awaited at startup
+  (`wait_ready`), and stopped in reverse order after the request drain and before
+  `@pre_destruct` (`stop_timeout`). `ServiceContext` offers `stop_requested`,
+  `sleep()`, `wait_stopped()`, `mark_ready()` and `scope()`.
+- **Scheduled jobs:** `@interval`, `@cron` and `@run_once` on singleton methods,
+  enabled by `ScheduleModule.for_root(timezone=, lock=, enabled=, clock=,
+  job_drain_timeout=)`: overlap `skip` / `queue` / `allow`, `max_instances`,
+  `timeout`, `jitter`, misfire `coalesce` / `skip`, `exclusive`, and a fresh DI
+  scope per run with `JobContext`. Misuse fails in `LaurenFactory.create` or at
+  decoration time.
+- `CronExpression`: five- or six-field cron with names, macros, IANA zones and a
+  defined DST policy; `next_after()` / `iter_from()` preview schedules.
+- `SchedulerRegistry` (`jobs`, `job`, `services`, `trigger`, `pause`, `resume`,
+  `remove`, `add_interval`, `add_cron`), the `SchedulerLock` protocol with
+  `InMemorySchedulerLock`, and `ManualClock` (`advance`, `jump`) for deterministic
+  tests.
+- `LaurenFactory.create(..., hosted_services=, scheduler=)` and the same options
+  on `Lauren(...)`, to build an app without starting background work.
+- Lifecycle events `HostedServiceStarted` / `HostedServiceStopped` /
+  `HostedServiceFailed` and `JobStarted` / `JobCompleted` / `JobFailed` /
+  `JobSkipped`.
+- **Native validation engine:** dataclass, `TypedDict`, `NamedTuple`, enum,
+  literal, numeric, temporal, UUID, `Decimal`, container, union, `Discriminated`
+  and recursive types are validated without pydantic; nested models become real
+  instances and `__post_init__` errors become issues.
+- `lauren.validation`: constraint markers (`Ge`, `Gt`, `Le`, `Lt`, `MultipleOf`,
+  `MinLen`, `MaxLen`, `Pattern`, `Strict`, `Alias`),
+  `@validation_config(extra=, strict=, rename="camel")`, `TypeCompiler` /
+  `CompiledType` (`validate`, `project`, `json_schema`), `validate()` and
+  `ValidationFailed`.
+- `ValidationPolicy` (`LaurenFactory.create(validation=...)` /
+  `Lauren(validation=...)`) with `stdlib_models="legacy" | "warn" | "enforce"`,
+  `json_mode`, `extra`, `include_input` and `max_issues`; `app.type_compiler` and
+  `app.validation_policy`.
+- `ValidationIssue`: every validation 422, WebSocket error frame and stream error
+  carries `detail["issues"]` (`{loc, type, msg, ctx?, input?}`), and every failing
+  parameter of a request is reported in one 422. `ExtractorError.from_issues()` and
+  `WebSocketValidationError.from_issues()`.
+- Marker constraints on bare parameters (`size: Annotated[int, Le(100)] = 10`) and
+  unified `Query[Model]` / `Form[Model]` for dataclass, `TypedDict` and
+  `NamedTuple` models.
+- **Application lifecycle state:** `app.lifecycle_state` (`AppLifecycleState`:
+  `CREATED`, `STARTING`, `READY`, `DRAINING`, `STOPPED`, `FAILED`), the
+  `LifecycleStateChanged` signal and `app.begin_draining(reason=...)`, which fails
+  readiness before the server stops accepting connections (also on `Lauren`).
+- `install_signal_handlers(..., shutdown_delay=)`: SIGTERM/SIGINT call
+  `begin_draining()`, keep serving for the delay, then shut down.
+- **Health probes** (`lauren.health`): `HealthModule.for_root()` serves
+  `/health/live`, `/health/ready`, `/health/startup` and a full report;
+  `@health_check` methods on singletons are discovered and validated at startup
+  and run concurrently with per-check timeouts, single-flight and `cache_ttl`;
+  details policy (`never` / `always` / `when_authorized` plus a guard),
+  `format="ietf"` (`application/health+json`), event-loop-lag, disk and memory
+  indicators, and the `HealthChanged` signal.
+- `PUBLIC_METADATA_KEY`: the well-known metadata key for public routes (set on the
+  probe routes) that global guards can honour.
+- **Standalone application contexts:** `LaurenFactory.create_context(AppModule,
+  ...)`, `LaurenApp.context()` and `ApplicationContext.from_lauren()` run the app's
+  DI graph and lifecycle without HTTP (`async with ... as ctx:` with `ctx.get`,
+  `ctx.resolve`, `ctx.scope`, `ctx.run_command`, `ctx.commands`,
+  `ctx.lifecycle_state` and `ctx.wait_for_shutdown_signal`). Hosted services and the
+  scheduler are off unless enabled.
+- **DI-aware commands** (`lauren.commands`): `@command("db:seed")` on any provider
+  method, `Opt(short=, env=, help=)`, `CommandContext` (`echo`, `error`, `confirm`,
+  `fail`, `log`), `CommandResult` and `CommandInfo`. Commands are discovered and
+  validated in `LaurenFactory.create`, their arguments are derived from the
+  signature and parsed with stdlib `argparse`, and each run gets its own
+  `OperationScope`.
+- `python -m lauren exec | commands | console` with `pkg.module:attr` /
+  `$LAUREN_TARGET` targets (module class, `LaurenApp`, `Lauren`, context or
+  factory), defined exit codes (0/1/2/3, 130/143) and graceful SIGINT/SIGTERM
+  cancellation.
+- `strict_request_scope=True` on `LaurenFactory.create` / `Lauren(...)`: resolving a
+  `Scope.REQUEST` provider outside a request, WebSocket connection or `app.scope()`
+  raises `DIScopeViolationError` (`reason="no_active_scope"`).
+- Stores (`lauren.stores`): an async key-value `Store` protocol (bytes values, TTLs, atomic `incr` / `set_if_absent` / `delete_if_equal`, namespaces), the bounded `MemoryStore`, `PrefixedStore`, `Lock`, `StoresModule.for_root(default=..., named=...)` with lifecycle-managed per-app stores, `StoreToken` and `StoreRegistry`. Any `Store` works as `SessionConfig(store=..., revocation_store=...)` through `StoreSessionStore` / `StoreRevocationStore`.
+- Caching (`lauren.cache`): `CacheModule.for_root()` and `Cache`, with `get_or_set` (single-flight, `lock=`, `stale_ttl=`), typed decoding (`type=`, `cache.typed(T)`) and O(1) tag invalidation.
+- `@cache_response(ttl=..., vary=..., key=..., tags=..., query=..., allow_authenticated=...)`: server-side response caching for GET/HEAD. Guards run first. Responses with `Set-Cookie`, `private` / `no-store` / `no-cache`, streamed bodies or an uncovered `Vary` are never stored. Cached responses carry `Age` / `X-Cache`, and OpenAPI gets `x-cache-ttl`.
+- `@idempotent(...)`: `Idempotency-Key` replay with `Idempotent-Replayed: true`. A request whose key is still in flight answers 409, a payload mismatch 422, and a missing key 400.
+- `lauren.testing.store_contract.run_store_contract` for testing store backends.
+- `StartupError` reasons `cache_module_missing`, `duplicate_store_name`, `invalid_store` and `conflicting_cache_options`.
+- `status_code=` on every route decorator: plain return values are sent with it, `None` sends it with an empty body, and OpenAPI documents it.
+- Typed results `Ok[T]`, `Created[T]` (`location=`), `Accepted[T]`, `NoContent` and the `Annotated[T, Status(code)]` marker. Unions document one response per member, and result bodies use the route's encoder.
+- Response contracts: `response_validation="off" | "filter" | "strict"`, set on the factory, on `Lauren(...)` or per route. `filter` projects the returned value onto the declared type, so extra fields from a subclass, an ORM object or a dict never leave; `strict` also validates. A violation is a 500 `response_validation_error`, logged with structured issues. `StreamingResponse[T]` items are projected too.
+- `@raises(*http_errors, description=)` documents error responses in OpenAPI and in `ReflectedRoute.raises`. With `debug=` on, an undeclared error raised by the handler logs one warning.
+- `response_headers=` documents success-response headers.
+- `json_fallback="dict" | "warn" | "error"` on the factory, and `fallback=` on the built-in encoders.
+- `ReflectedResponse`; `ReflectedRoute.status_code`, `.responses_typed` and `.raises`; `LaurenApp.response_validation` and `.json_fallback`.
+- Pagination (`lauren.pagination`, also exported from `lauren`): `OffsetPagination` (`?limit=&offset=`), `PageNumberPagination` (`?page=&per_page=`) and `CursorPagination[C]` (`?cursor=&limit=`) handler parameters, validated by the native engine with hard maxima (a 422 on `loc: ["query", "limit"]`). `Page[T]` / `CursorPage[T]` come with `Page.of`, `Page.from_rows` (the limit + 1 probe), `CursorPage.from_rows` and `paginate_sequence`.
+- `PaginationConfig`, set app-wide (`LaurenFactory.create(pagination=...)`, `Lauren(pagination=...)`) or per parameter (`Annotated[OffsetPagination, PaginationConfig(...)]`). It covers defaults and maxima, parameter names, one envelope per app (`"items"`, JSON:API-style `"data"`, GitHub-style `"bare"`), snake/camel `meta` keys, `X-Total-Count`, `base_url`, `cursor_secret` (with rotation; `Secret` accepted) and `cursor_max_age`.
+- RFC 8288 `Link` headers on page responses, built from the request URL (other query parameters keep their order, and the root path is included).
+- Opaque, versioned, HMAC-signed cursors. A tampered, expired or outdated cursor answers 400 `invalid_cursor`; a `CursorPagination` route without a secret fails startup (`reason="pagination_secret_missing"`).
+- OpenAPI: pagination parameters with minimum/maximum/default, named page components (`UserOutPage`, `UserOutNumberedPage`, `EventOutCursorPage`) and documented `Link` / `X-Total-Count` headers.
+- Under `response_validation="filter"` / `"strict"` a `Page[T]` / `CursorPage[T]` stays a page: only its `items` are projected onto `T`, and a route's `status_code=` applies to the page response.
+
+### Changed
+
+- HTTP requests, WebSocket connections and operation scopes share one
+  request-scope finaliser built on a provider index computed once at startup,
+  instead of a provider map rebuilt on every request. Teardown error log messages
+  now name the scope kind.
+- `SessionConfig(secret=...)` accepts `Secret[str]` / `Secret[bytes]` (or a list of
+  them).
+- Settings that list an `AsyncSource` finish loading at the start of
+  `LaurenApp.startup()`, before `@post_construct`.
+- `Lauren(debug=True)` is no longer a reserved no-op; it is forwarded to the
+  factory.
+- The warning for an unknown `error_format` now says it will become a
+  `StartupError` in 2.0.
+- A `LaurenApp` that receives an HTTP or WebSocket request without ever seeing
+  ASGI lifespan events (`httpx.ASGITransport`, `uvicorn --lifespan off`, mounted
+  Lauren sub-apps) now runs `startup()` once and logs a warning; opt out with
+  `lazy_startup=False`.
+- `TestClient` runs startup, requests and shutdown on one event loop per client
+  instead of a new loop per request, and `receive()` blocks after the body until
+  the response completes, then reports `http.disconnect`. `lauren.testing` is now a
+  package; import paths are unchanged.
+- `LaurenApp.shutdown()` now stops the scheduler firing, drains requests, awaits
+  (then cancels) scheduled runs, stops hosted services and drains event handlers
+  before the `on_shutdown` callbacks and `@pre_destruct`.
+- WebSocket payloads and `Stream[T]` items are validated by the app's compiled
+  validators with the same issues as HTTP; the process-wide streaming adapter cache
+  is gone.
+- A pipe or custom-extractor `ExtractorError` becomes a `value_error` issue at the
+  parameter's location, and RFC 9457 `errors` arrays are built from the issues.
+- pydantic and msgspec `Query[Model]` / `Form[Model]` list fields read every
+  repeated key; `FieldDescriptor` constraints that cannot apply log a startup
+  warning.
+- `startup()` called while startup is already running, or once shutdown has begun,
+  raises `LifecycleViolationError` (with `detail["lifecycle_state"]`); retrying
+  after a failed startup still works. A hosted service that fails to start marks
+  the app `FAILED`.
+- The application event bus follows `app.lifecycle_state` instead of keeping its
+  own copy.
+- Resolving a `Scope.REQUEST` provider outside any scope logs a one-time warning per
+  provider (it still falls back to an untracked transient; 2.0 makes strict mode
+  the default).
+- `InMemorySessionStore` / `InMemoryRevocationStore` are bounded (`max_entries=100_000`), sweep expired entries, accept `clock=` and no longer hold an `asyncio.Lock` tied to one event loop. The revocation store logs a warning the first time it evicts a live entry.
+- Pre-built singletons (value providers) start before any constructed provider and stop after them.
+- OpenAPI documents declared statuses: `-> None` / `-> NoContent` as a 204 with no content, `-> Response` without a JSON body, `-> T | None` as T plus a 204, and a bare `dict` as `{"type": "object"}`. Return annotations are resolved at startup.
+- `json_fallback` defaults to `"warn"`: serializing an object through its `__dict__` logs one warning per type.
+- `response_model=` with the contract off logs one startup warning listing those routes.
+- Status and type contradictions (a 204/304 route with a body type, `status_code=` disagreeing with a typed result, duplicate statuses) fail at startup with `DecoratorUsageError`.
+- The session HMAC signer moved to a shared private module (`lauren/_signing.py`, with per-feature namespaces) used by sessions and cursors. Session cookies are unchanged.
+
+### Deprecated
+
+- `detail.type` on `internal_error` responses and `detail.guard` on guard denials:
+  from 2.0 they are sent only when debug pages are enabled.
+- The defaults `response_validation="off"` and `json_fallback="warn"` change to `"filter"` and `"error"` in 2.0.
+
+### Fixed
+
+- Module providers are registered in declaration order (imported modules first).
+  The order used to follow set iteration, so `list[T]` multi-binding order and the
+  lifecycle order of independent providers could change between runs.
+- `@pre_destruct` now runs for multi-bound (`multi=True`) request-scoped providers
+  at the end of a request or WebSocket connection.
+- `MethodNotAllowedError` raised from a handler now sends `Allow`.
+- `SocketIOError` has its own `socketio_error` code instead of inheriting
+  `lauren_error`.
+- Docs, skills and the tutorial no longer re-declare `NotFoundError` and friends or
+  reference error classes that do not exist.
+- `WebSocketTestSession` no longer leaks `CancelledError` when the server task
+  misses its wind-down timeout.
+- Every `@post_construct` / `@pre_destruct` hook of a class runs — base class
+  first for `@post_construct`, subclass first for `@pre_destruct`, definition
+  order within a class, including classes substituted by `use_class` test
+  overrides. Additional hooks used to be silently ignored.
+- Oversized `Json[T]`, `Bytes` and form bodies answer 413, not 422.
+- msgspec bodies are decoded once instead of three times, and dataclass query
+  models no longer resolve type hints on every request.
+- A bare `Discriminated[...]` parameter no longer crashes at startup, and
+  `TypedDict` `Required` / `NotRequired` are honoured under
+  `from __future__ import annotations`.
+- Docs: sync `@post_construct` hooks run inline on the event loop, not in a worker
+  thread.
+- `Lauren.on_startup` hooks run inside `LaurenApp.startup()`, after every
+  `@post_construct` hook and before hosted services start, as documented; they
+  used to run at compile time, before any singleton existed.
+  `await lauren_app.startup()` on a `Lauren` app now only compiles it.
+- A store passed as `SessionConfig(store=...)` / `revocation_store=` now gets its `@post_construct` / `@pre_destruct` (or `startup()` / `aclose()`) hooks run. The documented Redis recipe used to answer 500 on the first request.
+- A `NamedTuple` return value is serialized instead of being read as a `(body, status)` pair.
+- `CompiledType.project()` no longer emits a pydantic subclass's extra fields.
+
 ## [1.10.0] - 2026-10-23
 
 ### Security
@@ -792,7 +1075,8 @@ Seven framework source files migrated from direct pydantic calls to
   complete reference) shipped inside the wheel.
 - **`TestClient` / `WsTestClient`** — in-process ASGI test clients.
 
-[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.11.0
 [1.10.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.10.0
 [1.9.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.9.0
 [1.8.1]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.8.1

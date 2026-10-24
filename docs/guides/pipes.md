@@ -107,12 +107,8 @@ class X:
 The second argument is a [`PipeContext`](#pipecontext) carrying the request, parameter name, DI container, and more:
 
 ```python
+from lauren import NotFoundError       # built-in 404
 from lauren.extractors import pipe, PipeContext
-from lauren.exceptions import HTTPError
-
-class NotFoundError(HTTPError):       # define your own domain errors
-    status_code = 404
-    code = "not_found"
 
 @pipe()
 async def lookup_user(value: int, ctx: PipeContext):
@@ -350,11 +346,8 @@ Always pass `request_cache` to avoid creating a second instance of a request-sco
 Raise any `HTTPError` subclass from a pipe to short-circuit the request with the matching status:
 
 ```python
-from lauren.exceptions import ExtractorFieldError, HTTPError
-
-class NotFoundError(HTTPError):       # define your own domain errors
-    status_code = 404
-    code = "not_found"
+from lauren import NotFoundError
+from lauren.exceptions import ExtractorFieldError
 
 @pipe()
 async def lookup(value: int, ctx: PipeContext) -> Article:
@@ -428,7 +421,7 @@ Put reusable pipes in a module-level file so every controller can import them:
 ```python
 # app/pipes.py
 from lauren.extractors import Pipe, pipe, PipeContext
-from app.errors import NotFoundError   # your HTTPError subclass (status_code = 404)
+from lauren import NotFoundError       # or your own subclass of it
 
 @pipe()
 class LookupUser(Pipe):

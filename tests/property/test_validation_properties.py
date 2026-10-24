@@ -7,9 +7,9 @@ hypothesis = pytest.importorskip("hypothesis")
 from hypothesis import HealthCheck, assume, given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
-# Each discriminated example builds fresh classes, so a GC or scheduler pause
-# on a busy machine can push one past Hypothesis' 200 ms deadline without any
-# bug. (The built-in "ci" profile GitHub Actions loads relaxes both checks.)
+# A GC or scheduler pause on a busy machine (discriminated examples also build
+# fresh classes) can push an example past Hypothesis' 200 ms deadline without
+# any bug. (The built-in "ci" profile GitHub Actions loads relaxes both checks.)
 _TOLERANT = settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
 
 
@@ -20,6 +20,7 @@ class SimpleModel:
 
 
 class TestValidateAsProperties:
+    @_TOLERANT
     @given(
         name=st.text(min_size=1, max_size=100),
         count=st.integers(min_value=0, max_value=10_000),
@@ -32,6 +33,7 @@ class TestValidateAsProperties:
         assert result.name == name
         assert result.count == count
 
+    @_TOLERANT
     @given(data=st.fixed_dictionaries({"name": st.text(min_size=1)}))
     def test_missing_required_field_raises(self, data: dict):
         from lauren._validation import validate_as
@@ -41,6 +43,7 @@ class TestValidateAsProperties:
         with pytest.raises(ExtractorError):
             validate_as(SimpleModel, data, field="body")
 
+    @_TOLERANT
     @given(
         payload=st.one_of(
             st.integers(),

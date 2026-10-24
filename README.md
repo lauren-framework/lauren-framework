@@ -121,7 +121,9 @@ core ideas:
   auto-detected from type annotations. Write `id: int`, `q: str`,
   `body: MyModel` without boilerplate unless you need the explicit form.
   `Query[T]` and `Json[T]` support Pydantic models, `msgspec.Struct`,
-  Python `dataclass`, and `TypedDict` types.
+  Python `dataclass`, and `TypedDict` types — stdlib models are validated
+  natively without pydantic (nested models, `Annotated[int, Ge(13)]`
+  constraints), and a 422 lists every failing field as structured `issues`.
 * **Pydantic-free discriminated unions** — `Discriminated[Cat | Dog, "kind"]`
   routes tagged-union JSON bodies to the correct variant class using only
   stdlib. Works with `@dataclass`, `TypedDict`, `msgspec.Struct`, and
@@ -155,6 +157,17 @@ core ideas:
   `Last-Event-ID` resumability for AI token-streaming patterns.
 * **Typed streaming** — `StreamingResponse[T]` auto-negotiates between SSE,
   NDJSON, and JSON Lines based on the client's `Accept` header.
+* **Response contracts** — `status_code=` and typed results (`Ok[T]`,
+  `Created[T]`, `Accepted[T]`, `NoContent`) declare a route's statuses on the
+  wire and in OpenAPI. `response_validation="filter"` projects the returned
+  value onto the annotated type, so returning a `UserInDB` (or an ORM row) from
+  a route annotated `-> UserOut` never leaks `password_hash`; `"strict"` also
+  validates it. `@raises(NotFoundError)` documents error responses.
+* **Pagination** — `paging: OffsetPagination` (or `PageNumberPagination`,
+  `CursorPagination[C]`) and a `Page[T]` / `CursorPage[T]` return value give
+  validated parameters with hard maxima, one envelope per app, RFC 8288 `Link`
+  headers, opaque HMAC-signed cursors with key rotation, and named OpenAPI
+  components.
 * **Custom responses & file delivery** — Return your own `Response` subclasses,
   stream downloads with `await Response.file(...)`, or emit XML with
   `Response.xml(...)` while keeping the dispatch pipeline untouched.
@@ -162,6 +175,23 @@ core ideas:
   response is sent. `TaskHandle` exposes `status`, `done`, `cancel()` (before
   the task starts) and `await result()` (from another coroutine). Signals
   notify on start, complete, and failure.
+* **Application events** — typed domain events between modules: `@on_event`
+  handlers on any provider, discovered and validated at startup; publish with
+  the singleton `EventBus` or the request-scoped `EventPublisher` (inline
+  handlers share the request's DI scope). Inline, concurrent or
+  after-the-response delivery, priorities, `propagate` / `isolate` error
+  policies, shutdown draining, and `recording()` / `drain()` for tests.
+* **Hosted services & scheduling** — `@hosted_service()` long-running loops
+  that start after `@post_construct`, restart with backoff and stop before
+  `@pre_destruct`; `@interval` / `@cron` / `@run_once` jobs on singleton
+  methods with overlap control, jitter, timeouts, misfire handling, a DI scope
+  per run, IANA time zones and a `ManualClock` for tests.
+* **Commands & scripts** — `LaurenFactory.create_context(AppModule)` runs the
+  server's DI graph and lifecycle without HTTP; `ctx.scope()` gives scripts a
+  request scope with deterministic teardown. `@command("db:seed")` turns a
+  provider method into a CLI command — arguments derived from its signature,
+  validated at startup — run with `python -m lauren exec` and tested with
+  `await ctx.run_command(...)`.
 * **Sessions** — first-class signed-cookie sessions via
   `LaurenFactory.create(..., sessions=SessionConfig(...))`. A mutable
   `session: Session` is injected into handlers at zero per-request cost; the
@@ -171,15 +201,46 @@ core ideas:
   Unsafe configuration is rejected at startup. Pair with
   `content=ContentConfig(strict_content_type=True)` so cross-site `text/plain`
   posts to JSON routes are rejected (415).
+* **Stores & caching** — one async key-value `Store` protocol (bounded
+  `MemoryStore` in core; Redis and friends plug in) behind sessions, session
+  revocation, the `Cache` service (`get_or_set` with single-flight, tag
+  invalidation, stale-while-revalidate), `@cache_response` server-side
+  response caching with correct-by-default rules, and `@idempotent`
+  `Idempotency-Key` handling.
+* **Typed configuration** — settings classes (frozen dataclasses, pydantic
+  models, `msgspec.Struct`) loaded by `ConfigModule.for_root(...)` from `.env`,
+  TOML and the environment, validated inside `LaurenFactory.create` — one
+  `ConfigValidationError` lists every missing or invalid key with its source —
+  and injected through DI. `Secret[T]` is redacted in logs, JSON and errors.
+* **Testing toolkit** — `with TestClient(app)` runs startup and the full
+  shutdown on one persistent event loop, keeps a browser-like cookie jar, sends
+  forms / uploads / streamed bodies, reads endless streams event by event and
+  simulates client aborts. `Test.create_testing_module(AppModule)
+  .override_provider(X).use_value(fake).compile()` swaps any provider, guard,
+  middleware or module and is validated by the real factory. `AsyncTestClient`
+  and an opt-in pytest plugin round it out.
 * **Static files** — `StaticFilesModule.for_root("/assets", directory="./public")`
   with ETag caching, `Cache-Control`, path-traversal protection, and dotfiles
   (`.env`, `.git/`) hidden by default (`/.well-known/` still served).
 * **Socket.IO** — Engine.IO v4 / Socket.IO v5 adapter via `@socketio_controller`.
+* **Stable error contract** — A closed error catalog with stable `code`s and
+  the everyday HTTP errors built in (`NotFoundError`, `ConflictError`,
+  `TooManyRequestsError`, `ServiceUnavailableError`, …). Errors carry headers
+  (`UnauthorizedError(challenge=...)`, `retry_after=`), render as Lauren's
+  `{"error": {...}}` envelope or RFC 9457 problem details
+  (`error_format="rfc9457"`), and `debug=True` serves development error pages
+  with the traceback and route chain.
 * **OpenAPI 3.1** — Automatic schema generation from Pydantic models,
   dataclasses, `TypedDict`, and `Discriminated` unions. Swagger UI and ReDoc
   served out of the box.
+* **Health & readiness probes** — `HealthModule.for_root()` serves
+  `/health/live`, `/health/ready`, `/health/startup` and a full report from the
+  public `app.lifecycle_state` and `@health_check` methods on your singletons:
+  per-check timeouts, concurrency, single-flight and caching, details hidden by
+  default, and `app.begin_draining()` to fail readiness before the socket closes.
 * **Lifecycle signals** — `SignalBus` with `StartupBegin`, `StartupComplete`,
-  `ShutdownBegin`, `RequestReceived`, `RequestComplete`, and more.
+  `ShutdownBegin`, `RequestReceived`, `RequestComplete`, `LifecycleStateChanged`,
+  and more.
 * **Standards-based** — Built on [ASGI](https://asgi.readthedocs.io/) and
   [anyio](https://anyio.readthedocs.io/). Pydantic is optional (`pip install
   "lauren[pydantic]"`).
@@ -230,9 +291,9 @@ class UserController:
     async def get_user(self, id: int) -> dict:
         return {"id": id, "found": True}
 
-    @post("/")
-    async def create(self, body: CreateUser):
-        return body.model_dump(), 201
+    @post("/", status_code=201)
+    async def create(self, body: CreateUser) -> dict:
+        return body.model_dump()
 
     @get("/admin")
     @use_guards(AdminGuard)
@@ -398,8 +459,175 @@ app = LaurenFactory.create(
 
 The cookie is HMAC-signed and secure by default (`HttpOnly`, `Secure`,
 `SameSite=Lax`). Swap `InMemorySessionStore` for the stateless
-`SignedCookieSessionStore` or a Redis-backed `SessionStore` in production.
+`SignedCookieSessionStore` or any shared key-value `Store` (adapted
+automatically) in production.
 Unsafe configuration fails inside `LaurenFactory.create`, not at runtime.
+
+## Caching
+
+```python
+from lauren import LaurenFactory, controller, get, injectable, module, post
+from lauren.cache import Cache, CacheModule, cache_response, idempotent
+
+@injectable()
+class Products:
+    def __init__(self, cache: Cache) -> None:
+        self._cache = cache
+
+    async def get(self, pid: int) -> dict:
+        return await self._cache.get_or_set(
+            f"product:{pid}", lambda: load_product(pid), ttl=60, tags=(f"product:{pid}",)
+        )
+
+@controller("/products")
+class ProductController:
+    def __init__(self, products: Products) -> None:
+        self._products = products
+
+    @get("/{pid}")
+    @cache_response(ttl=30, vary=("accept-language",))   # server-side; guards still run first
+    async def show(self, pid: int) -> dict:
+        return await self._products.get(pid)
+
+    @post("/{pid}/orders")
+    @idempotent(ttl=24 * 3600)                           # Idempotency-Key retries run once
+    async def order(self, pid: int) -> dict:
+        return {"ordered": pid}
+
+@module(imports=[CacheModule.for_root()], providers=[Products], controllers=[ProductController])
+class AppModule:
+    pass
+```
+
+Concurrent misses share one computation, `cache.invalidate_tags(...)` evicts in
+O(1) without scanning keys, and a cached response never replays a `Set-Cookie`.
+Every stateful feature runs on one `Store`: `StoresModule.for_root(default=...)`
+plus `SessionConfig(store=...)` share a single backend.
+
+## Configuration
+
+```python
+from dataclasses import dataclass
+
+from lauren import LaurenFactory, injectable, module
+from lauren.config import ConfigModule, Secret
+
+@dataclass(frozen=True)
+class DatabaseSettings:
+    url: str
+    pool_size: int = 10
+
+@dataclass(frozen=True)
+class AppSettings:
+    session_secret: Secret[str]       # redacted in repr, logs and JSON
+    database: DatabaseSettings        # APP_DATABASE__URL, APP_DATABASE__POOL_SIZE
+    debug: bool = False               # APP_DEBUG=yes
+
+@injectable()
+class Mailer:
+    def __init__(self, settings: AppSettings) -> None:
+        self.debug = settings.debug
+
+@module(imports=[ConfigModule.for_root(AppSettings, env_prefix="APP_")], providers=[Mailer])
+class AppModule:
+    pass
+
+app = LaurenFactory.create(AppModule)   # raises one ConfigValidationError listing every bad key
+```
+
+Values come from `.env`, `.env.{profile}` and the environment (the environment
+always wins; `os.environ` is never written). Profiles, TOML / YAML / secret-file
+sources, feature-scoped settings and `load_settings(...)` for factory kwargs:
+see the [Typed Configuration guide](https://lauren-py.dev/guides/configuration/).
+
+## Testing
+
+```python
+from lauren.testing import Test, TestClient
+
+app = Test.create_testing_module(AppModule).override_provider(Mailer).use_value(FakeMailer()).compile()
+
+with TestClient(app) as client:                 # startup() on enter, shutdown() on exit
+    client.post("/account/login")               # Set-Cookie kept in client.cookies
+    assert client.get("/account/visits").json() == {"visits": 1}
+    with client.stream("GET", "/events") as r:  # endless SSE, event by event
+        first = next(r.iter_sse())
+```
+
+One event loop per client keeps startup-created resources (pools, `asyncio`
+primitives, background tasks) alive across requests. See the
+[testing guide](https://lauren-py.dev/guides/testing/).
+
+## Hosted services & scheduling
+
+```python
+from lauren import injectable, module
+from lauren.scheduling import ScheduleModule, ServiceContext, cron, hosted_service, interval
+
+@hosted_service(restart="on-failure")
+class OutboxRelay:
+    async def run(self, ctx: ServiceContext) -> None:
+        while await ctx.sleep(1.0):          # False once shutdown asks it to stop
+            ...                              # relay one batch
+
+@injectable()
+class Maintenance:
+    @interval(seconds=60, jitter=5)
+    async def warm_cache(self) -> None: ...
+
+    @cron("0 3 * * *", tz="Europe/Paris", timeout=300)
+    async def purge_sessions(self) -> None: ...
+
+@module(imports=[ScheduleModule.for_root()], providers=[OutboxRelay, Maintenance])
+class AppModule:
+    pass
+```
+
+Services start after `@post_construct` and stop, in reverse order, before
+`@pre_destruct`; jobs fire once the app is ready. Bad cron expressions, missing
+`ScheduleModule`, non-singleton providers and duplicate names fail at startup.
+See the [Scheduling guide](https://lauren-py.dev/guides/scheduling/).
+
+## Commands
+
+Admin and maintenance tasks are commands, not HTTP endpoints:
+
+```python fragment
+from typing import Annotated
+
+from lauren import injectable
+from lauren.commands import CommandContext, Opt, command
+
+@injectable()
+class SeedCommands:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    @command("db:seed", help="Insert fixture data.")
+    async def seed(
+        self,
+        ctx: CommandContext,
+        *,
+        count: Annotated[int, Opt(short="-n", help="rows per table")] = 50,
+        reset: bool = False,
+    ) -> int:
+        if reset and not ctx.confirm("Truncate every table?"):
+            return 1
+        ctx.echo(f"seeded {await self._db.seed(count)} rows")
+        return 0
+```
+
+```console
+$ python -m lauren exec app.main:AppModule db:seed -n 500 --reset --yes
+seeded 500 rows
+```
+
+The command runs with the app started (`@post_construct` before,
+`@pre_destruct` after) in its own DI scope; the exit code comes from the return
+value. `python -m lauren commands` lists commands, `python -m lauren console`
+opens an async REPL on the app, and `LaurenFactory.create_context(AppModule)`
+does the same for your own scripts. See the
+[Commands & Scripts guide](https://lauren-py.dev/guides/commands-and-scripts/).
 
 ## Performance
 
@@ -444,6 +672,7 @@ full tables, the method and the pinned dependency set are on the
 | `pydantic` / `msgspec` | Model validation and OpenAPI for those model kinds (`lauren[pydantic]`, `lauren[msgspec]`, `lauren[full]`) |
 | `orjson` | Faster JSON via `OrjsonEncoder` — opt in with `json_encoder=OrjsonEncoder()` or `json_encoder=auto_encoder()` |
 | `msgspec` | Alternative fast JSON encoder via `MsgspecEncoder` |
+| `pyyaml` | `YamlSource` for typed configuration (`lauren[yaml]`); TOML, `.env` and the environment need nothing extra |
 | `httpx` | Only if you prefer `httpx.ASGITransport` in tests — `lauren.testing.TestClient` needs nothing extra |
 
 Form bodies and multipart uploads are parsed in-tree; no `python-multipart` needed.
@@ -470,6 +699,20 @@ granian --interface asgi main:app --host 0.0.0.0 --port 8000
 # Hypercorn (HTTP/2 + HTTP/3)
 hypercorn main:app --bind 0.0.0.0:8000
 ```
+
+Import `HealthModule.for_root()` and point the orchestrator's probes at it —
+liveness never checks dependencies, readiness fails before startup completes
+and while draining:
+
+```yaml
+startupProbe:   {httpGet: {path: /health/startup, port: 8000}, periodSeconds: 2, failureThreshold: 30}
+livenessProbe:  {httpGet: {path: /health/live, port: 8000}, periodSeconds: 10}
+readinessProbe: {httpGet: {path: /health/ready, port: 8000}, periodSeconds: 5}
+lifecycle:
+  preStop: {exec: {command: ["sleep", "5"]}}
+```
+
+See the [health checks guide](https://lauren-py.dev/guides/health-checks/) for draining and `@health_check`.
 
 ## Contributing
 

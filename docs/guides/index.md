@@ -19,6 +19,16 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Path params, query params, and JSON bodies auto-detected from type annotations — no `Path[…]`/`Query[…]`/`Json[…]` boilerplate unless you need it.
 
+-   :material-check-decagram: [__Validation__](validation.md)
+
+    ---
+    Native validation of dataclasses, `TypedDict` and `NamedTuple` (no pydantic needed), `Annotated` constraints, the structured `issues` 422 payload, `ValidationPolicy` and `TypeCompiler`.
+
+-   :material-book-open-page-variant: [__Pagination__](pagination.md)
+
+    ---
+    `OffsetPagination` / `PageNumberPagination` / `CursorPagination[C]` parameters, `Page[T]` / `CursorPage[T]` responses, one envelope per app, RFC 8288 `Link` headers and signed, rotatable cursors.
+
 -   :material-magnify-plus: [__Custom Extractors__](custom-extractors.md)
 
     ---
@@ -44,6 +54,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Subclass `Response`, preserve the concrete type through dispatch, and expose domain-specific response builders or streaming bodies.
 
+-   :material-file-check-outline: [__Response Contracts__](response-contracts.md)
+
+    ---
+    `status_code=`, typed results (`Created[T]`, `NoContent`), `response_validation="filter"` so internal fields never leave, `@raises` and `json_fallback`.
+
 -   :material-shield-key: [__Custom Guards__](custom-guards.md)
 
     ---
@@ -64,6 +79,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Catch domain errors at the right scope. Class-form (DI-injected) vs function-form. Global vs per-controller vs per-route.
 
+-   :material-bug-outline: [__Debug Error Pages__](debugging.md)
+
+    ---
+    `debug=True` in development: traceback, route chain and a redacted request summary for unhandled errors — loopback-only, refused in production.
+
 -   :material-lan-connect: [__WebSockets__](websockets.md)
 
     ---
@@ -83,6 +103,16 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
 
     ---
     `SignalBus` for typed pub/sub: `RequestComplete`, `StartupComplete`, background-task signals. MRO dispatch, error isolation, metrics/tracing patterns.
+
+-   :material-heart-pulse: [__Health & Readiness Probes__](health-checks.md)
+
+    ---
+    `HealthModule.for_root()` with `/health/live`, `/ready`, `/startup` and a full report: `@health_check` methods with timeouts, single-flight and caching, the public lifecycle state, `begin_draining()` and Kubernetes manifests.
+
+-   :material-bullhorn: [__Application Events__](events.md)
+
+    ---
+    Typed domain events between modules: `@on_event` handlers discovered and validated at startup, `EventBus` / request-scoped `EventPublisher`, inline / concurrent / background delivery, priorities, error policies, after-commit emission, testing aids.
 
 -   :material-puzzle: [__Socket.IO__](socketio.md)
 
@@ -109,10 +139,30 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Fire-and-forget work after the response is sent. `BackgroundTasks` extractor, `TaskHandle`, sync/async callables, `BackgroundTaskFailed` signals, graceful-shutdown drain participation.
 
+-   :material-clock-outline: [__Scheduling & Hosted Services__](scheduling.md)
+
+    ---
+    `@hosted_service` loops started after `@post_construct` and stopped before `@pre_destruct`, with restarts and backoff; `@interval` / `@cron` / `@run_once` jobs with overlap, jitter, timeouts, misfire handling and a DI scope per run; `SchedulerRegistry`; `ManualClock` for tests.
+
+-   :material-console: [__Commands & Scripts__](commands-and-scripts.md)
+
+    ---
+    The app's DI graph and lifecycle without HTTP: `LaurenFactory.create_context`, operation scopes, `@command` methods run with `python -m lauren exec`, the console, testing with `ctx.run_command`, workers and Kubernetes `CronJob`s.
+
 -   :material-cookie: [__Sessions__](sessions.md)
 
     ---
     Signed-cookie sessions: `sessions=SessionConfig(...)`, `session: Session` injection, pluggable `SessionStore` (in-memory, stateless cookie, Redis), secure-by-default cookies, `regenerate_id()` / `invalidate()`, and startup-validated config.
+
+-   :material-database-clock: [__Stores & Caching__](caching.md)
+
+    ---
+    One async key-value `Store` (bounded `MemoryStore` in core) behind sessions, the `Cache` service (`get_or_set` with single-flight, tags, stale-while-revalidate), `@cache_response` with correct-by-default rules, `@idempotent` idempotency keys and `Lock`.
+
+-   :material-tune-variant: [__Typed Configuration__](configuration.md)
+
+    ---
+    Settings classes validated inside `LaurenFactory.create`: `ConfigModule.for_root` / `for_feature`, layered `.env` / TOML / environment sources, profiles, `Secret[T]` redaction, and one aggregated `ConfigValidationError`.
 
 -   :material-sync: [__Sync vs Async Handlers__](sync-handlers.md)
 

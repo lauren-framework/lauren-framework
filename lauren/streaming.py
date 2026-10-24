@@ -170,6 +170,7 @@ class Stream(ExtractionMarker):
             inner_type=inner,
             format=fmt,
             field_name=extraction.name,
+            plan=getattr(extraction, "compiled", None),
         )
 
 
@@ -181,8 +182,10 @@ class StreamReader(Generic[T]):
     callable and the handler's ``async for`` loop: every inbound message is
     buffered into a line accumulator, complete lines are decoded using the
     negotiated wire format, and each decoded payload is validated against
-    ``T`` (supporting both plain Pydantic models and ``Annotated[Union[...],
-    Field(discriminator=...)]`` tagged unions via :class:`pydantic.TypeAdapter`).
+    ``T`` with the item plan the app compiled at startup (the same validator
+    an HTTP body or a WebSocket frame of that type uses). Failures raise
+    :class:`~lauren.exceptions.ExtractorError` whose ``issues`` are rooted at
+    ``("item", n)``.
     """
 
     __slots__ = (
@@ -193,6 +196,8 @@ class StreamReader(Generic[T]):
         "_buffer",
         "_done",
         "_adapter",
+        "_plan",
+        "_index",
     )
 
     def __init__(
@@ -202,6 +207,7 @@ class StreamReader(Generic[T]):
         inner_type: Any,
         format: str,
         field_name: str,
+        plan: Any = None,
     ) -> None:
         self._request = request
         self._inner_type = inner_type
@@ -209,10 +215,11 @@ class StreamReader(Generic[T]):
         self._field_name = field_name
         self._buffer = b""
         self._done = False
-        # Build a TypeAdapter eagerly so validation errors surface
-        # immediately when the first chunk arrives (and so we don't pay the
-        # construction cost per-chunk).
-        self._adapter = _build_adapter(inner_type)
+        self._plan = plan
+        self._index = 0
+        # Without a compiled plan (a hand-built extraction) fall back to the
+        # pre-engine adapter, built once per reader.
+        self._adapter = _build_adapter(inner_type) if plan is None else None
 
     @property
     def format(self) -> str:
@@ -296,6 +303,26 @@ class StreamReader(Generic[T]):
                     "fragment": stripped[:120].decode("utf-8", errors="replace"),
                 },
             ) from e
+        index = self._index
+        self._index += 1
+        plan = self._plan
+        if plan is not None:
+            from ._schema._params import ItemFailure
+
+            try:
+                return plan.validate(data)
+            except ItemFailure as failure:
+                issues = [issue.prefixed("item", index) for issue in failure.issues]
+                err = ExtractorError.from_issues(
+                    issues,
+                    message="validation error in streaming body",
+                    field=self._field_name,
+                    include_input=plan.runtime.include_input,
+                    detail={"format": self._format},
+                )
+                if failure.errors is not None:
+                    err.detail["errors"] = failure.errors
+                raise err from failure.cause
         if self._adapter is None:
             return data
         try:
@@ -410,25 +437,20 @@ class _ValidationAdapter:
         return self._dump_fn(value, mode=mode)
 
 
-_ADAPTER_CACHE: dict[int, "_ValidationAdapter | None"] = {}
-
-
 def _build_adapter(target: Any) -> "_ValidationAdapter | None":
-    """Return a cached _ValidationAdapter for *target*, or None if unsupported.
+    """Build the pre-engine validation adapter for *target*, or None if unsupported.
+
+    This is the ``ValidationPolicy(stdlib_models="legacy"/"warn")`` behaviour of
+    WebSocket payloads, stream items and streamed responses. The app builds
+    it once per type at startup and keeps it on the compiled plan — there is
+    no process-wide cache.
 
     Resolution order:
       1. pydantic.TypeAdapter (handles BaseModel, discriminated unions, scalars)
       2. msgspec.convert (handles Struct)
       3. validate_as (handles @dataclass and TypedDict)
       4. None (pass-through for scalars and unsupported types)
-
-    Caching is keyed on ``id(target)`` — application types are defined at
-    import time and never change, so the cache is safe to hold indefinitely.
     """
-    key = id(target)
-    if key in _ADAPTER_CACHE:
-        return _ADAPTER_CACHE[key]
-
     adapter: _ValidationAdapter | None = None
 
     # Path 0 — native Discriminated[A | B, key] (pydantic-free)
@@ -440,7 +462,6 @@ def _build_adapter(target: Any) -> "_ValidationAdapter | None":
             validate_fn=lambda d: validate_native_discriminated(d, _target, "<stream>"),
             dump_fn=lambda v, mode="json": _to_json_safe(v),
         )
-        _ADAPTER_CACHE[key] = adapter
         return adapter
 
     # Path 1 — pydantic (handles BaseModel + discriminated unions best)
@@ -455,7 +476,6 @@ def _build_adapter(target: Any) -> "_ValidationAdapter | None":
                 validate_fn=ta.validate_python,
                 dump_fn=lambda v, mode="json": ta.dump_python(v, mode=mode),
             )
-            _ADAPTER_CACHE[key] = adapter
             return adapter
         except Exception:
             pass
@@ -472,7 +492,6 @@ def _build_adapter(target: Any) -> "_ValidationAdapter | None":
                 validate_fn=lambda d, _t=inner: msgspec.convert(d, _t),
                 dump_fn=lambda v, mode="json": msgspec.to_builtins(v),
             )
-            _ADAPTER_CACHE[key] = adapter
             return adapter
         except ImportError:
             pass
@@ -491,10 +510,8 @@ def _build_adapter(target: Any) -> "_ValidationAdapter | None":
             validate_fn=lambda d, _t=_inner: validate_as(_t, d),
             dump_fn=_dc_dump,
         )
-        _ADAPTER_CACHE[key] = adapter
         return adapter
 
-    _ADAPTER_CACHE[key] = None
     return None
 
 

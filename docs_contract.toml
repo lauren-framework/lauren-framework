@@ -7,12 +7,56 @@
 
 [attributes]
 "lauren.background.TaskHandle" = ["task_id", "status", "done", "result", "cancel"]
-"lauren.testing.TestResponse" = ["status_code", "headers", "body", "text", "json", "header", "headers_all"]
-"lauren.testing.TestClient" = ["get", "post", "put", "patch", "delete", "options", "head", "request", "arequest"]
+"lauren.testing.TestResponse" = [
+    "status_code", "headers", "body", "content", "text", "json", "header", "headers_all", "cookies",
+    "is_success", "is_redirect", "is_client_error", "is_server_error", "raise_for_status",
+    "aborted", "url", "request", "elapsed", "history",
+]
+"lauren.testing.TestClient" = [
+    "get", "post", "put", "patch", "delete", "options", "head", "request", "arequest",
+    "stream", "websocket_connect", "close", "new_session", "resolve", "capture", "set_session",
+    "timeout", "persists_cookies",
+]
+"lauren.testing.AsyncTestClient" = [
+    "get", "post", "put", "patch", "delete", "options", "head", "request",
+    "stream", "websocket_connect", "aclose", "new_session", "resolve", "capture", "set_session",
+]
+"lauren.testing.ResponseHeaders" = ["get", "getall", "get_list", "keys", "values", "items", "multi_items"]
+"lauren.testing.StreamingTestResponse" = [
+    "iter_bytes", "iter_text", "iter_lines", "iter_sse", "read", "close",
+    "aiter_bytes", "aiter_text", "aiter_lines", "aiter_sse", "aread", "aclose",
+]
+"lauren.testing.CookieJar" = ["get", "set", "delete", "clear", "as_dict"]
+"lauren.testing.StoredCookie" = ["name", "value", "domain", "path", "expires", "secure", "http_only", "same_site", "host_only"]
+"lauren.testing.Test" = ["create_testing_module"]
+"lauren.testing.TestingModuleBuilder" = [
+    "override_provider", "override_guard", "override_interceptor", "override_middleware",
+    "override_exception_handler", "override_module", "compile",
+]
+"lauren.testing.WebSocketTestSession" = [
+    "send_text", "send_bytes", "send_json", "send_event",
+    "receive", "receive_text", "receive_bytes", "receive_json", "receive_event", "close",
+]
+"lauren.testing.WebSocketSession" = [
+    "send_text", "send_bytes", "send_json", "send_event",
+    "receive", "receive_text", "receive_bytes", "receive_json", "receive_event", "close",
+    "close_code", "close_reason", "accepted_subprotocol",
+]
+"lauren.types.Request" = ["extensions"]
 "lauren.types.UploadFile" = ["filename", "content_type", "headers", "name", "size", "read", "read_sync"]
 "lauren.types.Headers" = ["get", "getall", "items", "keys", "values"]
 "lauren.types.State" = ["get", "set", "has", "get_typed", "require", "asdict"]
 "lauren.types.ContentConfig" = ["strict_content_type"]
+"lauren.DebugConfig" = [
+    "include_4xx", "allow_remote", "redact_headers", "redact_query_keys",
+    "source_context", "max_frames", "include_locals",
+]
+"lauren.ReflectedError" = ["cls", "code", "status_code", "category", "problem_type", "problem_title", "summary"]
+"lauren.HTTPError" = ["status_code", "code", "problem_type", "problem_title", "headers", "to_payload"]
+"lauren.UnauthorizedError" = ["headers"]
+"lauren.TooManyRequestsError" = ["retry_after", "headers"]
+"lauren.ServiceUnavailableError" = ["retry_after"]
+"lauren.RequestTimeoutError" = ["retry_after"]
 "lauren.Response" = [
     "status", "status_code", "headers", "body",
     "with_header", "with_headers", "with_body", "with_cookie", "delete_cookie",
@@ -22,12 +66,60 @@
     "get", "post", "put", "patch", "delete", "head",
     "include_module", "add_middleware", "add_guard", "add_interceptor",
     "add_exception_handler", "add_provider", "mount", "on_startup", "on_shutdown",
-    "startup", "shutdown", "openapi", "routes", "container", "state", "debug",
+    "startup", "shutdown", "openapi", "routes", "container", "scope", "state", "debug",
+    "lifecycle_state", "begin_draining",
 ]
 "lauren.LaurenApp" = [
     "router", "container", "app_state", "routes", "openapi",
-    "startup", "shutdown", "on_shutdown", "mount", "mounts",
+    "startup", "shutdown", "on_shutdown", "mount", "mounts", "scope", "context", "error_format",
+    "type_compiler", "validation_policy", "response_validation", "json_fallback",
+    "lifecycle_state", "begin_draining",
 ]
+"lauren.Ok" = ["value", "headers", "status"]
+"lauren.Created" = ["value", "location", "headers", "status"]
+"lauren.Accepted" = ["value", "location", "headers", "status"]
+"lauren.NoContent" = ["headers", "status"]
+"lauren.Status" = ["code", "description"]
+"lauren.decorators.RaisesSpec" = ["exc_type", "description", "status_code", "code"]
+"lauren.ReflectedRoute" = ["status_code", "responses_typed", "raises", "response_model", "handler"]
+"lauren.ReflectedResponse" = ["status", "body_type", "description", "source"]
+"lauren.ValidationPolicy" = ["stdlib_models", "json_mode", "extra", "include_input", "max_issues"]
+"lauren.ValidationIssue" = ["loc", "type", "msg", "input", "ctx", "to_dict", "prefixed"]
+"lauren.validation.ValidationFailed" = ["errors"]
+"lauren.validation.TypeCompiler" = ["compile", "policy", "max_issues"]
+"lauren.validation.CompiledType" = ["type", "validate", "project", "json_schema", "explicit"]
+"lauren.ExtractorError" = ["issues", "from_issues"]
+"lauren.WebSocketValidationError" = ["issues", "from_issues"]
+"lauren.OperationScope" = ["name", "values", "active", "teardown_errors", "resolve"]
+"lauren.health.HealthModule" = ["for_root"]
+"lauren.health.HealthResult" = ["status", "details", "up", "degraded", "down"]
+"lauren.health.HealthStatus" = ["UP", "DEGRADED", "DOWN"]
+"lauren.AppLifecycleState" = ["CREATED", "STARTING", "READY", "DRAINING", "STOPPED", "FAILED"]
+"lauren.signals.LifecycleStateChanged" = ["app", "previous", "current", "reason", "timestamp"]
+"lauren.signals.HealthChanged" = ["app", "name", "previous", "current", "details", "timestamp"]
+"lauren.LaurenFactory" = ["create", "create_context"]
+"lauren.ApplicationContext" = [
+    "app", "container", "active", "get", "resolve", "scope", "run_command", "commands",
+    "wait_for_shutdown_signal", "from_lauren", "lifecycle_state",
+]
+"lauren.CommandContext" = [
+    "name", "argv", "stdout", "stderr", "is_interactive", "assume_yes", "log", "echo", "error", "confirm", "fail",
+]
+"lauren.CommandResult" = ["exit_code", "value", "stdout", "stderr", "exception"]
+"lauren.Opt" = ["short", "env", "help"]
+"lauren.commands.CommandInfo" = ["name", "aliases", "help", "hidden", "parameters", "module", "target"]
+"lauren.commands.CommandParameter" = [
+    "name", "kind", "flags", "type", "required", "default", "repeatable", "choices", "env", "help",
+]
+"lauren.events.EventBus" = ["emit", "recording", "drain", "disabled", "handlers_for"]
+"lauren.events.EventPublisher" = ["emit", "emit_threadsafe", "in_request"]
+"lauren.events.EmitResult" = ["event", "handled", "scheduled", "errors", "ok"]
+"lauren.events.EventContext" = ["event_id", "emitted_at", "depth", "mode", "in_request", "log"]
+"lauren.events.EventRecording" = ["events", "calls", "failures", "of", "handler_calls"]
+"lauren.events.EventsModule" = ["for_root"]
+"lauren.events.TransactionPhase" = ["COMMIT"]
+"lauren.events.UnitOfWork" = ["on_commit", "on_rollback"]
+"lauren.signals.EventHandlerFailed" = ["event_type", "handler", "error", "mode", "event", "timestamp"]
 "lauren.websockets.BroadcastGroup" = [
     "subscribe", "unsubscribe", "unsubscribe_all", "broadcast", "groups", "members", "member_count",
 ]
@@ -43,3 +135,75 @@
     "secret", "store", "cookie_name", "max_age", "idle_timeout", "rolling", "path", "domain",
     "secure", "http_only", "same_site", "serializer", "autoload", "revocation_store", "user_id_key",
 ]
+"lauren.PaginationConfig" = [
+    "default_limit", "max_limit", "max_offset", "limit_param", "offset_param", "page_param",
+    "per_page_param", "cursor_param", "envelope", "meta_keys", "total_header", "base_url",
+    "cursor_secret", "cursor_max_age",
+]
+"lauren.OffsetPagination" = ["limit", "offset"]
+"lauren.PageNumberPagination" = ["page", "per_page", "limit", "offset"]
+"lauren.CursorPagination" = ["cursor", "direction", "limit", "encode_cursor"]
+"lauren.Page" = ["items", "limit", "offset", "total", "has_next", "of", "from_rows"]
+"lauren.CursorPage" = ["items", "limit", "has_next", "next_cursor", "prev_cursor", "from_rows"]
+"lauren.config.ConfigModule" = ["for_root", "for_feature"]
+"lauren.config.Secret" = ["get_secret_value"]
+"lauren.config.Profile" = ["name", "is_development", "is_test", "is_production"]
+"lauren.config.Env" = ["names"]
+"lauren.config.DotenvSource" = ["path", "required", "encoding"]
+"lauren.config.TomlSource" = ["path", "required"]
+"lauren.config.YamlSource" = ["path", "required"]
+"lauren.config.SecretsDirSource" = ["path", "required"]
+"lauren.config.AsyncSource" = ["load"]
+"lauren.exceptions.ConfigValidationError" = ["code"]
+"lauren.scheduling.ServiceContext" = [
+    "stop_requested", "sleep", "wait_stopped", "mark_ready", "ready", "name", "restart_count", "log", "scope",
+]
+"lauren.scheduling.JobContext" = ["name", "scheduled_at", "fired_at", "attempt", "log", "cancelled", "scope"]
+"lauren.scheduling.ScheduleModule" = ["for_root"]
+"lauren.scheduling.SchedulerRegistry" = [
+    "jobs", "job", "services", "trigger", "pause", "resume", "remove", "add_interval", "add_cron",
+]
+"lauren.scheduling.JobInfo" = [
+    "name", "kind", "schedule", "next_run_at", "last_run_at", "last_status", "last_error", "last_duration_s",
+    "running", "paused", "enabled", "dynamic", "runs", "failures", "skips", "as_dict",
+]
+"lauren.scheduling.JobRun" = ["name", "status", "scheduled_at", "duration_s", "error", "reason"]
+"lauren.scheduling.HostedServiceInfo" = ["name", "state", "ready", "restart_count", "last_error", "healthy", "as_dict"]
+"lauren.scheduling.CronExpression" = ["next_after", "iter_from", "matches", "with_tz", "expression", "tz", "has_seconds"]
+"lauren.scheduling.SchedulerLock" = ["acquire", "release"]
+"lauren.scheduling.InMemorySchedulerLock" = ["acquire", "release"]
+"lauren.scheduling.Clock" = ["monotonic", "now", "sleep"]
+"lauren.scheduling.SystemClock" = ["monotonic", "now", "sleep"]
+"lauren.scheduling.ManualClock" = ["monotonic", "now", "sleep", "advance", "jump", "sleepers"]
+"lauren.signals.HostedServiceStarted" = ["name"]
+"lauren.signals.HostedServiceStopped" = ["name", "duration_s"]
+"lauren.signals.HostedServiceFailed" = ["name", "error", "restart_count", "will_restart"]
+"lauren.signals.JobStarted" = ["name", "scheduled_at"]
+"lauren.signals.JobCompleted" = ["name", "duration_s", "scheduled_at"]
+"lauren.signals.JobFailed" = ["name", "error", "duration_s", "scheduled_at"]
+"lauren.signals.JobSkipped" = ["name", "reason", "scheduled_at"]
+"lauren.stores.Store" = [
+    "get", "set", "delete", "exists", "expire", "ttl", "incr", "set_if_absent", "delete_if_equal", "namespace",
+]
+"lauren.stores.MemoryStore" = [
+    "get", "set", "delete", "exists", "expire", "ttl", "incr", "set_if_absent", "delete_if_equal", "namespace",
+    "max_entries", "sweep",
+]
+"lauren.stores.PrefixedStore" = ["prefix", "base", "namespace"]
+"lauren.stores.StoresModule" = ["for_root"]
+"lauren.stores.StoreToken" = ["store_name"]
+"lauren.stores.StoreRegistry" = ["get", "names"]
+"lauren.stores.Lock" = ["acquire", "release", "locked", "key", "name"]
+"lauren.stores.StoreSessionStore" = ["store", "load", "save", "delete", "new_id"]
+"lauren.stores.StoreRevocationStore" = ["store", "revoke_token", "is_token_revoked", "revoke_user", "user_cutoff"]
+"lauren.cache.CacheModule" = ["for_root"]
+"lauren.cache.Cache" = [
+    "get", "set", "delete", "get_or_set", "invalidate_tags", "typed", "aclose", "store", "default_ttl", "codec",
+]
+"lauren.cache.TypedCache" = ["get", "set", "delete", "get_or_set", "type"]
+"lauren.cache.JsonCacheCodec" = ["encode", "decode", "encoder"]
+"lauren.cache.CachePolicy" = [
+    "ttl", "vary", "key", "tags", "methods", "statuses", "debug_header", "respect_client_no_cache",
+    "query", "allow_authenticated", "per_caller",
+]
+"lauren.cache.IdempotencyPolicy" = ["ttl", "header", "required", "scope", "lock_ttl"]

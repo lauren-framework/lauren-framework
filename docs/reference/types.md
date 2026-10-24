@@ -42,6 +42,10 @@ Core request/response types and state containers.
 
 ::: lauren.AppState
 
+## Configuration
+
+::: lauren.DebugConfig
+
 ## Scope
 
 ::: lauren.Scope

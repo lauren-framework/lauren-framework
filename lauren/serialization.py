@@ -82,8 +82,87 @@ preserving all ``@field_serializer`` and ``model_config`` rules.
 
 from __future__ import annotations
 
+import functools
 import json as _stdlib_json
+import logging as _stdlib_logging
+from contextvars import ContextVar
 from typing import Any, Protocol, runtime_checkable
+
+
+# ---------------------------------------------------------------------------
+# ``json_fallback`` — what to do with an object no encoder rule covers
+# ---------------------------------------------------------------------------
+
+#: The ``json_fallback`` policies: ``"dict"`` dumps the object's public
+#: attributes (``__dict__``), ``"warn"`` does the same and logs once per type,
+#: ``"error"`` raises ``TypeError`` (a 500 inside a request).
+JSON_FALLBACK_POLICIES: tuple[str, ...] = ("dict", "warn", "error")
+
+
+def _check_fallback(mode: Any) -> str:
+    if not isinstance(mode, str) or mode not in JSON_FALLBACK_POLICIES:
+        raise ValueError(
+            f"json_fallback must be one of {', '.join(map(repr, JSON_FALLBACK_POLICIES))}, got {mode!r}"
+        )
+    return mode
+
+
+class _FallbackPolicy:
+    """A ``json_fallback`` policy plus its warn-once memory.
+
+    Owned by a :class:`~lauren.LaurenApp` (``LaurenFactory.create(json_fallback=...)``,
+    applied to the app's requests through :data:`_ACTIVE_FALLBACK`) or pinned
+    on one encoder (``StdlibJSONEncoder(fallback=...)``).
+    """
+
+    __slots__ = ("mode", "_warned", "_logger")
+
+    def __init__(self, mode: str, logger: Any = None) -> None:
+        self.mode = _check_fallback(mode)
+        self._warned: set[type] = set()
+        self._logger = logger
+
+    def apply(self, obj: Any) -> Any:
+        """Return ``obj``'s public attributes, or raise under ``"error"``."""
+        cls = type(obj)
+        if self.mode == "error":
+            raise TypeError(
+                f"Object of type {cls.__name__} is not JSON serializable (json_fallback='error'); "
+                "declare a response type or return a model, dataclass or dict"
+            )
+        if self.mode == "warn" and cls not in self._warned:
+            self._warned.add(cls)
+            message = (
+                f"serialized {cls.__module__}.{cls.__qualname__} via the __dict__ fallback, which "
+                "sends every public attribute; declare a response type or return a model "
+                "(json_fallback='error' rejects it)"
+            )
+            _stdlib_logging.getLogger("lauren").warning(message)
+            if self._logger is not None:
+                try:
+                    self._logger.warn(message, context="Serialization", type=cls.__qualname__)
+                except Exception:  # a broken logger must not fail the response
+                    pass
+        return _public_attributes(obj)
+
+
+def _public_attributes(obj: Any) -> dict[str, Any]:
+    """The historical last-resort dump: public, non-callable ``__dict__`` entries."""
+    return {k: v for k, v in obj.__dict__.items() if not k.startswith("_") and not callable(v)}
+
+
+#: The policy of the app handling the current request (set by ``LaurenApp``
+#: for each HTTP request and WebSocket connection). ``None`` outside an app:
+#: the legacy ``"dict"`` behaviour.
+_ACTIVE_FALLBACK: ContextVar[_FallbackPolicy | None] = ContextVar("lauren_json_fallback", default=None)
+
+
+def _object_fallback(obj: Any, policy: _FallbackPolicy | None = None) -> Any:
+    """Apply ``policy`` (or the current app's policy) to an object with a ``__dict__``."""
+    active = policy if policy is not None else _ACTIVE_FALLBACK.get()
+    if active is None:
+        return _public_attributes(obj)
+    return active.apply(obj)
 
 
 # ---------------------------------------------------------------------------
@@ -97,11 +176,25 @@ def _default_fallback(obj: Any) -> Any:
 
     The stdlib encoder drops here for any object it doesn't know how
     to serialise. We mirror the behaviour of ``lauren.types._json_default``
-    so the adapter layer is a drop-in replacement.
+    so the adapter layer is a drop-in replacement. Objects that need the
+    ``__dict__`` fallback follow the current app's ``json_fallback`` policy.
     """
     from .types import _json_default
 
     return _json_default(obj)
+
+
+def _make_default(default: Any, fallback: str | None) -> Any:
+    """The ``default=`` callback of an encoder built with ``default`` / ``fallback``."""
+    if default is not None:
+        if fallback is not None:
+            raise ValueError("pass either default= or fallback= to an encoder, not both")
+        return default
+    if fallback is None:
+        return _default_fallback
+    from .types import _json_default
+
+    return functools.partial(_json_default, fallback=_FallbackPolicy(_check_fallback(fallback)))
 
 
 # ---------------------------------------------------------------------------
@@ -146,8 +239,10 @@ class StdlibJSONEncoder:
 
     __slots__ = ("_default",)
 
-    def __init__(self, default: Any = None) -> None:
-        self._default = default or _default_fallback
+    def __init__(self, default: Any = None, *, fallback: str | None = None) -> None:
+        # ``fallback`` pins this encoder's ``json_fallback`` policy; ``None``
+        # follows the app that is encoding (``"dict"`` outside an app).
+        self._default = _make_default(default, fallback)
 
     def encode(self, value: Any) -> bytes:
         # ``ensure_ascii=False`` is slightly slower but produces the
@@ -191,7 +286,7 @@ class OrjsonEncoder:
 
     __slots__ = ("_orjson", "_opts", "_default")
 
-    def __init__(self, default: Any = None) -> None:
+    def __init__(self, default: Any = None, *, fallback: str | None = None) -> None:
         try:
             import orjson
         except ImportError as exc:  # pragma: no cover - import guarded in auto_encoder
@@ -203,7 +298,7 @@ class OrjsonEncoder:
         # raising — matches pydantic's ``model_dump(mode='json')``
         # behaviour for enum-keyed maps.
         self._opts = orjson.OPT_NON_STR_KEYS
-        self._default = default or _default_fallback
+        self._default = _make_default(default, fallback)
 
     def encode(self, value: Any) -> bytes:
         try:
@@ -240,7 +335,7 @@ class MsgspecEncoder:
 
     __slots__ = ("_encoder",)
 
-    def __init__(self, default: Any = None) -> None:
+    def __init__(self, default: Any = None, *, fallback: str | None = None) -> None:
         try:
             import msgspec
         except ImportError as exc:  # pragma: no cover - import guarded in auto_encoder
@@ -249,7 +344,7 @@ class MsgspecEncoder:
             ) from exc
         # msgspec accepts a ``default=`` callback for unknown types,
         # wired identically to orjson/stdlib.
-        self._encoder = msgspec.json.Encoder(enc_hook=default or _default_fallback)
+        self._encoder = msgspec.json.Encoder(enc_hook=_make_default(default, fallback))
 
     def encode(self, value: Any) -> bytes:
         return self._encoder.encode(value)
@@ -269,7 +364,7 @@ class MsgspecEncoder:
 # ---------------------------------------------------------------------------
 
 
-def auto_encoder(default: Any = None) -> JSONEncoder:
+def auto_encoder(default: Any = None, *, fallback: str | None = None) -> JSONEncoder:
     """Pick the best available encoder at import time.
 
     The selection order mirrors typical performance characteristics:
@@ -281,16 +376,16 @@ def auto_encoder(default: Any = None) -> JSONEncoder:
     try:
         import orjson  # noqa: F401
 
-        return OrjsonEncoder(default=default)
+        return OrjsonEncoder(default=default, fallback=fallback)
     except ImportError:
         pass
     try:
         import msgspec  # noqa: F401
 
-        return MsgspecEncoder(default=default)
+        return MsgspecEncoder(default=default, fallback=fallback)
     except ImportError:
         pass
-    return StdlibJSONEncoder(default=default)
+    return StdlibJSONEncoder(default=default, fallback=fallback)
 
 
 #: The process-wide fallback encoder. Used by the ``Response.json``

@@ -3,19 +3,43 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
 
 
 __all__ = [
+    "ReflectedResponse",
     "ReflectedRoute",
     "ReflectedWsMessage",
     "ReflectedController",
     "ReflectedModule",
     "ReflectedWsGateway",
+    "ReflectedError",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class ReflectedResponse:
+    """One documented response of a route: a declared success, a ``@raises`` error or a manual entry.
+
+    Returned in :attr:`ReflectedRoute.responses_typed`.
+    """
+
+    status: int
+    """The HTTP status."""
+
+    body_type: Any
+    """The declared body type; ``None`` for no body, :class:`~lauren.types.Response` for a
+    passthrough, ``typing.Any`` when undeclared, the error class for a ``@raises`` entry."""
+
+    description: str | None
+    """The description (``Status(description=...)``, ``@raises(description=...)``, ``responses=``)."""
+
+    source: Literal["declared", "raises", "manual"]
+    """``"declared"``: ``status_code=`` / return annotation / ``response_model=``;
+    ``"raises"``: ``@raises``; ``"manual"``: the free-form ``responses=`` dict."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +70,17 @@ class ReflectedRoute:
 
     handler: Any
     """The unbound method function that handles this route."""
+
+    status_code: int = 200
+    """The effective success status: ``status_code=`` / ``Status(...)`` for plain values,
+    else the first declared response (``-> None`` → 204, ``-> Created[T]`` → 201); 200
+    when undeclared."""
+
+    responses_typed: tuple[ReflectedResponse, ...] = ()
+    """Every documented response: declared successes, ``@raises`` errors and ``responses=`` entries."""
+
+    raises: tuple[type, ...] = ()
+    """The ``@raises`` error classes (the method's, then the controller's own)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,3 +150,32 @@ class ReflectedWsGateway:
     middlewares: tuple[type, ...]
     messages: tuple[ReflectedWsMessage, ...]
     owning_module: type | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReflectedError:
+    """One error class of the catalog — framework or application.
+
+    Returned by :func:`~lauren.reflect.error_catalog`.
+    """
+
+    cls: type
+    """The error class (a :class:`~lauren.exceptions.LaurenError` subclass)."""
+
+    code: str
+    """The class-level stable ``code``."""
+
+    status_code: int | None
+    """The HTTP status for ``HTTPError`` subclasses; ``None`` for startup, lifecycle and WebSocket errors."""
+
+    category: Literal["startup", "http", "lifecycle", "websocket", "other"]
+    """``"other"`` is ``LaurenError`` itself and direct subclasses outside the four families."""
+
+    problem_type: str | None
+    """The class's RFC 9457 ``problem_type``, if it declares one."""
+
+    problem_title: str | None
+    """The class's RFC 9457 ``problem_title``, if it declares one."""
+
+    summary: str
+    """The first paragraph of the class's own docstring, on one line (``""`` without one)."""

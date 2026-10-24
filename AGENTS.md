@@ -103,23 +103,50 @@ nox -s ver_dec -- --patch
 | `lauren/_di/__init__.py`          | DI container, provider graph, cycles; `_GeneratorContextWrapper` for generator provider lifecycle |
 | `lauren/_di/custom.py`            | `use_value` / `use_class` / `use_factory` /  |
 |                                   | `use_existing` / `Token` / `Inject`          |
+| `lauren/_di/_scope.py`            | Shared request-scope finaliser (`finalize_scope`) used by HTTP, WebSocket and `OperationScope`; `register_framework_value` |
+| `lauren/_discovery.py`            | Startup discovery pass (Phase 6a): marker registry, `DiscoveryIndex`, compiled `CallPlan`s for provider methods |
+| `lauren/context.py`               | `OperationScope` (public; built by `app.scope()`) and `ApplicationContext` (`LaurenFactory.create_context`, `app.context()`, `from_lauren`) |
+| `lauren/commands.py`              | Public command surface (`command`, `Opt`, `CommandContext`, `CommandResult`, `CommandInfo`, `CommandParameter`) |
+| `lauren/_commands/`               | `@command` marker (`_meta`), Phase 6a compiler + argparse parsers + `CommandRegistry` (`_compile`), `CommandContext` / `CommandResult` (`_context`), `python -m lauren` runner and TARGET resolution (`_runner`) |
+| `lauren/__main__.py`              | `python -m lauren exec \| commands \| console` entry point |
+| `lauren/events.py`                | Public application-event surface (`EventBus`, `EventPublisher`, `on_event`, `EventContext`, `EmitResult`, `EventsModule`, `TransactionPhase`, `UnitOfWork`) |
+| `lauren/_events/`                 | Event bus internals: `@on_event` marker (`_meta`), handler validation + dispatch table (`_plan`), `EventBus` / `EventPublisher`, task tracking, shutdown drain, factory hooks (`_bus`) |
+| `lauren/scheduling.py`            | Public hosted-service / scheduling surface (`@hosted_service`, `@interval`, `@cron`, `@run_once`, `ScheduleModule`, `SchedulerRegistry`, `CronExpression`, `SchedulerLock`, `ManualClock`) |
+| `lauren/_scheduling/`             | Decorators + discovery markers (`_decorators`), supervisor (`_supervisor`), scheduler + registry (`_scheduler`), cron parser (`_cron`), clocks (`_clock`), contexts (`_context`), locks (`_lock`), `ScheduleModule` + factory phases (`_module`) |
+| `lauren/health.py`                | Public health surface (`HealthModule`, `health_check`, `HealthResult`, `HealthStatus`) |
+| `lauren/_health/`                 | Health internals: `@health_check` marker (`_meta`), values + aggregation (`_types`), built-in indicators (`_indicators`), check validation + per-app `HealthRuntime` (`_runtime`), `HealthModule.for_root` + factory hooks (`_module`) |
 | `lauren/_discriminated.py`        | `Discriminated[A\|B,"key"]` — detection, validation, OpenAPI schema |
 | `lauren/_encoders/`               | Optional encoder backends (e.g. `pydantic.py`) |
 | `lauren/_routing/__init__.py`     | Radix-tree router                            |
 | `lauren/_modules/__init__.py`     | Module graph, imports/exports validation     |
 | `lauren/_lifecycle/__init__.py`   | post_construct / pre_destruct scheduler; sync hooks run in thread pool via asyncio.to_thread (timeout-protected, event-loop-safe); second pass runs generator provider teardown (code after yield) for SINGLETON scope |
 | `lauren/_typing/`                 | ForwardRef / PEP 563 resolver                |
-| `lauren/_validation.py`           | Provider-agnostic type detection + validation (pydantic, msgspec, dataclass, TypedDict) |
+| `lauren/_validation.py`           | Provider-agnostic type detection + the 1.x shallow `validate_as` (legacy/warn modes, config loader) |
+| `lauren/validation.py`            | Public validation surface: constraint markers, `ValidationPolicy`, `ValidationIssue`, `validation_config`, `TypeCompiler`, `validate` |
+| `lauren/_schema/`                 | Native validation engine: `_compiler` (`TypeCompiler`/`CompiledType`), `_nodes` (validate/project/schema), `_issues`, `_markers`, `_backends` (pydantic/msgspec + error translation), `_jsonschema`, `_params` (extraction/WS/stream plans, strategies, 422 aggregation), `_scalars` (shared with `_config/_coerce`) |
 | `lauren/_ws_runtime.py`           | WebSocket dispatch loop + `WsConnectionContext` / `WsUpgradeRequest` |
 | `lauren/reflect/`                 | Full metadata introspection API — static readers, app readers, result types, WS composers |
 | `lauren/reflect/_reader.py`       | Static readers: `reflect_controller`, `reflect_routes`, `reflect_exception_handlers`, … |
 | `lauren/reflect/_app_reader.py`   | App readers: `get_all_routes`, `get_all_ws_gateways`, `get_route_metadata` |
 | `lauren/reflect/_types.py`        | Frozen result types: `ReflectedRoute`, `ReflectedController`, `ReflectedWsGateway`, … |
-| `lauren/decorators.py`            | User-facing decorators only                  |
+| `lauren/decorators.py`            | User-facing decorators only; route-option validation table (`_ROUTE_OPTION_VALIDATORS`); `@raises` |
+| `lauren/responses.py`             | Typed results: `Ok`, `Created`, `Accepted`, `NoContent`, `Status` (no framework imports) |
+| `lauren/_asgi/_contracts.py`      | Response contracts: `describe_responses` (status table, startup checks), `ResponsePlan` (runtime coercion + projection), `ResponseContractViolation` |
+| `lauren/_schema/_contract.py`     | Filter / strict response projectors built over compiled validator nodes |
 | `lauren/extractors.py`            | Typed extractors + pipes + custom extractors |
 | `lauren/exceptions.py`            | The closed error catalog (table: `docs/reference/errors.md`) |
 | `lauren/sessions.py`              | Public session surface (`Session`, `SessionConfig`, stores) |
-| `lauren/_sessions/`               | Session engine, stores, HMAC signing, serializer, config |
+| `lauren/config.py`                | Public typed-configuration surface (`ConfigModule`, `Secret`, sources, `Profile`, `load_settings`) |
+| `lauren/_config/`                 | Settings loader: coercion table (`_coerce`), sources + `.env` parser (`_sources`), layered resolution + aggregated errors (`_loader`), `ConfigModule` + factory Phase 2b (`_module`), `Secret` (`_secret`) |
+| `lauren/_sessions/`               | Session engine, stores, serializer, config (signing re-exported from `lauren/_signing.py`); `_adapters` (sessions / revocation on any `Store`) |
+| `lauren/stores.py`                | Public store surface (`Store`, `MemoryStore`, `PrefixedStore`, `StoresModule`, `StoreToken`, `StoreRegistry`, `Lock`, `StoreSessionStore`, `StoreRevocationStore`) |
+| `lauren/_stores/`                 | Store protocol + checks (`_protocol`), bounded `TTLMap` / `MemoryStore` (`_memory`), `PrefixedStore`, `Lock`, `StoresModule` + Phase 2 `install_stores` (`_module`), lifecycle adoption (`_lifecycle`) |
+| `lauren/cache.py`                 | Public caching surface (`Cache`, `TypedCache`, `CacheModule`, `CacheCodec`, `JsonCacheCodec`, `cache_response`, `idempotent`, policies) |
+| `lauren/_cache/`                  | `Cache` service (`_service`), entry layout (`_entry`), codecs + typed decode (`_codec`), decorators (`_policy`), response-cache keying / store rules / interceptor (`_response`), idempotency interceptor (`_idempotency`), `CacheModule` + factory hooks (`_module`) |
+| `lauren/testing/store_contract.py` | Shared `Store` contract suite (`run_store_contract`, `STORE_CONTRACT_CHECKS`) for core and companion backends |
+| `lauren/_signing.py`              | The shared HMAC signer: key rotation, constant-time verify, per-feature `namespace` (sessions, pagination cursors, signed URLs) |
+| `lauren/pagination.py`            | Public pagination surface (`OffsetPagination`, `PageNumberPagination`, `CursorPagination`, `PaginationConfig`, `Page`, `CursorPage`, `paginate_sequence`) |
+| `lauren/_pagination/`             | Pagination internals: config resolution (`_config`), paging values + `PaginationPlan` (`_params`, the `"pagination"` extraction source), cursor codec (`_cursor`), `Link` URLs (`_links`), page rendering (`_page`), OpenAPI contribution (`_openapi`) |
 | `lauren/streaming.py`             | StreamingResponse[T], Stream, StreamReader   |
 | `lauren/sse.py`                   | EventStream, ServerSentEvent, last_event_id  |
 | `lauren/types.py`                 | Request, Response, State, Headers, Scope, `Discriminated`, … |
@@ -128,8 +155,9 @@ nox -s ver_dec -- --patch
 | `lauren/serialization.py`         | JSON encoders: `StdlibJSONEncoder`, `OrjsonEncoder`, `MsgspecEncoder`, `PydanticEncoder`; encoder threaded app-wide; `@use_encoder(enc)` overrides per-route or per-controller (method > controller > app) |
 | `lauren/logging.py`               | NestJS-style logger (built-in, separate from |
 |                                   | the optional `lauren-logging` companion)     |
-| `lauren/signals.py`               | POSIX signal integration                     |
-| `lauren/testing.py`               | `TestClient`, `WsTestClient`                 |
+| `lauren/signals.py`               | POSIX signal integration (`install_signal_handlers(shutdown_delay=)` drains first), `SignalBus`, lifecycle events, `AppLifecycleState` |
+| `lauren/testing/`                 | `TestClient` (persistent portal loop), `AsyncTestClient`, `Test.create_testing_module` overrides, cookie jar, `WsTestClient`, opt-in `pytest_plugin` |
+| `lauren/_di/_overrides.py`        | Build-time override plan read by `LaurenFactory.create` (only set by `lauren.testing`) |
 | `lauren/docs.py`                  | Programmatic access to llms*.txt             |
 | `lauren/llms-full.txt`            | Public-API reference for AI ingestion        |
 | `lauren/llms.txt`                 | Short overview (llmstxt.org convention)      |
@@ -150,7 +178,10 @@ nox -s ver_dec -- --patch
   machine-parseable keys (`target`, `param`, `token`, ...).
 - HTTP-mapped errors render as
   `{"error": {"code": "...", "message": "...", "detail": {...}}}` —
-  the envelope is stable across the entire framework.
+  the envelope is stable across the entire framework (RFC 9457 problem
+  details with `error_format="rfc9457"`). Raise the built-in HTTP errors
+  (`NotFoundError`, `ConflictError`, `TooManyRequestsError`, …) and subclass
+  them for domain codes; errors carry `headers=`.
 - Subclasses do NOT inherit `@injectable` / `@controller` / `@module`
   / `@middleware()` / `@ws_controller` / `@exception_handler` decoration.
 
@@ -211,7 +242,8 @@ A change is ready for merge when:
       `run` examples execute, documented attributes exist (new ones are
       added to `docs_contract.toml`), and generated fact regions are
       current (`python scripts/sync_doc_facts.py`).
-- [ ] New behaviour has at least one test in the matching layer.
+- [ ] New behaviour has at least one test in the matching layer, and
+      `nox -s coverage` stays above its 90 % branch-coverage floor.
 - [ ] Public API changes are reflected in `__all__`, `llms.txt`,
       and `llms-full.txt`.
 - [ ] User-facing additions have a doc page or section under `docs/`.
@@ -267,14 +299,24 @@ Welcome aboard.
 | I need to… | Read first | Copy-paste guide |
 |---|---|---|
 | Add a new route / controller | `lauren/_asgi/__init__.py` | `skills/building-lauren-controllers/` |
+| Shape a response (status, typed results, output filtering, declared errors) | `lauren/responses.py`, `lauren/_asgi/_contracts.py` | `docs/guides/response-contracts.md` |
 | Wire DI / providers / lifecycle | `lauren/_di/__init__.py` | `skills/building-lauren-services/` |
 | Add a guard, middleware, or interceptor | `lauren/decorators.py` | `skills/building-lauren-guards/` |
 | Add exception handlers | `lauren/decorators.py` | `skills/building-lauren-guards/` §Exception handlers |
 | Add WebSocket / SSE / streaming | `lauren/websockets.py`, `lauren/sse.py` | `skills/building-lauren-streaming/` |
 | Serve static files | `lauren/_staticfiles.py` | `skills/building-lauren-apps/` §Static files |
 | Write unit or integration tests | `tests/integration/test_di.py` | `skills/testing-lauren-apps/` |
+| Mock / replace a provider in tests | `lauren/testing/_module.py` | `Test.create_testing_module(...)` in `skills/testing-lauren-apps/` |
 | Add a background task | `lauren/background.py` | `skills/building-lauren-background-tasks/` |
+| Decouple modules with domain events | `lauren/events.py` | `skills/building-lauren-events/` |
+| Run a hosted service or a scheduled job | `lauren/scheduling.py` | `skills/building-lauren-scheduling/` |
+| Add liveness / readiness probes, drain before shutdown | `lauren/health.py`, `LaurenApp.lifecycle_state` | `skills/health-check-probes/` |
+| Run code outside HTTP / add an admin command | `lauren/context.py`, `lauren/commands.py` | `skills/building-lauren-commands/` |
 | Add session state | `lauren/sessions.py` | `skills/building-lauren-sessions/` |
+| Cache data or responses, idempotency keys, shared stores | `lauren/cache.py`, `lauren/stores.py` | `skills/building-lauren-caching/` |
+| Paginate a list endpoint (offset, page number, cursor) | `lauren/pagination.py` | `skills/rest-crud-endpoints/` §Pagination |
+| Read typed configuration / secrets | `lauren/config.py` | `skills/building-lauren-config/` |
+| Add field constraints / validate payloads | `lauren/validation.py`, `lauren/_schema/` | `skills/building-lauren-controllers/` §Validation |
 | Debug a startup error | `lauren/exceptions.py` | **Common Errors** section below |
 | Port from FastAPI | `llms-full.txt` §Guards | `skills/migrating-from-fastapi/` |
 | Add CORS / auth guards / logging | `AGENTS.md` §Companion Packages | `skills/using-companion-packages/` |
@@ -290,11 +332,18 @@ Welcome aboard.
 | Guards, interceptors, middleware | `skills/building-lauren-guards/` |
 | SSE, WebSocket gateways, `StreamingResponse` | `skills/building-lauren-streaming/` |
 | `BackgroundTasks`, `TaskHandle` | `skills/building-lauren-background-tasks/` |
+| Domain events: `@on_event`, `EventBus`, `EventPublisher` | `skills/building-lauren-events/` |
+| Hosted services, `@interval` / `@cron` / `@run_once`, `ScheduleModule` | `skills/building-lauren-scheduling/` |
+| `create_context`, `@command`, `python -m lauren exec`, `ctx.run_command` | `skills/building-lauren-commands/` |
 | Sessions: signed cookies, `Session` injection, pluggable store | `skills/building-lauren-sessions/` |
+| Stores & caching: `Store`, `Cache.get_or_set`, `@cache_response`, `@idempotent` | `skills/building-lauren-caching/` |
+| Redis behind the cache / sessions (a `Store` over `redis.asyncio`) | `skills/redis-caching/` |
+| Typed configuration: `ConfigModule`, sources, profiles, `Secret[T]` | `skills/building-lauren-config/` |
 | `TestClient`, async tests, mock providers | `skills/testing-lauren-apps/` |
 | FastAPI → lauren side-by-side equivalents | `skills/migrating-from-fastapi/` |
 | CORS, auth guards, structured logging | `skills/using-companion-packages/` |
 | Copy-paste: CRUD, health check, background job, SSE | `skills/common-patterns/` |
+| Liveness / readiness / startup probes, `@health_check`, draining | `skills/health-check-probes/` |
 | Build a first-party or third-party companion package | `skills/building-companion-packages/` |
 
 Full index: [`skills/README.md`](skills/README.md)
@@ -315,7 +364,16 @@ Full index: [`skills/README.md`](skills/README.md)
 | Enumerating all HTTP routes / WS gateways at runtime | `get_all_routes`, `get_all_ws_gateways` in `lauren.reflect` |
 | SSE / streaming | `docs/guides/sse.md` |
 | Session management | `docs/guides/sessions.md` |
+| Stores, caching, response caching, idempotency keys | `docs/guides/caching.md` |
+| Pagination, envelopes, `Link` headers, signed cursors | `docs/guides/pagination.md` |
+| Domain events between modules | `docs/guides/events.md` |
+| Health probes, lifecycle state, draining | `docs/guides/health-checks.md` |
+| Typed configuration | `docs/guides/configuration.md` |
+| Hosted services & scheduled jobs | `docs/guides/scheduling.md` |
+| Validation (stdlib models, constraints, `issues`, `ValidationPolicy`) | `docs/guides/validation.md` |
+| Standalone contexts, commands, `python -m lauren` | `docs/guides/commands-and-scripts.md` |
 | Custom response subclasses and response factories | `docs/guides/custom-responses.md` / `docs/guides/file-responses.md` |
+| Status codes, typed results, response filtering, `@raises`, `json_fallback` | `docs/guides/response-contracts.md` |
 | Testing playbook | `skills/testing-lauren-apps/SKILL.md` |
 | Release / versioning process | `docs/development/release.md` / `docs/development/versioning.md` |
 
@@ -329,7 +387,19 @@ Full index: [`skills/README.md`](skills/README.md)
 | `DecoratorUsageError` | `@middleware` / `@injectable` used bare without `()` | Change to `@middleware()` / `@injectable()` |
 | `DuplicateRouteError` | Two handlers registered on the same method + path | Rename one route |
 | `UnresolvableProviderError` | Type not registered anywhere, or owning module not imported | Import the owning module in the consumer module |
+| `LifecycleConfigError` | A scheduled job without `ScheduleModule.for_root()`, a hosted service / job on a non-singleton provider, or a hook on a non-method | Import `ScheduleModule.for_root()`; make the provider a singleton; decorate methods only |
 | `SessionConfigError` | Sessions misconfigured, or `Session` injected with sessions disabled | Pass `sessions=SessionConfig(...)` / fix the unsafe cookie config |
+| `DIScopeViolationError` (`reason="no_active_scope"`) | With `strict_request_scope=True`, a `Scope.REQUEST` provider resolved outside a request, WebSocket connection or `app.scope()`; also `ctx.resolve()` of a request-scoped token | Resolve it inside `async with app.scope() as scope:` / `ctx.scope()` |
+| `DuplicateBindingError` (`reason="duplicate_command_name"`) / `UnresolvableParameterError` (`reason="unsupported_command_parameter"`) | Two `@command`s share a name or alias / a command parameter is neither a CLI type nor a provider visible from its module | Rename; use a CLI type, or export/import the provider |
+| `ConfigValidationError` | A settings key is missing or invalid, or the profile is unknown (every problem listed in `detail["errors"]`) | Set the listed keys in the environment / `.env` / config files; tests pass `environ=` to `ConfigModule.for_root` |
+| `GuardConfigError` (`reason="invalid_deny_error"`) | A guard's `deny_error` is not an `HTTPError` subclass or a zero-argument factory (e.g. an exception *instance*, `ValueError`) | `deny_error = UnauthorizedError`, or `deny_error = staticmethod(lambda: UnauthorizedError("…", challenge="…"))` |
+| `StartupError` (`reason="debug_in_production"`) | `debug=` enabled while the configuration profile is production | Enable debug pages only in development |
+| `StartupError` (`reason="invalid_debug_config"` / `"invalid_problem_type_base"`) | `debug=` is not a bool / valid `DebugConfig`, or `problem_type_base` is not a non-empty string | Fix the value passed to `LaurenFactory.create` |
+| `UnresolvableParameterError` (`reason="bad_constraint"` / `"bad_pattern"` / `"unsupported_type"`) | A validation marker that cannot apply (`Ge` on a `str`, `MinLen > MaxLen`), an invalid `Pattern` regex, or (under `stdlib_models="enforce"`) a model field type the engine does not know | Fix the annotation named by `detail["class"]` / `["handler"]` / `["param"]` / `["field"]` |
+| `StartupError` (`reason="cache_module_missing"`) | A route uses `@cache_response` / `@idempotent` but no `Cache` is provided | Import `CacheModule.for_root()` into the app |
+| `StartupError` (`reason="duplicate_store_name"` / `"invalid_store"`) | Two default stores / one store name registered twice, or a store factory that returned a non-`Store` | Configure each store once in `StoresModule.for_root(...)` |
+| `StartupError` (`reason="pagination_secret_missing"`) | A route takes `CursorPagination` but no cursor secret is configured | `LaurenFactory.create(..., pagination=PaginationConfig(cursor_secret=...))` with a dedicated key (never the session secret) |
+| `StartupError` (`reason="invalid_pagination_config"`) | A `PaginationConfig` value is invalid (`default_limit > max_limit` at one level, duplicate parameter names, `envelope` set per parameter, …) — `detail["field"]` names it | Fix the field; `envelope` / `meta_keys` belong on the app-level config |
 | `StartupError` (generic) | Missing required parameter in constructor injection | Add the type as a `@module` provider or import its module |
 
 ## Interceptor `CallHandler.handle()` contract (v1.4.2+)
