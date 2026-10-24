@@ -25,37 +25,38 @@ common mistakes.
 14. [Interceptors](#interceptors)
 15. [Exception Handlers](#exception-handlers)
 16. [`@propagate_metadata` — copy Lauren decorator metadata between objects](#propagate_metadata--copy-lauren-decorator-metadata-between-objects)
-17. [Auto-Serialization](#auto-serialization)
-18. [Response Contracts](#response-contracts)
-19. [Pagination](#pagination)
-20. [Sync vs Async Handlers](#sync-vs-async-handlers)
-21. [Background Tasks](#background-tasks)
-22. [Hosted Services & Scheduling](#hosted-services--scheduling)
-23. [Standalone Context & Commands](#standalone-context--commands)
-24. [Error Catalog](#error-catalog)
-25. [Debug Error Pages](#debug-error-pages)
-26. [Testing](#testing)
-27. [Strict Decorator Inheritance](#strict-decorator-inheritance)
-28. [OpenAPI 3.1 Generation](#openapi-31-generation)
-29. [Logging](#logging)
-30. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
-31. [Health & Readiness](#health--readiness)
-32. [Application Events](#application-events)
-33. [WebSockets](#websockets)
-34. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
-35. [Typed Streaming](#typed-streaming)
-36. [Socket.IO Compatibility](#socketio-compatibility)
-37. [Sessions](#sessions)
-38. [Stores & Caching](#stores--caching)
-39. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
-40. [Configuration](#configuration)
-41. [Static Files](#static-files)
-42. [Request Arena](#request-arena)
-43. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
-44. [AI Documentation Access](#ai-documentation-access)
-45. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-46. [Companion Packages](#companion-packages)
-47. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
+17. [Typed Metadata & State Keys](#typed-metadata--state-keys)
+18. [Auto-Serialization](#auto-serialization)
+19. [Response Contracts](#response-contracts)
+20. [Pagination](#pagination)
+21. [Sync vs Async Handlers](#sync-vs-async-handlers)
+22. [Background Tasks](#background-tasks)
+23. [Hosted Services & Scheduling](#hosted-services--scheduling)
+24. [Standalone Context & Commands](#standalone-context--commands)
+25. [Error Catalog](#error-catalog)
+26. [Debug Error Pages](#debug-error-pages)
+27. [Testing](#testing)
+28. [Strict Decorator Inheritance](#strict-decorator-inheritance)
+29. [OpenAPI 3.1 Generation](#openapi-31-generation)
+30. [Logging](#logging)
+31. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
+32. [Health & Readiness](#health--readiness)
+33. [Application Events](#application-events)
+34. [WebSockets](#websockets)
+35. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
+36. [Typed Streaming](#typed-streaming)
+37. [Socket.IO Compatibility](#socketio-compatibility)
+38. [Sessions](#sessions)
+39. [Stores & Caching](#stores--caching)
+40. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
+41. [Configuration](#configuration)
+42. [Static Files](#static-files)
+43. [Request Arena](#request-arena)
+44. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+45. [AI Documentation Access](#ai-documentation-access)
+46. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+47. [Companion Packages](#companion-packages)
+48. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -390,7 +391,9 @@ class Db:
 - `@middleware()` — marks a class with a `dispatch(request, call_next)` method as middleware. Always call it with parentheses: bare `@middleware` raises `DecoratorUsageError`.
 - `@use_middlewares(*classes)` — attach middleware to a **controller class** OR a **handler method**.
 - `@use_guards(*classes)` — attach guards to a **controller class** OR a **handler method**.
-- `@set_metadata(key, value)` — attach free-form metadata readable by guards via `ExecutionContext.get_metadata(key, default)`.
+- `@set_metadata(key, value)` — attach free-form metadata readable by guards via `ExecutionContext.get_metadata(key, default)`. `key` may also be a typed `MetadataKey` / `MetadataSetKey` (see [Typed Metadata & State Keys](#typed-metadata--state-keys)); on classes only the class's own metadata is read and extended.
+- `compose(*decorators, name=None)` — bundle decorators into one (`compose(a, b)(f)` is `a(b(f))`); `reject_bare_usage(name, arg)` — reject `@my_decorator` without parentheses in your own factories.
+- `@provides_state(*state_keys)` — declare on a guard / middleware / interceptor class which `StateKey`s it sets.
 
 Both decoration orders work for class-level `@use_guards` and `@use_middlewares`:
 
@@ -468,7 +471,15 @@ val = request.state.require("user_id", int)     # raises MissingStateError if ab
 request.state.has("user_id")                    # bool
 ```
 
-`AppState` raises `RuntimeError` on writes after `app.startup()` has sealed it.
+Typed slots: with `CurrentUser = StateKey[AuthUser]("app.user")`,
+`request.state[CurrentUser] = user` stores under `"app.user"` and
+`request.state[CurrentUser]` returns an `AuthUser` (raising the key's
+`on_missing`, `MissingStateError` by default); `get` / `set` / `has` / `in`
+accept a key too, and a handler can declare `user: Annotated[AuthUser, CurrentUser]`.
+See [Typed Metadata & State Keys](#typed-metadata--state-keys).
+
+`AppState` raises `RuntimeError` on writes after `app.startup()` has sealed it
+(item assignment with a `StateKey` included).
 
 ### `Headers`
 
@@ -812,7 +823,7 @@ is echoed only with `debug=True` or `ValidationPolicy(include_input=True)`.
 ### `ValidationPolicy`
 
 `ValidationPolicy(*, stdlib_models="warn", json_mode="lax", extra="ignore",
-include_input=None, max_issues=50)` — a frozen dataclass passed as
+include_input=None, max_issues=50, missing_state="warn")` — a frozen dataclass passed as
 `LaurenFactory.create(validation=...)` / `Lauren(validation=...)`; invalid
 values raise `StartupError(reason="invalid_validation_policy")`.
 
@@ -825,6 +836,11 @@ values raise `StartupError(reason="invalid_validation_policy")`.
 Pydantic and msgspec types, and any type using validation markers /
 `@validation_config`, are validated natively in every mode. Under `"warn"` a
 dataclass body's `__post_init__` may run twice per request.
+
+`missing_state` covers the legacy name-based `State` extractor
+(`StateExtractor`): `"warn"` (1.x default) answers a missing value with a 422
+and a `DeprecationWarning`; `"error"` (2.0 default) raises `MissingStateError`
+(500), as a `StateKey` parameter does.
 
 ### Programmatic use
 
@@ -939,6 +955,11 @@ The extractor receives:
   and `inner_type`.
 
 Raise any `HTTPError` subclass (`UnauthorizedError`, `ForbiddenError`, ...) to short-circuit with the matching status.
+
+When the value is produced by a guard or middleware (the current user, the
+tenant), a `StateKey` replaces such an extractor without any class:
+`User = Annotated[AuthUser, StateKey[AuthUser]("app.user", on_missing=UnauthorizedError)]`
+and `async def me(self, user: User)` — see [Typed Metadata & State Keys](#typed-metadata--state-keys).
 
 If the extractor needs constructor dependencies, decorate it with
 `@injectable` and list it in a module's `providers=[...]`. Lauren then
@@ -1316,32 +1337,49 @@ class BasicAuthGuard:
 ```
 
 ```python run
-from lauren import ExecutionContext
+from dataclasses import dataclass
+
+from lauren import ExecutionContext, StateKey
+
+@dataclass
+class Principal:
+    id: str
+    role: str
+
+CurrentUser = StateKey[Principal]("app.user")      # typed request state
 
 class AdminGuard:
     async def can_activate(self, ctx: ExecutionContext) -> bool:
-        if ctx.request.state.get("user", {}).get("role") != "admin":
-            return False
-        return True
+        user = ctx.request.state.get(CurrentUser)    # Principal | None
+        return user is not None and user.role == "admin"
 ```
 
 Attach with `@use_guards(...)`. Guards declared on a controller class run before guards declared on the individual method.
 
-`@set_metadata("key", value)` lets guards read per-route policy:
+Typed metadata keys let guards read per-route policy; `MetadataSetKey` items
+declared on the controller and the route accumulate:
 
 ```python run
-from lauren import get, set_metadata, use_guards
+from lauren import MetadataSetKey, controller, get, use_guards
+
+RequiredRoles = MetadataSetKey[str]("app.required_roles")
 
 class RoleGuard:
-    async def can_activate(self, ctx):
-        required = ctx.get_metadata("required_role", "user")
-        return ctx.request.state.get("user", {}).get("role") == required
+    async def can_activate(self, ctx: ExecutionContext) -> bool:
+        user = ctx.request.state.get(CurrentUser)
+        return user is not None and user.role in ctx.get_metadata(RequiredRoles)   # tuple[str, ...]
 
-@get("/purge")
+@RequiredRoles("admin")
 @use_guards(RoleGuard)
-@set_metadata("required_role", "admin")
-async def purge(self) -> dict: ...
+@controller("/ops")
+class Ops:
+    @get("/purge")
+    @RequiredRoles("operator")              # effective: ("admin", "operator")
+    async def purge(self) -> dict: ...
 ```
+
+`@set_metadata("required_role", "admin")` with `ctx.get_metadata("required_role", "user")`
+still works; string keys are untyped and a route's value replaces the controller's.
 
 `PUBLIC_METADATA_KEY` (`"lauren.public"`) is the well-known key for public
 routes: `@set_metadata(PUBLIC_METADATA_KEY, True)` marks one, and a global
@@ -1586,12 +1624,194 @@ own entries, so propagated behaviour runs as the outermost layer.
 **Encoder**: source encoder is copied only when the target has no encoder of
 its own (target's explicit `@use_encoder` wins).
 
-**User metadata** (`@set_metadata` key/value pairs): source dict is merged in;
-target's existing keys take precedence on conflict.
+**User metadata** (`@set_metadata` key/value pairs and typed keys): source
+values are merged in; the target's existing values take precedence on conflict,
+except `MetadataSetKey` items, which are unioned (source items first). This is
+the explicit way to give a subclass its parent's metadata — `@set_metadata`
+never inherits.
 
 Parameters: `source` (required), `guards=True`, `interceptors=True`,
 `middlewares=True`, `exception_handlers=True`, `encoder=True`,
 `user_metadata=True`.
+
+---
+
+## Typed Metadata & State Keys
+
+Route metadata (guard ⇄ route policy) and request state (guard / middleware ⇄
+handler data) have typed handles. A key is declared once, used as a decorator
+or a `state[...]` index, and read back with full static typing. Values are
+stored under the key's **name**, so string readers (`ctx.get_metadata("app.roles")`,
+`request.state.get("app.user")`) keep working; the string APIs are unchanged.
+
+### `MetadataKey[T]` / `MetadataSetKey[T]`
+
+- `MetadataKey[T](name, *, default, merge="override", validate=False, public=False, description=None)`
+  — a scalar key. `@Key(value)` attaches a value; `ctx.get_metadata(Key) -> T`
+  returns it or the (required) `default`.
+- `MetadataSetKey[T](name, *, merge="union", validate=False, public=False, description=None)`
+  — a collection key. `@Key(*items)` adds items; `ctx.get_metadata(Key) -> tuple[T, ...]`
+  (`()` when unset).
+- `@set_metadata(Key, value)` is the same as `@Key(value)` (a `MetadataSetKey`
+  takes a tuple: `@set_metadata(Roles, ("admin",))`).
+
+| | `MetadataKey[T]` | `MetadataSetKey[T]` |
+|---|---|---|
+| Stacked twice on one target | equal values allowed; different values → `DecoratorUsageError` at decoration time (`reason="metadata_conflict"`) | items accumulate, de-duplicated, in application order (like `@use_guards`) |
+| Across levels (controller ⟵ route; WebSocket gateway ⟵ `@on_message`) | `merge="override"` most specific wins · `"outer"` outermost wins (pin a security setting) · `"error"` different values fail `LaurenFactory.create` (`reason="metadata_merge_conflict"`) · or `callable(outer, inner) -> T` | `merge="union"` ordered union, outer first · `"override"` most specific replaces · or `callable(outer, inner) -> tuple` |
+
+Rules:
+
+- **Readers** — `get_metadata(Key)` on `ExecutionContext`, `WsConnectionContext`
+  and `WsMessageContext`; `lauren.reflect.reflect_user_metadata(obj, Key)` reads
+  what one class / function declares. A typed read takes no `default` argument.
+- **Merging happens once, in `LaurenFactory.create`.** `ctx.metadata` is a
+  read-only mapping shared by every request of the route (no per-request
+  copy); writing to it raises `TypeError`. String keys keep the legacy rule —
+  the most specific level wins.
+- **Name collisions** — two *different* key objects with one name meeting on a
+  target or in one route's merge raise `DecoratorUsageError`
+  (`reason="metadata_key_collision"`, `detail["definitions"]` = both
+  `module:line` sites). There is no process-wide registry.
+- **Bare usage** — `@Key` without a value is rejected (`reason="bare_metadata_key"`);
+  a class or function *value* needs a key typed for it (`MetadataKey[type[Base]]`).
+- **`validate=True`** checks every decorated value against `T` at decoration
+  time (`bool`/`int`/`str`/classes, unions, `Literal`, `tuple[...]` by origin);
+  a type that cannot be checked raises `reason="unvalidatable_metadata_key"`.
+- **`public=True`** marks the key for app manifests; it does not change behaviour.
+- **Strict inheritance** — `@set_metadata` and typed keys read and extend a
+  class's **own** metadata only; a subclass never absorbs its parent's keys.
+  Copy them deliberately with `@propagate_metadata(Parent)` (scalars: the
+  target wins; `MetadataSetKey` items: union, source first).
+
+### `StateKey[T]` — typed request state
+
+`StateKey[T](name, *, on_missing=None, require_provider=False, description=None)`
+names a slot in `request.state` (and `app_state`, `ws.state`):
+
+| Operation | Meaning |
+|---|---|
+| `request.state[Key] = value` | store under `Key.name` (`AppState` raises `RuntimeError` once sealed) |
+| `request.state[Key]` | the value, or raise `Key.missing_error()` |
+| `request.state.get(Key[, default])`, `Key in request.state`, `.has(Key)`, `.set(Key, v)` | as for string keys |
+| handler parameter `user: Annotated[T, Key]` | compiled at startup (`"state_key"` source); dispatch is one dict read of `request.state`, then `app_state` |
+| `Annotated[T \| None, Key]`, `Annotated[T, Key] \| None` or a parameter default | `None` / the default when absent |
+| missing, no default | `on_missing` — `MissingStateError` (500) by default; an `HTTPError` subclass (`UnauthorizedError`) or a zero-argument factory returning one |
+
+The same annotation works in `@on_connect` / `@on_message` hooks (reading
+`ws.state`), and a WebSocket guard writes `ctx.request.state[Key]` exactly
+like an HTTP guard (`WsUpgradeRequest.state` is the connection's state).
+
+The legacy name-based extractor (`lauren.StateExtractor`, `Annotated[T, State]`)
+still answers **422** for a missing value, now with a `DeprecationWarning`;
+`ValidationPolicy(missing_state="error")` switches it to `MissingStateError`
+(500) — the 2.0 default.
+
+### `@provides_state(*keys)` — startup provenance
+
+`@provides_state(Key, ...)` is metadata on a guard, middleware or interceptor
+class (own `__dict__`: a subclass re-declares it; stacking accumulates). For a
+key declared `require_provider=True`, `LaurenFactory.create` checks that every
+route injecting it (without `| None` or a default) has a component in its
+chain — global middlewares, guards and interceptors plus the controller's and
+route's own; for WebSocket hooks the global / gateway / handler guards and
+interceptors — that provides it. Otherwise it raises
+`UnresolvableParameterError` with `detail = {"param", "handler", "route",
+"state_key", "providers", "reason": "state_not_provided"}`, where `providers`
+names every registered class that would satisfy it. With `sessions=` on, the
+session engine provides the key named `"session"`.
+
+### `compose(*decorators, name=None)` and `reject_bare_usage(name, arg)`
+
+`compose(a, b, ...)` returns one decorator: `compose(a, b)(f)` is exactly
+`a(b(f))`, so metadata is identical to stacking by hand (route options,
+`@raises`, `@cache_response`, guards, keys…). Each step must return the object
+it received — a wrapping decorator raises `DecoratorUsageError`
+(`reason="decorator_replaced_target"`) naming it. Every application is
+recorded: `lauren.reflect.reflect_composed(obj)` returns
+`ReflectedComposition(name, decorators)` entries (own `__dict__` for classes).
+`reject_bare_usage(name, first_arg)` is the framework's own check against
+`@decorator` used without parentheses, for your decorator factories.
+
+```python run
+from dataclasses import dataclass
+from typing import Annotated
+
+from lauren import (
+    ExecutionContext, LaurenFactory, MetadataKey, MetadataSetKey, StateKey, UnauthorizedError,
+    compose, controller, get, module, provides_state, reject_bare_usage, use_guards,
+)
+from lauren.testing import TestClient
+
+
+@dataclass(frozen=True)
+class AuthUser:
+    id: str
+    roles: frozenset[str]
+
+
+Roles = MetadataSetKey[str]("app.roles")
+IsPublic = MetadataKey[bool]("app.is_public", default=False)
+CurrentUser = StateKey[AuthUser]("app.user", on_missing=UnauthorizedError, require_provider=True)
+User = Annotated[AuthUser, CurrentUser]
+TOKENS = {"t-alice": AuthUser("alice", frozenset({"admin", "auditor"})), "t-bob": AuthUser("bob", frozenset({"auditor"}))}
+
+
+@provides_state(CurrentUser)
+class TokenGuard:
+    deny_error = UnauthorizedError
+
+    async def can_activate(self, ctx: ExecutionContext) -> bool:
+        if ctx.get_metadata(IsPublic):                        # bool, default False
+            return True
+        user = TOKENS.get(ctx.request.headers.get("x-token", ""))
+        if user is None:
+            return False
+        ctx.request.state[CurrentUser] = user
+        return True
+
+
+class RolesGuard:
+    async def can_activate(self, ctx: ExecutionContext) -> bool:
+        user = ctx.request.state.get(CurrentUser)             # AuthUser | None
+        return ctx.get_metadata(IsPublic) or (user is not None and set(ctx.get_metadata(Roles)) <= user.roles)
+
+
+def auth(*roles: str):
+    """Require a token and every listed role."""
+    reject_bare_usage("auth", roles[0] if roles else None)
+    return compose(use_guards(TokenGuard, RolesGuard), Roles(*roles), name="auth")
+
+
+@auth("auditor")
+@controller("/reports")
+class Reports:
+    @get("/")
+    async def index(self, user: User) -> dict:
+        return {"viewer": user.id}
+
+    @get("/purge")
+    @Roles("admin")                                           # unions with the controller: auditor + admin
+    async def purge(self, user: User) -> dict:
+        return {"purged_by": user.id}
+
+    @get("/status")
+    @IsPublic(True)
+    async def status(self) -> dict:
+        return {"ok": True}
+
+
+@module(controllers=[Reports])
+class ReportsAppModule: ...
+
+
+with TestClient(LaurenFactory.create(ReportsAppModule)) as client:
+    assert client.get("/reports", headers={"x-token": "t-bob"}).json() == {"viewer": "bob"}
+    assert client.get("/reports/purge", headers={"x-token": "t-bob"}).status_code == 403
+    assert client.get("/reports/purge", headers={"x-token": "t-alice"}).json() == {"purged_by": "alice"}
+    assert client.get("/reports").status_code == 401
+    assert client.get("/reports/status").json() == {"ok": True}
+```
 
 ---
 
@@ -2791,7 +3011,7 @@ by `LaurenFactory.create` or at decoration time and are never HTTP-mapped;
 | `RequestTimeoutError` | `HTTPError` | 504 | `request_timeout` | A server-side deadline was exceeded while handling the request (504). |
 | `UnauthorizedError` | `HTTPError` | 401 | `unauthorized` | Authentication is missing or invalid; `challenge=` sets `WWW-Authenticate`. |
 | `ForbiddenError` | `HTTPError` | 403 | `forbidden` | The caller is not allowed — also what a guard returning `False` raises by default. |
-| `MissingStateError` | `HTTPError` | 500 | `missing_state` | `request.state.require(key, T)` found no value for `key`. |
+| `MissingStateError` | `HTTPError` | 500 | `missing_state` | A required `request.state` value is missing (`require(key, T)`, `state[key]`, a `StateKey` parameter). |
 | `StateTypeError` | `HTTPError` | 500 | `state_type_error` | A `request.state` value has the wrong type for `get_typed` / `require`. |
 | `LifecycleError` | `LaurenError` | — | `lifecycle_error` | Base class for errors around startup, shutdown and lifecycle hooks. |
 | `LifecycleViolationError` | `LifecycleError` | — | `lifecycle_violation` | A lifecycle operation was used in the wrong state (`startup()` twice, a mutator after compile). |
@@ -3233,7 +3453,7 @@ Same rule for `@controller` and `@module`. This avoids surprising behavior when 
 
 Method-level decorators (`@get`, `@post`, etc.) DO propagate through inheritance — that's just Python method resolution, nothing lauren-specific.
 
-`@use_guards` and `@use_middlewares` attach to the exact target (class or method) only. A subclass that wants parent guards must re-declare them.
+`@use_guards` and `@use_middlewares` attach to the exact target (class or method) only. A subclass that wants parent guards must re-declare them. The same holds for `@set_metadata`, typed metadata keys, `@provides_state` and `compose` provenance: a subclass sees only what it declares (use `@propagate_metadata(Parent)` to copy).
 
 ---
 
@@ -5032,7 +5252,8 @@ class ApiKeyGuard:
 ```
 
 Fields: `headers`, `path`, `path_params`, `query_string`, `client`,
-`method` (always `"GET"`).
+`method` (always `"GET"`), `state` (the connection's `ws.state`, so
+`ctx.request.state[Key] = value` works in a WebSocket guard) and `app_state`.
 
 #### `WsConnectionContext`
 
@@ -5046,8 +5267,9 @@ class PrivateGateway: ...
 ```
 
 Fields: `request` (`WsUpgradeRequest`), `connection` (live `WebSocket`),
-`handler_class`, `handler_func`, `route_template`, `metadata`.
-Method: `get_metadata(key, default=None)`.
+`handler_class`, `handler_func`, `route_template`, `metadata` (read-only).
+Method: `get_metadata(key, default=None)` — a typed `MetadataKey` /
+`MetadataSetKey` returns its typed value.
 
 #### `WsMessageContext`
 
@@ -5056,7 +5278,8 @@ Method: `get_metadata(key, default=None)`.
 `"__binary__"` for binary frames, the real name for wildcard handlers) and
 `payload: Any` (the validated payload; raw `bytes` for binary frames);
 `handler_func` is the handler and `metadata` merges class and method
-`@set_metadata` (method wins). Also importable from `lauren`.
+metadata at startup (typed keys by their merge policy; string keys: the method
+wins). Also importable from `lauren`.
 
 ### Cross-cutting concern readers
 
@@ -5115,10 +5338,18 @@ Return `None` when the class is not the expected type.
 
 ```python
 reflect_user_metadata(obj, key=None, default=None)
-# → full dict when key is None, single value otherwise
+# → full dict when key is None, single value otherwise; a typed key returns
+#   its typed value (its default, or () for a MetadataSetKey, when absent)
 
 reflect_encoder(cls_or_fn)   # → JSONEncoder instance or None
+
+reflect_composed(obj)        # → tuple[ReflectedComposition(name, decorators), ...]
 ```
+
+`reflect_composed` lists the `compose(...)` applications recorded on a class
+(own `__dict__`) or function, in application order; `decorators` holds one
+label per composed decorator (`"use_guards"`, `"app.roles('admin')"`, a nested
+composition's name).
 
 ### App-level readers (require started app)
 
@@ -5219,26 +5450,31 @@ class C:
 
 Lauren's runtime awaits `aclose()` on every request-scoped instance after each request, so DB sessions close deterministically. Outside a request (a script, a background job), open `async with app.scope() as scope:` and `await scope.resolve(DbSession)` to get the same per-scope instance and teardown.
 
-### Pattern: extract the user at the handler level
+### Pattern: hand the user from the guard to the handler
 
 ```python
-class CurrentUser(ExtractionMarker):
-    source = "app.current_user"
+CurrentUser = StateKey[AuthUser]("app.user", on_missing=UnauthorizedError)
+User = Annotated[AuthUser, CurrentUser]
 
-    async def extract(self, execution_context: ExecutionContext, extraction: Extraction) -> object:
-        user = execution_context.request.state.get("user")   # set by an auth guard
-        if user is None:
-            raise UnauthorizedError("login required")
-        return user
+@provides_state(CurrentUser)
+class JwtGuard:
+    async def can_activate(self, ctx: ExecutionContext) -> bool:
+        ctx.request.state[CurrentUser] = await verify(ctx.request.headers.get("authorization"))
+        return True
 
+@use_guards(JwtGuard)
 @controller("/me")
 class MeController:
     @get("/")
-    async def me(self, user: CurrentUser) -> dict:
-        return {"id": user["id"]}
+    async def me(self, user: User) -> dict:      # AuthUser — one dict read at dispatch
+        return {"id": user.id}
 ```
 
-Better than threading an AuthContext through the controller constructor — the dependency is visible per-route.
+Better than threading an AuthContext through the controller constructor or
+reading `request.state.user` strings — the dependency is typed and visible
+per-route, and `require_provider=True` makes a route that forgot the guard fail
+`LaurenFactory.create`. A custom `ExtractionMarker` remains the tool when the
+value must be computed from the request.
 
 ### Pattern: declare the success status
 
@@ -5502,7 +5738,10 @@ request.
 | Add a guard to all routes on a controller | `@use_guards(MyGuard)` on the class |
 | Override JSON encoder for one route | `@use_encoder(OrjsonEncoder())` on the method |
 | Override JSON encoder for all routes on a controller | `@use_encoder(MsgspecEncoder())` on the class |
-| Read per-route metadata in a guard | `ctx.get_metadata("key", default)` |
+| Read per-route metadata in a guard | `Roles = MetadataSetKey[str]("app.roles")`, `@Roles("admin")`, `ctx.get_metadata(Roles)` (strings: `ctx.get_metadata("key", default)`) |
+| Pass typed data from a guard to a handler | `CurrentUser = StateKey[User]("app.user")`; guard: `ctx.request.state[CurrentUser] = user`; handler: `user: Annotated[User, CurrentUser]` |
+| Fail startup when a route lacks the guard that sets a value | `StateKey(..., require_provider=True)` + `@provides_state(Key)` on the guard |
+| Build a reusable `@auth("admin")` decorator | `compose(use_guards(...), Roles(*roles), name="auth")` + `reject_bare_usage("auth", roles[0] if roles else None)` |
 | Attach a singleton explicitly | `app.container.set_singleton(MyCls, instance)` |
 | Run post-construct hook | `@post_construct` on an `async def` method of an `@injectable` |
 | Run a long-lived loop for the app's lifetime | `@hosted_service()` class with `async def run(self, ctx)`; list it in `providers` |

@@ -17,6 +17,7 @@ __all__ = [
     "ReflectedModule",
     "ReflectedWsGateway",
     "ReflectedError",
+    "ReflectedComposition",
 ]
 
 
@@ -179,3 +180,18 @@ class ReflectedError:
 
     summary: str
     """The first paragraph of the class's own docstring, on one line (``""`` without one)."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReflectedComposition:
+    """One ``compose(...)`` application recorded on a class or function.
+
+    Returned by :func:`~lauren.reflect.reflect_composed`, in application order.
+    """
+
+    name: str | None
+    """The ``name=`` given to :func:`~lauren.compose` (``None`` when unnamed)."""
+
+    decorators: tuple[str, ...]
+    """A label per composed decorator, in written order (e.g. ``"use_guards"``,
+    ``"app.roles('admin')"``, or a nested composition's name)."""

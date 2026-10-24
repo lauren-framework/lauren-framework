@@ -29,9 +29,15 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from .._metadata import StateKey, provides_state
 from ..types import Request, Response
 from ._config import ResolvedSessionConfig
 from ._session import Session
+
+#: The state slot the engine fills (``request.state.session``). Declared with
+#: ``@provides_state`` so a ``StateKey("session", require_provider=True)``
+#: parameter passes the factory's provenance check when sessions are on.
+SESSION_STATE: StateKey[Session] = StateKey("session")
 
 
 def _now() -> float:
@@ -61,6 +67,7 @@ class _Inbound:
     loaded_expiry: float | None = None  # the inbound cookie's expiry
 
 
+@provides_state(SESSION_STATE)
 class _SessionEngine:
     """Middleware-shaped session lifecycle engine (see module docstring)."""
 

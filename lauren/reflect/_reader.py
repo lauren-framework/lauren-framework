@@ -4,10 +4,13 @@ class without importing internal attribute-name strings directly.
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple, TYPE_CHECKING
+from typing import Any, NamedTuple, TYPE_CHECKING, TypeVar, overload
 
+from .._metadata import _UNSET, composed_records, own_metadata, read_metadata
+from .._metadata import MetadataKey, MetadataSetKey
 from ._responses import static_route_responses
 from ._types import (
+    ReflectedComposition,
     ReflectedController,
     ReflectedModule,
     ReflectedRoute,
@@ -39,7 +42,10 @@ __all__ = [
     # Phase 3 — user metadata + encoder
     "reflect_user_metadata",
     "reflect_encoder",
+    "reflect_composed",
 ]
+
+_V = TypeVar("_V")
 
 # ---------------------------------------------------------------------------
 # Mirrored decorator-attribute constants.
@@ -345,19 +351,25 @@ def get_module_metadata(cls: type) -> ReflectedModule | None:
 # ---------------------------------------------------------------------------
 
 
-def reflect_user_metadata(
-    obj: Any,
-    key: str | None = None,
-    default: Any = None,
-) -> Any:
-    """Return ``@set_metadata`` values from *obj* (a class or function).
+@overload
+def reflect_user_metadata(obj: Any) -> dict[str, Any]: ...
+@overload
+def reflect_user_metadata(obj: Any, key: MetadataSetKey[_V]) -> tuple[_V, ...]: ...
+@overload
+def reflect_user_metadata(obj: Any, key: MetadataKey[_V]) -> _V: ...
+@overload
+def reflect_user_metadata(obj: Any, key: str, default: Any = None) -> Any: ...
+def reflect_user_metadata(obj: Any, key: Any = None, default: Any = _UNSET) -> Any:
+    """Return ``@set_metadata`` / typed-key values declared on *obj* (a class or function).
 
     When *key* is ``None`` the full metadata dict is returned (a copy).
-    When *key* is provided the value for that key is returned, or *default*
-    if the key is absent.
+    A string *key* returns that value, or *default* if absent. A typed key
+    (:class:`~lauren.MetadataKey` / :class:`~lauren.MetadataSetKey`) returns
+    its typed value — the key's default, or ``()``, when absent.
 
     Reads from ``obj.__dict__`` for classes (own-class rule) and from
-    ``getattr`` for functions.
+    ``getattr`` for functions. Values are what *obj* itself declares; the
+    per-route merge across levels happens in ``LaurenFactory.create``.
 
     Example::
 
@@ -369,13 +381,31 @@ def reflect_user_metadata(
         reflect_user_metadata(ApiController, "rate_limit")     # 100
         reflect_user_metadata(ApiController, "missing", 0)    # 0
     """
-    if isinstance(obj, type):
-        meta: dict[str, Any] = dict(obj.__dict__.get(_SET_METADATA, {}))
-    else:
-        meta = dict(getattr(obj, _SET_METADATA, {}))
+    meta, _keys = own_metadata(obj)
     if key is None:
         return meta
-    return meta.get(key, default)
+    return read_metadata(meta, key, default)
+
+
+def reflect_composed(obj: Any) -> tuple[ReflectedComposition, ...]:
+    """Return the :func:`~lauren.compose` applications recorded on *obj*.
+
+    Reads ``obj.__dict__`` for classes (own-class rule) and attribute lookup
+    for functions; entries are in application order (an inner composition
+    precedes the one that contains it)::
+
+        admin = compose(use_guards(JwtGuard), Roles("admin"), name="admin")
+
+        @controller("/stats")
+        class Stats:
+            @get("/")
+            @admin
+            async def show(self) -> dict: ...
+
+        reflect_composed(Stats.show)
+        # (ReflectedComposition(name="admin", decorators=("use_guards", "app.roles('admin')")),)
+    """
+    return tuple(ReflectedComposition(name=r.name, decorators=r.decorators) for r in composed_records(obj))
 
 
 def reflect_encoder(cls_or_fn: Any) -> Any | None:

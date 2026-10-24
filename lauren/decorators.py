@@ -15,6 +15,19 @@ from .exceptions import (
     LifecycleConfigError,
     MiddlewareConfigError,
 )
+from ._metadata import (
+    COMPOSED_META,
+    METADATA_KEYS,
+    PROVIDES_STATE_META,
+    MetadataKey,
+    MetadataSetKey,
+    StateKey,
+    compose,
+    propagate_user_metadata,
+    provides_state,
+    reject_bare_usage,
+    stack_metadata,
+)
 from .types import Scope
 
 
@@ -31,27 +44,8 @@ def _describe(obj: Any) -> str:
     return repr(obj)
 
 
-def _reject_bare_usage(decorator_name: str, arg: Any) -> None:
-    """Raise if a configurable decorator was used without parentheses.
-
-    When a user writes ``@controller`` instead of ``@controller()`` Python
-    passes the decorated class or function straight to the decorator's
-    factory as its first positional argument, which almost always produces
-    a confusing downstream error (or, worse, silently "succeeds" and
-    creates a broken registration). By checking at decoration time we
-    surface the mistake immediately with actionable guidance.
-    """
-    if isinstance(arg, type) or callable(arg):
-        raise DecoratorUsageError(
-            f"@{decorator_name} must be used with parentheses: write "
-            f"'@{decorator_name}()' even when all arguments are default. "
-            "The bare form is rejected because it silently binds the "
-            "decorated object as the first positional configuration argument.",
-            detail={
-                "decorator": decorator_name,
-                "target": getattr(arg, "__qualname__", repr(arg)),
-            },
-        )
+#: Private alias kept for the framework's own decorators (public: :func:`reject_bare_usage`).
+_reject_bare_usage = reject_bare_usage
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -998,8 +992,10 @@ def propagate_metadata(
     For **encoder** metadata, the source encoder is copied only when the target
     has no encoder of its own (target's explicit ``@use_encoder`` wins).
 
-    For **user metadata** (``@set_metadata`` key/value pairs), the source dict
-    is merged in and the target's existing keys take precedence.
+    For **user metadata** (``@set_metadata`` key/value pairs and typed keys),
+    the source values are merged in and the target's existing values take
+    precedence — except :class:`~lauren.MetadataSetKey` items, which are
+    unioned (source items first).
 
     Use ``guards=False``, ``interceptors=False``, etc. to suppress individual
     categories::
@@ -1084,21 +1080,9 @@ def propagate_metadata(
                     except (AttributeError, TypeError):  # pragma: no cover
                         pass
 
-        # ---- user metadata dict: merge, target keys win ----
+        # ---- user metadata: source values are defaults; typed collection keys union ----
         if user_metadata:
-            src_meta: dict[str, Any] = (
-                dict(source.__dict__.get(SET_METADATA, {}))
-                if isinstance(source, type)
-                else dict(getattr(source, SET_METADATA, {}))
-            )
-            if src_meta:
-                if isinstance(target, type):
-                    existing_meta = dict(target.__dict__.get(SET_METADATA, {}))
-                else:
-                    existing_meta = dict(getattr(target, SET_METADATA, {}))
-                # source provides defaults; existing target values win
-                merged = {**src_meta, **existing_meta}
-                setattr(target, SET_METADATA, merged)
+            propagate_user_metadata(source, target)
 
         return target
 
@@ -1240,13 +1224,30 @@ def openapi_security(
     return decorator
 
 
-def set_metadata(key: str, value: Any) -> Callable[[_T], _T]:
-    """Attach free-form metadata observable from ``ExecutionContext``."""
+def set_metadata(key: Any, value: Any) -> Callable[[_T], _T]:
+    """Attach metadata observable from ``ExecutionContext.get_metadata``.
+
+    *key* is a string (legacy: the last write on a target wins; a more
+    specific level replaces a controller's value) or a typed key —
+    ``@set_metadata(Roles, ("admin",))`` is ``@Roles("admin")`` and
+    ``@set_metadata(IsPublic, True)`` is ``@IsPublic(True)``, with the key's
+    stacking and merge rules. On classes only the class's **own** metadata is
+    read and extended (strict inheritance); use ``@propagate_metadata(Parent)``
+    to copy a parent's values deliberately.
+    """
+    if isinstance(key, MetadataSetKey):
+        if isinstance(value, (str, bytes)) or not isinstance(value, (tuple, list, set, frozenset)):
+            raise DecoratorUsageError(
+                f"@set_metadata({key!r}, {value!r}): a MetadataSetKey takes a tuple of items, "
+                f"e.g. @set_metadata(key, ({value!r},)) — or apply the key directly: @key(item, ...)",
+                detail={"decorator": "set_metadata", "key": key.name, "reason": "invalid_metadata_value"},
+            )
+        return key(*value)
+    if isinstance(key, MetadataKey):
+        return key(value)
 
     def decorator(target: _T) -> _T:
-        existing: dict[str, Any] = dict(getattr(target, SET_METADATA, {}))
-        existing[key] = value
-        setattr(target, SET_METADATA, existing)
+        stack_metadata(target, key, value)
         return target
 
     return decorator
@@ -1444,6 +1445,12 @@ __all__ = [
     "use_encoder",
     "set_metadata",
     "propagate_metadata",
+    "compose",
+    "provides_state",
+    "reject_bare_usage",
+    "MetadataKey",
+    "MetadataSetKey",
+    "StateKey",
     "openapi_security",
     "raises",
     "ControllerMeta",
@@ -1463,6 +1470,9 @@ __all__ = [
     "USE_EXCEPTION_HANDLERS",
     "EXCEPTION_HANDLER_META",
     "SET_METADATA",
+    "METADATA_KEYS",
+    "COMPOSED_META",
+    "PROVIDES_STATE_META",
     "PUBLIC_METADATA_KEY",
     "OPENAPI_SECURITY_META",
     "USE_ENCODER",
