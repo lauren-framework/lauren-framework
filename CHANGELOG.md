@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-10-24
+
 ### Added
 
 - `OperationScope` and `app.scope(name="operation", *, values=None)` (also on
@@ -1073,7 +1075,8 @@ Seven framework source files migrated from direct pydantic calls to
   complete reference) shipped inside the wheel.
 - **`TestClient` / `WsTestClient`** — in-process ASGI test clients.
 
-[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.11.0
 [1.10.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.10.0
 [1.9.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.9.0
 [1.8.1]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.8.1
