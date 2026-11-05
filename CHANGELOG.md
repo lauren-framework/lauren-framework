@@ -7,7 +7,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
-## [1.11.0] - 2026-10-24
+## [1.11.0] - 2026-11-05
 
 ### Added
 
@@ -289,6 +289,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - A store passed as `SessionConfig(store=...)` / `revocation_store=` now gets its `@post_construct` / `@pre_destruct` (or `startup()` / `aclose()`) hooks run. The documented Redis recipe used to answer 500 on the first request.
 - A `NamedTuple` return value is serialized instead of being read as a `(body, status)` pair.
 - `CompiledType.project()` no longer emits a pydantic subclass's extra fields.
+- Response contracts on older Pydantic releases read aliased fields by name without
+  changing the model's input-validation configuration, including nested models;
+  strict responses reject serializer type mismatches, and recursive schemas hoist
+  their actual root definition.
+- Regression tests cover msgspec's single-decode path without intercepting response
+  parsing, app-owned streaming adapters, and Python 3.13's HTTP status titles.
 
 ## [1.10.0] - 2026-10-23
 
