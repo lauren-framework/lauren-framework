@@ -299,7 +299,7 @@ class MetadataKey(_MetadataKeyBase, Generic[T]):
     security settings), ``"error"`` (conflicting levels fail
     ``LaurenFactory.create``) or a callable ``(outer, inner) -> value``.
     ``validate=True`` checks every decorated value against ``T`` at
-    decoration time; ``public=True`` marks the key for manifests.
+    decoration time; ``public=True`` records future manifest visibility.
     """
 
     __slots__ = ("default",)

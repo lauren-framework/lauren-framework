@@ -14,13 +14,14 @@ from lauren import (
     compose,
     controller,
     get,
+    post,
     raises,
     reject_bare_usage,
     set_metadata,
     use_guards,
     use_interceptors,
 )
-from lauren.cache import cache_response
+from lauren.cache import cache_response, idempotent
 from lauren.exceptions import NotFoundError
 from lauren.reflect import ReflectedComposition, reflect_composed
 
@@ -51,6 +52,7 @@ _LAUREN_ATTRS = (
     "__lauren_metadata_keys__",
     "__lauren_raises__",
     "__lauren_cache_response__",
+    "__lauren_idempotent__",
 )
 
 
@@ -86,6 +88,21 @@ def test_compose_applies_like_manual_stacking() -> None:
     @IsPublic(False)
     @raises(NotFoundError)
     @cache_response(ttl=30)
+    async def stacked() -> dict:
+        return {}
+
+    assert _snapshot(composed) == _snapshot(stacked)
+
+
+def test_compose_preserves_idempotent_metadata_like_manual_stacking() -> None:
+    bundled = compose(post("/charge", status_code=201), idempotent(ttl=120, required=True))
+
+    @bundled
+    async def composed() -> dict:
+        return {}
+
+    @post("/charge", status_code=201)
+    @idempotent(ttl=120, required=True)
     async def stacked() -> dict:
         return {}
 

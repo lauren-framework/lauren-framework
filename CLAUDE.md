@@ -97,6 +97,7 @@ lauren/                      — framework package
 ├── _health/                 — health probes: @health_check marker, HealthRuntime (timeouts, single-flight, cache), indicators, HealthModule
 ├── _lifecycle/              — post_construct / pre_destruct machinery
 ├── _modules/                — module graph & visibility
+├── _metadata.py             — typed metadata / state keys, merge policy, decorator composition, provenance checks (private)
 ├── _pagination/             — pagination: PaginationConfig resolution, paging plans ("pagination" source), cursor codec, Link URLs, Page rendering, OpenAPI contribution
 ├── _routing/                — radix-tree HTTP router
 ├── _scheduling/             — hosted-service supervisor, scheduler, cron parser, clocks, ScheduleModule (private)
@@ -256,6 +257,8 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Wrap handler execution (timing, caching, transforms) | `@injectable` interceptor + `@use_interceptors` |
 | Inject a typed value into a handler parameter | Custom `Extractor` (`extractors.py`) |
 | Share state across a single request | `Scope.REQUEST` injectable |
+| Pass typed data from a guard to a handler | `StateKey[T]("app.user")` + `Annotated[T, Key]`; opt into startup provenance with `require_provider=True` and `@provides_state(Key)` |
+| Attach typed policy to a route / controller | `MetadataKey[T]` (scalar) or `MetadataSetKey[T]` (ordered union); read with `ctx.get_metadata(Key)` |
 | Share state for the app lifetime | `Scope.SINGLETON` injectable |
 | Decouple modules with domain events | `EventBus` / `EventPublisher` + `@on_event` (`lauren.events`) |
 | Expose liveness / readiness / startup probes | `HealthModule.for_root()` + `@health_check("name")` on a singleton method (`lauren.health`) |
@@ -328,10 +331,15 @@ See `docs/concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md` for d
 - Reject **bare usage** (`@my_decorator` without parentheses) when the
   decorator takes optional configuration — silent passing of the
   decorated function as the first arg is the leading source of
-  silent-broken patches in the codebase. Use `_reject_bare_usage` from
-  `decorators.py` as a model.
+  silent-broken patches in the codebase. Use public `reject_bare_usage` from
+  `decorators.py` in configurable application / companion decorators.
 - Never combine decoration with execution — the decorated object must
   be the same object after decoration.
+- Build reusable bundles with `compose(a, b, name=...)` instead of a
+  wrapping decorator. `compose` applies like manual stacking, rejects any
+  decorator that replaces its target, and records `reflect_composed` provenance.
+  Metadata decorators built on `MetadataKey` / `MetadataSetKey` inherit the
+  key's explicit merge policy; scalar conflicts on one target fail immediately.
 - **Route-decorator options go through one table.** `@get` … `@options`
   (and `Lauren`'s `@app.get` …) validate their keyword options with
   `_validate_route_options` against `_ROUTE_OPTION_VALIDATORS` in
@@ -453,6 +461,12 @@ exit).
 
 ## 8. Common Pitfalls
 
+- ❌ Reading `request.state.<name>` or repeating string literals in guards and
+  handlers for shared typed values — use one `StateKey[T]`, write
+  `request.state[Key] = value`, and inject `Annotated[T, Key]`. Missing
+  required values raise `MissingStateError` (500) by default; a legacy
+  name-based `StateExtractor` still answers 422 with a deprecation warning
+  unless `ValidationPolicy(missing_state="error")` is enabled.
 - ❌ Persisting state on the `Request` object. `Request` instances are pooled
   and reused; `Request.reset()` clears the instance's entire `__dict__`
   between requests, so any attribute set on `request` (or read from a previous
@@ -823,7 +837,9 @@ exit).
 - `lauren/_ws_runtime.py` — `WsConnectionContext`, `WsUpgradeRequest`, `CompiledGateway`, `handle_websocket`.
 - `lauren/websockets.py` — gateway runtime + `BroadcastGroup`.
 - `lauren/reflect/` — full metadata introspection API: `reflect_routes`, `reflect_controller`, `get_all_routes`, `get_controller_metadata`, `propagate_metadata` targets this module's readers.
-- `lauren/decorators.py` — `propagate_metadata` (copies `@use_*` metadata between objects).
+- `lauren/decorators.py` — `propagate_metadata`, `compose`, typed key exports;
+  `lauren/_metadata.py` owns the merge engine, `StateKey` and the Phase-5
+  `@provides_state` provenance checker.
 - `lauren/sse.py` — `EventStream`, `ServerSentEvent`, framing.
 - `lauren/streaming.py` — `StreamingResponse[T]`, `Stream`,
   `StreamReader`, content-negotiation logic.

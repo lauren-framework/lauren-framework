@@ -387,24 +387,28 @@ Request-scoped state bag with typed accessors.
 
 Attributes can be set either via attribute-style (``state.user = u``) or
 with :meth:`set`. Typed retrieval helps middleware/handlers avoid silent
-type errors.
+type errors. A :class:`~lauren.StateKey` gives a slot a name *and* a type:
+``state[CurrentUser] = user`` stores under the key's name and
+``state[CurrentUser]`` reads it back (raising the key's ``on_missing`` —
+:class:`MissingStateError` by default — when absent). Item access, ``in``,
+:meth:`get`, :meth:`set` and :meth:`has` accept a key or a plain string.
 
 #### `State.set`
 
 ```python
-def set(self, key: str, value: Any) -> None
+def set(self, key: StateKey[Any] | str, value: Any) -> None
 ```
 
 #### `State.get`
 
 ```python
-def get(self, key: str, default: Any = None) -> Any
+def get(self, key: Any, default: Any = None) -> Any
 ```
 
 #### `State.has`
 
 ```python
-def has(self, key: str) -> bool
+def has(self, key: StateKey[Any] | str) -> bool
 ```
 
 #### `State.get_typed`
@@ -433,7 +437,8 @@ class AppState(initial: Mapping[str, Any] | None = None)
 
 Read-only application-level state.
 
-Writes raise :class:`RuntimeError` after the app has been sealed.
+Writes raise :class:`RuntimeError` after the app has been sealed (once
+startup completed). ``StateKey`` item access works as on :class:`State`.
 
 #### `AppState.seal`
 
@@ -444,5 +449,5 @@ def seal(self) -> None
 #### `AppState.set`
 
 ```python
-def set(self, key: str, value: Any) -> None
+def set(self, key: StateKey[Any] | str, value: Any) -> None
 ```

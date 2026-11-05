@@ -296,6 +296,7 @@ LaurenFactory.create(
         extra="ignore",         # default for stdlib models; @validation_config wins
         include_input=None,     # None: echo "input" only when debug is on
         max_issues=50,          # cap on reported issues per request
+        missing_state="warn",   # legacy State extractor: "warn" (422 + DeprecationWarning) | "error" (500)
     ),
 )
 ```
@@ -312,6 +313,13 @@ apply in every mode, because they only change requests that already fail.
 Under `"warn"`, `__post_init__` of a dataclass body may run twice per request
 (once for the shadow check). The plan for 2.0 is to make `"enforce"` the
 default; turn it on now and fix what the warnings report.
+
+`missing_state` concerns the legacy name-based `State` extractor
+(`StateExtractor`): a missing value is a server-side wiring bug, not a client
+error, so `"error"` (the 2.0 default) raises `MissingStateError` (500) instead
+of the deprecated 422 that `"warn"` keeps (with a `DeprecationWarning`).
+Typed [state keys](typed-metadata-and-state.md#state-keys) behave like
+`"error"` already.
 
 `Lauren(validation=...)` forwards the same policy.
 

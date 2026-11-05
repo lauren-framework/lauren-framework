@@ -1678,7 +1678,7 @@ Rules:
 - **`validate=True`** checks every decorated value against `T` at decoration
   time (`bool`/`int`/`str`/classes, unions, `Literal`, `tuple[...]` by origin);
   a type that cannot be checked raises `reason="unvalidatable_metadata_key"`.
-- **`public=True`** marks the key for app manifests; it does not change behaviour.
+- **`public=True`** records the key's intended manifest visibility for the future app manifest (F22); it does not change behaviour or expose a manifest in this release.
 - **Strict inheritance** — `@set_metadata` and typed keys read and extend a
   class's **own** metadata only; a subclass never absorbs its parent's keys.
   Copy them deliberately with `@propagate_metadata(Parent)` (scalars: the
@@ -1725,7 +1725,7 @@ session engine provides the key named `"session"`.
 
 `compose(a, b, ...)` returns one decorator: `compose(a, b)(f)` is exactly
 `a(b(f))`, so metadata is identical to stacking by hand (route options,
-`@raises`, `@cache_response`, guards, keys…). Each step must return the object
+`@raises`, `@cache_response`, `@idempotent`, guards, interceptors, keys…). Each step must return the object
 it received — a wrapping decorator raises `DecoratorUsageError`
 (`reason="decorator_replaced_target"`) naming it. Every application is
 recorded: `lauren.reflect.reflect_composed(obj)` returns

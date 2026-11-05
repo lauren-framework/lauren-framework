@@ -172,6 +172,14 @@ def test_state_key_cannot_combine_with_an_extractor(annotation: str) -> None:
         parse_extractor_hint(hint)
 
 
+@pytest.mark.parametrize("second", [CurrentUser, StateKey[User]("another.user")])
+def test_multiple_state_keys_in_one_annotation_fail_at_compile_time(second: StateKey[User]) -> None:
+    from lauren import ExtractorError
+
+    with pytest.raises(ExtractorError, match="multiple StateKey"):
+        parse_extractor_hint(Annotated[User, CurrentUser, second])
+
+
 def _state_ext(annotation: Any, *, has_default: bool = False, default: Any = None) -> Extraction:
     source, inner, _, _, fd, _ = parse_extractor_hint(annotation)
     ext = Extraction(

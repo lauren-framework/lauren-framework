@@ -22,7 +22,7 @@ No external dependencies — pure Python dataclasses.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from lauren import Scope, controller, get, injectable, module, set_metadata, use_guards, ExecutionContext
+from lauren import Scope, controller, get, injectable, module, MetadataKey, StateKey, use_guards, ExecutionContext
 from lauren.exceptions import ForbiddenError
 
 
@@ -91,7 +91,8 @@ class ABACEvaluator:
 # Guard
 # ---------------------------------------------------------------------------
 
-ACTION_KEY = "abac_action"
+ACTION = MetadataKey[str]("app.abac_action", default="")
+SUBJECT = StateKey[dict]("app.subject")
 
 
 @injectable(scope=Scope.SINGLETON)
@@ -102,9 +103,9 @@ class ABACGuard:
         self._evaluator = evaluator
 
     async def can_activate(self, ctx: ExecutionContext) -> bool:
-        action = ctx.get_metadata(ACTION_KEY, "")
+        action = ctx.get_metadata(ACTION)
         # Subject attributes come from request state (populated by auth guard)
-        subject = ctx.request.state.get("subject", {})
+        subject = ctx.request.state.get(SUBJECT, {})
         if not self._evaluator.evaluate(subject, action):
             raise ForbiddenError(
                 f"ABAC denied action '{action}'",
@@ -121,7 +122,7 @@ class ABACGuard:
 @controller("/docs")
 class DocsController:
     @get("/secret")
-    @set_metadata(ACTION_KEY, "read_secret")
+    @ACTION("read_secret")
     async def secret(self) -> dict:
         return {"content": "top secret"}
 
@@ -135,5 +136,7 @@ class ABACModule:
 
 - `PolicySet.actions` is empty → applies to all actions.
 - Multiple policy sets are all evaluated; access requires every set to pass.
-- Store `subject` in `ctx.request.state` from an upstream authentication guard.
+- Store `subject` with `ctx.request.state[SUBJECT] = subject` from an upstream
+  authentication guard. `@ACTION(...)` is typed route metadata; a controller
+  can declare a default action and `merge="override"` lets the route replace it.
 - Swap in-memory `_policy_sets` for a database-backed loader without changing the guard interface.

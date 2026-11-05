@@ -921,7 +921,11 @@ def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
         for extra in args[1:]:
             # Typed request state: ``Annotated[T, CurrentUser]``.
             if isinstance(extra, StateKey):
-                if source not in (None, "state_key"):
+                if source == "state_key":
+                    raise ExtractorError(
+                        "multiple StateKey entries in Annotated[...]; keep one key per parameter",
+                    )
+                if source is not None:
                     raise ExtractorError(
                         f"Annotated[...] combines {extra!r} with the {source!r} extractor; "
                         "a parameter reads either a state key or one extractor source",

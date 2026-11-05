@@ -200,13 +200,21 @@ class State:
         except KeyError:
             raise MissingStateError(f"required state key {key!r} is missing", detail={"key": key}) from None
 
-    def __setitem__(self, key: StateKey[T] | str, value: Any) -> None:
+    @overload
+    def __setitem__(self, key: StateKey[T], value: T) -> None: ...
+    @overload
+    def __setitem__(self, key: str, value: Any) -> None: ...
+    def __setitem__(self, key: StateKey[Any] | str, value: Any) -> None:
         self._data[key.name if isinstance(key, StateKey) else key] = value  # type: ignore[attr-defined]
 
     def __contains__(self, key: object) -> bool:
         return (key.name if isinstance(key, StateKey) else key) in self._data  # type: ignore[attr-defined]
 
-    def set(self, key: StateKey[T] | str, value: Any) -> None:
+    @overload
+    def set(self, key: StateKey[T], value: T) -> None: ...
+    @overload
+    def set(self, key: str, value: Any) -> None: ...
+    def set(self, key: StateKey[Any] | str, value: Any) -> None:
         self._data[key.name if isinstance(key, StateKey) else key] = value  # type: ignore[attr-defined]
 
     @overload
@@ -262,12 +270,20 @@ class AppState(State):
             raise RuntimeError("AppState is sealed and read-only after startup")
         super().__setattr__(key, value)
 
-    def __setitem__(self, key: StateKey[T] | str, value: Any) -> None:
+    @overload
+    def __setitem__(self, key: StateKey[T], value: T) -> None: ...
+    @overload
+    def __setitem__(self, key: str, value: Any) -> None: ...
+    def __setitem__(self, key: StateKey[Any] | str, value: Any) -> None:
         if getattr(self, "_sealed", False):
             raise RuntimeError("AppState is sealed and read-only after startup")
         super().__setitem__(key, value)
 
-    def set(self, key: StateKey[T] | str, value: Any) -> None:
+    @overload
+    def set(self, key: StateKey[T], value: T) -> None: ...
+    @overload
+    def set(self, key: str, value: Any) -> None: ...
+    def set(self, key: StateKey[Any] | str, value: Any) -> None:
         if getattr(self, "_sealed", False):
             raise RuntimeError("AppState is sealed and read-only after startup")
         super().set(key, value)
