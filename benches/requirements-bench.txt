@@ -34,9 +34,9 @@
 -e ..
 
 # --- frameworks under test -------------------------------------------------
-fastapi==0.143.0
-starlette==1.7.0
-litestar==2.24.0
+fastapi==0.162.0
+starlette==1.10.0
+litestar==2.25.0
 blacksheep==2.6.4
 sanic==25.12.1
 falcon==4.4.0
@@ -48,7 +48,7 @@ robyn==0.88.0
 httpx==0.28.1
 
 # --- serializer selection (see the note above: these are deliberate) -------
-pydantic==2.14.1
+pydantic==2.14.2
 msgspec==0.22.0
 orjson==3.13.0
 ujson==6.0.0
