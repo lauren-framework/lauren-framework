@@ -219,8 +219,11 @@ async def test_memory_store_copies_bytearray_and_memoryview_values() -> None:
 
 async def test_delete_without_keys_returns_zero() -> None:
     store = MemoryStore(max_entries=10)
-    assert await store.delete() == 0
-    assert await store.namespace("x").delete() == 0
+    deleted = await store.delete()
+    namespaced_deleted = await store.namespace("x").delete()
+
+    assert deleted == 0
+    assert namespaced_deleted == 0
 
 
 def test_memory_store_works_across_sequential_event_loops() -> None:

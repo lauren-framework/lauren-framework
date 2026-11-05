@@ -8,6 +8,22 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+@dataclass(frozen=True, slots=True)
+class HealthOptions:
+    """The validated arguments of one ``HealthModule.for_root(...)`` call."""
+
+    path: str
+    details: str
+    details_guard: type | None
+    format: str
+    event_loop_lag_ms: float | None
+    disk_paths: tuple[tuple[str, int], ...]
+    max_rss_bytes: int | None
+    version: str | None
+    report_status_code: bool
+    degraded_status: int
+
+
 class HealthStatus(enum.Enum):
     """The status of one check, or of a whole probe or report."""
 
@@ -68,4 +84,4 @@ def aggregate(outcomes: Iterable[tuple[bool, HealthStatus]]) -> HealthStatus:
     return result
 
 
-__all__ = ["HealthResult", "HealthStatus", "aggregate"]
+__all__ = ["HealthOptions", "HealthResult", "HealthStatus", "aggregate"]

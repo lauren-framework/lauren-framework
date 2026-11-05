@@ -319,12 +319,12 @@ def test_synthesized_issues_translate_a_pydantic_cause() -> None:
     class M(pydantic.BaseModel):
         x: int
 
-    try:
+    with pytest.raises(ExtractorError) as info:
         try:
             M.model_validate({"x": "a"})
         except pydantic.ValidationError as exc:
             raise ExtractorError("failed") from exc
-    except ExtractorError as err:
-        issues = synthesize_issues(err, ("body",))
+
+    issues = synthesize_issues(info.value, ("body",))
 
     assert [(i.loc, i.type) for i in issues] == [(("body", "x"), "int_parsing")]

@@ -13,7 +13,6 @@ from __future__ import annotations
 import math
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..decorators import PUBLIC_METADATA_KEY, controller, get, module, set_metadata
@@ -23,6 +22,7 @@ from ..types import ExecutionContext, Request, Response
 from ._indicators import memory_supported
 from ._meta import HEALTH_CHECK_META, LIVE, READY, STARTUP
 from ._runtime import HealthRuntime, compile_checks
+from ._types import HealthOptions
 
 if TYPE_CHECKING:
     from .._di import DIContainer
@@ -33,22 +33,6 @@ HEALTH_OPTIONS_ATTR = "__lauren_health_options__"
 DETAILS_POLICIES = ("never", "always", "when_authorized")
 FORMATS = ("lauren", "ietf")
 _HELPER = "HealthModule.for_root"
-
-
-@dataclass(frozen=True, slots=True)
-class HealthOptions:
-    """The validated arguments of one ``HealthModule.for_root(...)`` call."""
-
-    path: str
-    details: str
-    details_guard: type | None
-    format: str
-    event_loop_lag_ms: float | None
-    disk_paths: tuple[tuple[str, int], ...]
-    max_rss_bytes: int | None
-    version: str | None
-    report_status_code: bool
-    degraded_status: int
 
 
 class HealthModule:

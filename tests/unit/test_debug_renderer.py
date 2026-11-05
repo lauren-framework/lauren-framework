@@ -222,10 +222,10 @@ def test_qualname_of_none_is_empty() -> None:
 def test_frames_without_source_have_no_context() -> None:
     namespace: dict[str, Any] = {}
     exec(compile("def boom():\n    raise ValueError('no source')\n", "<generated>", "exec"), namespace)
-    try:
+    with pytest.raises(ValueError) as info:
         namespace["boom"]()
-    except ValueError as exc:
-        frames = _debug._frames(exc.__traceback__, DebugConfig())
+
+    frames = _debug._frames(info.value.__traceback__, DebugConfig())
 
     assert frames[-1]["file"] == "<generated>"
     assert frames[-1]["context"] == []

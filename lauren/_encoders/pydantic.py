@@ -2,7 +2,7 @@
 
 Only usable when pydantic is installed (``pip install 'lauren[pydantic]'``).
 The public import path ``from lauren.serialization import PydanticEncoder``
-is preserved via a ``__getattr__`` shim in ``lauren/serialization.py``.
+is a direct re-export; importing this module does not import pydantic.
 """
 
 from __future__ import annotations

@@ -141,4 +141,44 @@ class CommandResult:
     exception: BaseException | None = None
 
 
-__all__ = ["CommandContext", "CommandResult"]
+@dataclass(frozen=True, slots=True)
+class CommandParameter:
+    """One CLI parameter of a command, as listed by ``ctx.commands()``.
+
+    ``kind`` is ``"positional"``, ``"option"`` or ``"flag"``; ``flags`` holds
+    the option strings (``("-n", "--count")``, ``("--reset", "--no-reset")``;
+    empty for positionals); ``type`` is a readable annotation; ``default`` is
+    ``None`` for a required parameter; ``choices`` lists the accepted values
+    of an ``Enum`` / ``Literal``.
+    """
+
+    name: str
+    kind: str
+    flags: tuple[str, ...]
+    type: str
+    required: bool
+    default: Any
+    repeatable: bool
+    choices: tuple[str, ...]
+    env: str | None
+    help: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CommandInfo:
+    """A discovered command, as listed by ``ctx.commands()``.
+
+    ``module`` is the module that owns the provider (``None`` for global
+    providers) and ``target`` names the method (``"SeedCommands.seed"``).
+    """
+
+    name: str
+    aliases: tuple[str, ...]
+    help: str | None
+    hidden: bool
+    parameters: tuple[CommandParameter, ...]
+    module: type | None
+    target: str
+
+
+__all__ = ["CommandContext", "CommandInfo", "CommandParameter", "CommandResult"]

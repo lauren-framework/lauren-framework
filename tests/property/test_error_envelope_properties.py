@@ -84,7 +84,7 @@ def test_header_values_with_line_breaks_are_rejected_at_construction(
     prefix: str, breaker: str, suffix: str
 ) -> None:
     with pytest.raises(ValueError):
-        HTTPError("x", headers={"x-test": prefix + breaker + suffix})
+        raise HTTPError("x", headers={"x-test": prefix + breaker + suffix})
 
 
 @_TOLERANT

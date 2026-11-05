@@ -344,7 +344,7 @@ parity with the classic API.
 #### `Lauren.scope`
 
 ```python
-def scope(self, name: str = 'operation', values: Mapping[Any, Any] | None = None) -> OperationScope
+def scope(self, name: str = 'operation', values: Mapping[Any, Any] | None = None) -> _context.OperationScope
 ```
 
 Open an :class:`~lauren.context.OperationScope` on the compiled app.

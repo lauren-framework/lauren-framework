@@ -184,11 +184,15 @@ def test_portal_stop_reports_and_cancels_leftover_tasks() -> None:
 
 
 def test_portal_surfaces_loop_factory_errors() -> None:
-    def broken() -> asyncio.AbstractEventLoop:
-        raise OSError("no loop for you")
+    error = OSError("no loop for you")
 
-    with pytest.raises(OSError, match="no loop"):
+    def broken() -> asyncio.AbstractEventLoop:
+        raise error
+
+    with pytest.raises(OSError, match="no loop") as caught:
         Portal(name="lauren-testclient-broken", loop_factory=broken)
+
+    assert caught.value is error
 
 
 def test_custom_loop_factory_is_used() -> None:

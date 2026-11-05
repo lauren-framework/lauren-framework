@@ -89,8 +89,9 @@ class Portal:
         self.thread = threading.Thread(target=self._idle_main, name=name, daemon=True)
         self.thread.start()
         self._ready.wait()
-        if self._error is not None:
-            raise self._error
+        error = self._error
+        if error is not None:
+            raise error
 
     # -- state -----------------------------------------------------------------
 

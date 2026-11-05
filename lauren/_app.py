@@ -38,7 +38,7 @@ import inspect
 from collections.abc import Mapping
 from typing import Any, Awaitable, Callable
 
-from .context import OperationScope
+from . import context as _context
 from .decorators import controller, module
 from .exceptions import LifecycleViolationError
 from .signals import AppLifecycleState
@@ -543,7 +543,9 @@ class Lauren:
             raise LifecycleViolationError("container is only available after startup()")
         return self._compiled.container
 
-    def scope(self, name: str = "operation", *, values: Mapping[Any, Any] | None = None) -> OperationScope:
+    def scope(
+        self, name: str = "operation", *, values: Mapping[Any, Any] | None = None
+    ) -> _context.OperationScope:
         """Open an :class:`~lauren.context.OperationScope` on the compiled app.
 
         Same as :meth:`LaurenApp.scope`. Raises
@@ -551,7 +553,7 @@ class Lauren:
         """
         if self._compiled is None:
             raise LifecycleViolationError("scope() is only available after startup()")
-        scope: OperationScope = self._compiled.scope(name, values=values)
+        scope: _context.OperationScope = self._compiled.scope(name, values=values)
         return scope
 
     @property

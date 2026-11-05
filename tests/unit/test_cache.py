@@ -82,9 +82,11 @@ async def test_delete_removes_entries_and_counts_them() -> None:
     cache, _, _ = make_cache()
     await cache.set("a", 1)
     await cache.set("b", 2)
-    assert await cache.delete("a", "b", "c") == 2
+    deleted = await cache.delete("a", "b", "c")
+    assert deleted == 2
     assert await cache.get("a") is None
-    assert await cache.delete() == 0
+    empty_deleted = await cache.delete()
+    assert empty_deleted == 0
 
 
 async def test_values_are_written_under_the_val_prefix() -> None:
@@ -229,7 +231,8 @@ async def test_typed_view_binds_the_type() -> None:
     assert await products.get("p") == Product(1, "pen")
     assert await products.get_or_set("q", lambda: Product(2, "ink")) == Product(2, "ink")
     assert await products.get("q") == Product(2, "ink")
-    assert await products.delete("p", "q") == 2
+    deleted = await products.delete("p", "q")
+    assert deleted == 2
     assert repr(products) == f"TypedCache({Product!r})"
 
 

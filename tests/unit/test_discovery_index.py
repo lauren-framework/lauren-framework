@@ -6,7 +6,12 @@ specs, so these tests never touch the process-wide marker registry.
 
 from __future__ import annotations
 
+import importlib
+import subprocess
+import sys
+import textwrap
 import threading
+from pathlib import Path
 from typing import Annotated, Any
 
 import pytest
@@ -91,6 +96,98 @@ class SpecialClock(Clock):
 @injectable()
 class Repo:
     pass
+
+
+# ---------------------------------------------------------------------------
+# Import and annotation dependencies
+# ---------------------------------------------------------------------------
+
+
+_IMPORT_ENTRYPOINTS = (
+    "lauren.context",
+    "lauren._app",
+    "lauren._discovery",
+    "lauren._commands._meta",
+    "lauren._commands._compile",
+    "lauren._commands._context",
+    "lauren._scheduling._context",
+    "lauren._health._runtime",
+    "lauren._health._module",
+    "lauren.serialization",
+    "lauren._encoders.pydantic",
+)
+
+
+@pytest.mark.parametrize("first", _IMPORT_ENTRYPOINTS)
+def test_feature_modules_import_independently_of_entrypoint(first: str) -> None:
+    # Bypass the public facade: its fixed import order would mask a cycle
+    # between internal modules imported in a different order.
+    source = textwrap.dedent("""\
+        import importlib
+        import sys
+        import types
+        from pathlib import Path
+
+        package = types.ModuleType("lauren")
+        package.__path__ = [str(Path.cwd() / "lauren")]
+        sys.modules["lauren"] = package
+        for name in sys.argv[1:]:
+            importlib.import_module(name)
+    """)
+
+    result = subprocess.run(
+        [sys.executable, "-c", source, first, *_IMPORT_ENTRYPOINTS],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "name,legacy_module,public_module,declaration_module",
+    [
+        ("CommandInfo", "lauren._commands._compile", "lauren.commands", "lauren._commands._context"),
+        ("CommandParameter", "lauren._commands._compile", "lauren.commands", "lauren._commands._context"),
+        ("HealthOptions", "lauren._health._module", "lauren._health", "lauren._health._types"),
+    ],
+)
+def test_info_records_keep_their_existing_import_paths(
+    name: str, legacy_module: str, public_module: str, declaration_module: str
+) -> None:
+    declaration = getattr(importlib.import_module(declaration_module), name)
+
+    assert getattr(importlib.import_module(legacy_module), name) is declaration
+    assert getattr(importlib.import_module(public_module), name) is declaration
+
+
+def test_imperative_scope_annotation_remains_runtime_resolvable() -> None:
+    from lauren import Lauren
+    from lauren._typing import resolve_type_hints
+
+    assert resolve_type_hints(Lauren.scope)["return"] is OperationScope
+
+
+def test_context_command_info_annotation_resolves_from_its_declaration() -> None:
+    from lauren._typing import resolve_type_hints
+    from lauren.commands import CommandInfo, CommandParameter
+    from lauren.context import ApplicationContext
+
+    assert resolve_type_hints(ApplicationContext.commands)["return"] == tuple[CommandInfo, ...]
+    assert resolve_type_hints(CommandInfo)["parameters"] == tuple[CommandParameter, ...]
+
+
+def test_health_annotations_resolve_without_a_module_runtime_cycle() -> None:
+    from lauren._health._module import HealthOptions, _make_controller
+    from lauren._health._runtime import HealthRuntime
+    from lauren._typing import resolve_type_hints
+
+    controller = _make_controller("/health")
+
+    assert resolve_type_hints(HealthRuntime.__init__)["options"] is HealthOptions
+    assert resolve_type_hints(controller.__init__)["runtime"] is HealthRuntime
 
 
 # ---------------------------------------------------------------------------

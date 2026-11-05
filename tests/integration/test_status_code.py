@@ -116,7 +116,9 @@ def test_response_instance_passes_through(client: TestClient) -> None:
 
 
 def test_none_without_declared_status_is_204(client: TestClient) -> None:
-    assert client.delete("/items/7").status_code == 204
+    response = client.delete("/items/7")
+
+    assert response.status_code == 204
 
 
 def test_created_result_sends_201_and_location(client: TestClient) -> None:

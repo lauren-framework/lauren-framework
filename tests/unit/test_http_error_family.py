@@ -138,13 +138,13 @@ def test_headers_are_available_on_startup_errors_too() -> None:
 )
 def test_headers_reject_invalid_names_and_values(headers: dict[str, str]) -> None:
     with pytest.raises(ValueError):
-        NotFoundError("x", headers=headers)
+        raise NotFoundError("x", headers=headers)
 
 
 @pytest.mark.parametrize("name", ["Content-Type", "content-length"])
 def test_headers_reject_framework_owned_names(name: str) -> None:
     with pytest.raises(ValueError, match="set by the framework"):
-        NotFoundError("x", headers={name: "text/plain"})
+        raise NotFoundError("x", headers={name: "text/plain"})
 
 
 @pytest.mark.parametrize(
@@ -154,7 +154,7 @@ def test_headers_reject_framework_owned_names(name: str) -> None:
 )
 def test_headers_reject_malformed_shapes(headers: object) -> None:
     with pytest.raises(TypeError):
-        NotFoundError("x", headers=headers)  # type: ignore[arg-type]
+        raise NotFoundError("x", headers=headers)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -182,12 +182,12 @@ def test_unauthorized_challenge_comes_before_explicit_headers() -> None:
 
 def test_unauthorized_rejects_an_empty_challenge_list() -> None:
     with pytest.raises(ValueError, match="challenge"):
-        UnauthorizedError("x", challenge=[])
+        raise UnauthorizedError("x", challenge=[])
 
 
 def test_unauthorized_rejects_a_challenge_with_crlf() -> None:
     with pytest.raises(ValueError):
-        UnauthorizedError("x", challenge="Bearer\r\nX-Evil: 1")
+        raise UnauthorizedError("x", challenge="Bearer\r\nX-Evil: 1")
 
 
 @pytest.mark.parametrize("cls", _RETRY_AFTER_CLASSES, ids=[c.__name__ for c in _RETRY_AFTER_CLASSES])
@@ -233,17 +233,17 @@ def test_retry_after_is_optional(cls: type[HTTPError]) -> None:
 )
 def test_retry_after_rejects_invalid_values(value: object, error: type[Exception]) -> None:
     with pytest.raises(error):
-        TooManyRequestsError("x", retry_after=value)  # type: ignore[arg-type]
+        raise TooManyRequestsError("x", retry_after=value)  # type: ignore[arg-type]
 
 
 def test_retry_after_is_only_accepted_by_the_retryable_classes() -> None:
     with pytest.raises(TypeError):
-        NotFoundError("x", retry_after=3)  # type: ignore[call-arg]
+        raise NotFoundError("x", retry_after=3)  # type: ignore[call-arg]
 
 
 def test_challenge_is_only_accepted_by_unauthorized() -> None:
     with pytest.raises(TypeError):
-        ForbiddenError("x", challenge="Bearer")  # type: ignore[call-arg]
+        raise ForbiddenError("x", challenge="Bearer")  # type: ignore[call-arg]
 
 
 def test_method_not_allowed_allow_sets_header_and_detail() -> None:
@@ -291,13 +291,13 @@ def test_instance_code_override_on_a_family_class_keeps_its_status() -> None:
 )
 def test_instance_status_override_must_be_an_error_status(status: object) -> None:
     with pytest.raises(ValueError, match="status_code"):
-        HTTPError("x", status_code=status)  # type: ignore[arg-type]
+        raise HTTPError("x", status_code=status)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("code", ["", 7], ids=["empty", "non-str"])
 def test_instance_code_override_must_be_a_non_empty_string(code: object) -> None:
     with pytest.raises(ValueError, match="code"):
-        HTTPError("x", code=code)  # type: ignore[arg-type]
+        raise HTTPError("x", code=code)  # type: ignore[arg-type]
 
 
 def test_problem_type_and_title_default_to_none() -> None:

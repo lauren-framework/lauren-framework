@@ -39,7 +39,7 @@ from .._config._coerce import CoercionError, coerce, type_name
 from .._discovery import ARGUMENT, DiscoveredMethod, DiscoveryIndex, PlanParam
 from .._scheduling._context import bound_logger
 from ..exceptions import DecoratorUsageError, DuplicateBindingError, UnresolvableParameterError
-from ._context import CommandContext, _write
+from ._context import CommandContext, CommandInfo, CommandParameter, _write
 from ._meta import COMMAND_META, CommandMeta, Opt
 
 if TYPE_CHECKING:
@@ -84,51 +84,6 @@ _SUPPORTED = (
 POSITIONAL = "positional"
 OPTION = "option"
 FLAG = "flag"
-
-
-# ---------------------------------------------------------------------------
-# Public info records
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class CommandParameter:
-    """One CLI parameter of a command, as listed by ``ctx.commands()``.
-
-    ``kind`` is ``"positional"``, ``"option"`` or ``"flag"``; ``flags`` holds
-    the option strings (``("-n", "--count")``, ``("--reset", "--no-reset")``;
-    empty for positionals); ``type`` is a readable annotation; ``default`` is
-    ``None`` for a required parameter; ``choices`` lists the accepted values
-    of an ``Enum`` / ``Literal``.
-    """
-
-    name: str
-    kind: str
-    flags: tuple[str, ...]
-    type: str
-    required: bool
-    default: Any
-    repeatable: bool
-    choices: tuple[str, ...]
-    env: str | None
-    help: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class CommandInfo:
-    """A discovered command, as listed by ``ctx.commands()``.
-
-    ``module`` is the module that owns the provider (``None`` for global
-    providers) and ``target`` names the method (``"SeedCommands.seed"``).
-    """
-
-    name: str
-    aliases: tuple[str, ...]
-    help: str | None
-    hidden: bool
-    parameters: tuple[CommandParameter, ...]
-    module: type | None
-    target: str
 
 
 # ---------------------------------------------------------------------------

@@ -32,13 +32,12 @@ from ..signals import AppLifecycleState, HealthChanged, LifecycleEvent, Lifecycl
 from ..types import ExecutionContext, Headers, Request, Response, Scope
 from ._indicators import LoopLagMonitor, disk_probe, memory_probe
 from ._meta import LIVE, READY, STARTUP
-from ._types import HealthResult, HealthStatus, aggregate
+from ._types import HealthOptions, HealthResult, HealthStatus, aggregate
 
 if TYPE_CHECKING:
     from .._asgi import LaurenApp
     from .._di import DIContainer
     from ..context import OperationScope
-    from ._module import HealthOptions
 
 #: Names of the built-in indicators; user checks cannot take them.
 RESERVED_NAMES = frozenset({"lifecycle", "event_loop", "memory"})

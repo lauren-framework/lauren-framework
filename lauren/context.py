@@ -35,7 +35,7 @@ from collections.abc import Callable, Iterable, Mapping
 from types import MappingProxyType, TracebackType
 from typing import TYPE_CHECKING, Any, TextIO
 
-from ._commands._context import CommandResult
+from ._commands._context import CommandInfo, CommandResult
 from ._di import _GeneratorContextWrapper, _describe, _multi_binding_element_type
 from ._di._scope import finalize_scope
 from .signals import AppLifecycleState
@@ -43,9 +43,8 @@ from .exceptions import DestructError, DIScopeViolationError, LaurenError, Lifec
 from .types import Scope
 
 if TYPE_CHECKING:
-    from ._app import Lauren
+    from . import _app
     from ._asgi import LaurenApp
-    from ._commands._compile import CommandInfo
     from ._di import DIContainer, Provider
 
 logger = logging.getLogger("lauren")
@@ -204,7 +203,7 @@ class ApplicationContext:
     @classmethod
     def from_lauren(
         cls,
-        lauren_app: Lauren,
+        lauren_app: _app.Lauren,
         *,
         hosted_services: bool = False,
         scheduler: bool = False,

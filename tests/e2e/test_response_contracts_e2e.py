@@ -137,7 +137,8 @@ def _stdlib_checks(client: TestClient) -> None:
     )
     assert client.put("/bank/accounts/1").status_code == 200
     assert client.put("/bank/accounts/7").status_code == 201
-    assert client.delete("/bank/accounts/1").status_code == 204
+    deleted = client.delete("/bank/accounts/1")
+    assert deleted.status_code == 204
 
 
 @pytest.mark.parametrize("mode", ["filter", "strict"])

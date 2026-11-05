@@ -88,6 +88,8 @@ import logging as _stdlib_logging
 from contextvars import ContextVar
 from typing import Any, Protocol, runtime_checkable
 
+from ._encoders.pydantic import PydanticEncoder
+
 
 # ---------------------------------------------------------------------------
 # ``json_fallback`` — what to do with an object no encoder rule covers
@@ -353,13 +355,6 @@ class MsgspecEncoder:
 
 
 # ---------------------------------------------------------------------------
-# Pydantic encoder — moved to lauren/_encoders/pydantic.py.
-# A lazy __getattr__ shim below preserves the import path:
-#   from lauren.serialization import PydanticEncoder  # still works
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
 # Auto-selection + active-encoder plumbing
 # ---------------------------------------------------------------------------
 
@@ -419,22 +414,12 @@ def set_active_encoder(encoder: JSONEncoder | None) -> JSONEncoder:
     return previous
 
 
-def __getattr__(name: str) -> Any:
-    """Lazy import shim so ``from lauren.serialization import PydanticEncoder`` still works."""
-    if name == "PydanticEncoder":
-        from lauren._encoders.pydantic import PydanticEncoder  # noqa: PLC0415
-
-        return PydanticEncoder
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# PydanticEncoder is provided lazily via __getattr__ above.
 __all__ = [
     "JSONEncoder",
     "StdlibJSONEncoder",
     "OrjsonEncoder",
     "MsgspecEncoder",
-    "PydanticEncoder",  # noqa: F822 — provided lazily via __getattr__
+    "PydanticEncoder",
     "auto_encoder",
     "get_active_encoder",
     "set_active_encoder",
