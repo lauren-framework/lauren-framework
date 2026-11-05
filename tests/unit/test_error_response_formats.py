@@ -1,12 +1,14 @@
 """Unit tests for the error wire formats: default, legacy rfc7807, RFC 9457 (F05).
 
 The golden tests pin the ``default`` and ``rfc7807`` bodies byte for byte — they
-must not change while ``rfc9457`` evolves next to them.
+must not change while ``rfc9457`` evolves next to them. Status titles follow the
+running Python's ``HTTPStatus`` phrases, as they did before RFC 9457 support.
 """
 
 from __future__ import annotations
 
 import json
+from http import HTTPStatus
 
 import pytest
 
@@ -71,8 +73,11 @@ _RFC7807_GOLDEN = [
     b'"code":"route_not_found"}',
     b'{"type":"urn:ietf:rfc:7231:405","title":"Method Not Allowed","status":405,'
     b'"detail":"POST not allowed for /x","code":"method_not_allowed","errors":{"allow":["GET"]}}',
-    b'{"type":"urn:ietf:rfc:7231:422","title":"Unprocessable Entity","status":422,"detail":"id must be >= 1",'
-    b'"code":"extractor_field_error","errors":{"field":"id","constraint":"ge"}}',
+    (
+        f'{{"type":"urn:ietf:rfc:7231:422","title":"{HTTPStatus(422).phrase}",'
+        '"status":422,"detail":"id must be >= 1",'
+        '"code":"extractor_field_error","errors":{"field":"id","constraint":"ge"}}'
+    ).encode(),
     b'{"type":"https://example.com/p","title":"Quantum","status":422,"detail":"collapsed","code":"quantum",'
     b'"errors":{"n":7}}',
     b'{"type":"urn:ietf:rfc:7231:401","title":"Unauthorized","status":401,"detail":"Unauthorized",'

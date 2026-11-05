@@ -376,14 +376,54 @@ def test_pydantic_subclass_instance_is_filtered() -> None:
     assert _projector(Out)(InDB(id=1, secret="s")) == {"id": 1}
 
 
-def test_pydantic_orm_object_is_read_by_field_name() -> None:
+@pytest.mark.parametrize("strict", [False, True])
+def test_pydantic_orm_object_is_read_by_field_name(strict: bool) -> None:
     pydantic = pytest.importorskip("pydantic")
 
     class Out(pydantic.BaseModel):
         id: int
         name: str = pydantic.Field(alias="userName")
 
-    assert _projector(Out)(Row(id=1, name="a", secret="s")) == {"id": 1, "userName": "a"}
+    assert _projector(Out, strict=strict)(Row(id=1, name="a", secret="s")) == {"id": 1, "userName": "a"}
+
+
+@pytest.mark.parametrize("container", [Row, dict])
+@pytest.mark.parametrize("strict", [False, True])
+def test_pydantic_nested_models_are_read_by_field_name(container: Any, strict: bool) -> None:
+    pydantic = pytest.importorskip("pydantic")
+
+    class Child(pydantic.BaseModel):
+        name: str = pydantic.Field(alias="childName")
+
+    class Out(pydantic.BaseModel):
+        child: Child = pydantic.Field(alias="nestedChild")
+
+    value = container(child=container(name="a"))
+
+    assert _projector(Out, strict=strict)(value) == {"nestedChild": {"childName": "a"}}
+
+
+def test_pydantic_response_name_lookup_does_not_change_input_validation() -> None:
+    pydantic = pytest.importorskip("pydantic")
+
+    class Out(pydantic.BaseModel):
+        model_config = pydantic.ConfigDict(extra="forbid")
+        name: str = pydantic.Field(alias="userName")
+
+    assert _projector(Out)({"name": "a"}) == {"userName": "a"}
+    assert Out.model_config == {"extra": "forbid"}
+    with pytest.raises(pydantic.ValidationError):
+        Out.model_validate({"name": "a"})
+    assert _issues(Out, {"name": "a", "secret": "s"}) == [(("secret",), "extra_forbidden")]
+
+
+def test_pydantic_response_name_lookup_preserves_default_payloads() -> None:
+    pydantic = pytest.importorskip("pydantic")
+
+    class Out(pydantic.BaseModel):
+        payload: dict[str, Any] = pydantic.Field(default={"type": "model"})
+
+    assert _projector(Out)({}) == {"payload": {"type": "model"}}
 
 
 def test_pydantic_mapping_that_cannot_convert_is_a_violation() -> None:

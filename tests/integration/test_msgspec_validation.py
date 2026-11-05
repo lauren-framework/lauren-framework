@@ -45,9 +45,14 @@ def test_struct_bodies_are_decoded_once(client: TestClient, monkeypatch: pytest.
     def fail(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("the stdlib JSON parser must not run for msgspec bodies")
 
-    monkeypatch.setattr(params._jsonlib, "loads", fail)
+    # The stdlib json module is shared with the client's response parser.
+    # Guard request decoding only, then restore loads before inspecting the body.
+    with monkeypatch.context() as patch:
+        patch.setattr(params._jsonlib, "loads", fail)
+        response = client.post("/m/body", json={"name": "a", "qty": 2})
 
-    assert client.post("/m/body", json={"name": "a", "qty": 2}).json() == {"name": "a", "qty": 2}
+    assert response.status_code == 200
+    assert response.json() == {"name": "a", "qty": 2}
 
 
 def test_struct_errors_are_translated(client: TestClient) -> None:

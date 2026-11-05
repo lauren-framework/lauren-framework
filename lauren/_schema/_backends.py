@@ -22,7 +22,6 @@ from typing import Any
 from ._issues import MISSING, ValidationIssue, _Invalid, jsonable, make_issue
 from ._nodes import Node
 
-
 # ---------------------------------------------------------------------------
 # pydantic
 # ---------------------------------------------------------------------------
@@ -89,7 +88,11 @@ class PydanticModelNode(Node):
         def build() -> dict[str, Any]:
             raw = self.model.model_json_schema(ref_template=ctx.ref_template)  # type: ignore[attr-defined]
             defs = raw.pop("$defs", {})
-            own = defs.pop(self.model.__name__, None) if "$ref" in raw else None
+            # Older Pydantic versions wrap a recursive root reference in ``allOf``.
+            root = raw
+            if set(raw) == {"allOf"} and len(raw["allOf"]) == 1:
+                root = raw["allOf"][0]
+            own = defs.pop(self.model.__name__, None) if "$ref" in root else None
             for name, sub in defs.items():
                 ctx.add_raw(name, sub)
             return own if own is not None else raw

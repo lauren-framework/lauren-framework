@@ -26,6 +26,7 @@ reflection here: the request path only calls the prebuilt closures.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
@@ -69,6 +70,25 @@ def _pydantic_version() -> tuple[int, int]:
 
     major, minor = (int(part) for part in pydantic.VERSION.split(".")[:2])
     return major, minor
+
+
+def _pydantic_by_name_schema(schema: Any) -> Any:
+    """Copy a legacy core schema with field-name lookup enabled for every model."""
+    if isinstance(schema, dict):
+        out = {
+            key: value
+            if key in ("config", "default", "metadata", "custom_error_context")
+            else _pydantic_by_name_schema(value)
+            for key, value in schema.items()
+        }
+        if out.get("type") == "model":
+            out["config"] = {**out.get("config", {}), "populate_by_name": True}
+        return out
+    if isinstance(schema, list):
+        return [_pydantic_by_name_schema(value) for value in schema]
+    if isinstance(schema, tuple):
+        return tuple(_pydantic_by_name_schema(value) for value in schema)
+    return schema
 
 
 class _Builder:
@@ -379,7 +399,7 @@ class _Builder:
 
     def _pydantic(self, node: Node) -> Projector:
         import pydantic
-        from pydantic_core import PydanticSerializationError
+        from pydantic_core import PydanticSerializationError, SchemaValidator
 
         from ._backends import PydanticModelNode, translate_pydantic
 
@@ -397,28 +417,34 @@ class _Builder:
         convert_kwargs: dict[str, Any] = {"from_attributes": True}
         if version >= (2, 11):
             convert_kwargs["by_name"] = True  # ORM attributes carry field names, not aliases
+        else:
+            # Older versions cannot override name lookup per call. Compile a
+            # private validator instead of mutating the model's configuration;
+            # nested models need the same override as the response's root.
+            validate = SchemaValidator(_pydantic_by_name_schema(adapter.core_schema)).validate_python
         strict = self.strict
-        # pydantic >= 2.7 can turn "value does not fit the declared type" into an
-        # error while serializing; older versions are checked by re-validation.
-        type_checked_dump = strict and version >= (2, 7)
+        type_checked_dump = version >= (2, 7)
 
         def check_instance(value: Any) -> Any:
-            if type_checked_dump:
-                try:
+            try:
+                if type_checked_dump:
                     return dump(value, mode="json", by_alias=True, warnings="error")
-                except PydanticSerializationError as exc:
-                    out = dump(value, mode="json", by_alias=True, warnings=False)
-                    try:
-                        validate(out)
-                    except error as invalid_exc:
-                        raise _Invalid(translate_pydantic(invalid_exc)) from None
-                    raise _Invalid([make_issue("value_error", ctx={"error": str(exc)})]) from None
-            out = dump(value, mode="json", by_alias=True, warnings=False)  # pragma: no cover - pydantic < 2.7
-            try:  # pragma: no cover - pydantic < 2.7
+                # Before 2.7 the serializer only supports boolean ``warnings``.
+                # Escalate its mismatch warnings, not unrelated user warnings.
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("error", r"^Pydantic serializer warnings:", UserWarning)
+                    out = dump(value, mode="json", by_alias=True, warnings=True)
                 validate(out)
-            except error as invalid_exc:  # pragma: no cover - pydantic < 2.7
+                return out
+            except (PydanticSerializationError, UserWarning) as exc:
+                out = dump(value, mode="json", by_alias=True, warnings=False)
+                try:
+                    validate(out)
+                except error as invalid_exc:
+                    raise _Invalid(translate_pydantic(invalid_exc)) from None
+                raise _Invalid([make_issue("value_error", ctx={"error": str(exc)})]) from None
+            except error as invalid_exc:
                 raise _Invalid(translate_pydantic(invalid_exc)) from None
-            return out  # pragma: no cover - pydantic < 2.7
 
         def project(value: Any) -> Any:
             if cls is not None and isinstance(value, cls):

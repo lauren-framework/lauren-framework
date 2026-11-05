@@ -385,16 +385,22 @@ def test_pydantic_schemas_hoist_their_definitions() -> None:
     assert "Owner" in components
 
 
-def test_recursive_pydantic_schema_is_not_self_referential() -> None:
+@pytest.mark.parametrize("dialect", ["2020-12", "openapi-3.1"])
+def test_recursive_pydantic_schema_is_not_self_referential(dialect: str) -> None:
     pydantic = pytest.importorskip("pydantic")
 
     class Tree(pydantic.BaseModel):
         children: list[Tree] = []
 
     Tree.model_rebuild()
-    defs = _compile(Tree).json_schema()["$defs"]
+    components: dict[str, Any] = {}
+    schema = _compile(Tree).json_schema(dialect=dialect, components=components)
+    defs = schema["$defs"] if dialect == "2020-12" else components
+    ref = "#/$defs/Tree" if dialect == "2020-12" else "#/components/schemas/Tree"
 
+    assert schema["$ref"] == ref
     assert defs["Tree"]["type"] == "object"
+    assert defs["Tree"]["properties"]["children"]["items"] == {"$ref": ref}
 
 
 def test_pydantic_tagged_unions_use_a_type_adapter() -> None:
