@@ -107,11 +107,12 @@ There are three ways for a guard to block a request:
 @injectable(scope=Scope.SINGLETON)
 class G:
     async def can_activate(self, ctx) -> bool:
-        # 1. Return False — Lauren raises ForbiddenError(403).
+        # 1. Return False — Lauren raises ForbiddenError(403), or the
+        #    guard's deny_error (see below).
         if not ok: return False
 
         # 2. Raise UnauthorizedError(401) — typical for missing/invalid auth tokens.
-        if not authn: raise UnauthorizedError("invalid token")
+        if not authn: raise UnauthorizedError("invalid token", challenge='Bearer realm="api"')
 
         # 3. Raise any HTTPError — full control over status + body.
         if banned: raise HTTPError("account banned", status_code=403,
@@ -123,8 +124,84 @@ class G:
 Choose by intent:
 
 * `return False` — generic 403. Good for "the user just isn't allowed here".
-* `raise UnauthorizedError(...)` — 401. Good for missing/invalid credentials.
+* `raise UnauthorizedError(...)` — 401. Good for missing/invalid credentials;
+  `challenge=` sets the `WWW-Authenticate` header RFC 9110 requires on a 401.
 * `raise <custom HTTPError>` — when the response body needs domain-specific shape.
+
+### Choosing the denial error
+
+Authentication guards ("who are you?") should answer **401**, authorization
+guards ("you may not") **403**. Instead of raising, a guard can declare which
+error its `False` produces with a `deny_error` class attribute:
+
+<!-- docs-contract: run -->
+```python
+from typing import Any, ClassVar
+
+from lauren import HTTPError, LaurenFactory, UnauthorizedError, controller, get, module, use_guards
+from lauren.testing import TestClient
+from lauren.types import ExecutionContext
+
+
+class ApiKeyGuard:
+    deny_error: ClassVar[type[HTTPError]] = UnauthorizedError  # default: ForbiddenError
+
+    async def can_activate(self, ctx: ExecutionContext) -> bool:
+        return ctx.request.headers.get("x-api-key") == "secret"
+
+
+class BasicAuthGuard:
+    @staticmethod
+    def deny_error() -> HTTPError:  # a zero-argument factory: full control
+        return UnauthorizedError("login required", challenge='Basic realm="admin"')
+
+    async def can_activate(self, ctx: ExecutionContext) -> bool:
+        return ctx.request.headers.get("authorization") == "Basic YWRtaW46cHc="
+
+
+@controller("/reports")
+class Reports:
+    @get("/")
+    @use_guards(ApiKeyGuard)
+    async def index(self) -> dict[str, Any]:
+        return {"ok": True}
+
+    @get("/admin")
+    @use_guards(BasicAuthGuard)
+    async def admin(self) -> dict[str, Any]:
+        return {"ok": True}
+
+
+@module(controllers=[Reports])
+class ReportsModule:
+    pass
+
+
+client = TestClient(LaurenFactory.create(ReportsModule))
+denied = client.get("/reports/")
+assert denied.status_code == 401
+assert denied.json()["error"] == {
+    "code": "unauthorized",
+    "message": "guard ApiKeyGuard denied the request",
+    "detail": {"guard": "ApiKeyGuard"},
+}
+assert client.get("/reports/admin").header("www-authenticate") == 'Basic realm="admin"'
+```
+
+* A **class** (`HTTPError` subclass) is called as
+  `deny_error("guard <Name> denied the request", detail={"guard": "<Name>"})`.
+* A **zero-argument factory** (a `@staticmethod`, a `lambda`, any callable) is
+  called on every denial and must return an `HTTPError` instance — use it for
+  challenge headers or a custom message.
+* `deny_error` is read once by `LaurenFactory.create`. Anything else — a class
+  that is not an `HTTPError`, an exception *instance*, a callable that needs
+  arguments — raises `GuardConfigError` (`detail["reason"] ==
+  "invalid_deny_error"`) at startup.
+* It is plain class configuration, so a guard subclass inherits it (the guard
+  *role* still is not inherited — re-decorate subclasses as usual).
+* WebSocket guards honour it too: a per-message denial answers with its error
+  frame, and a connect-time denial closes with `1008` and the error's `code`
+  (e.g. `"unauthorized"`) as the close reason.
 
 ## Parametric guards with `@set_metadata`
 
@@ -255,11 +332,13 @@ For unit tests of complex guards, build an `ExecutionContext` manually or mock t
 
 `@use_guards` on a `@ws_controller` class runs the guard chain *before* the
 `@on_connect` hook and *before* the connection is accepted — a rejected client
-receives WebSocket close code `1008` (policy violation) without the handshake
-ever completing. On an `@on_message` method, the guard runs **for every frame**
-routed to that handler instead, receives a `WsMessageContext` (the connection
-context plus `event` and the validated `payload`), and a denial answers with a
-`forbidden` error frame while the connection stays open. See
+receives WebSocket close code `1008` (policy violation), with the guard's
+`deny_error` code (`"forbidden"` by default) as the close reason, without the
+handshake ever completing. On an `@on_message` method, the guard runs **for
+every frame** routed to that handler instead, receives a `WsMessageContext` (the
+connection context plus `event` and the validated `payload`), and a denial
+answers with a `forbidden` error frame (or its `deny_error`) while the
+connection stays open. See
 [WebSockets → Per-message guards and interceptors](websockets.md#per-message-guards-and-interceptors).
 
 ```python
@@ -352,7 +431,7 @@ See [Reference → Reflect](../reference/reflect.md) for the full API.
 
 | Error | Meaning |
 |---|---|
-| `GuardConfigError` | A guard class is missing `can_activate(ctx)`. |
+| `GuardConfigError` | A guard class is missing `can_activate(ctx)`, or declares an invalid `deny_error`. |
 | `MetadataInheritanceError` | A subclass of a guard was registered without re-decorating. |
 | `MissingProviderError` | A guard's `__init__` requires a provider that isn't visible from the controller's module. |
 

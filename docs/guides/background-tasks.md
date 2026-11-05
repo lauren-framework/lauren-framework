@@ -249,8 +249,11 @@ def test_signal_on_failure(app, client):
 
 ## Non-goals
 
-Background tasks run in the **current process**. For deferred/scheduled/persistent
-task queues see the planned `lauren-jobs` companion package which will add:
+Background tasks run in the **current process**. For recurring work inside the
+process (`@interval`, `@cron`, `@run_once`) and long-running loops
+(`@hosted_service`), see [Scheduling & Hosted Services](scheduling.md). For
+deferred/persistent task queues see the planned `lauren-jobs` companion package
+which will add:
 
 - `delay=`, `run_at=` scheduling
 - Recurring tasks (`cron=`, `every=`)

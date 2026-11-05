@@ -25,9 +25,12 @@ stays truly stateless) unless you ask for it.
 
 from __future__ import annotations
 
-import asyncio
+import logging
+import threading
 import time
-from typing import ClassVar, Protocol, runtime_checkable
+from typing import Callable, ClassVar, Protocol, runtime_checkable
+
+from .._stores._memory import DEFAULT_MAX_ENTRIES, TTLMap
 
 
 @runtime_checkable
@@ -52,55 +55,71 @@ class RevocationStore(Protocol):
 
 
 class InMemoryRevocationStore:
-    """Process-local revocation index guarded by an ``asyncio.Lock``.
+    """Bounded, process-local revocation index.
 
-    Holds a deny-list of revoked token ids and a per-user cutoff map, both
-    with lazy TTL pruning. Fine for development and single-worker
-    deployments; multi-worker production wants a Redis-backed store with
-    the same surface (a shared blocklist is the whole point).
+    Holds a deny-list of revoked token ids and a per-user cutoff map. Entries
+    expire with their TTL (checked on lookup and swept proactively) and each
+    map keeps at most ``max_entries`` entries. An entry evicted to make room
+    is no longer enforced, so size ``max_entries`` above the revocations you
+    expect within one session lifetime (a warning is logged the first time a
+    live entry is evicted). Fine for development and single-worker
+    deployments; multi-worker production wants a shared backend — pass any
+    :class:`~lauren.stores.Store` as ``SessionConfig(revocation_store=...)``.
     """
 
     requires_secret: ClassVar[bool] = False
 
-    def __init__(self) -> None:
-        # token_id -> expiry epoch (or None = no expiry)
-        self._tokens: dict[str, float | None] = {}
-        # user_id -> (cutoff epoch, entry expiry epoch or None)
-        self._users: dict[str, tuple[float, float | None]] = {}
-        self._lock = asyncio.Lock()
+    def __init__(
+        self,
+        *,
+        max_entries: int = DEFAULT_MAX_ENTRIES,
+        sweep_interval: float = 60.0,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        # token_id -> True (presence is the deny-list entry)
+        self._tokens: TTLMap[bool] = TTLMap(
+            max_entries=max_entries, sweep_interval=sweep_interval, clock=clock
+        )
+        # user_id -> cutoff epoch (wall-clock seconds)
+        self._users: TTLMap[float] = TTLMap(
+            max_entries=max_entries, sweep_interval=sweep_interval, clock=clock
+        )
+        self._lock = threading.Lock()
+        self._warned = False
+
+    def _put(self, entries: TTLMap[bool] | TTLMap[float], key: str, value: object, ttl: int | None) -> None:
+        now = entries.clock()
+        entries.maybe_sweep(now)
+        evicted = entries.put(key, value, (now + ttl) if ttl else None, now)  # type: ignore[arg-type]
+        if evicted and not self._warned:
+            self._warned = True
+            logging.getLogger("lauren").warning(
+                "InMemoryRevocationStore is full (max_entries=%d): the least recently used "
+                "revocations were dropped and are no longer enforced; raise max_entries or use "
+                "a shared store",
+                entries.max_entries,
+            )
 
     async def revoke_token(self, token_id: str, *, ttl: int | None = None) -> None:
-        async with self._lock:
-            self._tokens[token_id] = (time.time() + ttl) if ttl else None
+        with self._lock:
+            self._put(self._tokens, token_id, True, ttl)
 
     async def is_token_revoked(self, token_id: str) -> bool:
-        async with self._lock:
-            if token_id not in self._tokens:
-                return False
-            expiry = self._tokens[token_id]
-            if expiry is not None and time.time() >= expiry:
-                del self._tokens[token_id]  # lazy prune
-                return False
-            return True
+        with self._lock:
+            return self._tokens.get(token_id, self._tokens.clock()) is not None
 
     async def revoke_user(self, user_id: str, *, cutoff: float | None = None, ttl: int | None = None) -> None:
         at = cutoff if cutoff is not None else time.time()
-        entry_expiry = (time.time() + ttl) if ttl else None
-        async with self._lock:
-            self._users[user_id] = (at, entry_expiry)
+        with self._lock:
+            self._put(self._users, user_id, at, ttl)
 
     async def user_cutoff(self, user_id: str) -> float | None:
-        async with self._lock:
-            entry = self._users.get(user_id)
-            if entry is None:
-                return None
-            cutoff, expiry = entry
-            if expiry is not None and time.time() >= expiry:
-                del self._users[user_id]  # lazy prune
-                return None
-            return cutoff
+        with self._lock:
+            entry = self._users.get(user_id, self._users.clock())
+            return None if entry is None else entry[0]
 
     # -- test/introspection helpers (not part of the Protocol) ---------
 
-    def _token_count(self) -> int:  # pragma: no cover - convenience for tests
+    def _token_count(self) -> int:
+        """Deny-list entries currently held, including expired ones not yet swept."""
         return len(self._tokens)

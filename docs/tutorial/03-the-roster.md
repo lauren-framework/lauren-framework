@@ -55,15 +55,13 @@ A controller can ask for any provider in its `__init__`, and Lauren wires it up.
 controller is now blissfully ignorant of *how* heroes are stored:
 
 ```python title="hero_hq/main.py"
-from lauren import Json, LaurenFactory, Path, controller, get, module, post
-from lauren.exceptions import HTTPError
+from lauren import Json, LaurenFactory, NotFoundError, Path, controller, get, module, post
 
 from .models import CreateHero, HeroOut
 from .roster import HeroRepository
 
 
-class HeroNotFoundError(HTTPError):
-    status_code = 404
+class HeroNotFoundError(NotFoundError):
     code = "hero_not_found"
 
 

@@ -57,13 +57,17 @@ class TestBuildAdapterNonPydantic:
         result = _build_adapter(Greet)
         assert result is not None
 
-    def test_msgspec_struct_adapter_cached(self) -> None:
+    def test_msgspec_struct_adapter_is_not_cached_process_wide(self) -> None:
         class Greet2(msgspec.Struct):
             value: int
 
         first = _build_adapter(Greet2)
-        second = _build_adapter(Greet2)  # hit cache
-        assert first is second  # same cached adapter
+        second = _build_adapter(Greet2)
+
+        # Each app owns its adapters through compiled plans, not a global cache.
+        assert first is not None
+        assert second is not None
+        assert first is not second
 
     def test_msgspec_struct_adapter_validates(self) -> None:
         class Greet3(msgspec.Struct):

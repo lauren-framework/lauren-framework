@@ -16,8 +16,12 @@ These tests exercise each encoder in isolation to prove:
 from __future__ import annotations
 
 import json as stdlib_json
+import subprocess
+import sys
+import textwrap
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -357,6 +361,47 @@ def test_auto_encoder_falls_back_to_stdlib_when_neither_available(
 # ---------------------------------------------------------------------------
 # PydanticEncoder tests
 # ---------------------------------------------------------------------------
+
+
+def test_pydantic_encoder_is_a_declared_reexport() -> None:
+    from lauren import PydanticEncoder as public_encoder
+    from lauren import serialization
+    from lauren._encoders.pydantic import PydanticEncoder as backend_encoder
+
+    assert vars(serialization)["PydanticEncoder"] is backend_encoder
+    assert public_encoder is backend_encoder
+    assert all(name in vars(serialization) for name in serialization.__all__)
+
+
+def test_serialization_star_import_works_without_optional_backends() -> None:
+    source = textwrap.dedent("""\
+        import sys
+
+        for name in ("pydantic", "pydantic_core", "msgspec", "orjson"):
+            sys.modules[name] = None
+
+        import lauren
+        from lauren.serialization import *
+
+        assert PydanticEncoder is lauren.PydanticEncoder
+        assert StdlibJSONEncoder().encode_compact({"ok": True}) == b'{"ok":true}'
+        try:
+            PydanticEncoder()
+        except RuntimeError as exc:
+            assert "pip install pydantic" in str(exc)
+        else:
+            raise AssertionError("PydanticEncoder must fail only when constructed")
+    """)
+
+    result = subprocess.run(
+        [sys.executable, "-c", source],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 class TestPydanticEncoder:

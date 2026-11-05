@@ -18,7 +18,7 @@ class Db:
         await self.pool.close()
 ```
 
-Hooks may be `async def` or plain `def`. A sync `@post_construct` runs inline on the event loop (keep it quick, or make it `async`); a sync `@pre_destruct` is offloaded to a worker thread so blocking teardown work cannot freeze the loop. Declare at most one `@post_construct` and one `@pre_destruct` per class — only the first one found is honoured.
+Hooks may be `async def` or plain `def`. A sync `@post_construct` runs inline on the event loop (keep it quick, or make it `async`); a sync `@pre_destruct` is offloaded to a worker thread so blocking teardown work cannot freeze the loop. A class may declare several hooks of each kind and every one runs: `@post_construct` hooks run base class first, then in definition order within a class; `@pre_destruct` hooks run subclass first, then in definition order (so `flush` declared before `close` still runs first). Hooks follow the method-decorator inheritance rule: an override **without** the decorator stops being a hook, and a decorated override runs once, in its own class's position.
 
 ## When they run
 
@@ -27,6 +27,7 @@ sequenceDiagram
     participant F as LaurenFactory
     participant L as Lifecycle scheduler
     participant A as @post_construct hooks (topological)
+    participant H as Hosted services + scheduler
     participant App as Application running
     participant D as @pre_destruct hooks (reverse topological)
     participant S as Shutdown
@@ -34,14 +35,36 @@ sequenceDiagram
     F->>L: Phase 6 computes the order
     App->>L: startup() (ASGI lifespan)
     L->>A: deps first
-    A-->>App: ready
-    App-->>S: drain begins
+    A->>H: hosted services start, scheduler armed
+    H-->>App: ready (StartupComplete), scheduler fires
+    App-->>S: scheduler stops firing, requests drain
+    S->>H: job runs finish, services stop (reverse order)
     S->>D: leaves first
     D-->>S: complete
 ```
 
-* **Startup** — phase 6 of `LaurenFactory.create(...)` only *computes* the order. Singletons are constructed and their `@post_construct` hooks run in `LaurenApp.startup()` — triggered by the ASGI lifespan `startup` event (or by `TestClient`; call `await app.startup()` yourself without lifespan) — in **topological order** (a dependency's hook completes before its dependent's hook starts). There is no timeout on `@post_construct`.
-* **Shutdown** — `app.shutdown(drain_timeout=...)` runs in four logged phases: drain in-flight requests, run `on_shutdown` callbacks (LIFO), then run `@pre_destruct` hooks in **reverse topological order** (dependents teardown first).
+* **Startup** — phase 6 of `LaurenFactory.create(...)` only *computes* the order. Singletons are constructed and their `@post_construct` hooks run in `LaurenApp.startup()` — triggered by the ASGI lifespan `startup` event (or by `TestClient`; call `await app.startup()` yourself without lifespan) — in **topological order** (a dependency's hook completes before its dependent's hook starts). There is no timeout on `@post_construct`. Then [hosted services](../guides/scheduling.md#hosted-services) start, in the same dependency order, and the scheduler is armed; scheduled jobs start firing once the app is ready (`StartupComplete`).
+* **Shutdown** — `app.shutdown(drain_timeout=...)` runs in logged phases: the scheduler stops firing, in-flight requests drain, in-flight job runs are awaited (then cancelled), hosted services stop in reverse start order, `on_shutdown` callbacks run (LIFO), then `@pre_destruct` hooks run in **reverse topological order** (dependents teardown first). Hosted services therefore stop while every dependency is still alive.
+
+Never start a background loop with `asyncio.create_task(...)` inside `@post_construct`: nothing supervises or stops it, it can outlive the resources it uses, and it dies with the test client's startup loop. Use [`@hosted_service`](../guides/scheduling.md#hosted-services) for loops and [`@interval` / `@cron`](../guides/scheduling.md#scheduled-methods) for recurring work.
+
+## The application lifecycle state
+
+The app itself moves through a public state machine, `app.lifecycle_state` (an `AppLifecycleState`). Every transition emits `LifecycleStateChanged` on `app.signals`:
+
+```mermaid
+stateDiagram-v2
+    [*] --> CREATED: LaurenFactory.create()
+    CREATED --> STARTING: startup()
+    STARTING --> READY: every @post_construct ran
+    STARTING --> FAILED: startup() raised
+    FAILED --> STARTING: startup() retried
+    READY --> DRAINING: begin_draining() / shutdown() begins
+    DRAINING --> STOPPED: shutdown() finished
+    STOPPED --> [*]
+```
+
+`@post_construct` hooks run during `STARTING`; `@pre_destruct` hooks run while the app is `DRAINING`, and it is `STOPPED` once they are done. `app.begin_draining()` lets a pre-stop hook or a signal handler fail readiness *before* `shutdown()` starts, while requests are still served — see [Health & Readiness Probes](../guides/health-checks.md).
 
 ## Topological ordering, with a picture
 
@@ -64,11 +87,15 @@ This is what makes lifecycle ordering *correct*: a `Repo` whose `@post_construct
 await app.shutdown(drain_timeout=10.0)   # drain phase capped at 10s
 ```
 
-Inside the four-phase shutdown:
+Inside the shutdown:
 
 | Phase | Bounded by | What runs |
 |---|---|---|
+| Stop firing | — | The scheduler starts no new job runs; hosted services keep running. |
 | Drain | `drain_timeout` | In-flight requests get a chance to finish. |
+| Job runs | `job_drain_timeout` (default: the rest of `drain_timeout`) | In-flight scheduled runs finish, or are cancelled. |
+| Hosted services | each service's `stop_timeout` | Stop requested in reverse start order, then cancelled. |
+| Event handler drain | what is left of `drain_timeout` (or `EventsModule.for_root(drain_timeout=...)`) | Running [`@on_event`](../guides/events.md) handler tasks finish; the rest are cancelled and reported as `EventHandlerFailed`. |
 | `on_shutdown` callbacks | — (no timeout; keep them short) | User hooks registered via `app.on_shutdown(fn)` (LIFO order). |
 | `@pre_destruct` hooks | per-hook timeout | Provider teardown in reverse topological order. |
 | Goodbye | — | Final log line confirming clean shutdown. |
@@ -142,13 +169,14 @@ class DbSession:
 | `DestructError` | A `@pre_destruct` hook raised an exception; collected and logged. |
 | `DestructTimeoutError` | A `@pre_destruct` hook exceeded its per-hook timeout. |
 | `DrainTimeoutError` | The drain phase exceeded `drain_timeout`. |
+| `LifecycleViolationError` (startup) | `startup()` called again while starting or after it succeeded, or once shutdown began (`detail["lifecycle_state"]`); retrying after a failed startup is allowed. |
 
 All of them are emitted through the structured logger, so production aggregators see them as JSON records you can alert on.
 
 ## Best practices
 
 * **Keep `@post_construct` cheap.** Anything that can fail and might need retry belongs in a separate "warm" step you can re-run, not in startup.
-* **Plain `def` hooks may block, but only briefly.** Sync hooks now run in a worker thread, which protects the loop, but long CPU-bound work still delays readiness or shutdown completion. Prefer `async def` for naturally async I/O and keep sync cleanup bounded.
+* **Plain `def` hooks may block, but only briefly.** A sync `@post_construct` runs inline on the event loop — the app stays `STARTING` (readiness fails) until it returns; a sync `@pre_destruct` runs in a worker thread, which protects the loop, but long work still delays shutdown completion. Prefer `async def` for naturally async I/O and keep sync hooks bounded.
 * **Use `on_shutdown` for things that aren't owned by a provider** — flushing a global metrics client, sending a "we're shutting down" event to a service registry, closing a side-channel connection.
 * **Use `@pre_destruct` for provider-owned resources** — connection pools, file handles, subprocesses. These mirror the `@post_construct` that opened them.
 * **Don't depend on order between `on_shutdown` callbacks and `@pre_destruct` hooks**, except that all callbacks run before any hooks. Within each phase, registration order (LIFO) and topology decide.

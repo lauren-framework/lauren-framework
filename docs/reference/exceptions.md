@@ -1,6 +1,8 @@
 # Exception Catalog
 
-All 34 typed exception classes exported by the framework.
+Every typed exception class exported by the framework. The generated table of
+statuses and codes lives in the [Error Catalog](errors.md); `error_catalog()`
+returns it as data.
 
 ## Base classes
 
@@ -46,29 +48,51 @@ All 34 typed exception classes exported by the framework.
 
 ::: lauren.ExceptionHandlerConfigError
 
+::: lauren.SessionConfigError
+
 ::: lauren.OpenAPISchemaError
+
+## HTTP errors
 
 ::: lauren.ExtractorError
 
 ::: lauren.ExtractorFieldError
 
-## HTTP errors
-
-::: lauren.RouteNotFoundError
-
-::: lauren.MethodNotAllowedError
-
-::: lauren.RequestBodyTooLarge
+::: lauren.BadRequestError
 
 ::: lauren.UnauthorizedError
 
 ::: lauren.ForbiddenError
 
-## Lifecycle errors
+::: lauren.NotFoundError
+
+::: lauren.RouteNotFoundError
+
+::: lauren.MethodNotAllowedError
+
+::: lauren.NotAcceptableError
+
+::: lauren.ConflictError
+
+::: lauren.GoneError
+
+::: lauren.PreconditionFailedError
+
+::: lauren.RequestBodyTooLarge
+
+::: lauren.UnsupportedMediaTypeError
+
+::: lauren.TooManyRequestsError
+
+::: lauren.ServiceUnavailableError
+
+::: lauren.RequestTimeoutError
 
 ::: lauren.MissingStateError
 
 ::: lauren.StateTypeError
+
+## Lifecycle errors
 
 ::: lauren.LifecycleViolationError
 

@@ -16,17 +16,13 @@ class DC:
 class TestBuildAdapter:
     def test_returns_none_for_plain_type_without_pydantic(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "pydantic", None)
-        # Clear the adapter cache so the mock takes effect
         import lauren.streaming as _streaming
 
-        _streaming._ADAPTER_CACHE.clear()
+        monkeypatch.setattr(_streaming, "_PYDANTIC_AVAILABLE", False)
 
         from lauren.streaming import _build_adapter
 
         assert _build_adapter(int) is None
-
-        # Restore cache for other tests
-        _streaming._ADAPTER_CACHE.clear()
 
     def test_returns_adapter_for_dataclass(self):
         from lauren.streaming import _build_adapter

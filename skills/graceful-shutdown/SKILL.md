@@ -140,3 +140,10 @@ app = LaurenFactory.create(AppModule)
 ```
 
 No additional wiring is needed — as long as you use a lifespan-aware ASGI server (uvicorn `--lifespan on`), `@pre_destruct` hooks fire automatically on `SIGTERM`.
+
+Uvicorn only sends `lifespan.shutdown` after it has stopped listening, so a
+readiness flip inside `shutdown()` comes too late for load balancers. Fail
+readiness earlier with `app.begin_draining()` (`READY → DRAINING`, requests are
+still served) — from a Kubernetes `preStop` window, or with
+`install_signal_handlers(app, shutdown_delay=10)` in a custom runner. See the
+`health-check-probes` skill.

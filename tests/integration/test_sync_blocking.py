@@ -21,6 +21,7 @@ start until the first finishes.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 
 import httpx
@@ -39,8 +40,23 @@ PARALLEL_THRESHOLD = SLOW * 1.5  # < this → ran in parallel; > this → serial
 # ---------------------------------------------------------------------------
 
 
+# Two-party rendezvous for the parallelism test; set fresh by that test.
+_RENDEZVOUS: threading.Barrier | None = None
+
+
 @controller("/")
 class SlowController:
+    @get("/rendezvous")
+    def rendezvous(self) -> dict:
+        """Sync handler that returns only once a second concurrent call arrives.
+
+        Raises ``threading.BrokenBarrierError`` (a 500) when the calls cannot
+        overlap — that is, when sync handlers block the event loop.
+        """
+        assert _RENDEZVOUS is not None
+        _RENDEZVOUS.wait(timeout=10)
+        return {"done": True}
+
     @get("/slow")
     def slow_sync(self) -> dict:
         """Sync handler that blocks for SLOW seconds."""
@@ -91,29 +107,28 @@ class TestSyncHandlerNonBlocking:
     """
 
     async def test_two_concurrent_slow_sync_requests_run_in_parallel(self):
-        """Two concurrent sync-sleep requests must finish in ~SLOW seconds total.
+        """Two concurrent sync requests must run at the same time.
 
-        Failure means the framework is blocking the event loop: the two
-        requests serialise and take ~2*SLOW seconds.
+        Each handler waits on a two-party barrier, which only handlers running
+        concurrently in worker threads can pass. Were sync handlers run on the
+        event loop, the first would wait for a second that could never start
+        and the barrier's timeout would fail both requests — a deterministic
+        check that, unlike a wall-clock threshold, does not depend on load.
         """
+        global _RENDEZVOUS
+        _RENDEZVOUS = threading.Barrier(2)
         client, app = await _make_client()
         try:
-            start = time.monotonic()
             r1, r2 = await asyncio.gather(
-                client.get("/slow"),
-                client.get("/slow"),
+                client.get("/rendezvous"),
+                client.get("/rendezvous"),
             )
-            elapsed = time.monotonic() - start
         finally:
             await client.aclose()
             await app.shutdown()
 
-        assert r1.status_code == 200
-        assert r2.status_code == 200
-        assert elapsed < PARALLEL_THRESHOLD, (
-            f"Two concurrent sync-sleep({SLOW}s) requests took {elapsed:.2f}s "
-            f"(threshold {PARALLEL_THRESHOLD:.2f}s).  "
-            "This indicates the event loop is being blocked by the sync handler."
+        assert (r1.status_code, r2.status_code) == (200, 200), (
+            "Concurrent sync handlers never overlapped: the event loop is being blocked by the sync handler."
         )
 
     async def test_fast_async_route_not_blocked_by_concurrent_slow_sync(self):

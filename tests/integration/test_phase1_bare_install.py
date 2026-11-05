@@ -67,8 +67,8 @@ def test_pyproject_optional_extras_declared():
         dist = meta.distribution("lauren")
     except meta.PackageNotFoundError:
         pytest.skip("Package not installed as a distribution — running from source")
-
-    extras = dist.metadata.get_all("Provides-Extra") or []
-    assert "pydantic" in extras, f"'pydantic' extra missing; found: {extras}"
-    assert "msgspec" in extras, f"'msgspec' extra missing; found: {extras}"
-    assert "full" in extras, f"'full' extra missing; found: {extras}"
+    else:
+        extras = dist.metadata.get_all("Provides-Extra") or []
+        assert "pydantic" in extras, f"'pydantic' extra missing; found: {extras}"
+        assert "msgspec" in extras, f"'msgspec' extra missing; found: {extras}"
+        assert "full" in extras, f"'full' extra missing; found: {extras}"

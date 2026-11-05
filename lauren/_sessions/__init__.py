@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .._stores._lifecycle import adopt_store_lifecycle
+from ._adapters import StoreRevocationStore, StoreSessionStore
 from ._config import ResolvedSessionConfig, SessionConfig, resolve_session_config
 from ._engine import _SessionEngine
 from ._revocation import InMemoryRevocationStore, RevocationStore
@@ -34,6 +36,8 @@ __all__ = [
     "JSONSessionSerializer",
     "RevocationStore",
     "InMemoryRevocationStore",
+    "StoreSessionStore",
+    "StoreRevocationStore",
     # internal wiring (not part of the public lauren surface)
     "configure_sessions",
     "resolve_session_config",
@@ -52,6 +56,13 @@ def configure_sessions(config: SessionConfig, container: Any) -> type:
     Also binds the resolved store under the :class:`SessionStore` token
     so application services may inject ``store: SessionStore`` directly
     (e.g. an admin endpoint that revokes sessions).
+
+    The store and the revocation store are registered as lifecycle-managed
+    singletons, not bare values: their ``@post_construct`` /
+    ``@pre_destruct`` (or ``startup()`` / ``aclose()``) hooks run at
+    ``app.startup()`` / ``app.shutdown()`` — and so do the hooks of the
+    backend a store adapter wraps. Each object's hooks run once even when
+    the same backend also serves as a ``StoresModule`` store.
     """
     from .._di.custom import use_value
 
@@ -61,11 +72,12 @@ def configure_sessions(config: SessionConfig, container: Any) -> type:
     existing = {p.cls for p in container.all_providers()}
     container.register_custom(use_value(provide=_SessionEngine, value=engine), owning_module=None)
     if SessionStore not in existing:
-        container.register_custom(use_value(provide=SessionStore, value=resolved.store), owning_module=None)
+        container.register_instance(SessionStore, resolved.store)
+    adopt_store_lifecycle(container, resolved.store)
     # Expose the revocation store for injection so an app can offer a
     # "log out everywhere" endpoint (revoke_user) or inspect the deny-list.
-    if resolved.revocation is not None and RevocationStore not in existing:
-        container.register_custom(
-            use_value(provide=RevocationStore, value=resolved.revocation), owning_module=None
-        )
+    if resolved.revocation is not None:
+        if RevocationStore not in existing:
+            container.register_instance(RevocationStore, resolved.revocation)
+        adopt_store_lifecycle(container, resolved.revocation)
     return _SessionEngine

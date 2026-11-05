@@ -8,7 +8,6 @@ the engine's cookie-attribute emission. Integration round-trips live in
 
 from __future__ import annotations
 
-import time
 
 import pytest
 
@@ -223,12 +222,46 @@ class TestInMemoryStore:
         assert all(len(i) >= 32 for i in ids)
 
     async def test_lazy_ttl_expiry(self):
-        store = InMemorySessionStore()
+        now = [0.0]
+        store = InMemorySessionStore(clock=lambda: now[0])
         sid = store.new_id()
         await store.save(sid, {"a": 1}, max_age=1)
-        # Force the stored expiry into the past, then load.
-        store._expiry[sid] = time.time() - 1
+        # Move the injected clock past the expiry, then load.
+        now[0] = 1.0
         assert await store.load(sid) is None
+
+    async def test_evicts_the_least_recently_used_beyond_max_entries(self):
+        store = InMemorySessionStore(max_entries=2)
+        for sid in ("a", "b", "c"):
+            await store.save(sid, {"sid": sid}, max_age=None)
+        assert await store.load("a") is None
+        assert store._count() == 2
+
+    async def test_sweeps_sessions_that_are_never_loaded_again(self):
+        now = [0.0]
+        store = InMemorySessionStore(sweep_interval=60, clock=lambda: now[0])
+        for i in range(10):
+            await store.save(f"anon{i}", {"v": i}, max_age=30)
+        now[0] = 61.0
+        await store.save("new", {}, max_age=30)
+        assert store._count() == 1
+
+    async def test_keeps_values_that_are_not_json(self):
+        store = InMemorySessionStore()
+        marker = object()
+        await store.save("s", {"obj": marker}, max_age=None)
+        loaded = await store.load("s")
+        assert loaded is not None and loaded["obj"] is marker
+
+    async def test_deleting_an_unknown_session_is_a_no_op(self):
+        store = InMemorySessionStore()
+        await store.delete("never-saved")
+        assert store._count() == 0
+
+    @pytest.mark.parametrize("kwargs", [{"max_entries": 0}, {"sweep_interval": 0}])
+    def test_rejects_an_invalid_capacity(self, kwargs):
+        with pytest.raises(ValueError):
+            InMemorySessionStore(**kwargs)
 
     async def test_load_returns_copy(self):
         store = InMemorySessionStore()

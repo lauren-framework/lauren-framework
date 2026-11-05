@@ -32,6 +32,7 @@ async def apply_guards(
     request_cache: dict[type, Any],
     framework_values: dict[type, Any],
     owning_module: type | None = None,
+    on_denied: Callable[[type], Any] | None = None,
 ) -> bool:
     """Resolve and call each guard in order.
 
@@ -41,6 +42,11 @@ async def apply_guards(
 
     Guard exceptions are caught, logged at ERROR level, and treated as
     rejections so a broken guard never silently admits a connection.
+
+    ``on_denied``, when given, is called with the guard class whose
+    ``can_activate`` returned a falsy value (not for a guard that raised) —
+    Lauren's WS runtime uses it to put the guard's ``deny_error`` code in the
+    close reason.
 
     Parameters
     ----------
@@ -60,6 +66,7 @@ async def apply_guards(
         provider visibility.
     """
     for guard_cls in guard_classes:
+        raised = False
         try:
             guard = await container.resolve(
                 guard_cls,
@@ -74,6 +81,7 @@ async def apply_guards(
                 guard_cls.__name__,
             )
             allowed = False
+            raised = True
 
         if not allowed:
             _logger.debug(
@@ -81,6 +89,8 @@ async def apply_guards(
                 guard_cls.__name__,
                 ctx.route_template,
             )
+            if on_denied is not None and not raised:
+                on_denied(guard_cls)
             return False
 
     return True

@@ -131,10 +131,37 @@ class WebhookRegistry:
         return [s for s in self._subscriptions if event in s.events]
 ```
 
-## Fan-out service
+## Fan-out from domain events
+
+Services never call the webhook layer: they publish typed domain events on
+the application event bus, and one `@on_event` handler turns the ones you
+expose into webhook deliveries (see `skills/building-lauren-events/`). The
+handler runs in `"background"` mode, so deliveries (and their retries) start
+after the HTTP response when the event was published through an
+`EventPublisher` in a request.
 
 ```python
 import asyncio
+from dataclasses import asdict, dataclass
+
+from lauren.events import EventBus, on_event
+
+
+@dataclass(frozen=True)
+class OrderPaid:
+    order_id: str
+    amount_cents: int
+
+
+@dataclass(frozen=True)
+class OrderShipped:
+    order_id: str
+    carrier: str
+
+
+# Domain event class -> public webhook event name.
+WEBHOOK_EVENTS: dict[type, str] = {OrderPaid: "order.paid", OrderShipped: "order.shipped"}
+
 
 @injectable(scope=Scope.SINGLETON)
 class WebhookService:
@@ -142,13 +169,29 @@ class WebhookService:
         self._dispatcher = dispatcher
         self._registry = registry
 
-    async def emit(self, event: str, payload: dict) -> list[WebhookDelivery]:
-        subscribers = self._registry.get_subscribers(event)
+    @on_event(OrderShipped, mode="background")
+    @on_event(OrderPaid, mode="background")
+    async def fan_out(self, event: OrderPaid | OrderShipped) -> list[WebhookDelivery]:
+        name = WEBHOOK_EVENTS[type(event)]
+        payload = asdict(event)
+        subscribers = self._registry.get_subscribers(name)
         deliveries = await asyncio.gather(
-            *[self._dispatcher.dispatch(sub.url, event, payload) for sub in subscribers],
-            return_exceptions=False,
+            *[self._dispatcher.dispatch(sub.url, name, payload) for sub in subscribers],
         )
         return list(deliveries)
+```
+
+Publishing stays one line in the service that owns the change:
+
+```python
+@injectable(scope=Scope.SINGLETON)
+class PaymentService:
+    def __init__(self, events: EventBus) -> None:
+        self._events = events
+
+    async def capture(self, order_id: str, amount_cents: int) -> None:
+        # ... charge the card ...
+        await self._events.emit(OrderPaid(order_id, amount_cents))
 ```
 
 ## Signature verification (receiver side)
@@ -175,6 +218,7 @@ class WebhookModule:
 
 - Always use `hmac.compare_digest` for signature comparison to prevent timing attacks.
 - The `X-Webhook-Signature: sha256=<hex>` header mirrors the GitHub/Stripe convention.
-- Use `BackgroundTasks` to fire webhooks without blocking the HTTP response: return the response first, then dispatch.
+- Webhooks are triggered by `@on_event(mode="background")` handlers, so they never block the HTTP response and a failing delivery never fails the operation that published the event (it is logged and signalled as `EventHandlerFailed`).
+- Map domain event classes to stable public event names; never send the domain object's internals unfiltered.
 - For high-volume production use, move delivery to a task queue (e.g., Celery or ARQ) and store `WebhookDelivery` rows in a database.
 - Exponential backoff: attempt 0 is immediate, attempt 1 waits 1s, attempt 2 waits 2s (2^0, 2^1).

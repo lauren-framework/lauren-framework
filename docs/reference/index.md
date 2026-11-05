@@ -24,6 +24,8 @@ Every public name lives at the top of the `lauren` package and is re-exported fr
 from lauren import (
     # Application
     Lauren, LaurenApp, LaurenFactory,
+    # Standalone contexts & commands
+    ApplicationContext, OperationScope, command, Opt, CommandContext, CommandResult,
     # Decorators
     controller, module, injectable, middleware, exception_handler,
     get, post, put, patch, delete, head, options,
@@ -37,6 +39,13 @@ from lauren import (
     QueryField, HeaderField, CookieField, PathField,
     # Types
     Request, Response, Headers, ExecutionContext,
+    # Responses
+    Ok, Created, Accepted, NoContent, Status, raises,
+    # Validation (markers, TypeCompiler and validate live in lauren.validation)
+    ValidationPolicy, ValidationIssue, validation_config,
+    # Pagination (also lauren.pagination)
+    OffsetPagination, PageNumberPagination, CursorPagination, PaginationConfig,
+    Page, CursorPage, paginate_sequence,
     # Routing
     Router, RouteEntry,
     # Streaming / SSE / WS

@@ -53,6 +53,7 @@ from typing import (
     Any,
     Awaitable,
     Callable,
+    Self,
     TypeVar,
 )
 
@@ -133,6 +134,38 @@ class WebSocketValidationError(WebSocketError):
 
     code = "websocket_validation_error"
     close_code = 1003  # "unsupported data"
+    #: The structured validation issues (``ValidationIssue`` objects), mirrored
+    #: as JSON dicts in ``detail["issues"]``.
+    issues: tuple[Any, ...] = ()
+
+    @classmethod
+    def from_issues(
+        cls,
+        issues: Any,
+        *,
+        event: str | None = None,
+        errors: list[Any] | None = None,
+        message: str = "validation error",
+        include_input: bool = False,
+    ) -> Self:
+        """Build the error frame for validation issues: ``detail = {"event", "issues", "errors"}``.
+
+        ``issues`` are ``{"loc", "type", "msg", "ctx"?}`` dicts — the same shape
+        as an HTTP 422, with ``loc`` rooted at ``"frame"``. ``errors`` keeps the
+        1.x content (``"loc: msg"`` strings unless the caller passes the legacy
+        list).
+        """
+        from .exceptions import _issues_detail
+
+        items, dicts, texts = _issues_detail(issues, include_input)
+        detail: dict[str, Any] = {}
+        if event is not None:
+            detail["event"] = event
+        detail["issues"] = dicts
+        detail["errors"] = errors if errors is not None else texts
+        err = cls(message, detail=detail)
+        err.issues = tuple(items)
+        return err
 
 
 class WebSocketRouteNotFoundError(WebSocketError):

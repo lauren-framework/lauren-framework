@@ -10,7 +10,7 @@
 
     - [ ] Driving the app with `TestClient` — no network required
     - [ ] Testing guards, validation, and error envelopes
-    - [ ] Threading session cookies and testing WebSockets with `WsTestClient`
+    - [ ] Keeping session cookies in the client's jar and testing WebSockets with `WsTestClient`
 
 ---
 
@@ -73,37 +73,33 @@ def test_the_auditor_rejects_bad_paperwork():
 
 ---
 
-## Test sessions: thread the cookie by hand
+## Test sessions: let the cookie jar do it
 
-`TestClient` keeps no cookie jar, which is a feature for tests — you control exactly what's
-sent. Pull the cookie out of one response and pass it back on the next:
+Used as a context manager, `TestClient` keeps a browser-like cookie jar: the session cookie
+`/me/login` sets is replayed on the next request automatically — and `with` also runs the
+app's shutdown hooks when the block ends.
 
 ```python title="tests/test_hero_hq.py (continued)"
-def _session_cookie(resp) -> str | None:
-    sc = resp.header("set-cookie") or ""
-    for part in sc.split(";"):
-        if part.strip().startswith("lauren_session="):
-            return part.strip().split("=", 1)[1]
-    return None
-
-
 def test_login_is_remembered():
-    c = client()
-    hero_id = c.post(
-        "/heroes/", json={"name": "Volt", "power": "lightning", "wattage": 9001}, headers=BADGE
-    ).json()["id"]
+    with TestClient(build_app()) as c:
+        hero_id = c.post(
+            "/heroes/", json={"name": "Volt", "power": "lightning", "wattage": 9001}, headers=BADGE
+        ).json()["id"]
 
-    sid = _session_cookie(c.post("/me/login", json={"hero_id": hero_id}))
-    who = c.get("/me/", cookies={"lauren_session": sid})
-    assert who.json() == {"identified": True, "hero_id": hero_id, "name": "Volt"}
+        c.post("/me/login", json={"hero_id": hero_id})
+        who = c.get("/me/")
+        assert who.json() == {"identified": True, "hero_id": hero_id, "name": "Volt"}
 ```
+
+Need a second hero in the same app? `c.new_session()` is another browser with an empty jar.
 
 ---
 
 ## Test the live stuff
 
-The SSE feed is buffered by `TestClient`, so you can assert on the whole body. WebSockets get
-their own `WsTestClient`:
+A finite SSE feed comes back whole from a plain `get`, so you can assert on the body
+(`client.stream(...)` reads an endless one event by event). WebSockets get their own
+`WsTestClient`:
 
 ```python title="tests/test_hero_hq.py (continued)"
 import asyncio
@@ -131,9 +127,9 @@ def test_comms_broadcasts_to_everyone():
 ```
 
 !!! danger "💥 Villainous Pitfall"
-    Don't reuse one app across two `TestClient`s if you rely on a clean slate — share state
-    only when you mean to. For isolated tests, `build_app()` per test keeps each trial
-    hermetic. (HQ's lawyers love the word "hermetic.")
+    Don't drive one app with two independent clients — an app's loop-bound resources live on
+    one client's event loop. Use `client.new_session()` for a second user, and `build_app()`
+    per test to keep each trial hermetic. (HQ's lawyers love the word "hermetic.")
 
 ---
 

@@ -62,6 +62,41 @@ app = LaurenFactory.create(AppModule, global_guards=[AuthGuard])
 
 Guards run in order: global → controller → method. Any guard returning `False` short-circuits to 403.
 
+### 401 vs 403 — `deny_error`
+
+Authentication guards ("who are you?") should answer **401**, not 403. Declare
+the error a `False` produces, or raise it yourself with a challenge header:
+
+```python
+from typing import ClassVar
+
+from lauren import HTTPError, UnauthorizedError
+from lauren.types import ExecutionContext
+
+class ApiKeyGuard:
+    deny_error: ClassVar[type[HTTPError]] = UnauthorizedError   # False → 401 (default: ForbiddenError)
+
+    async def can_activate(self, ctx: ExecutionContext) -> bool:
+        return ctx.request.headers.get("x-api-key") == "secret"
+
+class BearerGuard:
+    # A zero-argument factory builds a configured error (e.g. with a challenge).
+    deny_error = staticmethod(lambda: UnauthorizedError("token required", challenge='Bearer realm="api"'))
+
+    async def can_activate(self, ctx: ExecutionContext) -> bool:
+        if not ctx.request.headers.get("authorization", "").startswith("Bearer "):
+            return False
+        return True
+```
+
+- A class is called as `deny_error("guard <Name> denied the request", detail={"guard": "<Name>"})`.
+- `LaurenFactory.create` validates it: a non-`HTTPError` class, an exception
+  *instance* or a callable needing arguments raises `GuardConfigError`.
+- Raising `UnauthorizedError("...", challenge='Basic realm="x"')` inside
+  `can_activate` sends `WWW-Authenticate` with no extra exception handler.
+- On WebSocket gateways the denial closes with 1008 and the error's `code` as
+  the close reason (per-message guards answer with its error frame).
+
 ### ExecutionContext
 
 ```python
@@ -104,7 +139,7 @@ Exception handlers catch typed exceptions and return structured HTTP responses. 
 from lauren import exception_handler
 from lauren.types import Request, Response
 
-# NotFoundError / ConflictError: your own HTTPError subclasses
+# NotFoundError / ConflictError are built in (lauren); subclasses are claimed too
 @exception_handler(NotFoundError, ConflictError)
 class DomainErrors:
     def __init__(self, log: Logger) -> None:

@@ -35,15 +35,13 @@ First, give the front desk its own file. Nothing about the controller changes â€
 moves out of `main.py`:
 
 ```python title="hero_hq/dispatch.py"
-from lauren import Json, Path, controller, get, post
-from lauren.exceptions import HTTPError
+from lauren import Json, NotFoundError, Path, controller, get, post
 
 from .models import CreateHero, HeroOut
 from .roster import HeroRepository
 
 
-class HeroNotFoundError(HTTPError):
-    status_code = 404
+class HeroNotFoundError(NotFoundError):
     code = "hero_not_found"
 
 

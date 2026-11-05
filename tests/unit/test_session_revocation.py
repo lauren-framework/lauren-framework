@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 
 from lauren import InMemoryRevocationStore, RevocationStore
@@ -22,11 +23,12 @@ class TestTokenDenyList:
         assert await store.is_token_revoked("other") is False
 
     async def test_ttl_expiry_prunes(self):
-        store = InMemoryRevocationStore()
+        now = [0.0]
+        store = InMemoryRevocationStore(clock=lambda: now[0])
         await store.revoke_token("t1", ttl=1)
         assert await store.is_token_revoked("t1") is True
-        # Force the entry into the past; the next check prunes and reports False.
-        store._tokens["t1"] = time.time() - 1
+        # Move the injected clock past the entry; the next check prunes and reports False.
+        now[0] = 1.0
         assert await store.is_token_revoked("t1") is False
         assert store._token_count() == 0
 
@@ -49,10 +51,32 @@ class TestUserCutoff:
         assert cutoff is not None and cutoff >= before
 
     async def test_user_cutoff_ttl_prunes(self):
-        store = InMemoryRevocationStore()
+        now = [0.0]
+        store = InMemoryRevocationStore(clock=lambda: now[0])
         await store.revoke_user("u1", cutoff=1000.0, ttl=1)
-        store._users["u1"] = (1000.0, time.time() - 1)
+        now[0] = 1.0
         assert await store.user_cutoff("u1") is None
+
+
+class TestBoundedInMemoryRevocation:
+    async def test_evicts_beyond_max_entries_and_warns_once(self, caplog):
+        store = InMemoryRevocationStore(max_entries=1)
+        with caplog.at_level(logging.WARNING, logger="lauren"):
+            await store.revoke_token("t1", ttl=60)
+            await store.revoke_token("t2", ttl=60)
+            await store.revoke_token("t3", ttl=60)
+        assert not await store.is_token_revoked("t1")
+        assert await store.is_token_revoked("t3")
+        warnings = [r for r in caplog.records if "InMemoryRevocationStore is full" in r.getMessage()]
+        assert len(warnings) == 1
+
+    async def test_sweeps_expired_user_cutoffs_that_are_never_read(self):
+        now = [0.0]
+        store = InMemoryRevocationStore(sweep_interval=10, clock=lambda: now[0])
+        await store.revoke_user("u1", cutoff=5.0, ttl=5)
+        now[0] = 11.0
+        await store.revoke_user("u2", cutoff=6.0, ttl=5)
+        assert len(store._users) == 1
 
 
 class TestRevocationStoreProtocol:

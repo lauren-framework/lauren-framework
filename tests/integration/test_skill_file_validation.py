@@ -15,15 +15,8 @@ from lauren import (
     module,
     post,
 )
-from lauren.exceptions import HTTPError
+from lauren import BadRequestError
 from lauren.testing import TestClient
-
-
-class BadRequestError(HTTPError):
-    """400 Bad Request — used by upload validation."""
-
-    status_code = 400
-    code = "bad_request"
 
 
 # ---------------------------------------------------------------------------

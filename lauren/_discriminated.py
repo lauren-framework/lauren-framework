@@ -30,6 +30,12 @@ class _DiscriminatorMarker:
     key: str
     mapping: dict[str, type]
 
+    def __hash__(self) -> int:
+        # ``Annotated[...]`` hashes its metadata; the DI lookup of a bare
+        # ``body: Discriminated[A | B, "kind"]`` parameter (and the type
+        # compiler's cache) need the marker hashable despite the dict field.
+        return hash((self.key, tuple(self.mapping.items())))
+
 
 # ---------------------------------------------------------------------------
 # Detection

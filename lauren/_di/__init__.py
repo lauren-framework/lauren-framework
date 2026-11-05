@@ -71,6 +71,8 @@ registry; this preserves backward compatibility and keeps test setup concise.
 from __future__ import annotations
 
 import inspect
+import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -86,11 +88,15 @@ from ..exceptions import (
     UnresolvableParameterError,
 )
 from ..types import Scope
+from ._overrides import OverridePlan, ProviderOverride
 from .custom import (
     CustomProvider,
     OptionalDep,
+    Token,
     _InjectMarker,
 )
+
+_logger = logging.getLogger("lauren")
 
 INJECTABLE_META = "__lauren_injectable__"
 
@@ -207,6 +213,9 @@ class Provider:
     provides: tuple[type, ...]
     multi: bool
     deps: tuple[tuple[str, Any], ...]
+    #: The first ``@post_construct`` / ``@pre_destruct`` hook (kept for
+    #: readers of a single hook); :attr:`post_construct_hooks` /
+    #: :attr:`pre_destruct_hooks` hold every hook in run order.
     post_construct: Callable[..., Any] | None = None
     pre_destruct: Callable[..., Any] | None = None
     #: Module class that declared this provider. ``None`` means the provider
@@ -252,12 +261,33 @@ class Provider:
     #: rather than by keyword — supporting raw lambdas where parameter
     #: names are arbitrary placeholders.
     positional_arg_names: tuple[str, ...] = ()
+    #: Every ``@post_construct`` hook in run order: base classes first,
+    #: definition order within a class. Empty means "use
+    #: :attr:`post_construct`" (providers built by hand).
+    post_construct_hooks: tuple[Callable[..., Any], ...] = ()
+    #: Every ``@pre_destruct`` hook in run order: subclasses first,
+    #: definition order within a class.
+    pre_destruct_hooks: tuple[Callable[..., Any], ...] = ()
+
+    @property
+    def post_construct_chain(self) -> tuple[Callable[..., Any], ...]:
+        """The ``@post_construct`` hooks to run, in order (empty when none)."""
+        if self.post_construct_hooks:
+            return self.post_construct_hooks
+        return (self.post_construct,) if self.post_construct is not None else ()
+
+    @property
+    def pre_destruct_chain(self) -> tuple[Callable[..., Any], ...]:
+        """The ``@pre_destruct`` hooks to run, in order (empty when none)."""
+        if self.pre_destruct_hooks:
+            return self.pre_destruct_hooks
+        return (self.pre_destruct,) if self.pre_destruct is not None else ()
 
 
 class DIContainer:
     """Compiled DI container; immutable after :meth:`compile`."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, overrides: OverridePlan | None = None, strict_request_scope: bool = False) -> None:
         self._providers: dict[type, Provider] = {}
         # Token -> list of providers (for protocols / multi-bindings)
         self._token_bindings: dict[type, list[Provider]] = {}
@@ -272,6 +302,29 @@ class DIContainer:
         #: callers that specify a module not present here fall back to global
         #: resolution (used by unit tests that bypass ModuleGraph).
         self._visible: dict[type, frozenset[type]] = {}
+        #: Every provider in registration order, keyed by ``id(provider)``.
+        #: Unlike ``_providers`` (keyed by token), multi-bound siblings that
+        #: share a token all appear here.
+        self._registered: dict[int, Provider] = {}
+        #: Instance-cache key -> provider, for scope teardown. Built by
+        #: :meth:`compile` and rebuilt lazily after a late registration.
+        self._instance_index: dict[Any, Provider] | None = None
+        #: Build-time overrides (``lauren.testing.Test``); ``None`` in production.
+        #: Every registration path consults it, so an override replaces its
+        #: target wherever — and whenever — the target would be registered.
+        self._overrides: OverridePlan | None = overrides
+        #: token -> provider rows built from an override, once applied.
+        self._override_rows: dict[Any, list[Provider]] = {}
+        #: ``LaurenFactory.create(strict_request_scope=...)``: resolving a
+        #: ``Scope.REQUEST`` provider outside any request / ``app.scope()``
+        #: raises instead of falling back to an untracked transient.
+        self._strict_request_scope = strict_request_scope
+        #: Request-scoped providers already warned about (lax mode warns once each).
+        self._unscoped_warned: set[Any] = set()
+        #: id -> object for pre-built instances whose lifecycle hooks this
+        #: container runs (see :meth:`register_instance`). Holding the object
+        #: keeps the id stable; one entry per object, whatever its tokens.
+        self._lifecycle_owners: dict[int, Any] = {}
 
     # -- Registration ------------------------------------------------------
 
@@ -288,6 +341,17 @@ class DIContainer:
         work uniformly.
         """
         meta = _get_injectable_meta(target)
+        if self._overrides is not None:
+            override = self._overrides.get(target)
+            if override is not None:
+                return self._register_override(
+                    target,
+                    override,
+                    owning_module=owning_module,
+                    target_scope=meta.scope if meta is not None else Scope.SINGLETON,
+                    provides=tuple(meta.provides) if meta is not None else (),
+                    multi=meta.multi if meta is not None else False,
+                )
         if meta is None:
             raise MissingProviderError(f"{_describe(target)} is not marked @injectable")
 
@@ -348,20 +412,22 @@ class DIContainer:
         # all three.
         deps = _inspect_class_deps(cls)
 
-        post = _find_lifecycle_hook(cls, "__lauren_post_construct__")
-        pre = _find_lifecycle_hook(cls, "__lauren_pre_destruct__")
+        post = _find_lifecycle_hooks(cls, "__lauren_post_construct__")
+        pre = _find_lifecycle_hooks(cls, "__lauren_pre_destruct__", subclass_first=True)
         provider = Provider(
             cls=cls,
             scope=meta.scope,
             provides=tuple(meta.provides),
             multi=meta.multi,
             deps=tuple(deps),
-            post_construct=post,
-            pre_destruct=pre,
+            post_construct=post[0] if post else None,
+            pre_destruct=pre[0] if pre else None,
             owning_module=owning_module,
             factory=cls,
             field_deps=tuple(field_deps),
             is_function_provider=False,
+            post_construct_hooks=post,
+            pre_destruct_hooks=pre,
         )
         self._providers[cls] = provider
         self._bind_token(cls, provider)
@@ -370,7 +436,186 @@ class DIContainer:
         return provider
 
     def _bind_token(self, token: Any, provider: Provider) -> None:
+        if self._overrides is not None:
+            override = self._overrides.get(token)
+            if override is not None and not any(
+                row is provider for row in self._override_rows.get(token, ())
+            ):
+                # ``provider`` reaches an overridden token through ``provides``
+                # (a Protocol / multi-binding token): the override replaces
+                # the binding instead of joining it.
+                self._register_override(
+                    token,
+                    override,
+                    owning_module=None,
+                    target_scope=provider.scope,
+                    provides=(),
+                    multi=provider.multi,
+                )
+                return
         self._token_bindings.setdefault(token, []).append(provider)
+        self._registered.setdefault(id(provider), provider)
+        self._instance_index = None
+
+    # ------------------------------------------------------------------
+    # Build-time overrides (``lauren.testing.Test``)
+    # ------------------------------------------------------------------
+
+    def applied_overrides(self) -> frozenset[Any]:
+        """Tokens whose registration an override has replaced in this container."""
+        return frozenset(self._override_rows)
+
+    def _register_override(
+        self,
+        token: Any,
+        override: ProviderOverride,
+        *,
+        owning_module: type | None,
+        target_scope: Scope,
+        provides: tuple[Any, ...],
+        multi: bool,
+    ) -> Provider:
+        """Install the provider rows ``override`` describes in place of ``token``.
+
+        The rows keep the target's token, owning module, ``provides`` and
+        ``multi`` flag, so module visibility, Protocol bindings and
+        ``list[T]`` membership are exactly what the replaced provider had.
+        Applied once per token: later registrations of the same token (a
+        multi-binding sibling, a repeated lazy registration) reuse the rows.
+        No user class is mutated — the rows are built directly.
+        """
+        existing = self._override_rows.get(token)
+        if existing:
+            return existing[0]
+        if override.kind == "values":
+            rows = [
+                self._override_value_row(
+                    token, value, owning_module=owning_module, provides=provides, multi=True
+                )
+                for value in override.values
+            ]
+        elif override.kind == "value":
+            rows = [
+                self._override_value_row(
+                    token, override.value, owning_module=owning_module, provides=provides, multi=multi
+                )
+            ]
+        else:
+            rows = [
+                self._override_built_row(
+                    token,
+                    override,
+                    owning_module=owning_module,
+                    scope=override.scope if override.scope is not None else target_scope,
+                    provides=provides,
+                    multi=multi,
+                )
+            ]
+        self._override_rows[token] = rows
+        for row in rows:
+            self._providers[token] = row
+            self._token_bindings.setdefault(token, []).append(row)
+            if row.provider_kind == "value":
+                key: Any = id(row) if row.multi else token
+                self._singletons[key] = row.factory() if row.factory is not None else None
+                self._singletons_initialized.add(key)
+            for tok in provides:
+                self._bind_token(tok, row)
+        return rows[0]
+
+    def _override_value_row(
+        self,
+        token: Any,
+        value: Any,
+        *,
+        owning_module: type | None,
+        provides: tuple[Any, ...],
+        multi: bool,
+    ) -> Provider:
+        def _value_factory() -> Any:
+            return value
+
+        return Provider(
+            cls=token,
+            scope=Scope.SINGLETON,
+            provides=provides,
+            multi=multi,
+            deps=(),
+            owning_module=owning_module,
+            factory=_value_factory,
+            is_function_provider=True,
+            provider_kind="value",
+        )
+
+    def _override_built_row(
+        self,
+        token: Any,
+        override: ProviderOverride,
+        *,
+        owning_module: type | None,
+        scope: Scope,
+        provides: tuple[Any, ...],
+        multi: bool,
+    ) -> Provider:
+        if override.kind == "class":
+            cls = override.use_class
+            if not isinstance(cls, type):
+                raise UnresolvableParameterError(
+                    f"use_class override for {_describe(token)} needs a class; got {cls!r}"
+                )
+            post = _find_lifecycle_hooks(cls, "__lauren_post_construct__")
+            pre = _find_lifecycle_hooks(cls, "__lauren_pre_destruct__", subclass_first=True)
+            return Provider(
+                cls=token,
+                scope=scope,
+                provides=provides,
+                multi=multi,
+                deps=tuple(_inspect_class_deps(cls)),
+                owning_module=owning_module,
+                factory=cls,
+                field_deps=tuple(_collect_field_deps(cls)),
+                is_function_provider=False,
+                provider_kind="class",
+                post_construct=post[0] if post else None,
+                pre_destruct=pre[0] if pre else None,
+                post_construct_hooks=post,
+                pre_destruct_hooks=pre,
+            )
+        if override.kind == "factory":
+            optional_names: set[str] = set()
+            deps: list[tuple[str, Any]] = []
+            for i, raw in enumerate(override.injects):
+                name = f"__factory_arg_{i}"
+                if isinstance(raw, OptionalDep):
+                    optional_names.add(name)
+                    raw = raw.token
+                deps.append((name, raw))
+            return Provider(
+                cls=token,
+                scope=scope,
+                provides=provides,
+                multi=multi,
+                deps=tuple(deps),
+                owning_module=owning_module,
+                factory=override.factory,
+                is_function_provider=True,
+                provider_kind="factory",
+                optional_dep_names=frozenset(optional_names),
+                positional_arg_names=tuple(name for name, _ in deps),
+            )
+        # "existing": an alias row; the resolver forwards to the target.
+        return Provider(
+            cls=token,
+            scope=Scope.SINGLETON,
+            provides=provides,
+            multi=multi,
+            deps=(),
+            owning_module=owning_module,
+            factory=None,
+            is_function_provider=True,
+            provider_kind="existing",
+            alias_target=override.existing,
+        )
 
     # ------------------------------------------------------------------
     # Custom-provider registration
@@ -443,6 +688,59 @@ class DIContainer:
         self._singletons_initialized.add(singleton_key)
         return provider
 
+    def register_instance(
+        self,
+        token: Any,
+        instance: Any,
+        *,
+        owning_module: type | None = None,
+    ) -> Provider:
+        """Register a pre-built singleton whose lifecycle hooks run with the app.
+
+        Unlike :meth:`register_value` (``use_value``), the hooks declared on
+        ``type(instance)`` — ``@post_construct`` / ``@pre_destruct``, or else
+        ``startup()`` / ``aclose()`` methods — run at ``app.startup()`` /
+        ``app.shutdown()``. They run once per object: registering the same
+        object under a second token (or adopting it again) adds no hooks.
+        A build-time override of ``token`` (``lauren.testing``) wins.
+        """
+        if self._overrides is not None:
+            override = self._overrides.get(token)
+            if override is not None:
+                return self._register_override(
+                    token,
+                    override,
+                    owning_module=owning_module,
+                    target_scope=Scope.SINGLETON,
+                    provides=(),
+                    multi=False,
+                )
+        provider = self.register_value(token, instance, owning_module=owning_module)
+        if id(instance) not in self._lifecycle_owners:
+            post, pre = instance_lifecycle_hooks(type(instance))
+            if post or pre:
+                self._lifecycle_owners[id(instance)] = instance
+                provider.post_construct = post[0] if post else None
+                provider.pre_destruct = pre[0] if pre else None
+                provider.post_construct_hooks = post
+                provider.pre_destruct_hooks = pre
+        return provider
+
+    def adopt_lifecycle(self, instance: Any) -> None:
+        """Run ``instance``'s lifecycle hooks with the app without exposing it as a token.
+
+        Used for objects the framework holds directly — a store handed to
+        ``SessionConfig(store=...)`` or the backend behind a store adapter.
+        A no-op when the object declares no hooks or already has them run.
+        """
+        if id(instance) in self._lifecycle_owners:
+            return
+        post, pre = instance_lifecycle_hooks(type(instance))
+        if not post and not pre:
+            return
+        name = getattr(type(instance), "__qualname__", type(instance).__name__)
+        self.register_instance(Token(f"lauren.lifecycle:{name}"), instance)
+
     def register_class(
         self,
         token: Any,
@@ -483,6 +781,8 @@ class DIContainer:
         # ``__call__`` overrides instead of demanding ``__init__``
         # parameters that may never run.
         deps = _inspect_class_deps(cls)
+        post = _find_lifecycle_hooks(cls, "__lauren_post_construct__")
+        pre = _find_lifecycle_hooks(cls, "__lauren_pre_destruct__", subclass_first=True)
         provider = Provider(
             cls=token,  # type: ignore[arg-type]
             scope=scope,
@@ -494,8 +794,10 @@ class DIContainer:
             field_deps=tuple(field_deps),
             is_function_provider=False,
             provider_kind="class",
-            post_construct=_find_lifecycle_hook(cls, "__lauren_post_construct__"),
-            pre_destruct=_find_lifecycle_hook(cls, "__lauren_pre_destruct__"),
+            post_construct=post[0] if post else None,
+            pre_destruct=pre[0] if pre else None,
+            post_construct_hooks=post,
+            pre_destruct_hooks=pre,
         )
         self._providers[token] = provider
         self._bind_token(token, provider)
@@ -600,6 +902,17 @@ class DIContainer:
         Used by :class:`LaurenFactory` so the module-graph compiler
         doesn't need to know the four-way branch.
         """
+        if self._overrides is not None:
+            override = self._overrides.get(custom.provide)
+            if override is not None:
+                return self._register_override(
+                    custom.provide,
+                    override,
+                    owning_module=owning_module,
+                    target_scope=custom.scope if custom.kind in ("class", "factory") else Scope.SINGLETON,
+                    provides=(),
+                    multi=custom.multi,
+                )
         if custom.kind == "value":
             return self.register_value(
                 custom.provide,
@@ -799,10 +1112,12 @@ class DIContainer:
             return [chosen]
 
         # Framework-provided types that are resolved by the runtime rather
-        # than by DI (Request, etc.). These are skipped during dep resolution.
+        # than by DI (Request, plus the context types features seed into
+        # operation scopes). These are skipped during dep resolution.
         from ..types import Request as _Request
+        from ._scope import framework_value_types
 
-        framework_tokens = {_Request}
+        framework_tokens = {_Request, *framework_value_types()}
 
         def visit(provider: Provider) -> None:
             tok = provider.cls
@@ -888,6 +1203,9 @@ class DIContainer:
                     },
                 )
 
+        # Precompute the teardown index once so scope finalisation never
+        # rebuilds a provider map per request.
+        self.instance_index()
         self._compiled = True
 
     # -- Resolution --------------------------------------------------------
@@ -933,6 +1251,33 @@ class DIContainer:
 
     def all_providers(self) -> list[Provider]:
         return list(self._providers.values())
+
+    def registered_providers(self) -> tuple[Provider, ...]:
+        """Return every provider in registration order.
+
+        Includes each multi-bound sibling, which :meth:`all_providers` (keyed
+        by token) collapses to the last one registered.
+        """
+        return tuple(self._registered.values())
+
+    def instance_index(self) -> Mapping[Any, Provider]:
+        """Map each instance-cache key to the provider that produced it.
+
+        A request-scoped instance is cached under ``provider.cls`` — or under
+        ``id(provider)`` for multi-bound providers, which share their token.
+        The scope finaliser uses this map to find an instance's
+        ``@pre_destruct`` hook. It is built by :meth:`compile` and rebuilt on
+        first use after a late registration.
+        """
+        index = self._instance_index
+        if index is None:
+            index = {}
+            for provider in self._registered.values():
+                if provider.provider_kind == "existing":
+                    continue  # aliases redirect; they never own a cached instance
+                index.setdefault(id(provider) if provider.multi else provider.cls, provider)
+            self._instance_index = index
+        return index
 
     async def resolve(
         self,
@@ -1090,8 +1435,10 @@ class DIContainer:
                 return cached.value if isinstance(cached, _GeneratorContextWrapper) else cached
         elif provider.scope == Scope.REQUEST:
             if request_cache is None:
-                # Falls back to transient if no request context is active.
-                pass
+                # No request, WebSocket connection or OperationScope is active:
+                # strict mode refuses; lax mode (the 1.x default) falls back to
+                # an untracked transient and warns once per provider.
+                self._unscoped_request_resolution(provider)
             elif _singleton_key in request_cache:
                 cached = request_cache[_singleton_key]
                 return cached.value if isinstance(cached, _GeneratorContextWrapper) else cached
@@ -1183,14 +1530,33 @@ class DIContainer:
         # other sensible place to invoke the hook. Singleton hooks are fired
         # exactly once by :class:`LifecycleScheduler` in topological order
         # during Phase 6; firing them here would cause a double-invoke.
-        if provider.post_construct is not None and provider.scope in (
-            Scope.REQUEST,
-            Scope.TRANSIENT,
-        ):
+        hooks = provider.post_construct_chain
+        if hooks and provider.scope in (Scope.REQUEST, Scope.TRANSIENT):
             resolved_instance = instance.value if isinstance(instance, _GeneratorContextWrapper) else instance
-            await _invoke_hook(resolved_instance, provider.post_construct)
+            for hook in hooks:
+                await _invoke_hook(resolved_instance, hook)
 
         return instance.value if isinstance(instance, _GeneratorContextWrapper) else instance
+
+    def _unscoped_request_resolution(self, provider: Provider) -> None:
+        """Handle a ``Scope.REQUEST`` provider resolved without a request cache."""
+        token = provider.cls
+        name = _describe(token)
+        if self._strict_request_scope:
+            raise DIScopeViolationError(
+                f"{name} is request-scoped but was resolved outside a request or app.scope(); "
+                f"resolve it inside `async with app.scope(...) as scope:` (scope.resolve({name}))",
+                detail={"token": name, "reason": "no_active_scope"},
+            )
+        key = id(provider) if provider.multi else token
+        if key in self._unscoped_warned:
+            return
+        self._unscoped_warned.add(key)
+        _logger.warning(
+            "%s is request-scoped but was resolved outside a request or `app.scope()`; it will never be "
+            "torn down. Use `app.scope()` or enable `strict_request_scope=True`.",
+            name,
+        )
 
     # -- Lifecycle access --------------------------------------------------
 
@@ -1241,15 +1607,69 @@ def _get_injectable_meta(target: Any) -> InjectableMeta | None:
     return None
 
 
-def _find_lifecycle_hook(cls: type, marker: str) -> Callable[..., Any] | None:
-    for attr_name in dir(cls):
-        try:
-            attr = getattr(cls, attr_name)
-        except AttributeError:
-            continue
-        if callable(attr) and getattr(attr, marker, False):
-            return attr
-    return None
+def _find_lifecycle_hooks(
+    cls: type, marker: str, *, subclass_first: bool = False
+) -> tuple[Callable[..., Any], ...]:
+    """Every method of ``cls`` carrying ``marker``, in run order.
+
+    Method decorators propagate through the MRO, and an attribute's *first*
+    MRO definition wins, so an override without the decorator drops the
+    base hook (the route rule). Hooks are ordered by the class that defines
+    them — base classes first, or subclasses first when ``subclass_first``
+    (teardown) — and by definition order within a class. One function
+    reachable under two names runs once.
+    """
+    owners: dict[str, type] = {}
+    for klass in cls.__mro__:
+        for attr_name in klass.__dict__:
+            owners.setdefault(attr_name, klass)
+    classes = [k for k in cls.__mro__ if k is not object]
+    if not subclass_first:
+        classes.reverse()
+    hooks: list[Callable[..., Any]] = []
+    seen: set[int] = set()
+    for klass in classes:
+        for attr_name in klass.__dict__:
+            if owners[attr_name] is not klass or (attr_name.startswith("__") and attr_name.endswith("__")):
+                continue  # dunders are never hooks (and may be deprecated class attributes)
+            try:
+                attr = getattr(cls, attr_name)
+            except AttributeError:
+                continue
+            if not (callable(attr) and getattr(attr, marker, False)):
+                continue
+            key = id(getattr(attr, "__func__", attr))
+            if key not in seen:
+                seen.add(key)
+                hooks.append(attr)
+    return tuple(hooks)
+
+
+def instance_lifecycle_hooks(
+    cls: type,
+) -> tuple[tuple[Callable[..., Any], ...], tuple[Callable[..., Any], ...]]:
+    """Return ``(startup_hooks, shutdown_hooks)`` for a pre-built instance of ``cls``.
+
+    Every ``@post_construct`` / ``@pre_destruct`` hook wins, in run order;
+    otherwise ``startup()`` / ``aclose()`` methods (the store convention)
+    are used.
+    """
+    post = _find_lifecycle_hooks(cls, "__lauren_post_construct__")
+    pre = _find_lifecycle_hooks(cls, "__lauren_pre_destruct__", subclass_first=True)
+    if not post:
+        startup = _named_hook(cls, "startup")
+        post = (startup,) if startup is not None else ()
+    if not pre:
+        aclose = _named_hook(cls, "aclose")
+        pre = (aclose,) if aclose is not None else ()
+    return post, pre
+
+
+def _named_hook(cls: type, name: str) -> Callable[..., Any] | None:
+    attr = getattr(cls, name, None)
+    if attr is None or not callable(attr) or getattr(attr, "__name__", None) != name:
+        return None
+    return attr  # type: ignore[no-any-return]
 
 
 async def _invoke_hook(instance: Any, hook: Callable[..., Any]) -> None:

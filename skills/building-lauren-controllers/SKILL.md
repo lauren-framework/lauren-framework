@@ -12,7 +12,7 @@ description: Writes Lauren controllers with route handlers, typed extractors, an
 ## Controller skeleton
 
 ```python
-from lauren import controller, get, post, put, delete, patch
+from lauren import NotFoundError, controller, get, post, put, delete, patch, raises
 from lauren.types import ExecutionContext, Path, Query, Json
 
 @controller("/users", tags=["users"])
@@ -28,19 +28,19 @@ class UsersController:
     async def find_one(self, id: Path[int]) -> UserDto:
         return await self._svc.find_one(id)
 
-    @post("/")
+    @post("/", status_code=201)      # declared success status (sent + documented)
     async def create(self, body: Json[CreateUserDto]) -> UserDto:
-        user = await self._svc.create(body)
-        return user, 201   # tuple: (data, status_code)
+        return await self._svc.create(body)
 
     @put("/{id}")
     async def update(self, id: Path[int], body: Json[UpdateUserDto]) -> UserDto:
         return await self._svc.update(id, body)
 
     @delete("/{id}")
+    @raises(NotFoundError)          # documents the 404 in OpenAPI
     async def remove(self, id: Path[int]) -> None:
         await self._svc.remove(id)
-        # return None → 204 No Content
+        # return None → 204 No Content (documented as 204)
 ```
 
 - `@controller` makes the class `REQUEST`-scoped automatically — DI injects services per request.
@@ -69,18 +69,95 @@ class UsersController:
 
 See [extractors.md](extractors.md) for field descriptors, pipes, and upload files.
 
+## Validation and the 422 payload
+
+Stdlib models are validated natively (no pydantic needed); constraints ride in
+`Annotated` metadata from `lauren.validation`:
+
+```python fragment
+from dataclasses import dataclass
+from typing import Annotated
+from lauren.validation import Ge, MaxLen, Pattern, ValidationPolicy, validation_config
+
+@validation_config(extra="forbid")          # unknown keys → extra_forbidden
+@dataclass
+class CreateUser:
+    email: Annotated[str, Pattern(r"@"), MaxLen(254)]
+    age: Annotated[int, Ge(13)]
+
+app = LaurenFactory.create(AppModule, validation=ValidationPolicy(stdlib_models="enforce"))
+```
+
+Every validation 422 lists **all** failing parameters in
+`error.detail.issues`: `[{"loc": ["query", "page"], "type": "int_parsing",
+"msg": "...", "ctx"?: {...}}, ...]` — `loc` starts with `path` / `query` /
+`header` / `cookie` / `body` / `form`. Clients should read `issues`, not the
+1.x `detail.errors` strings. In 1.x the default `stdlib_models="warn"` only
+logs dataclass/TypedDict failures; a model that uses markers or
+`@validation_config` is always enforced. Full guide: `docs/guides/validation.md`.
+
 ## Auto-serialization return types
 
 ```python fragment
 return {"ok": True}             # → JSON 200
 return "plain text"             # → text/plain 200
 return None                     # → 204 No Content
-return body, 201                # → JSON 201 (tuple shorthand)
+return Created(user, location=f"/users/{user.id}")   # → JSON 201 + Location (typed result)
+return body, 201                # → JSON 201 (tuple shorthand — not documented in OpenAPI)
 return Response.json(data, status=202)          # explicit Response
 return Response.redirect("/new-url", status=301)
 ```
 
 Pydantic models, dataclasses, and `msgspec.Struct` values serialize out of the box.
+
+## Response contracts — status codes and output shape
+
+- Declare the success status with `@post("/", status_code=201)` or a typed
+  result in the annotation: `-> Created[UserDto]`, `-> Ok[UserDto] | Created[UserDto]`,
+  `-> NoContent`, `-> Annotated[Chunk, Status(206)]` (`from lauren import Ok, Created,
+  Accepted, NoContent, Status`). Contradictions (204 with a body type,
+  `status_code=200` on `-> Created[T]`) fail at startup.
+- `LaurenFactory.create(..., response_validation="filter")` (or per route
+  `@get(..., response_validation="filter")`) projects the returned value onto the
+  annotated type: return the entity (`UserInDB`, an ORM row), annotate the DTO
+  (`-> UserDto`), and only the DTO's fields leave. `"strict"` also validates;
+  a value that does not fit is a 500 `response_validation_error`.
+- `@raises(NotFoundError, ConflictError)` documents error responses.
+- Prefer typed results over `Response.created(...)`: they use the route's encoder.
+
+Full guide: `docs/guides/response-contracts.md`.
+## Pagination
+
+List routes take a paging parameter and return a page — no hand-rolled
+`limit=min(100, max(1, limit))` clamps or ad-hoc envelopes:
+
+```python fragment
+from typing import Annotated
+
+from lauren import CursorPage, CursorPagination, OffsetPagination, Page, PaginationConfig
+
+@get("/")
+async def list_users(self, paging: OffsetPagination) -> Page[UserOut]:      # ?limit=&offset=
+    rows, total = await self.repo.list(limit=paging.limit, offset=paging.offset)
+    return Page.of(rows, paging, total=total)                               # or has_next=...
+
+@get("/export")
+async def export(self, paging: Annotated[OffsetPagination, PaginationConfig(max_limit=1000)]) -> Page[UserOut]:
+    rows = await self.repo.list(limit=paging.limit + 1, offset=paging.offset)
+    return Page.from_rows(rows, paging)                                     # probe row → has_next
+
+@get("/events")
+async def events(self, paging: CursorPagination[EventKey]) -> CursorPage[EventOut]:
+    rows = await self.repo.page(paging.cursor, paging.direction, paging.limit + 1)
+    return CursorPage.from_rows(rows, paging, key=lambda e: EventKey(e.created_at, e.id))
+```
+
+- Bad values are a 422 on `["query", "limit"]`; the maximum is a hard cap (default 100).
+- The envelope (`"items"` / `"data"` / `"bare"`), `meta` key style, `Link` / `X-Total-Count`
+  headers and the cursor secret are app-wide: `LaurenFactory.create(..., pagination=PaginationConfig(...))`.
+- `CursorPagination` needs `PaginationConfig(cursor_secret=...)` (startup error otherwise);
+  a tampered cursor is a 400 `invalid_cursor`. `PageNumberPagination` reads `?page=&per_page=`.
+- `paginate_sequence(items, paging)` paginates an in-memory list.
 
 ## Choosing the JSON encoder
 
@@ -114,20 +191,41 @@ def compute(self) -> dict:      # note: def, not async def
 
 ## Exception handling in handlers
 
-Raise Lauren's typed HTTP errors — they serialize to the standard envelope:
+Raise Lauren's built-in HTTP errors — they serialize to the standard envelope.
+Subclass one for a domain `code`; never re-declare `NotFoundError` & co.:
 
 ```python
-from lauren.exceptions import UnauthorizedError, ForbiddenError, RouteNotFoundError
+from lauren import ConflictError, NotFoundError, TooManyRequestsError
+
+class UserNotFound(NotFoundError):          # 404, code "user_not_found"
+    code = "user_not_found"
 
 @get("/{id}")
 async def find_one(self, id: Path[int]) -> UserDto:
     user = await self._svc.find_one(id)
     if user is None:
-        raise RouteNotFoundError(f"User {id} not found")
+        raise UserNotFound(f"User {id} not found", detail={"id": id})
     return user
+
+@post("/")
+async def create(self, body: Json[CreateUser]) -> UserDto:
+    if await self._svc.email_taken(body.email):
+        raise ConflictError("email already registered", code="email_taken")   # instance code override
+    if await self._svc.over_quota():
+        raise TooManyRequestsError("slow down", retry_after=30)                # Retry-After: 30
+    return await self._svc.create(body)
 ```
 
-See `docs/reference/errors.md` (generated from `lauren.exceptions`) for the full catalog.
+Built in: `BadRequestError` 400, `UnauthorizedError` 401 (`challenge=` →
+`WWW-Authenticate`), `ForbiddenError` 403, `NotFoundError` 404,
+`MethodNotAllowedError` 405 (`allow=` → `Allow`), `NotAcceptableError` 406,
+`ConflictError` 409, `GoneError` 410, `PreconditionFailedError` 412,
+`UnsupportedMediaTypeError` 415, `TooManyRequestsError` 429,
+`ServiceUnavailableError` 503, `RequestTimeoutError` 504 (`retry_after=` on the
+last three). Every error accepts `headers=`. `RouteNotFoundError` is reserved for
+routing misses. See `docs/reference/errors.md` (generated from
+`lauren.exceptions`) for the full catalog, and `error_format="rfc9457"` for RFC
+9457 problem details.
 
 ---
 

@@ -11,37 +11,40 @@
 
 ## App startup in async tests
 
-`TestClient` calls `startup()` synchronously in `__init__`. For async-only tests that need `@post_construct` hooks to fire without `TestClient`:
+`AsyncTestClient` runs startup and shutdown on the test's own event loop:
 
 ```python
 import pytest
 from lauren import LaurenFactory
+from lauren.testing import AsyncTestClient
 
-@pytest.fixture(scope="module")
-async def app():
-    a = LaurenFactory.create(AppModule)
-    await a.startup()   # explicit startup for async test context
-    return a
+@pytest.fixture
+async def client():
+    async with AsyncTestClient(LaurenFactory.create(AppModule)) as c:   # startup() / shutdown()
+        yield c
 ```
 
-With `asyncio_mode = "auto"` in `pyproject.toml`, async fixtures work without extra decorators.
+With `asyncio_mode = "auto"` in `pyproject.toml`, async fixtures work without
+extra decorators. A session-scoped async client needs a session-scoped loop
+(pytest-asyncio: `loop_scope="session"`); an app driven by a client on another
+loop raises `RuntimeError`.
+
+Keeping a third-party client? Wrap it in `lauren.testing.lifespan(app)`:
+
+```python
+from lauren.testing import lifespan
+
+async with lifespan(app):            # startup on enter, shutdown on exit
+    ...                              # e.g. httpx.AsyncClient(transport=ASGITransport(app=app))
+```
+
+(Without either, a `LaurenApp` starts itself on its first request and logs a warning.)
 
 ---
 
 ## Async HTTP client
 
 ```python
-import httpx
-import pytest
-
-@pytest.fixture
-async def client(app):
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
-    ) as c:
-        yield c
-
 async def test_get_user(client):
     resp = await client.get("/users/1")
     assert resp.status_code == 200
@@ -53,27 +56,30 @@ async def test_create(client):
     assert data["name"] == "Alice"
 ```
 
+Same keywords as `TestClient`: `params`, `headers`, `cookies`, `json`, `data`,
+`files`, `content`, `follow_redirects`, `timeout`, `disconnect_after`.
+
 ---
 
 ## Testing SSE
 
-Read chunks from the `text/event-stream` response:
+Read events as they arrive; leaving the block delivers `http.disconnect` so the
+producer's `finally` runs:
 
 ```python
 async def test_sse_stream(client):
-    chunks = []
     async with client.stream("GET", "/events/stream") as resp:
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "text/event-stream; charset=utf-8"
-        async for line in resp.aiter_lines():
-            if line.startswith("data:"):
-                chunks.append(line[5:].strip())
-            if len(chunks) >= 3:
+        events = []
+        async for event in resp.aiter_sse():      # lauren.ServerSentEvent
+            events.append(event.data)
+            if len(events) >= 3:
                 break
-    assert len(chunks) == 3
+    assert len(events) == 3
 ```
 
-For a simple non-streaming test, consume the full body:
+For a finite stream, consume the full body:
 
 ```python
 async def test_sse_body(client):
@@ -85,7 +91,9 @@ async def test_sse_body(client):
 
 ## Testing WebSockets
 
-Use `WsTestClient` — an async-context-manager client separate from `TestClient`:
+Use `client.websocket_connect(...)` on an `AsyncTestClient` (it carries the
+jar's cookies), or `WsTestClient` — an async-context-manager client separate
+from `TestClient`:
 
 ```python
 from lauren.testing import WsTestClient
@@ -107,6 +115,7 @@ async with client.connect(
     headers={"Authorization": "Bearer ..."},
     subprotocols=["chat"],
     query_string="token=abc",
+    server_timeout=2.0,          # bounds the server's wind-down on exit
 ) as ws:
     await ws.send_text("raw text")
     await ws.send_bytes(b"\x00")
@@ -115,6 +124,9 @@ async with client.connect(
     text = await ws.receive_text()
     data = await ws.receive_bytes()
     obj  = await ws.receive_json()
+
+    await ws.send_event("chat.send", {"text": "hi"})   # {"event": ..., "data": ...}
+    frame = await ws.receive_event()                   # the next JSON object frame
 
     await ws.close(code=1000)
 ```
@@ -129,14 +141,12 @@ Verify that sync handlers don't block async ones:
 
 ```python
 import asyncio
-import httpx
 import time
 
+from lauren.testing import AsyncTestClient
+
 async def test_concurrent_requests(app):
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
-    ) as client:
+    async with AsyncTestClient(app) as client:
         t0 = time.perf_counter()
         # Fire 5 requests that each take 0.1s sync sleep
         results = await asyncio.gather(*[client.get("/slow") for _ in range(5)])

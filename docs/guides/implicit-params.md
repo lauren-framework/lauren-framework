@@ -107,6 +107,9 @@ scores: tuple[float, ...]
 ### Boolean coercion
 
 Lauren accepts case-insensitive strings: `"true"`, `"1"`, `"yes"`, `"on"` → `True`; anything else → `False`.
+With `ValidationPolicy(stdlib_models="enforce")` only `"false"`, `"0"`, `"no"`,
+`"off"` are `False` and any other value is a 422 `bool_parsing` issue (the 1.x
+default `"warn"` logs it) — see [Validation](validation.md).
 
 ```console
 $ curl "http://localhost:8000/filter?active=True"   # active=True
@@ -116,7 +119,7 @@ $ curl "http://localhost:8000/filter?active=false"  # active=False
 
 ## Structured body types
 
-Any annotation that is a `pydantic.BaseModel`, `msgspec.Struct`, `@dataclass`, `TypedDict`, or `Discriminated[A | B, "key"]` (or `Optional[...]`) is auto-promoted to a JSON body parameter. Pydantic is not required — the framework validates the body using whichever library the type belongs to.
+Any annotation that is a `pydantic.BaseModel`, `msgspec.Struct`, `@dataclass`, `TypedDict`, or `Discriminated[A | B, "key"]` (or `Optional[...]`) is auto-promoted to a JSON body parameter. Pydantic is not required — the framework validates the body using whichever library the type belongs to, and validates stdlib types (dataclasses, `TypedDict`, `NamedTuple`) natively; see [Validation](validation.md) for the coercion table, constraints and the 422 payload.
 
 ### Pydantic models
 
@@ -202,7 +205,11 @@ $ curl -X POST "http://localhost:8000/1/orders?priority=high&dry_run=true" \
 Use `Query[Model]` to collect multiple query-string fields into a single typed
 object.  Lauren supports **Pydantic models**, **`msgspec.Struct`** subclasses,
 and **Python dataclasses** — all work identically.  Fields are collected by
-name and coerced to the declared types (`"5"` → `5` for `int`, etc.).
+name and coerced to the declared types (`"5"` → `5` for `int`, etc.); list
+fields read repeated keys (`?tags=a&tags=b`). With
+`ValidationPolicy(stdlib_models="enforce")` dataclass, `TypedDict` and
+`NamedTuple` query models are validated by the native engine, one key per
+field — see [Validation](validation.md).
 
 ```python
 from lauren import Query

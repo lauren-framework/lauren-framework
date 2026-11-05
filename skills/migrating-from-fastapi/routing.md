@@ -55,12 +55,12 @@ async def create(item: CreateItem): ...
 ```python
 from lauren import Json
 
-@post("/items")
+@post("/items", status_code=201)
 async def create(self, item: Json[CreateItem]) -> dict:
-    return item.model_dump(), 201
+    return item.model_dump()
 ```
 
-`Json[T]` deserializes and validates the body. Returning `(body, status)` sets the HTTP status code.
+`Json[T]` deserializes and validates the body. `status_code=` declares the success status (sent and documented in OpenAPI).
 
 ## Response models
 
@@ -76,7 +76,7 @@ async def get_user(id: int) -> UserOut: ...
 async def get_user(self, id: int) -> UserOut: ...  # return type → OpenAPI schema
 ```
 
-The return type annotation drives both serialization and OpenAPI generation. No `response_model=` kwarg needed.
+The return type annotation drives OpenAPI generation (`response_model=` also works and wins). Unlike FastAPI, filtering the output through it is opt-in in 1.x: pass `response_validation="filter"` to `LaurenFactory.create` (or the route) so a `UserInDB` returned from a `-> UserOut` route sends only `UserOut`'s fields; `"strict"` also validates, like FastAPI.
 
 ## Status codes and headers
 
@@ -92,12 +92,13 @@ async def create(response: Response) -> dict:
 
 **Lauren:**
 ```python
-from lauren import Response as LaurenResponse
-from lauren.types import Response
+from lauren import Created
 
 @post("/")
-async def create(self) -> tuple:
-    return {"created": True}, 201, {"X-Id": "123"}
+async def create(self) -> Created[dict]:
+    return Created({"created": True}, headers={"X-Id": "123"}, location="/items/123")
 ```
 
-Tuple forms: `(body,)`, `(body, status)`, `(body, status, headers)`. For full control inject `Response` and set attributes directly.
+`status_code=201` on the decorator works too (`-> dict`, `return {...}`). The tuple
+forms `(body, status)` / `(body, status, headers)` still work but are invisible to
+OpenAPI. For full control return a `Response`.

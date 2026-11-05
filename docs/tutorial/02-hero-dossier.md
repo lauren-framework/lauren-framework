@@ -32,14 +32,12 @@ Now teach the front desk to accept applications and look heroes up. Two new idea
 - `id: Path[int]` pulls `{id}` out of the URL and parses it as an `int`.
 
 ```python title="hero_hq/main.py"
-from lauren import Json, LaurenFactory, Path, controller, get, module, post
-from lauren.exceptions import HTTPError
+from lauren import Json, LaurenFactory, NotFoundError, Path, controller, get, module, post
 
 from .models import CreateHero, HeroOut
 
 
-class HeroNotFoundError(HTTPError):
-    status_code = 404
+class HeroNotFoundError(NotFoundError):
     code = "hero_not_found"
 
 
@@ -78,8 +76,9 @@ What to notice:
 
 - `recruit` returns `(HeroOut, 201)` — Lauren builds a `201 Created` response with the model
   as JSON. (You can also return just the model, or `(body, status, headers)`.)
-- `get_hero` raises a `HeroNotFoundError`. Because it subclasses `HTTPError` with a
-  `status_code` and a stable `code`, Lauren renders it as a structured error envelope.
+- `get_hero` raises a `HeroNotFoundError`. It subclasses Lauren's built-in `NotFoundError`
+  (so the status is `404`) and sets a stable `code`, so Lauren renders it as a structured
+  error envelope.
 
 ---
 

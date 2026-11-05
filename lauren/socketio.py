@@ -132,6 +132,8 @@ class SocketIOError(LaurenError):
     framework's ``detail`` payload + structured-log conventions.
     """
 
+    code = "socketio_error"
+
 
 # ---------------------------------------------------------------------------
 # Metadata classes

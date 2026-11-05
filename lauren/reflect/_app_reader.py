@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
+from ._responses import route_responses
 from ._types import ReflectedRoute, ReflectedWsGateway, ReflectedWsMessage
 
 if TYPE_CHECKING:
@@ -46,24 +47,35 @@ def get_all_routes(app: Any) -> tuple[ReflectedRoute, ...]:
     handlers: dict[Any, Any] = getattr(app, "_handlers", {})
     result: list[ReflectedRoute] = []
     for (method, path_template), ch in handlers.items():
-        rm = ch.route_meta
-        result.append(
-            ReflectedRoute(
-                method=method,
-                path=rm.path,
-                full_path=path_template,
-                summary=rm.summary,
-                description=rm.description,
-                response_model=rm.response_model,
-                responses=dict(rm.responses),
-                deprecated=rm.deprecated,
-                operation_id=rm.operation_id,
-                include_in_schema=rm.include_in_schema,
-                tags=tuple(rm.tags),
-                handler=ch.handler_fn,
-            )
-        )
+        result.append(_reflected(method, path_template, ch))
     return tuple(result)
+
+
+def _reflected(method: str, path_template: str, ch: Any) -> ReflectedRoute:
+    rm = ch.route_meta
+    status_code, responses_typed, raises = route_responses(
+        getattr(ch, "response_table", None),
+        getattr(ch, "raises", ()),
+        rm.responses,
+        status_code=getattr(rm, "status_code", None),
+    )
+    return ReflectedRoute(
+        method=method,
+        path=rm.path,
+        full_path=path_template,
+        summary=rm.summary,
+        description=rm.description,
+        response_model=rm.response_model,
+        responses=dict(rm.responses),
+        deprecated=rm.deprecated,
+        operation_id=rm.operation_id,
+        include_in_schema=rm.include_in_schema,
+        tags=tuple(rm.tags),
+        handler=ch.handler_fn,
+        status_code=status_code,
+        responses_typed=responses_typed,
+        raises=raises,
+    )
 
 
 def get_all_ws_gateways(app: Any) -> tuple[ReflectedWsGateway, ...]:
@@ -134,18 +146,4 @@ def get_route_metadata(app: Any, method: str, path: str) -> ReflectedRoute | Non
     ch = handlers.get((method.upper(), path))
     if ch is None:
         return None
-    rm = ch.route_meta
-    return ReflectedRoute(
-        method=method.upper(),
-        path=rm.path,
-        full_path=path,
-        summary=rm.summary,
-        description=rm.description,
-        response_model=rm.response_model,
-        responses=dict(rm.responses),
-        deprecated=rm.deprecated,
-        operation_id=rm.operation_id,
-        include_in_schema=rm.include_in_schema,
-        tags=tuple(rm.tags),
-        handler=ch.handler_fn,
-    )
+    return _reflected(method.upper(), path, ch)

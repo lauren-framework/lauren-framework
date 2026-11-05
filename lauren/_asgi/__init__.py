@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Iterable
 
@@ -14,14 +16,29 @@ import anyio.to_thread
 from .._typing import resolve_type_hints
 
 from .._arena import RequestArena
+from .._config._module import install_config
 from .._di import INJECTABLE_META, DIContainer, InjectableMeta
+from .._di._scope import finalize_scope
+from .._di._overrides import active_override_plan
 from .._di.custom import CustomProvider
+from .._commands._compile import CommandRegistry, compile_commands
+from .._discovery import DiscoveryIndex, build_discovery_index, registered_markers
+from .._events import EventBus, compile_events, install_events
+from .._scheduling._module import SchedulingRuntime, compile_scheduling, prepare_scheduling
+from .._health._module import compile_health, install_health
+from .._cache import compile_cache_routes, install_cache
+from .._stores import install_stores
 from ..serialization import (
+    _ACTIVE_FALLBACK,
+    JSON_FALLBACK_POLICIES,
     JSONEncoder,
     StdlibJSONEncoder,
+    _FallbackPolicy,
     get_active_encoder,
 )
 from ..signals import (
+    AppLifecycleState,
+    LifecycleStateChanged,
     RequestComplete,
     RequestReceived,
     ShutdownBegin,
@@ -31,12 +48,15 @@ from ..signals import (
     get_default_bus,
 )
 from ..background import BackgroundTasks as _BackgroundTasks, _BG_TASKS_ATTR
+from ..context import ApplicationContext, OperationScope
 from .._lifecycle import LifecycleScheduler
 from .._modules import ModuleGraph
 from .._routing import RouteEntry, Router
 from ..decorators import (
     CONTROLLER_META,
     EXCEPTION_HANDLER_META,
+    RAISES_META,
+    RESPONSE_VALIDATION_MODES,
     ROUTE_META,
     SET_METADATA,
     USE_ENCODER,
@@ -50,7 +70,9 @@ from ..decorators import (
 )
 from ..exceptions import (
     ExceptionHandlerConfigError,
+    ExtractorError,
     ForbiddenError,
+    GuardConfigError,
     HTTPError,
     LaurenError,
     LifecycleViolationError,
@@ -70,6 +92,14 @@ from ..extractors import (
     parse_extractor_hint,
 )
 from .._validation import is_json_body_type as _is_json_body_type
+from .._schema._compiler import TypeCompiler
+from .._schema._markers import ValidationPolicy
+from .._schema._params import (
+    ValidationRuntime,
+    build_param_plan,
+    failure_weight as _failure_weight,
+    merge_failures as _merge_failures,
+)
 from .._discriminated import is_native_discriminated_union as _is_native_discriminated_union
 from ..streaming import (
     FORMAT_TO_MEDIA_TYPE,
@@ -91,6 +121,7 @@ from ..types import (
     CallNext,
     ClientInfo,
     ContentConfig,
+    DebugConfig,
     ExecutionContext,
     Headers,
     Request,
@@ -103,6 +134,24 @@ from .._sessions import (
     SessionConfig,
     configure_sessions,
 )
+from .._pagination import (
+    PageResponse as _PageResponse,
+    PaginationConfig,
+    ResolvedPagination,
+    build_plan as _build_pagination_plan,
+    is_paging_annotation as _is_paging_annotation,
+    resolve_app as _resolve_pagination,
+)
+from .._pagination._config import BUILTIN_DEFAULTS as _PAGINATION_DEFAULTS
+from .._pagination._links import ROOT_PATH_ATTR as _ROOT_PATH_ATTR
+from ._problem import instance_reference as _instance_reference, problem_payload as _problem_payload
+from ._contracts import (
+    ResponseContractViolation,
+    _coerce_result,
+    compile_response_plan,
+    describe_responses,
+)
+from ..responses import RESULT_TYPES as _RESULT_TYPES
 
 logger = logging.getLogger("lauren")
 
@@ -162,6 +211,9 @@ class CompiledHandler:
     #: dispatcher consults this field to pick the streaming serializer
     #: path; the OpenAPI generator consults it to emit ``x-streaming``.
     streaming_item_type: Any = None
+    #: Serializer for streamed items, built once at startup from
+    #: ``streaming_item_type`` (``None`` when items go straight to the encoder).
+    streaming_adapter: Any = None
     #: Binding style that tells the dispatcher how to invoke ``handler_fn``.
     #: One of ``"instance"`` (normal method, pass ``controller`` first),
     #: ``"classmethod"`` (pass ``controller_cls`` first), or ``"static"``
@@ -195,6 +247,15 @@ class CompiledHandler:
     #: implicit model body, ``Discriminated[...]``). Such routes are subject
     #: to ``ContentConfig.strict_content_type``.
     json_body: bool = False
+    #: Declared success responses (:class:`~lauren._asgi._contracts.ResponseTable`),
+    #: read once at startup; consumed by OpenAPI and the reflect readers.
+    response_table: Any = None
+    #: Compiled response contract (:class:`~lauren._asgi._contracts.ResponsePlan`),
+    #: or ``None`` when the plain coercion path is equivalent (no declared
+    #: status, no typed results, ``response_validation="off"``).
+    response_plan: Any = None
+    #: ``@raises`` declarations (method first, then the controller's own).
+    raises: tuple[Any, ...] = ()
 
 
 #: Media types a JSON body parameter accepts under ``strict_content_type``.
@@ -247,6 +308,10 @@ def _compile_handler_signature(
     container: DIContainer,
     path_param_names: set[str] | None = None,
     owning_module: type | None = None,
+    *,
+    validation: ValidationRuntime | None = None,
+    route: str = "",
+    pagination: ResolvedPagination | None = None,
 ) -> tuple[tuple[Extraction, ...], list[str]]:
     """Introspect a handler and produce its extraction plan.
 
@@ -261,12 +326,22 @@ def _compile_handler_signature(
 
     Annotation-side pipes run before default-side pipes (so the ordering
     in source code matches left-to-right visual reading).
+
+    With ``validation`` (the app's validation runtime) every path / query /
+    header / cookie / JSON / form-model / stream parameter also gets its
+    compiled validation plan (``Extraction.compiled``).
+
+    Pagination parameters (``OffsetPagination``, ``PageNumberPagination``,
+    ``CursorPagination[C]``) become the ``"pagination"`` source; their plan —
+    the effective ``PaginationConfig`` (``pagination`` is the app's), integer
+    validators and the cursor codec — is compiled here.
     """
     sig = inspect.signature(fn)
     hints = _safe_type_hints(fn)
     path_param_names = path_param_names or set()
     extractions: list[Extraction] = []
     param_names: list[str] = []
+    annotations: dict[str, Any] = {}
     # Classmethod handlers have ``cls`` as their first argument — skip it
     # along with ``self`` so the DI plan starts at the first user
     # parameter regardless of binding style.
@@ -279,6 +354,7 @@ def _compile_handler_signature(
         ):
             continue
         ann = hints.get(name, param.annotation)
+        annotations[name] = ann
         source, inner, reads_body, marker_cls, ann_fd, ann_pipes = parse_extractor_hint(ann)
         default = param.default
         has_default = default is not inspect.Parameter.empty
@@ -330,7 +406,7 @@ def _compile_handler_signature(
 
         # Auto-promote bare parameters whose name matches a path variable.
         if source is None and name in path_param_names:
-            inner_type = ann if ann is not inspect.Parameter.empty else str
+            inner_type = _strip_param_annotated(ann) if ann is not inspect.Parameter.empty else str
             extractions.append(
                 Extraction(
                     name=name,
@@ -405,6 +481,50 @@ def _compile_handler_signature(
                         default=default,
                         has_default=has_default,
                         pipes=pipes,
+                    )
+                )
+                param_names.append(name)
+                continue
+            # Pagination parameters — a built-in source. The effective config
+            # (annotation layers over the app's), the integer validators and
+            # the cursor codec are compiled once, here.
+            if _is_paging_annotation(ann):
+                paging_plan = _build_pagination_plan(
+                    ann,
+                    pagination if pagination is not None else _PAGINATION_DEFAULTS,
+                    validation.compiler if validation is not None else TypeCompiler(),
+                    include_input=validation.include_input if validation is not None else False,
+                    where={
+                        "class": controller_cls.__name__,
+                        "handler": fn.__name__,
+                        "param": name,
+                        "route": route,
+                    },
+                )
+                if fd is not None:
+                    from ..exceptions import UnresolvableParameterError
+
+                    raise UnresolvableParameterError(
+                        f"Parameter {name!r} in {controller_cls.__name__}.{fn.__name__} is a "
+                        "pagination parameter and takes no field descriptor; configure it with "
+                        "Annotated[..., PaginationConfig(...)]",
+                        detail={
+                            "class": controller_cls.__name__,
+                            "handler": fn.__name__,
+                            "param": name,
+                            "reason": "pagination_field_descriptor",
+                        },
+                    )
+                extractions.append(
+                    Extraction(
+                        name=name,
+                        source="pagination",
+                        inner_type=ann,
+                        field_descriptor=None,
+                        default=default,
+                        has_default=has_default,
+                        pipes=pipes,
+                        compiled=paging_plan,
                     )
                 )
                 param_names.append(name)
@@ -498,7 +618,7 @@ def _compile_handler_signature(
                 param_names.append(name)
                 continue
             if _is_implicit_query_type(ann):
-                inner_type = ann
+                inner_type = _strip_param_annotated(ann)
                 extractions.append(
                     Extraction(
                         name=name,
@@ -538,7 +658,34 @@ def _compile_handler_signature(
         # No startup restriction on instance-method extractors: both
         # @injectable (DI-resolved) and plain (no-arg cache) forms are valid.
         param_names.append(name)
+    if validation is not None:
+        for ext in extractions:
+            if ext.source == "pagination":
+                continue  # compiled above
+            ext.compiled = build_param_plan(
+                ext,
+                annotations.get(ext.name),
+                validation,
+                route=route,
+                owner=controller_cls.__name__,
+                handler=getattr(fn, "__name__", "?"),
+            )
     return tuple(extractions), param_names
+
+
+def _strip_param_annotated(tp: Any) -> Any:
+    """``Annotated[int, Le(100)]`` → ``int`` (keeping ``| None``).
+
+    The extraction plan reads the markers from the original annotation; the
+    pre-engine coercer works on the plain type.
+    """
+    import typing as _typing
+
+    peeled, optional = _peel_optional(tp)
+    if _typing.get_origin(peeled) is _typing.Annotated:
+        base = _typing.get_args(peeled)[0]
+        return base | None if optional else base
+    return tp
 
 
 def _has_unresolved_hints(hints: dict[str, Any]) -> bool:
@@ -651,6 +798,8 @@ def _unwrap_handler_descriptor(
         "__lauren_ws_on_error__",
         "__lauren_post_construct__",
         "__lauren_pre_destruct__",
+        "__lauren_cache_response__",
+        "__lauren_idempotent__",
     )
 
     def _merge_markers(descriptor: Any, func: Any) -> None:
@@ -733,6 +882,11 @@ def _normalize_path(*parts: str) -> str:
 # LaurenApp — the ASGI app
 # ---------------------------------------------------------------------------
 
+#: States in which ``startup()`` has completed.
+_STARTED_STATES = frozenset({AppLifecycleState.READY, AppLifecycleState.DRAINING, AppLifecycleState.STOPPED})
+#: States in which the app serves traffic (until ``shutdown()`` begins).
+_RUNNING_STATES = frozenset({AppLifecycleState.READY, AppLifecycleState.DRAINING})
+
 
 class LaurenApp:
     """A compiled, ready-to-serve ASGI application.
@@ -765,6 +919,13 @@ class LaurenApp:
         global_ws_guards: list[type] | None = None,
         global_ws_interceptors: list[type] | None = None,
         strict_content_type: bool | str = False,
+        problem_type_base: str | None = None,
+        debug: DebugConfig | None = None,
+        guard_denials: dict[type, Any] | None = None,
+        lazy_startup: bool = True,
+        validation: ValidationRuntime | None = None,
+        response_validation: str = "off",
+        json_fallback: str = "warn",
     ) -> None:
         self._router = router
         self._container = container
@@ -786,9 +947,20 @@ class LaurenApp:
         self._app_state = app_state
         self._strict_lifecycle = strict_lifecycle
         self._max_body_size = max_body_size
-        self._running = False
+        # The public lifecycle state (``lifecycle_state``); ``_started`` and
+        # ``_running`` are derived from it.
+        self._lifecycle_state = AppLifecycleState.CREATED
         self._in_flight: set[asyncio.Task[Any]] = set()
-        self._started = False
+        # Settings still waiting on an AsyncSource (``lauren.config``); the
+        # factory sets it and ``startup()`` resolves it before any hook runs.
+        self._config_pending: Any = None
+        # Lazy startup for servers / drivers that never send lifespan events
+        # (``httpx.ASGITransport``, some embedded servers): the first ``http``
+        # or ``websocket`` scope starts the app once, behind a single-flight
+        # task, unless a lifespan message was seen or the app opted out.
+        self._lazy_startup = lazy_startup
+        self._lifespan_seen = False
+        self._lazy_start_task: asyncio.Task[None] | None = None
         self._shutdown_event = asyncio.Event()
         self._shutdown_running = False
         self._shutdown_complete = asyncio.Event()
@@ -831,22 +1003,58 @@ class LaurenApp:
                 for fn in fns:
                     self._signals.on(evt_type)(fn)
         # Error envelope format. ``"default"`` emits lauren's classic
-        # ``{"error": {"code", "message", "detail"}}`` shape;
-        # ``"rfc7807"`` emits RFC 7807 Problem Details with the
-        # ``application/problem+json`` content type. Anything else
-        # falls back to ``default`` with a log warning rather than
-        # raising — this is a user-facing response shape, not a
-        # startup-critical invariant.
-        if error_format not in ("default", "rfc7807"):
+        # ``{"error": {"code", "message", "detail"}}`` shape; ``"rfc9457"``
+        # emits RFC 9457 Problem Details and ``"rfc7807"`` the legacy
+        # RFC 7807 shape, both with ``application/problem+json``. Anything
+        # else falls back to ``default`` with a log warning (lauren 2.0 turns
+        # an unknown value into a StartupError).
+        if error_format not in _ERROR_FORMATS:
             self._logger.warn(
-                f"unknown error_format {error_format!r}; using 'default'",
+                f"unknown error_format {error_format!r}; using 'default' "
+                f"(expected one of {', '.join(_ERROR_FORMATS)}; lauren 2.0 will raise StartupError)",
                 context="LaurenApp",
             )
             error_format = "default"
         self._error_format = error_format
+        #: Prefix for the problem-details ``type`` member (``base + code``).
+        self._problem_type_base: str | None = problem_type_base
+        #: Development error pages; ``None`` when debug is off (the default).
+        self._debug: DebugConfig | None = debug
+        #: Guard class → its compiled denial (an ``HTTPError`` subclass or a
+        #: zero-argument factory), read from ``deny_error`` at startup.
+        self._guard_denials: dict[type, Any] = dict(guard_denials or {})
+        #: App-owned validation state (type compiler, policy, warn memory).
+        self._validation: ValidationRuntime = validation or ValidationRuntime(
+            TypeCompiler(), include_input=False, logger=self._logger
+        )
+        #: ``ValidationPolicy.max_issues`` — stop extracting once reached.
+        self._max_issues: int = self._validation.max_issues
         # Mounted sub-applications, ordered by descending prefix length so the
         # most-specific prefix wins when multiple prefixes could match.
         self._mounts: list[tuple[str, Any]] = []
+        # Provider-discovery index (Phase 6a of LaurenFactory.create).
+        self._discovery: DiscoveryIndex = DiscoveryIndex.empty()
+        # App-wide pagination config (``pagination=``); renders pages built
+        # without a paging parameter. Set by the factory.
+        self._pagination: ResolvedPagination = _PAGINATION_DEFAULTS
+        # The application event bus (``lauren.events``); set by the factory.
+        self._events: EventBus | None = None
+        # Hosted services + scheduler (``lauren.scheduling``); ``None`` when
+        # the app declares none, so startup/shutdown pay nothing.
+        self._scheduling: SchedulingRuntime | None = None
+        # ``@command`` methods (``lauren.commands``), compiled in Phase 6a.
+        self._commands: CommandRegistry = CommandRegistry()
+        # ``Lauren.on_startup`` hooks: run by ``startup()`` right after the
+        # ``@post_construct`` hooks, so the DI graph is fully initialised.
+        self._startup_hooks: list[Callable[[], Any]] = []
+        #: App default of the per-route ``response_validation`` mode.
+        self._response_validation = response_validation
+        #: ``json_fallback`` policy, applied to every encoder without a pinned
+        #: ``fallback=`` while this app handles a request (``_ACTIVE_FALLBACK``).
+        self._json_fallback = _FallbackPolicy(json_fallback, logger=self._logger)
+        #: (route, error class) pairs already reported by the debug-mode
+        #: undeclared-``@raises`` check.
+        self._undeclared_raise_warned: set[tuple[str, type]] = set()
 
     # -- Introspection -----------------------------------------------------
 
@@ -900,10 +1108,89 @@ class LaurenApp:
         return self._signals
 
     @property
+    def type_compiler(self) -> TypeCompiler:
+        """The :class:`~lauren.validation.TypeCompiler` ``LaurenFactory.create`` built.
+
+        Compile service-side payloads with it to get exactly the validation the
+        HTTP and WebSocket layers apply (``app.type_compiler.compile(T)``).
+        """
+        return self._validation.compiler
+
+    @property
+    def validation_policy(self) -> ValidationPolicy:
+        """The app's :class:`~lauren.validation.ValidationPolicy`."""
+        return self._validation.policy
+
+    @property
     def error_format(self) -> str:
-        """``'default'`` or ``'rfc7807'``. See
+        """``'default'``, ``'rfc9457'`` or ``'rfc7807'``. See
         :meth:`LaurenFactory.create` for the configuration hook."""
         return self._error_format
+
+    @property
+    def lifecycle_state(self) -> AppLifecycleState:
+        """Where the app is in its lifetime (:class:`~lauren.signals.AppLifecycleState`).
+
+        ``CREATED`` until :meth:`startup` runs, ``STARTING`` while it runs,
+        ``READY`` once it has finished, ``DRAINING`` after
+        :meth:`begin_draining` or once :meth:`shutdown` begins, ``STOPPED``
+        when :meth:`shutdown` has finished; ``FAILED`` if :meth:`startup`
+        raised (until :meth:`startup` is retried). Every transition emits a
+        :class:`~lauren.signals.LifecycleStateChanged` on :attr:`signals`.
+        """
+        return self._lifecycle_state
+
+    @property
+    def _started(self) -> bool:
+        """``True`` once :meth:`startup` has completed (the app reached ``READY``)."""
+        return self._lifecycle_state in _STARTED_STATES
+
+    @property
+    def _running(self) -> bool:
+        """``True`` from ``READY`` until :meth:`shutdown` begins (the pre-stop drain included)."""
+        return self._lifecycle_state in _RUNNING_STATES and not self._shutdown_running
+
+    def begin_draining(self, *, reason: str = "") -> bool:
+        """Announce termination: move ``READY → DRAINING`` so readiness probes fail.
+
+        Requests are still served normally; the drain itself is
+        :meth:`shutdown`'s job. Call it before the server stops accepting
+        connections (a ``preStop`` window, a signal handler —
+        :func:`~lauren.signals.install_signal_handlers` does) so load
+        balancers polling readiness take the instance out of rotation first.
+        Synchronous and idempotent: returns ``True`` when it changed the
+        state, ``False`` in any state other than ``READY``.
+        """
+        if self._lifecycle_state is not AppLifecycleState.READY:
+            return False
+        self._logger.log(
+            f"Draining: readiness now fails{f' ({reason})' if reason else ''}",
+            context="LaurenApp",
+            reason=reason,
+        )
+        self._signals.emit_sync(self._set_lifecycle_state(AppLifecycleState.DRAINING, reason))
+        return True
+
+    def _set_lifecycle_state(self, state: AppLifecycleState, reason: str = "") -> LifecycleStateChanged:
+        """Record a transition and return the event announcing it (the caller emits it).
+
+        Callers only transition to a different state, so every call is a change.
+        """
+        previous, self._lifecycle_state = self._lifecycle_state, state
+        return LifecycleStateChanged(app=self, previous=previous, current=state, reason=reason)
+
+    async def _transition(self, state: AppLifecycleState, reason: str = "") -> None:
+        await self._signals.emit(self._set_lifecycle_state(state, reason))
+
+    @property
+    def response_validation(self) -> str:
+        """The app's default response-contract mode: ``"off"``, ``"filter"`` or ``"strict"``."""
+        return self._response_validation
+
+    @property
+    def json_fallback(self) -> str:
+        """The ``json_fallback`` policy: ``"dict"``, ``"warn"`` or ``"error"``."""
+        return self._json_fallback.mode
 
     def routes(self) -> list[RouteEntry]:
         return self._router.routes()
@@ -974,24 +1261,83 @@ class LaurenApp:
         """Read-only snapshot of ``(path_prefix, sub_app)`` pairs."""
         return list(self._mounts)
 
+    # -- Operation scopes --------------------------------------------------
+
+    def scope(self, name: str = "operation", *, values: Mapping[Any, Any] | None = None) -> OperationScope:
+        """Open a DI scope for work outside an HTTP request or WebSocket connection.
+
+        Returns a single-use :class:`~lauren.context.OperationScope` to use as
+        an async context manager. ``Scope.REQUEST`` providers resolved through
+        it get one instance per scope, torn down on exit (``@pre_destruct``,
+        then ``aclose()``, newest first). ``values`` seeds framework values
+        (``{JobContext: ctx}``) that constructors and :meth:`OperationScope.resolve`
+        receive as-is. Use it while the app is running (after
+        :meth:`startup`), so singletons have had their ``@post_construct``::
+
+            async with app.scope("backfill") as scope:
+                db = await scope.resolve(DbSession)
+        """
+        return OperationScope(self._container, name, values=values)
+
+    def context(
+        self, *, hosted_services: bool = False, scheduler: bool = False, drain_timeout: float = 10.0
+    ) -> ApplicationContext:
+        """Wrap this built, not yet started app in an :class:`~lauren.context.ApplicationContext`.
+
+        For tooling that only knows ``main:app``; ``async with app.context() as ctx:``
+        starts the app without serving HTTP and shuts it down on exit. Hosted
+        services and the scheduler stay off unless enabled here (and on the
+        app). Raises :class:`~lauren.exceptions.LifecycleViolationError` when
+        the app was already started: one lifecycle has one owner.
+        """
+        return ApplicationContext(
+            self, hosted_services=hosted_services, scheduler=scheduler, drain_timeout=drain_timeout
+        )
+
     # -- Startup / Shutdown ------------------------------------------------
 
     async def startup(self) -> None:
-        if self._started:
+        state = self._lifecycle_state
+        # A failed startup may be retried (e.g. an async configuration source
+        # that was unavailable), unless shutdown has begun.
+        retry = state is AppLifecycleState.FAILED and not self._shutdown_running
+        if state is not AppLifecycleState.CREATED and not retry:
             if self._strict_lifecycle:
-                raise LifecycleViolationError("startup called twice")
+                raise LifecycleViolationError(
+                    "startup called after shutdown" if self._shutdown_running else "startup called twice",
+                    detail={"lifecycle_state": state.value},
+                )
             return
         t0 = time.perf_counter()
-        # Emit StartupBegin *before* @post_construct runs so listeners
-        # see the "DI graph built, about to come online" moment. The
-        # bus contract is that listener errors never propagate, so a
-        # misbehaving observer cannot prevent startup.
-        await self._signals.emit(StartupBegin(app=self))
-        self._logger.log("Running @post_construct hooks", context="Lifecycle")
-        await self._lifecycle.run_post_construct()
-        self._app_state.seal()
-        self._started = True
-        self._running = True
+        await self._transition(AppLifecycleState.STARTING)
+        try:
+            if self._config_pending is not None:
+                await self._config_pending.resolve(self._container)
+                self._config_pending = None
+            # Emit StartupBegin *before* @post_construct runs so listeners
+            # see the "DI graph built, about to come online" moment. The
+            # bus contract is that listener errors never propagate, so a
+            # misbehaving observer cannot prevent startup.
+            await self._signals.emit(StartupBegin(app=self))
+            self._logger.log("Running @post_construct hooks", context="Lifecycle")
+            await self._lifecycle.run_post_construct()
+            if self._startup_hooks:
+                await self._run_startup_hooks()
+            if self._scheduling is not None:
+                # Hosted services start in dependency order, then the scheduler
+                # is armed; nothing fires before StartupComplete.
+                await self._scheduling.start()
+            self._app_state.seal()
+        except Exception as exc:
+            await self._transition(AppLifecycleState.FAILED, f"{type(exc).__name__}: {exc}")
+            raise
+        except BaseException as exc:  # cancelled: do not await listeners
+            self._signals.emit_sync(self._set_lifecycle_state(AppLifecycleState.FAILED, type(exc).__name__))
+            raise
+        ready = self._set_lifecycle_state(AppLifecycleState.READY)
+        if self._events is not None:
+            self._events._on_ready()  # deferred event handlers queued during startup start now
+        await self._signals.emit(ready)
         duration = time.perf_counter() - t0
         self._logger.log(
             f"Application ready ({format_duration_ms(duration)})",
@@ -1000,25 +1346,52 @@ class LaurenApp:
         )
         # StartupComplete marks the app as ready for traffic.
         await self._signals.emit(StartupComplete(app=self, duration_s=duration))
+        if self._scheduling is not None:
+            self._scheduling.begin_firing()  # READY: run_once / initial_delay count from here
+
+    async def _run_startup_hooks(self) -> None:
+        """Run ``Lauren.on_startup`` hooks in order; a failure becomes a :class:`StartupError`."""
+        for hook in self._startup_hooks:
+            name = getattr(hook, "__name__", repr(hook))
+            try:
+                result = hook()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                raise StartupError(
+                    f"on_startup handler {name} failed: {exc}",
+                    detail={"handler": name},
+                ) from exc
 
     async def shutdown(self, *, drain_timeout: float = 10.0) -> None:
         """Gracefully stop the application.
 
         Steps (each logged as an event):
 
-        1. Mark the app not-running — no new request scheduling.
+        1. Mark the app not-running — no new request scheduling — and move
+           ``READY → DRAINING`` (a no-op after :meth:`begin_draining`); the
+           scheduler stops firing (hosted services keep running).
         2. Drain in-flight requests (up to ``drain_timeout`` seconds).
-        3. Invoke user-registered ``on_shutdown`` callbacks in reverse order.
-        4. Run ``@pre_destruct`` hooks in reverse topological order.
+        3. Await in-flight scheduled runs (``ScheduleModule`` ``job_drain_timeout``,
+           default what is left of ``drain_timeout``), then cancel them.
+        4. Stop hosted services in reverse start order.
+        5. Await running ``@on_event`` handler tasks with what is left of the
+           budget (or ``EventsModule``'s ``drain_timeout``), then cancel them —
+           after jobs and services, so events they emit while stopping run.
+        6. Invoke user-registered ``on_shutdown`` callbacks in reverse order.
+        7. Run ``@pre_destruct`` hooks in reverse topological order.
 
+        The app ends ``STOPPED`` (a ``FAILED`` app stays ``FAILED``).
         Idempotent: concurrent or repeated calls return as soon as the first
         shutdown has completed.
         """
         if self._shutdown_running:
             await self._shutdown_complete.wait()
             return
+        shutdown_t0 = time.perf_counter()
         self._shutdown_running = True
-        self._running = False
+        if self._lifecycle_state is AppLifecycleState.READY:
+            await self._transition(AppLifecycleState.DRAINING, "shutdown")
         self._logger.log(
             f"Shutdown initiated (drain_timeout={drain_timeout}s, in_flight={len(self._in_flight)})",
             context="Shutdown",
@@ -1028,6 +1401,9 @@ class LaurenApp:
         # Fire ShutdownBegin early so listeners can observe the
         # transition before the drain / pre_destruct machinery runs.
         await self._signals.emit(ShutdownBegin(app=self))
+        if self._scheduling is not None:
+            self._scheduling.stop_firing()
+        drain_t0 = time.perf_counter()
         # 1. Drain in-flight requests.
         if self._in_flight:
             self._logger.log(
@@ -1048,6 +1424,15 @@ class LaurenApp:
                     context="Shutdown",
                     in_flight=len(self._in_flight),
                 )
+        # Scheduled runs, then hosted services (reverse start order) — before
+        # on_shutdown and @pre_destruct, so their dependencies are still alive.
+        if self._scheduling is not None:
+            await self._scheduling.stop(remaining=drain_timeout - (time.perf_counter() - drain_t0))
+        # Event handler tasks: await them with what is left of the budget (or
+        # EventsModule's drain_timeout), then cancel the rest. After jobs and
+        # services, so events emitted while they stop are delivered.
+        if self._events is not None:
+            await self._events._on_drain(max(0.0, drain_timeout - (time.perf_counter() - shutdown_t0)))
         # 2. User callbacks (reverse registration order).
         if self._on_shutdown_callbacks:
             self._logger.log(
@@ -1074,6 +1459,10 @@ class LaurenApp:
                 context="Shutdown",
                 error=type(err).__name__,
             )
+        if self._events is not None:
+            await self._events._on_stopped()  # cancel stragglers; emit() raises from now on
+        if self._lifecycle_state is not AppLifecycleState.FAILED:
+            await self._transition(AppLifecycleState.STOPPED)
         self._logger.log("Shutdown complete. Goodbye.", context="Shutdown")
         self._shutdown_complete.set()
 
@@ -1161,25 +1550,127 @@ class LaurenApp:
 
     # -- Error rendering (route and request boundaries) --------------------
 
-    def _internal_error_response(self, exc: BaseException, *, encoder: JSONEncoder | None = None) -> Response:
+    def _render_error(
+        self,
+        err: LaurenError,
+        *,
+        status: int | None = None,
+        code: str | None = None,
+        encoder: JSONEncoder | None = None,
+        request: Request | None = None,
+        debug: dict[str, Any] | None = None,
+    ) -> Response:
+        """Render ``err`` in the app's ``error_format`` (may raise if encoding fails)."""
+        return _error_response(
+            err,
+            status=status,
+            code=code,
+            error_format=self._error_format,
+            encoder=encoder or self._json_encoder,
+            instance=_instance_reference(request.path) if request is not None else None,
+            problem_type_base=self._problem_type_base,
+            debug=debug,
+        )
+
+    def _internal_error_response(
+        self,
+        exc: BaseException,
+        *,
+        encoder: JSONEncoder | None = None,
+        request: Request | None = None,
+    ) -> Response:
         """The canonical ``internal_error`` 500 envelope for ``exc``.
 
-        Never raises: if the configured encoder cannot render even this
-        envelope, the stdlib encoder is used, and failing that a static body.
+        With debug pages enabled and an allowed client, the response is the
+        debug report instead (see :meth:`_debug_error_response`). Never
+        raises: if the configured encoder cannot render even this envelope,
+        the stdlib encoder is used, and failing that a static body.
         """
+        if self._debug is not None and request is not None:
+            debug_response = self._debug_error_response(exc, request=request, encoder=encoder)
+            if debug_response is not None:
+                return debug_response
         error = LaurenError("internal server error", detail={"type": type(exc).__name__})
         for candidate in (encoder or self._json_encoder, StdlibJSONEncoder()):
             try:
-                return _error_response(
-                    error,
-                    status=500,
-                    code="internal_error",
-                    error_format=self._error_format,
-                    encoder=candidate,
+                return self._render_error(
+                    error, status=500, code="internal_error", encoder=candidate, request=request
                 )
             except Exception:
                 continue
         return Response(_STATIC_INTERNAL_ERROR_BODY, status=500, media_type="application/json")
+
+    def _debug_error_response(
+        self,
+        exc: BaseException,
+        *,
+        request: Request,
+        encoder: JSONEncoder | None,
+    ) -> Response | None:
+        """The development error page for ``exc``, or ``None`` to send the plain 500.
+
+        ``None`` when the client is not allowed to see debug output or when
+        rendering the report itself fails — that secondary error is logged and
+        the caller falls back to the normal envelope (never a 500 inside a 500).
+        """
+        config = self._debug
+        if config is None:
+            return None
+        try:
+            from . import _debug
+
+            if not _debug.client_allowed(config, request):
+                return None
+            info = _debug.collect(exc, request=request, app=self, config=config)
+            if _debug.prefers_html(request.headers.get("accept")):
+                return Response(
+                    _debug.render_html(info),
+                    status=500,
+                    headers=Headers([("cache-control", "no-store")]),
+                    media_type="text/html; charset=utf-8",
+                )
+            error = LaurenError("internal server error", detail={"type": type(exc).__name__})
+            return self._render_error(
+                error, status=500, code="internal_error", encoder=encoder, request=request, debug=info
+            ).with_header("cache-control", "no-store")
+        except Exception as render_error:
+            self._log_debug_failure(render_error, exc, request)
+            return None
+
+    def _debug_raised_at(self, exc: HTTPError, request: Request) -> dict[str, Any] | None:
+        """``debug.raised_at`` for an ``HTTPError`` response (``DebugConfig(include_4xx=True)``)."""
+        config = self._debug
+        if config is None or not config.include_4xx:
+            return None
+        try:
+            from . import _debug
+
+            if not _debug.client_allowed(config, request):
+                return None
+            return _debug.raised_at(exc, config)
+        except Exception as render_error:
+            self._log_debug_failure(render_error, exc, request)
+            return None
+
+    def _log_debug_failure(self, render_error: Exception, exc: BaseException, request: Request) -> None:
+        """Log a failure of the debug renderer itself, naming the error it was rendering."""
+        logger.error(
+            "Debug error page failed while rendering %s (%s %s); sending the normal response",
+            type(exc).__name__,
+            request.method,
+            request.path,
+            exc_info=(type(render_error), render_error, render_error.__traceback__),
+        )
+        self._logger.error(
+            f"Debug error page failed while rendering {type(exc).__name__}: "
+            f"{type(render_error).__name__}: {render_error}",
+            context="Request",
+            method=request.method,
+            path=request.path,
+            error=type(render_error).__name__,
+            origin="debug_renderer",
+            cause=type(exc).__name__,
+        )
 
     def _render_http_error(
         self,
@@ -1189,31 +1680,52 @@ class LaurenApp:
         encoder: JSONEncoder | None,
         origin: str,
     ) -> Response:
-        """Render ``exc``'s own envelope, never raising.
+        """Render ``exc``'s own envelope and headers, never raising.
 
         If its ``detail`` cannot be encoded, the error is logged and rendered
-        with the same status and ``code`` but no detail; if even that fails,
-        the response is the internal-error 500.
+        with the same status, ``code`` and headers but no detail; if even that
+        fails, the response is the internal-error 500.
         """
+        debug = self._debug_raised_at(exc, request) if self._debug is not None else None
         try:
-            resp = _error_response(
-                exc, error_format=self._error_format, encoder=encoder or self._json_encoder
-            )
+            resp = self._render_error(exc, encoder=encoder, request=request, debug=debug)
         except Exception as render_error:
             self._log_unhandled(render_error, request, origin=f"{origin} (rendering {type(exc).__name__})")
             try:
-                resp = _error_response(
-                    LaurenError(str(exc.message)),
+                resp = self._render_error(
+                    LaurenError(str(exc.message), headers=getattr(exc, "headers", ())),
                     status=exc.status_code,
                     code=exc.code,
-                    error_format=self._error_format,
                     encoder=StdlibJSONEncoder(),
+                    request=request,
                 )
             except Exception:
-                return self._internal_error_response(render_error, encoder=encoder)
-        if isinstance(exc, MethodNotAllowedError) and exc.allow:
-            resp = resp.with_header("allow", ", ".join(exc.allow))
+                return self._internal_error_response(render_error, encoder=encoder, request=request)
+        if debug is not None:
+            resp = resp.with_header("cache-control", "no-store")
         return resp
+
+    def _guard_denial(self, guard_cls: type, *, message: str, detail: dict[str, Any]) -> HTTPError:
+        """The error a guard's falsy ``can_activate`` answers with.
+
+        ``ForbiddenError`` unless the guard class declares ``deny_error`` —
+        an ``HTTPError`` subclass (called as ``deny_error(message,
+        detail=detail)``) or a zero-argument factory returning an
+        ``HTTPError``. Compiled at startup; a guard registered after the app
+        was built is compiled on first use.
+        """
+        denial = self._guard_denials.get(guard_cls)
+        if denial is None:
+            denial = self._guard_denials[guard_cls] = _compile_guard_denial(guard_cls)
+        if isinstance(denial, type):
+            return denial(message, detail=detail)
+        error = denial()
+        if not isinstance(error, HTTPError):
+            raise TypeError(
+                f"deny_error factory of guard {guard_cls.__name__} returned {type(error).__name__}, "
+                "expected an HTTPError instance"
+            )
+        return error
 
     def _enforce_json_content_type(self, request: Request, compiled: CompiledHandler) -> None:
         """Apply ``strict_content_type`` to a request bound for a JSON body parameter.
@@ -1285,6 +1797,91 @@ class LaurenApp:
             cause=type(failure.original).__name__,
         )
 
+    def _log_contract_violation(self, violation: ResponseContractViolation, request: Request | None) -> None:
+        """Log a response-contract violation at ERROR with its structured issues."""
+        issues = [issue.to_dict() for issue in violation.issues]
+        method = request.method if request is not None else None
+        path = request.path if request is not None else None
+        logger.error(
+            "Response of %s (%s) violates its declared type (response_validation=%r): %s",
+            violation.handler,
+            violation.route,
+            violation.mode,
+            "; ".join(str(issue) for issue in violation.issues),
+        )
+        try:
+            self._logger.error(
+                f"Response contract violated by {violation.handler} ({violation.route}): "
+                f"{len(violation.issues)} issue(s)",
+                context="ResponseContract",
+                method=method,
+                path=path,
+                handler=violation.handler,
+                route=violation.route,
+                mode=violation.mode,
+                issues=issues,
+            )
+        except Exception:  # a broken logger must not change the response
+            logger.exception("Logging a response-contract violation failed")
+
+    def _contract_violation_response(
+        self,
+        violation: ResponseContractViolation,
+        *,
+        encoder: JSONEncoder | None,
+        request: Request,
+    ) -> Response:
+        """The 500 ``response_validation_error`` envelope (issues only with debug pages)."""
+        detail: dict[str, Any] = {}
+        debug = False
+        if self._debug is not None:
+            try:
+                from . import _debug
+
+                debug = _debug.client_allowed(self._debug, request)
+            except Exception:  # pragma: no cover - defensive
+                debug = False
+        if debug:
+            detail["issues"] = [issue.to_dict() for issue in violation.issues]
+        error = LaurenError("response validation failed", detail=detail)
+        for candidate in (encoder or self._json_encoder, StdlibJSONEncoder()):
+            try:
+                response = self._render_error(
+                    error, status=500, code="response_validation_error", encoder=candidate, request=request
+                )
+                return response.with_header("cache-control", "no-store") if debug else response
+            except Exception:
+                continue
+        return self._internal_error_response(violation, request=request)  # pragma: no cover
+
+    def _warn_undeclared_raise(self, exc: HTTPError, compiled: CompiledHandler) -> None:
+        """Debug pages on: warn once per (route, class) when a handler raises an undeclared error."""
+        declared = tuple(spec.exc_type for spec in compiled.raises)
+        if isinstance(exc, declared):
+            return
+        code = getattr(compiled.handler_fn, "__code__", None)
+        tb = exc.__traceback__
+        raised_by_handler = False
+        while tb is not None:
+            if tb.tb_frame.f_code is code:
+                raised_by_handler = True
+                break
+            tb = tb.tb_next
+        if not raised_by_handler:
+            return  # guards, extraction and interceptors raise for their own reasons
+        route = f"{compiled.route_meta.method} {compiled.path_template}"
+        key = (route, type(exc))
+        if key in self._undeclared_raise_warned:
+            return
+        self._undeclared_raise_warned.add(key)
+        message = (
+            f"{route} raised {type(exc).__name__} ({exc.status_code}), which its @raises "
+            f"declarations do not list; add @raises({type(exc).__name__}) so the OpenAPI document "
+            "and generated clients know about it"
+        )
+        logger.warning(message)
+        self._logger.warn(message, context="ResponseContract", route=route, error=type(exc).__name__)
+
     async def _render_outer_error(
         self,
         exc: Exception,
@@ -1315,44 +1912,23 @@ class LaurenApp:
             )
         except _ExceptionHandlerFailure as failure:
             self._log_handler_failure(failure, request)
-            return self._internal_error_response(failure.handler_error)
+            return self._internal_error_response(failure.handler_error, request=request)
         if handled is not None:
             return handled
         if isinstance(exc, HTTPError):
             return self._render_http_error(exc, request=request, encoder=self._json_encoder, origin=origin)
         self._log_unhandled(exc, request, origin=origin)
-        return self._internal_error_response(exc)
+        return self._internal_error_response(exc, request=request)
 
     async def _finalize_request_scope(self, request_cache: dict[type, Any]) -> None:
         """Finalize request-scoped instances: ``@pre_destruct``, then ``aclose()``.
 
-        Runs in reverse insertion order so the most recently constructed
-        instance tears down first — analogous to the LIFO order used by the
-        application-level scheduler at shutdown. The keys are snapshotted
-        while the arena lease still holds the pooled dict.
+        Delegates to the shared finaliser (:func:`lauren._di._scope.finalize_scope`)
+        used by WebSocket connections and :class:`~lauren.context.OperationScope`
+        too: newest instance first, errors logged and never raised. The keys
+        are snapshotted while the arena lease still holds the pooled dict.
         """
-        if not request_cache:
-            return
-        providers_by_cls = {p.cls: p for p in self._container.all_providers()}
-        request_scoped_instances = [(cls, request_cache[cls]) for cls in reversed(list(request_cache.keys()))]
-        for cls, instance in request_scoped_instances:
-            provider = providers_by_cls.get(cls)
-            if provider is not None and provider.pre_destruct is not None:
-                try:
-                    bound = getattr(instance, provider.pre_destruct.__name__)
-                    res = bound()
-                    if inspect.isawaitable(res):
-                        await res
-                except Exception:
-                    logger.exception("Error in @pre_destruct on %s", cls.__name__)
-            aclose = getattr(instance, "aclose", None)
-            if callable(aclose):
-                try:
-                    aclose_result = aclose()
-                    if inspect.isawaitable(aclose_result):
-                        await aclose_result
-                except Exception:
-                    logger.exception("Error closing request-scoped instance %r", instance)
+        await finalize_scope(self._container, request_cache, origin="request")
 
     # -- Request logging --------------------------------------------------
 
@@ -1452,6 +2028,8 @@ class LaurenApp:
                 framework_values = alloc.framework_values
                 framework_values[Request] = request
                 framework_values[type(request)] = request
+                # EventPublisher joins this request's DI scope through the lease.
+                request._lauren_lease = alloc  # type: ignore[attr-defined]
                 kwargs_dict = alloc.kwargs
 
                 async def _route_and_run(req: Request) -> Response:
@@ -1461,15 +2039,10 @@ class LaurenApp:
                     # --- Routing ---
                     try:
                         entry, params = self._router.find(req.method, req.path)
-                    except RouteNotFoundError as e:
+                    except (RouteNotFoundError, MethodNotAllowedError) as e:
+                        # The error carries its own headers (``Allow`` on a 405).
                         captured_error = e
-                        return _error_response(e, error_format=self._error_format, encoder=self._json_encoder)
-                    except MethodNotAllowedError as e:
-                        captured_error = e
-                        resp = _error_response(e, error_format=self._error_format, encoder=self._json_encoder)
-                        if e.allow:
-                            resp = resp.with_header("allow", ", ".join(e.allow))
-                        return resp
+                        return self._render_error(e, request=req)
 
                     compiled = self._handlers[(entry.method, entry.path_template)]
                     # Per-route encoder wins over the app-level encoder.
@@ -1548,8 +2121,11 @@ class LaurenApp:
                             )
                             ok = await guard.can_activate(ctx)
                             if not ok:
-                                raise ForbiddenError(
-                                    f"guard {guard_cls.__name__} denied the request",
+                                # ``ForbiddenError`` unless the guard declares
+                                # ``deny_error`` (compiled at startup).
+                                raise self._guard_denial(
+                                    guard_cls,
+                                    message=f"guard {guard_cls.__name__} denied the request",
                                     detail={"guard": guard_cls.__name__},
                                 )
 
@@ -1574,6 +2150,10 @@ class LaurenApp:
                             # content defensively in case a middleware populated
                             # the scratch earlier in the chain.
                             kwargs_dict.clear()
+                            # Every failing parameter is collected into one 422;
+                            # the list is allocated on the first failure only.
+                            failures: list[tuple[Extraction, ExtractorError]] | None = None
+                            reported = 0
                             for ext in compiled.extractions:
                                 if ext.source == "request":
                                     kwargs_dict[ext.name] = req2
@@ -1594,14 +2174,24 @@ class LaurenApp:
                                     # present whenever a handler injects Session.
                                     kwargs_dict[ext.name] = req2.state.session
                                 else:
-                                    kwargs_dict[ext.name] = await extract_parameter(
-                                        req2,
-                                        ext,
-                                        container=self._container,
-                                        request_cache=request_cache,
-                                        owning_module=owning_module,
-                                        execution_context=ctx,
-                                    )
+                                    try:
+                                        kwargs_dict[ext.name] = await extract_parameter(
+                                            req2,
+                                            ext,
+                                            container=self._container,
+                                            request_cache=request_cache,
+                                            owning_module=owning_module,
+                                            execution_context=ctx,
+                                        )
+                                    except ExtractorError as extraction_error:
+                                        if failures is None:
+                                            failures = []
+                                        failures.append((ext, extraction_error))
+                                        reported += _failure_weight(extraction_error)
+                                        if reported >= self._max_issues:
+                                            break
+                            if failures is not None:
+                                raise _merge_failures(failures, self._validation)
                             # ``kwargs`` below re-aliases the same pooled dict so
                             # the existing dispatch branches stay identical.
                             kwargs = kwargs_dict
@@ -1646,6 +2236,9 @@ class LaurenApp:
                         _captured_streaming_item_type = compiled.streaming_item_type
                         _captured_req2 = req2
                         _captured_effective_encoder = effective_encoder
+                        # Response contract (declared status, typed results,
+                        # filter/strict projection) — ``None`` keeps the plain path.
+                        _plan = compiled.response_plan
 
                         async def _coerced_invoke() -> Response:
                             raw = await _invoke_handler()
@@ -1655,8 +2248,15 @@ class LaurenApp:
                                     item_type=_captured_streaming_item_type,
                                     request=_captured_req2,
                                     encoder=_captured_effective_encoder,
+                                    adapter=compiled.streaming_adapter,
+                                    plan=_plan,
+                                    on_violation=self._log_contract_violation,
                                 )
-                            return _coerce_to_response(raw, encoder=_captured_effective_encoder)
+                            if _plan is not None:
+                                return _plan.coerce(raw, _captured_effective_encoder)
+                            return _coerce_to_response(
+                                raw, encoder=_captured_effective_encoder, pagination=self._pagination
+                            )
 
                         call_handler: CallHandler = CallHandler(_coerced_invoke)
                         for inter_cls in reversed(effective_interceptors):
@@ -1674,7 +2274,9 @@ class LaurenApp:
                         return (
                             result
                             if isinstance(result, Response)
-                            else _coerce_to_response(result, encoder=effective_encoder)
+                            else _coerce_to_response(
+                                result, encoder=effective_encoder, pagination=self._pagination
+                            )
                         )
 
                     async def _render_route_error(e: Exception) -> Response:
@@ -1690,6 +2292,17 @@ class LaurenApp:
                         the error it was handling and also becomes a 500.
                         """
                         nonlocal captured_error
+                        if isinstance(e, ResponseContractViolation):
+                            # The framework's own 500: exception handlers do not
+                            # see it (the handler did not raise, its output is
+                            # wrong), and the body never carries the payload.
+                            captured_error = e
+                            self._log_contract_violation(e, req)
+                            return self._contract_violation_response(
+                                e, encoder=effective_encoder, request=req
+                            )
+                        if self._debug is not None and compiled.raises and isinstance(e, HTTPError):
+                            self._warn_undeclared_raise(e, compiled)
                         try:
                             handled = await self._dispatch_exception_handlers(
                                 e,
@@ -1704,7 +2317,7 @@ class LaurenApp:
                             captured_error = failure.handler_error
                             self._log_handler_failure(failure, req)
                             return self._internal_error_response(
-                                failure.handler_error, encoder=effective_encoder
+                                failure.handler_error, encoder=effective_encoder, request=req
                             )
                         captured_error = e
                         if handled is not None:
@@ -1715,7 +2328,7 @@ class LaurenApp:
                                 e, request=req, encoder=effective_encoder, origin=route_origin
                             )
                         self._log_unhandled(e, req, origin=route_origin)
-                        return self._internal_error_response(e, encoder=effective_encoder)
+                        return self._internal_error_response(e, encoder=effective_encoder, request=req)
 
                     try:
                         # Per-route onion chain (global mw already wraps
@@ -1840,8 +2453,12 @@ class LaurenApp:
         send: Callable[[dict[str, Any]], Awaitable[None]],
     ) -> None:
         if scope["type"] == "lifespan":
+            self._lifespan_seen = True
             await self._lifespan(scope, receive, send)
             return
+        if not self._started and self._lazy_startup and not self._lifespan_seen:
+            if scope["type"] in ("http", "websocket") and not self._shutdown_running:
+                await self._start_lazily()
         # Check mounted sub-applications before lauren's own routing.  Only
         # HTTP and WebSocket scopes can match a path prefix; other ASGI types
         # (e.g. custom extensions) are left to fall through to the normal path.
@@ -1871,10 +2488,20 @@ class LaurenApp:
         # empty and the full prefixed path in ``scope["path"]``.
         _own_root = getattr(self, "_root_path", "")
         raw_path = scope["path"]
-        if _own_root and not scope.get("root_path") and raw_path.startswith(_own_root):
+        scope_root = scope.get("root_path")
+        if _own_root and not scope_root and raw_path.startswith(_own_root):
             effective_path = raw_path[len(_own_root) :] or "/"
+            public_root = _own_root
         else:
             effective_path = raw_path
+            # A server-stripped prefix (``uvicorn --root-path``, a mount) is
+            # part of the public URL unless the path already carries it.
+            public_root = (
+                scope_root
+                if scope_root
+                and not (raw_path == scope_root or raw_path.startswith(scope_root.rstrip("/") + "/"))
+                else ""
+            )
         # Acquire a Request through the arena so pooled instances are
         # reused where possible. ``acquire_request`` dispatches to
         # :meth:`Request.reset` for pooled instances and to the
@@ -1891,11 +2518,19 @@ class LaurenApp:
             receive=receive,
             app_state=self._app_state,
             max_body_size=self._max_body_size,
+            extensions=scope.get("extensions"),
         )
+        if public_root:
+            # The public path prefix (proxy root path / mount prefix), read
+            # by pagination links; ``Request.reset`` clears it.
+            setattr(request, _ROOT_PATH_ATTR, public_root)
         task = asyncio.current_task()
         if task is not None:
             self._in_flight.add(task)
         _response_sent = False
+        # Every encoder without a pinned ``fallback=`` follows this app's
+        # json_fallback policy while the request (and its body) is produced.
+        _fallback_token = _ACTIVE_FALLBACK.set(self._json_fallback)
         try:
             response = await self.handle(request)
             _bg: _BackgroundTasks | None = request.state.get(_BG_TASKS_ATTR)
@@ -1940,17 +2575,21 @@ class LaurenApp:
                 pass  # a broken logger must not prevent the fallback response
             if not _response_sent:
                 try:
-                    _fallback = _error_response(
+                    _fallback = (
+                        self._debug_error_response(exc, request=request, encoder=None)
+                        if self._debug is not None
+                        else None
+                    ) or self._render_error(
                         LaurenError("internal server error"),
                         status=500,
                         code="internal_error",
-                        error_format=self._error_format,
-                        encoder=self._json_encoder,
-                    ).with_header("connection", "close")
-                    await _send_response(_fallback, send)
+                        request=request,
+                    )
+                    await _send_response(_fallback.with_header("connection", "close"), send)
                 except Exception:
                     pass  # Cannot send — ASGI server will close the connection
         finally:
+            _ACTIVE_FALLBACK.reset(_fallback_token)
             if task is not None:
                 self._in_flight.discard(task)
             # Return the Request instance to the pool for reuse. Done
@@ -1959,6 +2598,24 @@ class LaurenApp:
             # iterable it may still reference the request's ``_receive``
             # callable.
             self._arena.release_request(request)
+
+    async def _start_lazily(self) -> None:
+        """Run :meth:`startup` once for a driver that never sent lifespan events.
+
+        Concurrent first requests share one startup task; a startup failure is
+        re-raised to every request (the app is not retried — a half-run
+        ``@post_construct`` sequence cannot be replayed safely).
+        """
+        task = self._lazy_start_task
+        if task is None:
+            message = (
+                "app started lazily on its first request; the ASGI server did not send "
+                "lifespan events (pass lazy_startup=False to LaurenFactory.create to disable)"
+            )
+            logger.warning(message)
+            self._logger.warn(message, context="LaurenApp")
+            task = self._lazy_start_task = asyncio.ensure_future(self.startup())
+        await asyncio.shield(task)
 
     async def _websocket(
         self,
@@ -1993,6 +2650,7 @@ class LaurenApp:
         task = asyncio.current_task()
         if task is not None:
             self._in_flight.add(task)
+        _fallback_token = _ACTIVE_FALLBACK.set(self._json_fallback)
         try:
             await handle_websocket(
                 self,
@@ -2018,6 +2676,7 @@ class LaurenApp:
                 "Unhandled error in WebSocket handler (path=%s)", scope.get("path", "?")
             )
         finally:
+            _ACTIVE_FALLBACK.reset(_fallback_token)
             if task is not None:
                 self._in_flight.discard(task)
 
@@ -2112,17 +2771,21 @@ def _wrap_interceptor(instance: Any, ctx: ExecutionContext, next_handler: CallHa
     return CallHandler(fn)
 
 
-def _coerce_to_response(value: Any, *, encoder: JSONEncoder | None = None) -> Response:
+def _coerce_to_response(
+    value: Any, *, encoder: JSONEncoder | None = None, pagination: ResolvedPagination | None = None
+) -> Response:
     """Convert a handler return value into a :class:`Response`.
 
     ``encoder`` lets the dispatcher pipe its per-app encoder through
     every recursive call so JSON emission uses the configured
     backend; when omitted, :meth:`Response.json` falls back to the
-    process-wide default.
+    process-wide default. ``pagination`` is the app's pagination config,
+    used for pages built without a paging parameter.
 
     Accepted shapes (in priority order):
 
-    1. An existing :class:`Response` is passed through.
+    1. An existing :class:`Response` is passed through; a ``Page`` /
+       ``CursorPage`` renders its envelope and ``Link`` headers.
     2. A ``(body, status)`` tuple, e.g. ``return user, 201``.
     3. A ``(body, status, headers)`` tuple.
     4. ``None`` → 204 No Content.
@@ -2131,17 +2794,21 @@ def _coerce_to_response(value: Any, *, encoder: JSONEncoder | None = None) -> Re
     7. Pydantic v2 model (has ``model_dump``) → JSON serialization via
        ``model_dump(mode="json")``.
     8. ``list`` / ``tuple`` of Pydantic models → JSON array of dumped models.
-    9. Dataclass instance → JSON via :func:`dataclasses.asdict`.
-    10. Plain ``dict`` / ``list`` / ``int`` / ``float`` / ``bool`` → JSON.
-    11. Anything else → JSON with a permissive default handler.
+    9. A typed result (``Ok`` / ``Created`` / ``Accepted`` / ``NoContent``) →
+       its status and headers, the value coerced by these rules.
+    10. Dataclass instance → JSON via :func:`dataclasses.asdict`.
+    11. Plain ``dict`` / ``list`` / ``int`` / ``float`` / ``bool`` → JSON.
+    12. Anything else → JSON with a permissive default handler (subject to
+        the app's ``json_fallback`` policy).
     """
-    # Status-override tuple form: (body, status) or (body, status, headers)
-    if isinstance(value, tuple) and len(value) in (2, 3):
+    # Status-override tuple form: (body, status) or (body, status, headers).
+    # A plain tuple only: a NamedTuple is a value, not a status pair.
+    if type(value) is tuple and len(value) in (2, 3):
         body_val = value[0]
         status = value[1]
         headers = value[2] if len(value) == 3 else None
         if isinstance(status, int):
-            resp = _coerce_to_response(body_val, encoder=encoder).with_status(status)
+            resp = _coerce_to_response(body_val, encoder=encoder, pagination=pagination).with_status(status)
             if headers:
                 resp = resp.with_headers(headers)
             return resp
@@ -2150,6 +2817,10 @@ def _coerce_to_response(value: Any, *, encoder: JSONEncoder | None = None) -> Re
         if encoder is not None and isinstance(value, EventStream):
             value._reframe(encoder)
         return value
+    # Private hook until F01's response-conversion protocol lands: pages
+    # render their envelope plus ``Link`` / ``X-Total-Count`` headers.
+    if isinstance(value, _PageResponse):
+        return value._lauren_response(encoder, pagination)
     if value is None:
         return Response.no_content()
     if isinstance(value, (bytes, bytearray)):
@@ -2166,6 +2837,9 @@ def _coerce_to_response(value: Any, *, encoder: JSONEncoder | None = None) -> Re
     # Sequence of Pydantic models (common: return list of DTOs).
     if isinstance(value, list) and value and all(hasattr(v, "model_dump") for v in value):
         return Response.json([v.model_dump(mode="json") for v in value], encoder=encoder)
+    # Typed results are dataclasses: unwrap them before the dataclass branch.
+    if isinstance(value, _RESULT_TYPES):
+        return _coerce_result(value, encoder=encoder, coerce=_coerce_to_response)
     # Dataclass instance?
     try:
         import dataclasses
@@ -2180,12 +2854,19 @@ def _coerce_to_response(value: Any, *, encoder: JSONEncoder | None = None) -> Re
     return Response.json(value, encoder=encoder)
 
 
+#: Default of ``_coerce_streaming_response(adapter=...)``: build the serializer now.
+_BUILD_ADAPTER: Any = object()
+
+
 async def _coerce_streaming_response(
     iterable: Any,
     *,
     item_type: Any,
     request: Request,
     encoder: JSONEncoder | None = None,
+    adapter: Any = _BUILD_ADAPTER,
+    plan: Any = None,
+    on_violation: Callable[[ResponseContractViolation, Request], None] | None = None,
 ) -> Response:
     """Serialize an async iterable of ``item_type`` as a typed stream.
 
@@ -2211,6 +2892,12 @@ async def _coerce_streaming_response(
     status code. Errors raised after the first item are logged and the
     stream is truncated — by that point the response start line has
     already shipped and the HTTP status is immutable.
+
+    With a response contract (``plan`` under ``response_validation="filter"``
+    / ``"strict"``) every item is projected onto ``item_type`` first. A first
+    item that does not fit fails the request with a 500; a later one is
+    reported to ``on_violation``, ends the stream with an error frame
+    (``response_validation_error``).
     """
     if not hasattr(iterable, "__aiter__") and not inspect.isasyncgen(iterable):
         raise TypeError(
@@ -2219,13 +2906,21 @@ async def _coerce_streaming_response(
     accept = request.headers.get("accept") or ""
     fmt = negotiate_stream_format(accept, default="jsonlines")
     media_type = FORMAT_TO_MEDIA_TYPE[fmt]
-    adapter = _build_adapter(item_type)
+    if adapter is _BUILD_ADAPTER:
+        # Direct callers (tests) without a startup-built serializer.
+        adapter = _build_adapter(item_type)
     # Capture the encoder once so every framed item hits the same
     # reference — matters for the ``msgspec`` backend which bakes
     # its options into a reusable Encoder instance.
     json_encoder = encoder if encoder is not None else get_active_encoder()
+    projector = plan.stream_projector if plan is not None else None
+    position = [0]
 
     def _dump(item: Any) -> bytes:
+        if projector is not None:
+            index = position[0]
+            position[0] = index + 1
+            return json_encoder.encode_compact(plan.project_item(item, index))
         if adapter is not None:
             # Pydantic type: convert to a JSON-safe dict first, then encode.
             # This preserves discriminated-union serialisation and custom
@@ -2281,9 +2976,22 @@ async def _coerce_streaming_response(
                 yield b"data: " + payload + b"\n\n"
             else:
                 yield payload + b"\n"
+        except ResponseContractViolation as violation:
+            # Same shape as a post-header HTTPError: log, one error frame, end.
+            if on_violation is not None:
+                on_violation(violation, request)
+            envelope = LaurenError("response validation failed").to_payload()
+            envelope["error"]["code"] = "response_validation_error"
+            payload = json_encoder.encode_compact(envelope)
+            if fmt == "sse":
+                yield b"event: error\n"
+                yield b"data: " + payload + b"\n\n"
+            else:
+                yield payload + b"\n"
 
     headers = Headers([("cache-control", "no-cache")]) if fmt == "sse" else None
-    return Response.stream(_produce(), media_type=media_type, headers=headers)
+    status = plan.default_status if plan is not None else 200
+    return Response.stream(_produce(), status=status, media_type=media_type, headers=headers)
 
 
 #: Registry mapping HTTP status codes to RFC 7807 type URIs.
@@ -2325,6 +3033,10 @@ def _http_status_title(status: int) -> str:
         return "HTTP Error"
 
 
+#: ``error_format`` values :func:`_error_response` understands.
+_ERROR_FORMATS: tuple[str, ...] = ("default", "rfc7807", "rfc9457")
+
+
 def _error_response(
     err: LaurenError,
     *,
@@ -2332,6 +3044,9 @@ def _error_response(
     code: str | None = None,
     error_format: str = "default",
     encoder: JSONEncoder | None = None,
+    instance: str | None = None,
+    problem_type_base: str | None = None,
+    debug: dict[str, Any] | None = None,
 ) -> Response:
     """Build an error :class:`Response` from a :class:`LaurenError`.
 
@@ -2342,44 +3057,64 @@ def _error_response(
       ``application/json`` content type. Preserves backwards
       compatibility for every existing lauren client.
 
-    * ``"rfc7807"`` — the RFC 7807 Problem Details envelope
-      ``{"type", "title", "status", "detail", "instance", "code"}``
-      with the correct ``application/problem+json`` content type.
-      Adopts industry-standard error reporting for clients that
-      understand Problem Details (the OpenAPI ecosystem, many
-      service meshes, etc.).
+    * ``"rfc9457"`` — RFC 9457 Problem Details
+      ``{"type", "title", "status", "detail", "instance", "code", "context",
+      "errors"}`` with ``application/problem+json`` (see
+      :func:`lauren._asgi._problem.problem_payload`). ``instance`` is the
+      request path; ``problem_type_base`` prefixes ``code`` to build ``type``.
+
+    * ``"rfc7807"`` — the legacy RFC 7807 envelope, byte-for-byte as in
+      earlier releases: a ``urn:ietf:rfc:7231:<status>`` default ``type``
+      and the ``detail`` dict in an object-valued ``errors`` member.
 
     The ``"code"`` field is lauren-specific; it rides alongside the
-    RFC 7807 structure as an opaque machine-readable identifier.
-    This is explicitly permitted by RFC 7807 §3.2 which allows
-    extensions.
+    problem-details members as an extension (RFC 9457 §3.2). The error's own
+    ``headers`` are added to the response in every format, and ``debug``
+    (development error pages) becomes a top-level ``debug`` member.
     """
     final_status = status or getattr(err, "status_code", None) or 500
-    final_code = code or getattr(err, "code", "lauren_error")
+    final_code: str = code or getattr(err, "code", None) or "lauren_error"
+    extra_headers: tuple[tuple[str, str], ...] = getattr(err, "headers", ()) or ()
+    payload: dict[str, Any]
 
-    if error_format == "rfc7807":
-        # Allow subclasses to override the ``type`` URI by declaring a
-        # class-level ``problem_type`` attribute. Defaults to the
-        # status-derived URN so the field is always stable.
-        problem_type = getattr(err, "problem_type", None) or _problem_type_for(final_status)
+    if error_format in ("rfc9457", "rfc7807"):
         title = getattr(err, "problem_title", None) or _http_status_title(final_status)
-        payload: dict[str, Any] = {
-            "type": problem_type,
-            "title": title,
-            "status": final_status,
-            "detail": err.message or title,
-            "code": final_code,
-        }
-        # Include the extra ``detail`` dict as a typed extension so
-        # machine clients can still read the structured context
-        # (field names, allowed values, etc.) that lauren's default
-        # envelope exposes. RFC 7807 §3.2 expressly permits this.
-        if err.detail:
-            payload["errors"] = err.detail
+        if error_format == "rfc9457":
+            payload = _problem_payload(
+                err,
+                status=final_status,
+                code=final_code,
+                title=title,
+                instance=instance,
+                type_base=problem_type_base,
+            )
+        else:
+            # Allow subclasses to override the ``type`` URI by declaring a
+            # class-level ``problem_type`` attribute. Defaults to the
+            # status-derived URN so the field is always stable.
+            problem_type = (
+                getattr(err, "problem_type", None)
+                or (f"{problem_type_base}{final_code}" if problem_type_base else None)
+                or _problem_type_for(final_status)
+            )
+            payload = {
+                "type": problem_type,
+                "title": title,
+                "status": final_status,
+                "detail": err.message or title,
+                "code": final_code,
+            }
+            # The structured ``detail`` dict rides as an object-valued
+            # ``errors`` extension (kept for compatibility; ``rfc9457``
+            # renames it to ``context``).
+            if err.detail:
+                payload["errors"] = err.detail
+        if debug is not None:
+            payload["debug"] = debug
         return Response.json(
             payload,
             status=final_status,
-            headers=Headers([("content-type", "application/problem+json")]),
+            headers=Headers([("content-type", "application/problem+json"), *extra_headers]),
             encoder=encoder,
         )
 
@@ -2387,7 +3122,14 @@ def _error_response(
     payload = err.to_payload()
     if code:
         payload["error"]["code"] = code
-    return Response.json(payload, status=final_status, encoder=encoder)
+    if debug is not None:
+        payload["debug"] = debug
+    return Response.json(
+        payload,
+        status=final_status,
+        headers=Headers(list(extra_headers)) if extra_headers else None,
+        encoder=encoder,
+    )
 
 
 async def _send_response(
@@ -2474,6 +3216,16 @@ class LaurenFactory:
         mounts: dict[str, Any] | None = None,
         sessions: SessionConfig | None = None,
         content: ContentConfig | None = None,
+        problem_type_base: str | None = None,
+        debug: bool | DebugConfig = False,
+        lazy_startup: bool = True,
+        hosted_services: bool = True,
+        scheduler: bool = True,
+        validation: ValidationPolicy | None = None,
+        strict_request_scope: bool = False,
+        response_validation: str = "off",
+        json_fallback: str = "warn",
+        pagination: PaginationConfig | None = None,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -2499,8 +3251,84 @@ class LaurenFactory:
         (:class:`~lauren.types.ContentConfig`). Left unset, apps with
         ``sessions=`` log mismatched JSON ``Content-Type`` values ("warn")
         and other apps do not check them.
+
+        ``error_format`` picks the error wire shape: ``"default"`` (the
+        ``{"error": {...}}`` envelope), ``"rfc9457"`` (RFC 9457 Problem
+        Details) or ``"rfc7807"`` (the legacy problem-details shape).
+        ``problem_type_base`` (e.g. ``"https://errors.example.com/"``) builds
+        the problem-details ``type`` as ``base + code`` for errors without
+        their own ``problem_type``.
+
+        ``debug=True`` (or a :class:`~lauren.types.DebugConfig`) enables
+        development error pages for unhandled exceptions, served to loopback
+        clients only by default. It is never enabled implicitly; ``create()``
+        logs a warning whenever it is on, and refuses it (``StartupError``,
+        ``reason="debug_in_production"``) when the configuration module's
+        active profile is a production profile.
+
+        ``lazy_startup`` (default ``True``) makes the app run :meth:`LaurenApp.startup`
+        on its first HTTP or WebSocket request when the ASGI server never
+        sent lifespan events (``httpx.ASGITransport``), logging a warning.
+        Pass ``False`` to keep such an app cold until ``startup()`` is awaited.
+
+        ``hosted_services=False`` discovers and validates ``@hosted_service``
+        classes but does not start them; ``scheduler=False`` does the same for
+        scheduled jobs (``SchedulerRegistry.trigger`` still works). Tests and
+        one-off commands use them to build the full app without background work.
+
+        ``validation`` (a :class:`~lauren.validation.ValidationPolicy`) sets how
+        request values are validated: the stdlib-model mode (``"warn"`` by
+        default in 1.x), JSON strictness, unknown keys, input echo and the
+        issue cap. Every extractor, WebSocket payload and stream item type is
+        compiled once here by the app's type compiler (``app.type_compiler``).
+
+        ``strict_request_scope=True`` makes resolving a ``Scope.REQUEST``
+        provider outside any request, WebSocket connection or ``app.scope()``
+        raise :class:`~lauren.exceptions.DIScopeViolationError`
+        (``reason="no_active_scope"``). The default keeps the 1.x fallback — a
+        new, never torn down instance per resolution — and logs a warning once
+        per provider.
+
+        ``response_validation`` is the default response contract of every route
+        (``@get(..., response_validation=...)`` overrides it): ``"off"`` (the
+        default) serializes the returned value as it is, ``"filter"`` projects
+        it onto the declared return type so undeclared fields never leave, and
+        ``"strict"`` also validates every value. ``json_fallback`` decides what
+        an encoder does with an object it has no rule for: ``"dict"`` sends its
+        public attributes, ``"warn"`` (the default) does too and logs once per
+        type, ``"error"`` fails the response with a 500.
+
+        ``pagination`` (a :class:`~lauren.pagination.PaginationConfig`) sets the
+        app-wide paging defaults, maxima, parameter names, page envelope and
+        cursor secret; ``Annotated[OffsetPagination, PaginationConfig(...)]``
+        overrides per parameter. A route using ``CursorPagination`` without a
+        cursor secret fails here (``reason="pagination_secret_missing"``).
         """
         _log: Logger = logger or NullLogger()
+        if response_validation not in RESPONSE_VALIDATION_MODES:
+            raise StartupError(
+                f"response_validation must be one of {', '.join(map(repr, RESPONSE_VALIDATION_MODES))}, "
+                f"got {response_validation!r}",
+                detail={"reason": "invalid_response_validation", "got": repr(response_validation)},
+            )
+        if json_fallback not in JSON_FALLBACK_POLICIES:
+            raise StartupError(
+                f"json_fallback must be one of {', '.join(map(repr, JSON_FALLBACK_POLICIES))}, "
+                f"got {json_fallback!r}",
+                detail={"reason": "invalid_json_fallback", "got": repr(json_fallback)},
+            )
+        if problem_type_base is not None and (
+            not isinstance(problem_type_base, str) or not problem_type_base
+        ):
+            raise StartupError(
+                f"problem_type_base must be a non-empty string, got {problem_type_base!r}",
+                detail={"reason": "invalid_problem_type_base", "got": repr(problem_type_base)},
+            )
+        debug_config: DebugConfig | None = None
+        if debug is not False and debug is not None:
+            from ._debug import resolve_config as _resolve_debug_config
+
+            debug_config = _resolve_debug_config(debug)
         content_config = content if content is not None else ContentConfig()
         if not isinstance(content_config, ContentConfig):
             raise StartupError(
@@ -2517,6 +3345,20 @@ class LaurenFactory:
         effective_strict_content_type: bool | str = (
             declared_strict if declared_strict is not None else ("warn" if sessions is not None else False)
         )
+        policy = validation if validation is not None else ValidationPolicy()
+        if not isinstance(policy, ValidationPolicy):
+            raise StartupError(
+                f"validation= expects a ValidationPolicy, got {type(validation).__name__}",
+                detail={"reason": "invalid_validation_policy", "got": type(validation).__name__},
+            )
+        pagination_config = _resolve_pagination(pagination)
+        validation_runtime = ValidationRuntime(
+            TypeCompiler(policy),
+            include_input=policy.include_input
+            if policy.include_input is not None
+            else debug_config is not None,
+            logger=_log,
+        )
 
         effective_global_middlewares = list(global_middlewares or [])
         effective_global_guards = list(global_guards or [])
@@ -2532,10 +3374,14 @@ class LaurenFactory:
             root=root_module.__name__,
         )
 
+        # Build-time overrides — set only inside lauren.testing's
+        # ``TestingModuleBuilder.compile()``; ``None`` for every other build.
+        override_plan = active_override_plan()
+
         # ---- Phase 1: Module graph construction ----
         t0 = time.perf_counter()
         graph = ModuleGraph()
-        graph.compile(root_module)
+        graph.compile(root_module, substitutions=override_plan.modules if override_plan is not None else None)
         _log.verbose(
             f"Phase 1/7 module graph built: {len(graph.modules)} module(s), "
             f"{len(graph.all_controllers)} controller(s), "
@@ -2552,7 +3398,7 @@ class LaurenFactory:
         # it so the container can enforce NestJS-style encapsulation at
         # resolution time.
         t0 = time.perf_counter()
-        container = DIContainer()
+        container = DIContainer(overrides=override_plan, strict_request_scope=strict_request_scope)
         for p in graph.iter_providers():
             owning_module = graph.module_for_provider(p)
             # Custom-provider records (use_value / use_class /
@@ -2583,6 +3429,10 @@ class LaurenFactory:
                     ctrl_class,
                     owning_module=graph.module_for_controller(ctrl_class),
                 )
+        # Stores (``StoresModule.for_root``): lifecycle-managed singletons,
+        # registered before sessions so a backend shared with
+        # ``SessionConfig(store=...)`` has its hooks owned by its Store token.
+        install_stores(graph, container)
         # Sessions (optional). Validate the config, build + register the
         # session engine and store, then install the engine as the
         # OUTERMOST global middleware so it loads the session before any
@@ -2673,6 +3523,29 @@ class LaurenFactory:
                     _ensure_injectable(gp)
                     container.register(gp, owning_module=None)
 
+        # ---- Phase 2b: Typed configuration ----
+        # Load and validate every ConfigModule spec in the graph (one
+        # aggregated ConfigValidationError) and register the settings.
+        config_pending = install_config(graph, container, logger=_log)
+        # ---- Phase 2c: Scheduling ----
+        # ScheduleModule.for_root() makes the app's SchedulerRegistry a global
+        # provider (before the DI compile, so constructors can depend on it).
+        scheduling_setup = prepare_scheduling(graph, container)
+
+        # ---- Phase 2d: Application events ----
+        # One EventBus per app (global value provider) and the request-scoped
+        # EventPublisher; handlers are compiled after discovery (Phase 6a).
+        events_bus = install_events(graph, container)
+        # Health probes (lauren.health): one runtime per app when a
+        # HealthModule is imported; checks are compiled after discovery.
+        health_runtime = install_health(graph, container)
+
+        # ---- Phase 2e: Cache ----
+        # ``CacheModule.for_root`` registers the app's Cache over its Store.
+        install_cache(
+            graph, container, encoder=json_encoder if json_encoder is not None else get_active_encoder()
+        )
+
         # Install per-module visible-token sets. A module sees its own
         # providers, its own controllers, and anything re-exported by a
         # module it imports (transitively).
@@ -2703,6 +3576,8 @@ class LaurenFactory:
         phase5_t0 = time.perf_counter()
         router = Router()
         compiled_handlers: dict[tuple[str, str], CompiledHandler] = {}
+        # Routes whose ``response_model=`` only documents (contract off).
+        documentation_only_models: list[str] = []
         from ..websockets import WS_CONTROLLER_META
 
         for ctrl_cls in graph.iter_controllers():
@@ -2764,10 +3639,17 @@ class LaurenFactory:
                         continue
                     resolved_methods[attr_name] = (fn, binding, raw)
 
+            ctrl_raises = list(ctrl_cls.__dict__.get(RAISES_META, []))
             for attr_name, (fn, binding, raw) in resolved_methods.items():
                 route_metas: list[RouteMeta] = getattr(fn, ROUTE_META, [])
                 if not route_metas:
                     continue
+                # ``@raises``: the method's declarations, then the controller's own.
+                fn_raises = list(getattr(fn, RAISES_META, []))
+                route_raises: list[Any] = []
+                for spec in fn_raises + ctrl_raises:
+                    if all(spec.exc_type is not known.exc_type for known in route_raises):
+                        route_raises.append(spec)
                 fn_mw = list(getattr(fn, USE_MIDDLEWARES, []))
                 fn_guards = list(getattr(fn, USE_GUARDS, []))
                 fn_interceptors = list(getattr(fn, USE_INTERCEPTORS, []))
@@ -2812,11 +3694,43 @@ class LaurenFactory:
                         container,
                         path_param_names=set(entry.param_names),
                         owning_module=ctrl_owning_module,
+                        validation=validation_runtime,
+                        route=f"{rmeta.method} {entry.path_template}",
+                        pagination=pagination_config,
                     )
                     # Resolve the handler's return annotation once at
                     # startup so the request path stays reflection-free.
                     return_hint = _safe_type_hints(fn).get("return", inspect.Parameter.empty)
                     streaming_item = extract_streaming_item_type(return_hint)
+                    # The streamed-response serializer is built once here (no
+                    # process-wide adapter cache).
+                    streaming_adapter = _build_adapter(streaming_item) if streaming_item is not None else None
+                    # Response contract: the declared statuses / body types
+                    # (contradictions fail here) and, when the route needs
+                    # runtime work, its compiled plan.
+                    route_label = f"{rmeta.method} {entry.path_template}"
+                    response_table = describe_responses(
+                        rmeta, return_hint, fn=fn, streaming_item=streaming_item
+                    )
+                    route_mode = rmeta.response_validation or response_validation
+                    if route_mode != "off" and not response_table.typed:
+                        _log.verbose(
+                            f"{route_label} ({ctrl_cls.__name__}.{fn.__name__}) declares no response "
+                            f"type; response_validation={route_mode!r} does not apply to it",
+                            context="ResponseContract",
+                            route=route_label,
+                        )
+                    if rmeta.response_model is not None and route_mode == "off":
+                        documentation_only_models.append(route_label)
+                    response_plan = compile_response_plan(
+                        response_table,
+                        mode=route_mode,
+                        compiler=validation_runtime.compiler,
+                        coerce=functools.partial(_coerce_to_response, pagination=pagination_config),
+                        controller_cls=ctrl_cls,
+                        fn=fn,
+                        route=route_label,
+                    )
                     compiled = CompiledHandler(
                         controller_cls=ctrl_cls,
                         handler_fn=fn,
@@ -2836,12 +3750,16 @@ class LaurenFactory:
                         metadata={**ctrl_extra_meta, **fn_meta},
                         owning_module=ctrl_owning_module,
                         streaming_item_type=streaming_item,
+                        streaming_adapter=streaming_adapter,
                         binding=binding,
                         is_coroutine=inspect.iscoroutinefunction(fn),
                         raw_descriptor=raw,
                         # Method-level encoder wins over controller-level.
                         encoder=fn_encoder or ctrl_encoder or None,
                         json_body=any(ext.source == "json" for ext in extractions),
+                        response_table=response_table,
+                        response_plan=response_plan,
+                        raises=tuple(route_raises),
                     )
                     compiled_handlers[(entry.method, entry.path_template)] = compiled
                     _log.log(
@@ -2869,6 +3787,10 @@ class LaurenFactory:
             # Ensure _DocsController is resolvable as a global singleton.
             if _DocsController not in {p.cls for p in container.all_providers()}:
                 container.register(_DocsController)
+
+        # ``@cache_response`` / ``@idempotent``: fail without a Cache, and make
+        # the framework interceptor the innermost one on those routes only.
+        compile_cache_routes(compiled_handlers, container, logger=_log)
 
         # Inverse session misconfiguration: a handler injects ``Session``
         # but ``sessions=`` was never supplied. Fail loudly at startup —
@@ -2915,6 +3837,17 @@ class LaurenFactory:
                 logging.getLogger("lauren").warning(message)
                 _log.warn(message, context="LaurenFactory", routes=exposed)
 
+        # ``response_model=`` with the contract off documents a shape the wire
+        # does not honour (a richer object leaks its extra fields). Say so once.
+        if documentation_only_models:
+            message = (
+                f"response_model= is documentation-only on {len(documentation_only_models)} route(s) "
+                f"(e.g. {', '.join(documentation_only_models[:3])}) because response_validation is 'off'; "
+                "set response_validation='filter' (app-wide or per route) to enforce it"
+            )
+            logging.getLogger("lauren").warning(message)
+            _log.warn(message, context="ResponseContract", routes=documentation_only_models)
+
         # ---- Phase 5b: WebSocket gateway compilation ----
         # The WS compiler walks the same module graph, picks every
         # class carrying its OWN ``@ws_controller`` marker, and builds
@@ -2925,8 +3858,29 @@ class LaurenFactory:
         from .._ws_runtime import compile_gateways
 
         ws_router = Router()
-        ws_gateways = compile_gateways(graph, container, ws_router=ws_router, logger=_log)
+        ws_gateways = compile_gateways(
+            graph, container, ws_router=ws_router, logger=_log, validation=validation_runtime
+        )
         ws_router.freeze()
+        # Startup notes from the type compiler (FieldDescriptor constraints that
+        # do not apply, parameters left on the legacy path) — logged once.
+        for note in dict.fromkeys(validation_runtime.compiler.warnings):
+            logging.getLogger("lauren").warning(note)
+            _log.warn(note, context="Validation")
+
+        # Guard denials: read each guard's ``deny_error`` once, here, so a bad
+        # value fails startup (GuardConfigError) and dispatch reads a dict.
+        all_guards: list[type] = [*effective_global_guards, *effective_global_ws_guards]
+        for ch in compiled_handlers.values():
+            all_guards.extend(ch.guards)
+        for gw in ws_gateways.values():
+            all_guards.extend((*gw.guards, *gw.on_connect_guards))
+            for ws_message in gw.messages.values():
+                all_guards.extend(ws_message.guards)
+        guard_denials: dict[type, Any] = {}
+        for guard_cls in all_guards:
+            if guard_cls not in guard_denials:
+                guard_denials[guard_cls] = _compile_guard_denial(guard_cls)
 
         # Re-compile after late registrations.
         container._compiled = False
@@ -2941,6 +3895,27 @@ class LaurenFactory:
             ws_gateways=len(ws_gateways),
         )
 
+        # ---- Phase 6a: Provider discovery ----
+        # One scan over every registered provider for the markers features
+        # registered (scheduled jobs, health checks, event handlers, …). Runs
+        # after the final DI compile so every provider is in the container,
+        # and before the lifecycle order so consumers can rely on the index.
+        # See ``lauren/_discovery.py`` for the rules.
+        t0 = time.perf_counter()
+        discovery = build_discovery_index(container, registered_markers())
+        compile_events(events_bus, discovery, container, logger=_log)
+        # Hosted services and scheduled jobs: scope, names, ScheduleModule.
+        scheduling = compile_scheduling(discovery, scheduling_setup)
+        compile_health(health_runtime, discovery, container, logger=_log)
+        # Commands: names, CLI argument specs and argparse parsers.
+        commands = compile_commands(discovery)
+        _log.verbose(
+            f"Phase 6a provider discovery: {sum(map(len, discovery.methods.values()))} method(s), "
+            f"{sum(map(len, discovery.classes.values()))} class(es) "
+            f"({format_duration_ms(time.perf_counter() - t0)})",
+            context="Discovery",
+        )
+
         # ---- Phase 6: Lifecycle execution ----
         lifecycle = LifecycleScheduler(container)
         lifecycle.compute_order()
@@ -2951,6 +3926,28 @@ class LaurenFactory:
         )
 
         # ---- Phase 7: Readiness ----
+        if debug_config is not None:
+            from ._debug import production_profile as _production_profile
+
+            profile_name = _production_profile(container)
+            if profile_name is not None:
+                raise StartupError(
+                    f"debug error pages cannot be enabled in the production profile {profile_name!r}",
+                    detail={"reason": "debug_in_production", "profile": profile_name},
+                )
+            debug_message = (
+                "Debug error pages enabled — never use in production "
+                f"(allow_remote={debug_config.allow_remote}, include_4xx={debug_config.include_4xx})"
+            )
+            logging.getLogger("lauren").warning(debug_message)
+            _log.warn(debug_message, context="LaurenFactory", allow_remote=debug_config.allow_remote)
+        if problem_type_base is not None and error_format == "default":
+            base_message = (
+                "problem_type_base has no effect with error_format='default'; "
+                "use error_format='rfc9457' to emit problem details"
+            )
+            logging.getLogger("lauren").warning(base_message)
+            _log.warn(base_message, context="LaurenFactory")
         final_state = app_state or AppState()
         # Arena policy: an explicit ``arena=`` wins; otherwise build one
         # using ``arena_capacity`` if provided, or fall back to the
@@ -2985,7 +3982,26 @@ class LaurenFactory:
             global_ws_guards=effective_global_ws_guards or None,
             global_ws_interceptors=effective_global_ws_interceptors or None,
             strict_content_type=effective_strict_content_type,
+            problem_type_base=problem_type_base,
+            debug=debug_config,
+            guard_denials=guard_denials,
+            lazy_startup=lazy_startup,
+            validation=validation_runtime,
+            response_validation=response_validation,
+            json_fallback=json_fallback,
         )
+        # The immutable Phase 6a index; feature consumers read their markers.
+        app._discovery = discovery
+        app._events = events_bus
+        events_bus._bind(app)
+        app._scheduling = scheduling.build(
+            app, order=lifecycle._order, hosted_services=hosted_services, scheduler=scheduler
+        )
+        if health_runtime is not None:
+            health_runtime._bind(app)
+        app._config_pending = config_pending
+        app._commands = commands
+        app._pagination = pagination_config
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via
         # ``lauren.serialization.set_active_encoder``). Pinning the
@@ -3027,6 +4043,68 @@ class LaurenFactory:
             providers=len(container.all_providers()),
         )
         return app
+
+    @staticmethod
+    def create_context(
+        root_module: type,
+        *,
+        hosted_services: bool = False,
+        scheduler: bool = False,
+        drain_timeout: float = 10.0,
+        **create_kwargs: Any,
+    ) -> ApplicationContext:
+        """Build the app with :meth:`create` and wrap it in an :class:`~lauren.context.ApplicationContext`.
+
+        The graph is the server's — every phase runs, routes included, so if
+        a command or script boots, the server boots — but nothing is served.
+        ``async with LaurenFactory.create_context(AppModule) as ctx:`` runs
+        ``startup()`` on enter and ``shutdown(drain_timeout=...)`` on exit.
+        Hosted services and the scheduler are **off** by default (pass
+        ``hosted_services=True`` for a worker); ``create_kwargs`` go to
+        :meth:`create` unchanged.
+        """
+        app = LaurenFactory.create(
+            root_module, hosted_services=hosted_services, scheduler=scheduler, **create_kwargs
+        )
+        return app.context(hosted_services=hosted_services, scheduler=scheduler, drain_timeout=drain_timeout)
+
+
+def _compile_guard_denial(guard_cls: type) -> Any:
+    """Validate a guard's ``deny_error`` and return what its denials raise.
+
+    ``deny_error`` is plain class configuration read through normal attribute
+    lookup, so a subclass inherits it (like any method override). Absent or
+    ``None`` means :class:`ForbiddenError`. An ``HTTPError`` subclass is
+    returned as-is; a callable must accept zero arguments (it is called on
+    every denial and must return an ``HTTPError`` instance). Anything else —
+    a non-``HTTPError`` class, an exception *instance*, a callable that needs
+    arguments — raises :class:`GuardConfigError` at startup.
+    """
+    name = getattr(guard_cls, "__name__", repr(guard_cls))
+    deny = getattr(guard_cls, "deny_error", None)
+    if deny is None:
+        return ForbiddenError
+    if isinstance(deny, type):
+        if issubclass(deny, HTTPError):
+            return deny
+        reason = f"{deny.__name__} is not an HTTPError subclass"
+    elif isinstance(deny, BaseException):
+        reason = "an exception instance cannot be raised for every denial; use the class or a zero-argument factory"
+    elif callable(deny):
+        try:
+            inspect.signature(deny).bind()
+        except TypeError:
+            reason = "a factory must be callable with no arguments"
+        except ValueError:  # no introspectable signature (C callables): trust it
+            return deny
+        else:
+            return deny
+    else:
+        reason = f"{deny!r} is neither an HTTPError subclass nor a zero-argument factory"
+    raise GuardConfigError(
+        f"guard {name} declares an invalid deny_error: {reason}",
+        detail={"guard": name, "deny_error": repr(deny), "reason": "invalid_deny_error"},
+    )
 
 
 def _ensure_injectable(cls: type) -> None:

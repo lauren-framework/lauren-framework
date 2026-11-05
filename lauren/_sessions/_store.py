@@ -7,16 +7,19 @@ engine. Two backends ship in core:
 * :class:`SignedCookieSessionStore` — stateless; the whole payload rides
   in the (signed) cookie, so there is no server-side row at all.
 
-Production multi-worker deployments implement the same Protocol over
-Redis / a database. Stores must be safe under concurrent access.
+Production multi-worker deployments pass any :class:`~lauren.stores.Store`
+(adapted by :class:`~lauren.stores.StoreSessionStore`) or implement the
+same Protocol over Redis / a database. Stores must be safe under
+concurrent access.
 """
 
 from __future__ import annotations
 
-import asyncio
 import secrets
-import time
-from typing import Any, ClassVar, Protocol, runtime_checkable
+import threading
+from typing import Any, Callable, ClassVar, Protocol, runtime_checkable
+
+from .._stores._memory import DEFAULT_MAX_ENTRIES, TTLMap
 
 
 @runtime_checkable
@@ -51,50 +54,63 @@ def _new_id() -> str:
 
 
 class InMemorySessionStore:
-    """Process-local session store guarded by an ``asyncio.Lock``.
+    """Bounded, process-local session store.
 
-    Fine for development and single-worker deployments. TTL expiry is
-    lazy (evaluated on ``load``). Multi-worker production should swap in a
-    Redis-backed store with the same surface — the engine does not care
-    which backend it talks to.
+    Fine for development and single-worker deployments. Sessions expire
+    after ``max_age`` (checked on load and swept proactively, so a session
+    that is written once and never revisited does not linger), and at most
+    ``max_entries`` sessions are kept — the least recently used are dropped
+    first. ``clock`` (seconds, ``time.monotonic`` by default) exists for
+    tests. Values are kept as Python objects (copied on save and load), so
+    they need not be JSON-serialisable.
+
+    Multi-worker production swaps in a shared backend: pass any
+    :class:`~lauren.stores.Store` (e.g. a Redis store) as
+    ``SessionConfig(store=...)`` and it is adapted automatically.
     """
 
     requires_secret: ClassVar[bool] = True
     client_side: ClassVar[bool] = False
 
-    def __init__(self) -> None:
-        self._data: dict[str, dict[str, Any]] = {}
-        self._expiry: dict[str, float | None] = {}
-        self._lock = asyncio.Lock()
+    def __init__(
+        self,
+        *,
+        max_entries: int = DEFAULT_MAX_ENTRIES,
+        sweep_interval: float = 60.0,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        self._entries: TTLMap[dict[str, Any]] = TTLMap(
+            max_entries=max_entries, sweep_interval=sweep_interval, clock=clock
+        )
+        self._lock = threading.Lock()
 
     def new_id(self) -> str:
         return _new_id()
 
     async def load(self, session_id: str) -> dict[str, Any] | None:
-        async with self._lock:
-            exp = self._expiry.get(session_id)
-            if exp is not None and time.time() >= exp:
-                # Lazy expiry — drop and report absent.
-                self._data.pop(session_id, None)
-                self._expiry.pop(session_id, None)
+        with self._lock:
+            entry = self._entries.get(session_id, self._entries.clock())
+            if entry is None:
                 return None
-            data = self._data.get(session_id)
-            return dict(data) if data is not None else None
+            self._entries.touch(session_id)
+            return dict(entry[0])
 
     async def save(self, session_id: str, data: dict[str, Any], *, max_age: int | None) -> None:
-        async with self._lock:
-            self._data[session_id] = dict(data)
-            self._expiry[session_id] = (time.time() + max_age) if max_age else None
+        with self._lock:
+            now = self._entries.clock()
+            self._entries.maybe_sweep(now)
+            self._entries.put(session_id, dict(data), (now + max_age) if max_age else None, now)
 
     async def delete(self, session_id: str) -> None:
-        async with self._lock:
-            self._data.pop(session_id, None)
-            self._expiry.pop(session_id, None)
+        with self._lock:
+            if self._entries.get(session_id, self._entries.clock()) is not None:
+                self._entries.remove(session_id)
 
     # -- test/introspection helpers (not part of the Protocol) ---------
 
-    def _count(self) -> int:  # pragma: no cover - convenience for tests
-        return len(self._data)
+    def _count(self) -> int:
+        """Sessions currently held, including expired ones not yet swept."""
+        return len(self._entries)
 
 
 class SignedCookieSessionStore:

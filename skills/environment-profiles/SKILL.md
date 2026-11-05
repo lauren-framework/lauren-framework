@@ -3,6 +3,11 @@ name: environment-profiles
 description: Merges base configuration with environment-specific overrides (dev/staging/prod). Use when different deployment environments need different settings loaded from a profile name rather than individual env vars.
 ---
 
+> **Superseded for the common case by core typed configuration.** Prefer
+> `lauren.config.ConfigModule` (startup-validated settings, profiles, `.env` /
+> TOML sources, `Secret[T]`) — see [building-lauren-config](../building-lauren-config/SKILL.md).
+> Keep this skill for the bespoke pattern it shows.
+
 > Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
 > exact file + line range and is faster than grep across the whole repo.
 

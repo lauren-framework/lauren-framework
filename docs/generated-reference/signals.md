@@ -207,3 +207,78 @@ Listeners are typically used to flush buffers, close external
 connections, or emit a final heartbeat. The event does NOT
 block shutdown — listeners run concurrently with the framework's
 own ``@pre_destruct`` machinery.
+
+## Event bus events
+
+### `EventHandlerFailed`
+
+```python
+class EventHandlerFailed(timestamp: float = time.monotonic(), event_type: Any = None, handler: str = '', error: BaseException | None = None, mode: str = '', event: Any = None)
+```
+
+Emitted when an ``@on_event`` handler raises, or is cancelled at shutdown.
+
+Fired by the application :class:`~lauren.events.EventBus` for every
+handler failure, whatever the handler's error policy: ``"isolate"``
+failures are also logged and returned in
+:attr:`EmitResult.errors <lauren.events.EmitResult.errors>`,
+``"propagate"`` failures re-raise from ``emit()``. A deferred handler
+cancelled by the shutdown drain carries an :class:`asyncio.CancelledError`.
+
+## Hosted service and job events
+
+### `HostedServiceStarted`
+
+```python
+class HostedServiceStarted(timestamp: float = time.monotonic(), name: str = '')
+```
+
+Emitted each time a hosted service's ``run()`` starts (first start and every restart).
+
+### `HostedServiceStopped`
+
+```python
+class HostedServiceStopped(timestamp: float = time.monotonic(), name: str = '', duration_s: float = 0.0)
+```
+
+Emitted once a hosted service has finished for good (stopped, completed or out of restarts).
+
+### `HostedServiceFailed`
+
+```python
+class HostedServiceFailed(timestamp: float = time.monotonic(), name: str = '', error: BaseException | None = None, restart_count: int = 0, will_restart: bool = False)
+```
+
+Emitted when a hosted service's ``run()`` raises.
+
+### `JobStarted`
+
+```python
+class JobStarted(timestamp: float = time.monotonic(), name: str = '', scheduled_at: Any = None)
+```
+
+Emitted when a scheduled job run begins (after an ``exclusive`` lock was won).
+
+### `JobCompleted`
+
+```python
+class JobCompleted(timestamp: float = time.monotonic(), name: str = '', duration_s: float = 0.0, scheduled_at: Any = None)
+```
+
+Emitted when a scheduled job run returns normally.
+
+### `JobFailed`
+
+```python
+class JobFailed(timestamp: float = time.monotonic(), name: str = '', error: BaseException | None = None, duration_s: float = 0.0, scheduled_at: Any = None)
+```
+
+Emitted when a scheduled job run raises, times out (``TimeoutError``) or is cancelled.
+
+### `JobSkipped`
+
+```python
+class JobSkipped(timestamp: float = time.monotonic(), name: str = '', reason: str = '', scheduled_at: Any = None)
+```
+
+Emitted when a fire does not run: ``reason`` is ``"overlap"``, ``"locked"``, ``"misfire"`` or ``"disabled"``.

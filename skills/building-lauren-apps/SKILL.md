@@ -128,6 +128,39 @@ app = LaurenFactory.create(
 )
 ```
 
+## Seeding, migrations and other admin tasks
+
+Write them as commands, never as HTTP endpoints. A `@command` method on a
+provider runs with the app started and its own DI scope:
+
+```python
+from lauren import injectable
+from lauren.commands import CommandContext, command
+
+
+@injectable()
+class SeedCommands:
+    def __init__(self, db: DatabaseService) -> None:
+        self._db = db
+
+    @command("db:seed", help="Insert the demo data.")
+    async def seed(self, ctx: CommandContext, *, reset: bool = False) -> int:
+        if reset and not ctx.confirm("Delete existing data first?"):
+            return 1
+        ctx.echo(f"seeded {await self._db.seed(reset=reset)} rows")
+        return 0
+```
+
+```console
+python -m lauren exec my_app.main:app db:seed --reset --yes
+python -m lauren commands my_app.main:app
+```
+
+`main:app` (a built `LaurenApp`), `main:create_app` (a factory) and
+`app_module:AppModule` all work as the target. Scripts use
+`async with LaurenFactory.create_context(AppModule) as ctx:`. Full story:
+`skills/building-lauren-commands/`.
+
 ## Recommended project layout
 
 See [project-layout.md](project-layout.md) for a full tree.
@@ -161,3 +194,5 @@ pyproject.toml
 - Using `await LaurenFactory.create()` — it is **synchronous**, not async.
 - Not listing a provider in `providers=[]` — it will be missing from the DI container.
 - Exporting a class that is not in `providers=` or not imported — raises `ModuleExportViolation`.
+- Exposing seeding or other admin work as an HTTP route — use a `@command` and `python -m lauren exec`.
+- Resolving request-scoped providers from `app.container` in a script — they are never torn down; use `ctx.scope()` (`LaurenFactory.create_context`).

@@ -23,3 +23,7 @@ Custom provider recipes and DI container utilities.
 ## Container
 
 ::: lauren.DIContainer
+
+## Operation scopes
+
+::: lauren.OperationScope

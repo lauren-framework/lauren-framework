@@ -31,6 +31,10 @@ Every provider is built and cached according to its scope:
 | `REQUEST` | One per request, shared in handler tree | Per-request cache | DB sessions, current-user objects, request-bound caches |
 | `TRANSIENT` | New on every resolve | Never cached | Stateful builders, randomized identifiers |
 
+Outside HTTP — a script, a background job — open the same scope yourself with
+`async with app.scope("name") as scope:`; see
+[Scopes outside requests](../guides/dependency-injection.md#part-g-scopes-outside-requests-appscope).
+
 ### Scope rules (enforced at startup)
 
 * `SINGLETON` may depend on `SINGLETON` only.

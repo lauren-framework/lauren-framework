@@ -303,16 +303,18 @@ A few SSE-specific notes:
 
 ## Testing
 
-Lauren's `TestClient` is buffered — it collects every body chunk into one `bytes` object before returning. That makes assertions on SSE bodies fully deterministic: the exact wire bytes, including the spec-mandated double newline that terminates each event, are what you assert on.
+A plain `client.get(...)` buffers the whole response, which makes assertions on
+a *finite* SSE body fully deterministic: the exact wire bytes, including the
+spec-mandated double newline that terminates each event, are what you assert on.
 
 ```python
 from lauren.testing import TestClient
 
 def test_feed_emits_three_events():
-    client = TestClient(app)
-    r = client.get("/feed/")
+    with TestClient(app) as client:
+        r = client.get("/feed/")
     assert r.status_code == 200
-    assert r.header("content-type") == "text/event-stream; charset=utf-8"
+    assert r.headers["content-type"] == "text/event-stream; charset=utf-8"
 
     # Parse the body into individual events. ``parse_sse_body`` is a tiny
     # helper from tests/integration/test_sse.py, ~25 lines of code.
@@ -322,14 +324,22 @@ def test_feed_emits_three_events():
     assert events[0]["data"] == '{"seq": 0, "value": 0.0}'
 ```
 
-For tests that need to assert on per-event timing (rather than the buffered final body), instantiate the response and iterate its stream directly:
+For an endless stream — or to assert on events as they arrive — use
+`client.stream(...)`. `iter_sse()` yields `lauren.ServerSentEvent` objects, the
+client `timeout` bounds the wait for each chunk, and leaving the block delivers
+`http.disconnect` so the producer's `finally` runs:
 
 ```python
-async def test_keepalive_arrives_during_idle():
-    response = build_response_for_test(...)
-    async for chunk in response.stream_body:
-        ...
+def test_live_feed():
+    with TestClient(app) as client:
+        with client.stream("GET", "/feed/live") as response:
+            events = response.iter_sse()
+            first, second = next(events), next(events)
+    assert first.event == "tick"
 ```
+
+`AsyncTestClient` offers the same with `async with client.stream(...)` and
+`aiter_sse()`. See the [Testing guide](testing.md#streaming-responses).
 
 ## Best practices
 

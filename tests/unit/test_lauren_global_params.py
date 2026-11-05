@@ -382,14 +382,28 @@ class TestLaurenFactoryParity:
         with pytest.raises(LifecycleViolationError):
             app.mount("/late", lambda scope, receive, send: None)
 
-    def test_debug_flag_warns_that_it_is_reserved(self, caplog):
+    def test_debug_flag_is_forwarded_to_the_factory(self, caplog):
         import logging
 
+        app = Lauren(debug=True, openapi_url=None, docs_url=None, redoc_url=None)
         with caplog.at_level(logging.WARNING, logger="lauren"):
-            app = Lauren(debug=True)
+            _compiled(app)
 
         assert app.debug is True
-        assert any("no effect yet" in r.getMessage() for r in caplog.records)
+        assert any("Debug error pages enabled" in r.getMessage() for r in caplog.records)
+
+    def test_problem_type_base_reaches_the_compiled_app(self):
+        app = Lauren(
+            error_format="rfc9457",
+            problem_type_base="https://errors.example.com/",
+            openapi_url=None,
+            docs_url=None,
+            redoc_url=None,
+        )
+
+        r = TestClient(app).get("/missing")
+
+        assert r.json()["type"] == "https://errors.example.com/route_not_found"
 
     def test_interceptors_and_encoder_on_app_routes_survive_the_wrap(self):
         from lauren import StdlibJSONEncoder, use_encoder, use_interceptors

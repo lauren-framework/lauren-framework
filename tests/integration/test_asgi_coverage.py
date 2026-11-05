@@ -52,6 +52,17 @@ class TestCoerceToResponse:
         result = _coerce_to_response(({"id": 1}, 202, {"X-Custom": "val"}))
         assert result.status == 202
 
+    def test_named_tuple_is_a_value_not_a_status_pair(self):
+        """A NamedTuple of two ints is serialized, not read as (body, status)."""
+        from typing import NamedTuple
+
+        class Pair(NamedTuple):
+            left: int
+            right: int
+
+        result = _coerce_to_response(Pair(1, 2))
+        assert (result.status, result.body) == (200, b"[1,2]")
+
     def test_none_returns_204(self):
         result = _coerce_to_response(None)
         assert result.status == 204

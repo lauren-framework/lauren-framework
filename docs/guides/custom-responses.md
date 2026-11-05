@@ -4,6 +4,15 @@ Lauren's `Response` class is designed to be subclassed.  Any `Response` subclass
 returned from a handler is passed through the dispatch pipeline unchanged — no
 JSON coercion, no content negotiation, no extra wrapping.
 
+!!! tip "Declaring a status or an output shape?"
+    To send a 201 with a `Location` header, or to keep internal fields off the
+    wire, you do not need a hand-built `Response`: use `status_code=`, a typed
+    result such as `Created(user, location=...)` and `response_validation="filter"`
+    — see [Response Contracts](response-contracts.md). Returning a `Response`
+    opts the route out of its response contract, and `Response.json(...)` /
+    `Response.created(...)` serialize with the process-wide default encoder,
+    not the app's `json_encoder` (typed results use the route's encoder).
+
 ## Why subclass?
 
 Subclassing `Response` lets you:

@@ -58,6 +58,9 @@ pydantic = [
 msgspec = [
     "msgspec>=0.18",
 ]
+yaml = [
+    "pyyaml>=6.0",
+]
 full = [
     "pydantic>=2.0",
     "msgspec>=0.18",

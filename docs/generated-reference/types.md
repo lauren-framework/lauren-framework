@@ -7,7 +7,7 @@ Core request/response types and state containers.
 ### `Request`
 
 ```python
-class Request(method: str, path: str, raw_query_string: bytes = b'', headers: Headers | None = None, path_params: dict[str, str] | None = None, client: ClientInfo | None = None, server: ServerInfo | None = None, receive: Callable[[], Awaitable[dict[str, Any]]] | None = None, app_state: AppState | None = None, max_body_size: int = 1048576)
+class Request(method: str, path: str, raw_query_string: bytes = b'', headers: Headers | None = None, path_params: dict[str, str] | None = None, client: ClientInfo | None = None, server: ServerInfo | None = None, receive: Callable[[], Awaitable[dict[str, Any]]] | None = None, app_state: AppState | None = None, max_body_size: int = 1048576, extensions: dict[str, Any] | None = None)
 ```
 
 Incoming HTTP request.
@@ -25,7 +25,7 @@ persist. Copy anything you need to keep.
 #### `Request.reset`
 
 ```python
-def reset(self, method: str, path: str, raw_query_string: bytes, headers: Headers, client: ClientInfo, server: ServerInfo, receive: Callable[[], Awaitable[dict[str, Any]]], app_state: AppState, max_body_size: int) -> None
+def reset(self, method: str, path: str, raw_query_string: bytes, headers: Headers, client: ClientInfo, server: ServerInfo, receive: Callable[[], Awaitable[dict[str, Any]]], app_state: AppState, max_body_size: int, extensions: dict[str, Any] | None = None) -> None
 ```
 
 Re-initialise this :class:`Request` in place for reuse.

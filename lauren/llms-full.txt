@@ -15,37 +15,47 @@ common mistakes.
 4. [Decorators](#decorators)
 5. [Types (Request / Response / State / Headers)](#types-request--response--state--headers)
 6. [Extractors](#extractors)
-7. [Pipes](#pipes)
-8. [Custom Extractors (plugin API)](#custom-extractors-plugin-api)
-9. [Dependency Injection](#dependency-injection)
-10. [Custom Providers](#custom-providers)
-11. [Modules](#modules)
-12. [Guards & Middleware](#guards--middleware)
-13. [Interceptors](#interceptors)
-14. [Exception Handlers](#exception-handlers)
-15. [`@propagate_metadata` — copy Lauren decorator metadata between objects](#propagate_metadata--copy-lauren-decorator-metadata-between-objects)
-16. [Auto-Serialization](#auto-serialization)
-17. [Sync vs Async Handlers](#sync-vs-async-handlers)
-18. [Background Tasks](#background-tasks)
-19. [Error Catalog](#error-catalog)
-20. [Testing](#testing)
-21. [Strict Decorator Inheritance](#strict-decorator-inheritance)
-22. [OpenAPI 3.1 Generation](#openapi-31-generation)
-23. [Logging](#logging)
-24. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
-25. [WebSockets](#websockets)
-26. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
-27. [Typed Streaming](#typed-streaming)
-28. [Socket.IO Compatibility](#socketio-compatibility)
-29. [Sessions](#sessions)
-30. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
-31. [Static Files](#static-files)
-32. [Request Arena](#request-arena)
-33. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
-34. [AI Documentation Access](#ai-documentation-access)
-35. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-36. [Companion Packages](#companion-packages)
-37. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
+7. [Validation](#validation)
+8. [Pipes](#pipes)
+9. [Custom Extractors (plugin API)](#custom-extractors-plugin-api)
+10. [Dependency Injection](#dependency-injection)
+11. [Custom Providers](#custom-providers)
+12. [Modules](#modules)
+13. [Guards & Middleware](#guards--middleware)
+14. [Interceptors](#interceptors)
+15. [Exception Handlers](#exception-handlers)
+16. [`@propagate_metadata` — copy Lauren decorator metadata between objects](#propagate_metadata--copy-lauren-decorator-metadata-between-objects)
+17. [Auto-Serialization](#auto-serialization)
+18. [Response Contracts](#response-contracts)
+19. [Pagination](#pagination)
+20. [Sync vs Async Handlers](#sync-vs-async-handlers)
+21. [Background Tasks](#background-tasks)
+22. [Hosted Services & Scheduling](#hosted-services--scheduling)
+23. [Standalone Context & Commands](#standalone-context--commands)
+24. [Error Catalog](#error-catalog)
+25. [Debug Error Pages](#debug-error-pages)
+26. [Testing](#testing)
+27. [Strict Decorator Inheritance](#strict-decorator-inheritance)
+28. [OpenAPI 3.1 Generation](#openapi-31-generation)
+29. [Logging](#logging)
+30. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
+31. [Health & Readiness](#health--readiness)
+32. [Application Events](#application-events)
+33. [WebSockets](#websockets)
+34. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
+35. [Typed Streaming](#typed-streaming)
+36. [Socket.IO Compatibility](#socketio-compatibility)
+37. [Sessions](#sessions)
+38. [Stores & Caching](#stores--caching)
+39. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
+40. [Configuration](#configuration)
+41. [Static Files](#static-files)
+42. [Request Arena](#request-arena)
+43. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+44. [AI Documentation Access](#ai-documentation-access)
+45. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+46. [Companion Packages](#companion-packages)
+47. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -85,10 +95,9 @@ class UserController:
     async def get_user(self, id: Path[int]) -> dict:
         return {"id": id, "found": True}
 
-    @post("/")
-    async def create(self, body: Json[CreateUser]):
-        # tuple form: (body, status); lauren builds the 201 Response.
-        return body.model_dump(), 201
+    @post("/", status_code=201)      # the declared success status (documented in OpenAPI)
+    async def create(self, body: Json[CreateUser]) -> dict:
+        return body.model_dump()
 
 @module(controllers=[UserController])
 class AppModule:
@@ -110,17 +119,17 @@ assert client.post("/users/", json={"name": "Ada", "age": 36}).status_code == 20
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, problem_type_base=None, debug=False, lazy_startup=True, hosted_services=True, scheduler=True, validation=None, strict_request_scope=False, response_validation="off", json_fallback="warn", pagination=None)`
 
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
 1. **Module graph construction** — walk `@module(imports=[...])` edges, detect cycles.
-2. **Provider collection** — gather every `@injectable` from the graph.
+2. **Provider collection** — gather every `@injectable` from the graph; then (Phase 2b) load and validate every `ConfigModule` settings class, raising one `ConfigValidationError` for all problems (see [Configuration](#configuration)).
 3. **Protocol binding** — resolve `provides=[Protocol]` declarations.
 4. **DI graph compilation** — detect circular deps, scope violations, protocol ambiguities.
-5. **Router compilation** — walk controllers, compile handler signatures into extraction plans, insert into the radix tree.
-6. **Lifecycle order computation** — build the topological `@post_construct` / `@pre_destruct` schedule.
-7. **Readiness** — build the `LaurenApp` object. `startup()` (singleton construction, `@post_construct` hooks, `StartupComplete`) runs on the ASGI lifespan `startup` event. When you drive the app without lifespan support — e.g. `httpx.ASGITransport` — call `await app.startup()` yourself; `lauren.testing.TestClient` does it for you.
+5. **Router compilation** — walk controllers, compile handler signatures into extraction plans (every path / query / header / cookie / body / form / stream parameter and WebSocket payload type is compiled into a validator by the app's type compiler — see [Validation](#validation)), insert into the radix tree. Each route's declared responses (`status_code=`, typed results such as `Created[T]`, `Annotated[T, Status(206)]`, `response_model=`) are read here — contradictions raise `DecoratorUsageError` — and routes that enforce a response contract get their projector compiled (see [Response Contracts](#response-contracts)).
+6. **Lifecycle order computation** — build the topological `@post_construct` / `@pre_destruct` schedule. Just before it (Phase 6a) one discovery pass indexes provider methods and classes carrying feature markers; hosted services and scheduled jobs are validated there (singleton scope, unique names, `ScheduleModule` imported — see [Hosted Services & Scheduling](#hosted-services--scheduling)).
+7. **Readiness** — build the `LaurenApp` object. `startup()` (singleton construction, `@post_construct` hooks, `StartupComplete`) runs on the ASGI lifespan `startup` event. When the driver sends no lifespan events — e.g. `httpx.ASGITransport` — the app starts itself on its first HTTP or WebSocket request (once, behind a single-flight latch, with a logged warning) unless built with `lazy_startup=False`; `lauren.testing.TestClient` starts it explicitly.
 
 Failures in phases 1–6 raise a `StartupError` subclass immediately — the app never begins serving traffic with an invalid graph.
 
@@ -150,11 +159,23 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `arena_capacity` | `int` | `None` | Override arena pool capacity |
 | `json_encoder` | `JSONEncoder` | `None` | Encoder for all JSON output (responses, errors, SSE, WS) |
 | `signals` | `SignalBus` | `None` | Shared signal bus for lifecycle events |
-| `error_format` | `str` | `"default"` | Error response format (`"default"` or `"rfc7807"`) |
+| `error_format` | `str` | `"default"` | Error response format: `"default"`, `"rfc9457"` (RFC 9457 problem details) or `"rfc7807"` (legacy problem details) — see [Error Catalog](#error-catalog) |
 | `root_path` | `str` | `""` | ASGI root path for reverse proxy prefix stripping |
 | `mounts` | `dict[str, Any]` | `None` | Sub-applications mounted at path prefixes |
 | `sessions` | `SessionConfig` | `None` | Enable signed-cookie sessions (see [Sessions](#sessions)) |
 | `content` | `ContentConfig` | `None` | Request-body content policy: `ContentConfig(strict_content_type=None \| False \| "warn" \| True)` (see [Content-type policy](#content-type-policy-contentconfig)) |
+| `problem_type_base` | `str` | `None` | Problem-details `type` prefix: `type = base + code` for errors without a `problem_type` (`StartupError` if not a non-empty string) |
+| `debug` | `bool \| DebugConfig` | `False` | Development error pages for unhandled errors (see [Debug Error Pages](#debug-error-pages)); never enabled implicitly |
+| `lazy_startup` | `bool` | `True` | Run `startup()` on the first HTTP / WebSocket request when the ASGI server never sent lifespan events (logs a warning); `False` keeps such an app cold until `await app.startup()` |
+| `hosted_services` | `bool` | `True` | `False` discovers and validates `@hosted_service` classes but does not start them (tests, one-off commands) |
+| `scheduler` | `bool` | `True` | `False` keeps scheduled jobs discovered and validated (and `SchedulerRegistry.trigger` working) but fires nothing |
+| `validation` | `ValidationPolicy` | `None` | Validation policy: `ValidationPolicy(stdlib_models="warn", json_mode="lax", extra="ignore", include_input=None, max_issues=50)` (see [Validation](#validation); `StartupError` with `reason="invalid_validation_policy"` for anything else) |
+| `strict_request_scope` | `bool` | `False` | `True` makes resolving a `Scope.REQUEST` provider outside any request, WebSocket connection or `app.scope()` raise `DIScopeViolationError` (`reason="no_active_scope"`); the default falls back to an untracked transient and logs a warning once per provider (see [Operation scopes](#operation-scopes-appscope)) |
+| `response_validation` | `str` | `"off"` | Default response contract of every route: `"off"`, `"filter"` (undeclared fields never leave) or `"strict"` (also validates) — see [Response Contracts](#response-contracts); `StartupError` with `reason="invalid_response_validation"` for anything else |
+| `json_fallback` | `str` | `"warn"` | What encoders do with an object no rule covers: `"dict"` (public attributes), `"warn"` (same, logged once per type) or `"error"` (500) — see [Response Contracts](#response-contracts); `StartupError` with `reason="invalid_json_fallback"` |
+| `pagination` | `PaginationConfig` | `None` | App-wide paging defaults, maxima, parameter names, page envelope and cursor secret (see [Pagination](#pagination); `StartupError` with `reason="invalid_pagination_config"` / `"pagination_secret_missing"`) |
+
+`LaurenFactory.create_context(root_module, *, hosted_services=False, scheduler=False, drain_timeout=10.0, **create_kwargs)` builds the same app and wraps it in an `ApplicationContext` — the DI graph and lifecycle without HTTP, for scripts, commands and workers (see [Standalone Context & Commands](#standalone-context--commands)).
 
 ### `Lauren` (imperative API)
 
@@ -176,9 +197,9 @@ app = Lauren()
 async def health() -> dict:
     return {"status": "ok"}
 
-@app.post("/users")
-async def create_user(body: Json[CreateUser]) -> tuple[dict, int]:
-    return asdict(body), 201
+@app.post("/users", status_code=201)
+async def create_user(body: Json[CreateUser]) -> dict:
+    return asdict(body)
 
 # `app` itself is the ASGI callable (`uvicorn main:app`); it compiles lazily.
 client = TestClient(app)
@@ -189,14 +210,20 @@ assert client.post("/users", json={"name": "ada"}).status_code == 201
 under friendlier names (`title` / `version` / `description` → `openapi_info`,
 `servers` → `openapi_servers`, `security_schemes` →
 `openapi_security_schemes`) — and differs in defaults: `/docs`, `/redoc` and
-`/openapi.json` are enabled. `debug` is reserved and has no effect yet (passing
-`True` logs a warning). It internally creates a root module from the registered
-routes and modules. Mutators — `include_module`, `add_middleware`,
+`/openapi.json` are enabled. `debug=True` (or a `DebugConfig`) is forwarded to
+the factory when the app compiles — see [Debug Error Pages](#debug-error-pages);
+`app.debug` reports whether it is on. It internally creates a root module from
+the registered routes and modules. Mutators — `include_module`, `add_middleware`,
 `add_guard`, `add_interceptor`, `add_exception_handler`, `add_provider`,
 `mount(path, asgi_app)` and the route decorators — must run before the app
 compiles (first request or `await app.startup()`); afterwards they raise
-`LifecycleViolationError`. `on_startup` hooks run when the app compiles, before
-singletons are built (so before `@post_construct`).
+`LifecycleViolationError`. `on_startup` hooks run inside `LaurenApp.startup()`
+(the ASGI lifespan, `TestClient`, an `ApplicationContext`) after every
+`@post_construct` hook and before hosted services start or a request is
+served; a failing hook raises `StartupError` (`detail={"handler": name}`).
+`await app.startup()` on a `Lauren` app only compiles it. `app.lifecycle_state` and
+`app.begin_draining()` forward to the compiled `LaurenApp` (`CREATED` / `False`
+before it compiles).
 
 ### `LaurenApp`
 
@@ -207,10 +234,18 @@ Attributes & methods:
 - `app.app_state: AppState` — sealed, read-only app-level state.
 - `app.routes()` — list of `RouteEntry` objects.
 - `app.openapi()` — OpenAPI 3.1 schema dict.
-- `await app.startup()` — builds singletons and runs `@post_construct` hooks. Invoked by the ASGI lifespan protocol (uvicorn, hypercorn); call it yourself when there is no lifespan (e.g. `httpx.ASGITransport`) — `TestClient` does. A second call raises `LifecycleViolationError` unless the app was built with `strict_lifecycle=False`.
-- `await app.shutdown(drain_timeout=10.0)` — runs `@pre_destruct` hooks, awaits in-flight requests.
+- `await app.startup()` — builds singletons, runs `@post_construct` hooks, starts hosted services and arms the scheduler (jobs fire after `StartupComplete`). Invoked by the ASGI lifespan protocol (uvicorn, hypercorn), by `TestClient`, or — for drivers without lifespan events such as `httpx.ASGITransport` — lazily by the first request (`lazy_startup=True`, the default). A second call raises `LifecycleViolationError` unless the app was built with `strict_lifecycle=False`.
+- `await app.shutdown(drain_timeout=10.0)` — stops the scheduler firing, awaits in-flight requests and job runs, stops hosted services (reverse start order), awaits running `@on_event` handler tasks, runs `on_shutdown` callbacks, then `@pre_destruct` hooks.
+- `app.lifecycle_state: AppLifecycleState` — `CREATED` → `STARTING` → `READY` → `DRAINING` → `STOPPED`, or `FAILED` when `startup()` raised (until it is retried; see [Lifecycle state](#lifecycle-state)).
+- `app.begin_draining(*, reason="") -> bool` — `READY → DRAINING`: readiness fails while requests are still served. Synchronous, idempotent; `True` only when it changed the state.
 - `await app(scope, receive, send)` — standard ASGI callable (HTTP + lifespan).
 - `app.mount(path, app)` — mount a sub-ASGI application at a path prefix.
+- `app.scope(name="operation", *, values=None)` — open an `OperationScope` for request-scoped providers outside a request (see [Operation scopes](#operation-scopes-appscope)).
+- `app.type_compiler: TypeCompiler` — the type compiler `create()` used; `app.type_compiler.compile(T)` gives services the HTTP layer's validation (see [Validation](#validation)).
+- `app.validation_policy: ValidationPolicy` — the app's validation policy.
+- `app.context(*, hosted_services=False, scheduler=False, drain_timeout=10.0)` — wrap the built, not yet started app in an `ApplicationContext` (see [Standalone Context & Commands](#standalone-context--commands)).
+- `app.response_validation: str` — the default response contract (`"off"` / `"filter"` / `"strict"`).
+- `app.json_fallback: str` — the `json_fallback` policy (`"dict"` / `"warn"` / `"error"`).
 
 ### Mounting Sub-Applications
 
@@ -307,10 +342,19 @@ class UserController:
 
 ### Route decorators
 
-- `@get(path="", *, summary=None, description=None, response_model=None, responses=None, deprecated=False, operation_id=None, include_in_schema=True, tags=None)`
+- `@get(path="", *, summary=None, description=None, response_model=None, responses=None, deprecated=False, operation_id=None, include_in_schema=True, tags=None, status_code=None, response_validation=None, response_headers=None)`
 - `@post(...)`, `@put(...)`, `@patch(...)`, `@delete(...)`, `@head(...)`, `@options(...)`
 
 Each decorator attaches a `RouteMeta` to the method. Multiple route decorators on the same method register multiple routes.
+
+- `status_code` — the declared success status (int, 100–599): plain return values are sent with it, `None` sends it with an empty body, and OpenAPI documents it.
+- `response_validation` — `"off"` / `"filter"` / `"strict"` for this route; `None` follows the app's `response_validation=` (see [Response Contracts](#response-contracts)).
+- `response_headers` — documentation-only success-response headers: `{"Location": "URL of the user"}` (a description or an OpenAPI Header Object dict).
+- `response_model` — the declared body type (any model kind, or a container of them); it wins over the return annotation for OpenAPI and for the response contract.
+
+Invalid option values fail at decoration time with `DecoratorUsageError`
+(`detail = {"decorator", "target", "option", "reason"}`, e.g. `reason="invalid_status_code"`).
+`@raises(*http_errors, description=None)` declares the `HTTPError` subclasses a route (or, on a class, every route of the controller) raises — see [Response Contracts](#response-contracts).
 
 ```python run
 @controller("/p")
@@ -335,7 +379,7 @@ class Db:
     async def disconnect(self) -> None: ...
 ```
 
-- `@post_construct` — runs after DI construction, in topological order (deps first). Singletons are built and their hooks run in `LaurenApp.startup()` (the ASGI lifespan `startup` event), not in `LaurenFactory.create`. A sync hook runs inline on the event loop and there is no timeout. Declare at most one `@post_construct` and one `@pre_destruct` per class — only the first found is honoured.
+- `@post_construct` — runs after DI construction, in topological order (deps first). Singletons are built and their hooks run in `LaurenApp.startup()` (the ASGI lifespan `startup` event), not in `LaurenFactory.create`. A sync hook runs inline on the event loop and there is no timeout. A class may declare several hooks of each kind and all of them run: `@post_construct` base class first, then definition order; `@pre_destruct` subclass first, then definition order. An override without the decorator is no longer a hook.
 - `@pre_destruct` — runs at shutdown in reverse-topological order, with a per-hook timeout (default 10 s). Both sync and async hooks are supported:
   - **Async hooks** are cancelled via `asyncio.wait_for` if they exceed the timeout.
   - **Sync hooks** run in a thread pool via `asyncio.to_thread` — they never block the event loop and receive the same timeout protection as async hooks. A sync hook that never returns is cancelled at the timeout boundary.
@@ -368,7 +412,7 @@ class B: ...
 
 ### `Request`
 
-Properties: `method`, `path`, `url`, `path_params`, `query_params`, `headers`, `cookies`, `client`, `server`, `state`, `app_state`.
+Properties: `method`, `path`, `url`, `path_params`, `query_params`, `headers`, `cookies`, `client`, `server`, `state`, `app_state`, `extensions` (the ASGI `scope["extensions"]`, read-only; empty when the server sent none).
 
 Body methods (async): `await request.body() -> bytes`, `await request.text()`, `await request.json()`, `await request.form()`, `request.stream()`.
 
@@ -468,7 +512,7 @@ Extractors convert request data into typed Python values. Built-in:
 | `Query[T]` | query string | no |
 | `Header[T]` | request header | no |
 | `Cookie[T]` | cookie | no |
-| `Json[T]` | JSON body, validated | yes |
+| `Json[T]` | JSON body, validated (see [Validation](#validation)) | yes |
 | `Json[Discriminated[A \| B, "key"]]` | discriminated union body | yes |
 | `Form[T]` | form-urlencoded body | yes |
 | `Bytes` | raw body bytes (buffered) | yes |
@@ -504,6 +548,13 @@ async def search(
 ```
 
 Supported constraints: `ge`, `le`, `gt`, `lt`, `min_length`, `max_length`, `pattern`, `alias`, `default`.
+They are lowered onto the validation engine's checks, so a violation is a
+`less_than_equal` / `string_too_short` / … issue (see [Validation](#validation)).
+As before, length and pattern checks apply to strings and numeric bounds to
+numbers; one that cannot apply is dropped with a startup warning
+(`UnresolvableParameterError` under `ValidationPolicy(stdlib_models="enforce")`).
+Constraint markers work on parameters too:
+`q: Query[str, MinLen(2)]`, `size: Annotated[int, Le(100)] = 10`.
 
 ### JSON body with Pydantic
 
@@ -512,12 +563,16 @@ class CreatePost(BaseModel):
     title: str
     body: str
 
-@post("/posts")
-async def create(self, body: Json[CreatePost]) -> tuple[dict, int]:
-    return body.model_dump(), 201
+@post("/posts", status_code=201)
+async def create(self, body: Json[CreatePost]) -> dict:
+    return body.model_dump()
 ```
 
-Validation errors are raised as `ExtractorError` and mapped to HTTP 422.
+Validation errors are raised as `ExtractorError` and mapped to HTTP 422. Every
+422 carries `detail["issues"]` — a list of `{"loc", "type", "msg", "ctx"?}`
+(pydantic errors translated field for field, `url` dropped) — next to the 1.x
+`detail.field` / `detail.errors` keys, and all failing parameters of a request
+are reported in one response (see [Validation](#validation)).
 
 ### Discriminated union body
 
@@ -547,9 +602,13 @@ async def create(body: Json[Animal]) -> dict:
     return {"type": type(body).__name__, "name": body.name}
 ```
 
-- **Missing discriminator field** → `422` with message `"missing discriminator field 'kind'"`
-- **Unknown tag value** → `422` with message `"unknown discriminator value 'fish'"`
-- **Non-dict payload** → `422` with message `"expected a JSON object"`
+- **Missing discriminator field** → `422`, issue `union_tag_not_found` (1.x
+  `detail.errors` text: `"missing discriminator field 'kind'"`)
+- **Unknown tag value** → `422`, issue `union_tag_invalid`
+  (`"unknown discriminator value 'fish'"`)
+- **Non-dict payload** → `422`, issue `model_type` (`"expected a JSON object"`)
+- **Invalid variant fields** → the variant's issues, nested under the tag:
+  `["body", "cat", "lives"]`
 - **OpenAPI output**: `oneOf` array + `discriminator.propertyName` + `discriminator.mapping`
 
 Auto-promotion: a bare `body: Animal` parameter (no `Json[…]`) is also
@@ -571,10 +630,9 @@ async def ingest(self, stream: ByteStream) -> dict:
     return {"bytes_received": total}
 ```
 
-The body is bounded by `max_body_size` (default 1 MB). An oversize
-`ByteStream` raises `RequestBodyTooLarge` (413). For `Json[T]` and `Bytes`
-parameters the extractor currently wraps the overflow, so the client sees a
-422 `extractor_error` instead.
+The body is bounded by `max_body_size` (default 1 MB). An oversize body raises
+`RequestBodyTooLarge` (413) — for `ByteStream`, `Json[T]`, `Bytes` and form
+parameters alike.
 
 ### File uploads
 
@@ -593,6 +651,220 @@ async def upload(self, file: UploadFile) -> dict:
 provides `.filename`, `.content_type`, `.headers`, `.name` (the form field),
 `.size`, `async .read()` and `.read_sync()`. There is no `.file` handle and no
 `.write()`; spool to disk yourself if you need to.
+
+---
+
+## Validation
+
+Lauren validates request data natively — no pydantic needed. Dataclasses
+(nested, defaults, `default_factory`, `__post_init__`, `InitVar`, frozen),
+`TypedDict` (`total`, `Required` / `NotRequired`), `NamedTuple`, `Enum`,
+`Literal`, `int` / `float` / `bool` / `str` / `bytes` / `complex`, `Decimal`,
+`UUID`, `datetime` / `date` / `time` / `timedelta`, paths, `list` / `tuple` /
+`set` / `frozenset` / `dict`, `X | None`, unions, `Discriminated[...]`,
+recursive types and `Any` are compiled into validators at startup by the app's
+`TypeCompiler`. Pydantic models (and pydantic dataclasses /
+`Field(discriminator=)` unions) are validated by pydantic, `msgspec.Struct` by
+msgspec — chosen per type at compile time, so a dataclass validates the same
+whether or not pydantic is installed, over HTTP, WebSocket frames and
+`Stream[T]` items. Public names live in `lauren.validation`; `ValidationPolicy`,
+`ValidationIssue` and `validation_config` are also exported from `lauren`.
+
+```python run
+from dataclasses import dataclass, field
+from typing import Annotated
+
+from lauren import Json, LaurenFactory, Query, QueryField, controller, get, module, post
+from lauren.testing import TestClient
+from lauren.validation import Ge, Le, MaxLen, Pattern, ValidationPolicy, validation_config
+
+
+@dataclass
+class Address:
+    city: Annotated[str, MaxLen(80)]
+    zip: Annotated[str, Pattern(r"^\d{5}$")]
+
+
+@validation_config(extra="forbid")
+@dataclass
+class CreateUser:
+    email: Annotated[str, Pattern(r"^[^@\s]+@[^@\s]+$"), MaxLen(254)]
+    age: Annotated[int, Ge(13), Le(130)]
+    tags: Annotated[list[str], MaxLen(10)] = field(default_factory=list)
+    address: Address | None = None
+
+    def __post_init__(self) -> None:          # invariants → a value_error issue
+        if "admin" in self.tags:
+            raise ValueError("tag 'admin' is reserved")
+
+
+@controller("/users")
+class UserController:
+    @post("/")
+    async def create(self, body: Json[CreateUser]) -> dict:
+        return {"age": body.age, "city": body.address.city if body.address else None}
+
+    @get("/")
+    async def search(self, page: int, size: int = QueryField(default=10, le=100)) -> dict:
+        return {"page": page, "size": size}
+
+
+@module(controllers=[UserController])
+class UsersAppModule:
+    pass
+
+
+client = TestClient(LaurenFactory.create(UsersAppModule, validation=ValidationPolicy(stdlib_models="enforce")))
+
+ok = client.post("/users/", json={"email": "a@b.co", "age": "30", "address": {"city": "Lyon", "zip": "69001"}})
+assert ok.json() == {"age": 30, "city": "Lyon"}     # "30" coerced; address is an Address
+
+bad = client.get("/users/?page=abc&size=1000").json()["error"]
+assert bad["code"] == "extractor_error" and bad["message"] == "2 validation errors"
+assert bad["detail"]["issues"] == [
+    {"loc": ["query", "page"], "type": "int_parsing",
+     "msg": "Input should be a valid integer, unable to parse string as an integer"},
+    {"loc": ["query", "size"], "type": "less_than_equal",
+     "msg": "Input should be less than or equal to 100", "ctx": {"le": 100}},
+]
+assert bad["detail"]["field"] == "page"              # 1.x keys kept until 2.0
+```
+
+### Coercion
+
+Path / query / header / cookie / urlencoded-form values are strings and are
+always parsed laxly. JSON bodies, WebSocket frames and stream items follow
+`ValidationPolicy(json_mode="lax" | "strict")`; `Strict()` on a field or
+`@validation_config(strict=True)` on a model forces strict.
+
+* `int`: lax accepts `"12"` and `12.0` (not `True`, not `"12.0"`); strict only `int`.
+* `float`: `int` / `float`; lax adds numeric strings. `bool`: lax accepts
+  `true/false/1/0/yes/no/on/off` (any case) and `0` / `1`; **`"maybe"` is
+  `bool_parsing`**.
+* `Decimal`, `UUID` (strict: canonical form), `datetime` / `date` / `time`
+  (ISO 8601 only — no Unix timestamps), `timedelta` (ISO 8601 duration; lax
+  also seconds), `bytes` (UTF-8 `str`), `Enum` (member value; lax also its
+  string form), `Literal` (exact; lax also the string form of `int` / `bool`).
+* Collections from JSON arrays; from the query string or a form they read
+  **repeated keys** (`?tag=a&tag=b`). `Path[list[int]]` / `Header[list[str]]`
+  split one value on commas.
+* `X | None`: an empty query/form value (`?n=`) is `None` when `X` is not `str`.
+* Unions: JSON values match an exact type first, then members strictly, then
+  laxly; query values try members laxly left to right (`int | str` reads
+  `"5"` as `5`). Failing members report their issues under the member name.
+* Models: `missing`, `extra_forbidden` (with `extra="forbid"`), `model_type`;
+  a dataclass is built by calling it, so `__post_init__` runs — a
+  `ValueError` / `TypeError` / `AssertionError` becomes `value_error` at the
+  model's `loc`. Query and form models (`Query[Filters]`, `Form[Signup]`) read
+  one key per field.
+
+### Constraints and per-type settings
+
+Markers in `Annotated` metadata (model fields and parameters): `Ge(n)`, `Gt(n)`,
+`Le(n)`, `Lt(n)`, `MultipleOf(n)` (numbers), `MinLen(n)`, `MaxLen(n)` (strings,
+bytes, collections, mappings), `Pattern(regex)` (strings, `re.search`),
+`Strict()`, `Alias("wireName")`. Any metadata exposing the annotated-types
+attribute names (`ge`, `le`, `min_length`, `pattern`, …) works, e.g.
+`annotated_types.Len(1, 10)`.
+
+`@validation_config(extra="ignore" | "forbid", strict=None, rename=None | "camel")`
+attaches `__lauren_validation__` to a dataclass / TypedDict / NamedTuple and
+returns it unchanged; it is not inherited (re-decorate subclasses), stacking
+merges, and bare `@validation_config` raises `DecoratorUsageError`.
+`rename="camel"` maps `first_name` ↔ `firstName`; an `Alias` wins.
+
+Startup checks raise `UnresolvableParameterError` with `detail = {"class",
+"handler", "param", "type", "reason", "field"?}` and `reason` in
+`"unsupported_type"` | `"bad_constraint"` | `"bad_pattern"`: a constraint that
+does not apply (`Ge` on `str`), an invalid regex, `MinLen > MaxLen`, an unknown
+field type. Outside `stdlib_models="enforce"` an unknown field type is a startup
+warning and that parameter keeps the 1.x behaviour.
+
+### The 422 payload
+
+`ExtractorError` / `ExtractorFieldError` carry `issues` (a tuple of
+`ValidationIssue`) and `detail["issues"]`: dicts `{"loc", "type", "msg",
+"ctx"?, "input"?}`. `loc` roots: `["path", name]`, `["query", name]`,
+`["header", name]`, `["cookie", name]`, `["body", ...]`, `["form", ...]`,
+`["frame", "data", ...]` (WebSocket), `["item", n, ...]` (`Stream[T]`). `input`
+is echoed only with `debug=True` or `ValidationPolicy(include_input=True)`.
+
+* Every failing parameter of a request is collected into one 422 (capped by
+  `max_issues`, default 50). Several failures → `code="extractor_error"`,
+  `message="N validation errors"`. A single failing parameter keeps its 1.x
+  code (`extractor_field_error` for path / query / header / cookie), message
+  and `detail` keys, with `issues` added.
+* Non-validation errors still short-circuit (a custom extractor's
+  `UnauthorizedError` → 401, `RequestBodyTooLarge` → 413). A pipe failure is
+  a `value_error` issue at the parameter's `loc`.
+* `detail.field` and `detail.errors` (`"loc: msg"` strings) are kept until 2.0
+  — read `detail.issues`. `error_format="rfc9457"` turns the issues into the
+  problem `errors` array; `"rfc7807"` carries them as `errors.issues`.
+* Build the same shape yourself with `ExtractorError.from_issues(issues, *,
+  field=None, message=None, include_input=False, detail=None)` or
+  `WebSocketValidationError.from_issues(issues, *, event=None, errors=None,
+  message="validation error", include_input=False)`.
+* msgspec messages (``Expected `int`, got `str` - at `$.age` ``) are parsed for
+  the path and expected type (unknown ones → `value_error` with the original
+  text). A `msgspec.Struct` body is decoded and validated in one
+  `msgspec.json.decode` call.
+
+### `ValidationPolicy`
+
+`ValidationPolicy(*, stdlib_models="warn", json_mode="lax", extra="ignore",
+include_input=None, max_issues=50)` — a frozen dataclass passed as
+`LaurenFactory.create(validation=...)` / `Lauren(validation=...)`; invalid
+values raise `StartupError(reason="invalid_validation_policy")`.
+
+| `stdlib_models` | Dataclass / TypedDict / NamedTuple bodies, query & form models, typed scalars |
+|---|---|
+| `"legacy"` | the shallow 1.x behaviour (escape hatch) |
+| `"warn"` (1.x default) | the native validator runs; a would-be rejection logs one warning per (route, issue type) — never the input — and the request continues with the 1.x value |
+| `"enforce"` (2.0 default) | native results (real nested instances, `UUID` path params, `?on=maybe` → 422, `?n=` → `None` for `int \| None`) and 422s |
+
+Pydantic and msgspec types, and any type using validation markers /
+`@validation_config`, are validated natively in every mode. Under `"warn"` a
+dataclass body's `__post_init__` may run twice per request.
+
+### Programmatic use
+
+```python run
+from dataclasses import dataclass
+
+from lauren.validation import TypeCompiler, ValidationFailed, validate
+
+
+@dataclass
+class Job:
+    name: str
+    retries: int = 3
+
+
+job_type = TypeCompiler().compile(Job)       # app.type_compiler inside an app
+assert job_type.validate({"name": "sync", "retries": "5"}) == Job("sync", 5)
+assert job_type.project(Job("sync", 5)) == {"name": "sync", "retries": 5}
+assert job_type.json_schema()["$defs"]["Job"]["required"] == ["name"]
+try:
+    validate(Job, {"retries": "x"}, mode="lax")  # compiles on every call
+except ValidationFailed as exc:
+    assert [i.type for i in exc.issues] == ["missing", "int_parsing"]
+```
+
+* `TypeCompiler(policy=None)` — per-instance cache (no global state);
+  `.compile(tp, *, mode=None) -> CompiledType` (`mode` "lax" / "strict",
+  default the policy's `json_mode`).
+* `CompiledType.validate(value, *, loc=())` → value or `ValidationFailed`;
+  `.project(value)` → JSON builtins with only the declared fields under their
+  wire names (response filtering; `validate(project(x))` round-trips);
+  `.json_schema(*, dialect="2020-12" | "openapi-3.1", components=None)` →
+  JSON Schema 2020-12 (`$defs`) or an OpenAPI 3.1 schema whose definitions go
+  into `components`; `.explicit` — the type uses validation metadata.
+* `validate(tp, value, *, mode="lax", policy=None)` — one-off convenience.
+* `ValidationFailed(ValueError)` — `.issues: tuple[ValidationIssue, ...]`,
+  `.errors(*, include_input=False) -> list[dict]`.
+* `ValidationIssue(loc, type, msg, input=MISSING, ctx=None)` — frozen;
+  `.to_dict(*, include_input=False)`, `.prefixed(*keys)`; `str(issue)` is
+  `"loc.path: msg"`.
 
 ---
 
@@ -700,7 +972,7 @@ class LegacyUser(ExtractionMarker):
 ### Scopes and their constraints
 
 - `SINGLETON` can depend on `SINGLETON` only (depending on request-scoped raises `DIScopeViolationError` at compile).
-- `REQUEST` can depend on `SINGLETON` or `REQUEST`.
+- `REQUEST` can depend on `SINGLETON` or `REQUEST`. One instance per HTTP request, WebSocket connection or `app.scope()` block.
 - `TRANSIENT` produces a new instance each resolution; can depend on anything.
 
 ### Protocols and multi-bindings
@@ -791,7 +1063,7 @@ async def async_client():               # async generator — awaitable setup/te
 | Scope | Teardown trigger |
 |---|---|
 | `SINGLETON` | `app.shutdown()` / `LifecycleScheduler.run_pre_destruct()` |
-| `REQUEST` | After ASGI response is sent (automatic via `aclose()` protocol) |
+| `REQUEST` | When the HTTP request, WebSocket connection or `app.scope()` block ends (automatic via `aclose()` protocol) |
 | `TRANSIENT` | ❌ Raises `StartupError` — transient instances are not tracked |
 
 Use `try/finally` for guaranteed cleanup even when handlers raise 500 errors.
@@ -807,6 +1079,74 @@ class Settings:
     database_url: str = "sqlite:///:memory:"
     jwt_secret: str = "dev"
 ```
+
+
+### Operation scopes (`app.scope()`)
+
+`app.scope(name="operation", *, values=None) -> OperationScope` opens the request scope without a request, for scripts, scheduled work and other non-HTTP code. Use it as an `async with` block while the app is running (after `await app.startup()`, or inside an `ApplicationContext`, whose `ctx.scope()` is the same); `Lauren()` apps have the same method once compiled (before that it raises `LifecycleViolationError`). Commands run in a scope of their own.
+
+```python run
+import asyncio
+
+from lauren import LaurenFactory, OperationScope, Scope, injectable, module, pre_destruct
+
+
+@injectable(scope=Scope.REQUEST)
+class DbSession:
+    def __init__(self) -> None:
+        self.closed = False
+
+    @pre_destruct
+    async def close(self) -> None:
+        self.closed = True
+
+
+@injectable()
+class Reports:
+    async def nightly(self, db: DbSession) -> str:
+        return "ok"
+
+
+@module(providers=[DbSession, Reports])
+class ReportsModule:
+    pass
+
+
+async def main() -> None:
+    app = LaurenFactory.create(ReportsModule)
+    await app.startup()
+    async with app.scope("nightly-report") as scope:
+        assert isinstance(scope, OperationScope)
+        db = await scope.resolve(DbSession)  # Scope.REQUEST: one instance per scope
+        assert db is await scope.resolve(DbSession)
+        reports = await scope.resolve(Reports)  # singletons: shared as usual
+        assert await reports.nightly(db) == "ok"
+    assert db.closed and scope.teardown_errors == ()  # torn down on exit
+    await app.shutdown()
+
+
+asyncio.run(main())
+```
+
+`OperationScope` members:
+
+- `await scope.resolve(token, *, owning_module=None)` — resolve within the scope. Visibility is global by default; pass a module class to see only what that module can see. Raises `LifecycleViolationError` outside the `async with` block.
+- `scope.name` — the label passed to `app.scope()`; `scope.values` — read-only view of the seeded values; `scope.active` — `True` inside the block.
+- `scope.teardown_errors` — `tuple[DestructError, ...]` collected on exit (empty until then); each has `__cause__` set and `detail` keys `class`, `stage` (`"pre_destruct"` / `"aclose"`), `origin`, `cause`.
+
+Rules:
+
+- `Scope.REQUEST` instances are cached per scope; singletons come from the container; transients are new on every resolution and are not tracked (never torn down).
+- `values={Type: obj}` seeds framework values: `scope.resolve(Type)` returns `obj`, and a provider constructor parameter of that type receives it. Startup validation only accepts such a parameter for registered providers and for context types the framework declares; give your own types a provider or a default.
+- On exit, every request-scoped instance is torn down newest first: `@pre_destruct`, then `aclose()` (generator providers' teardown). HTTP requests and WebSocket connections use the same finaliser. Teardown errors are logged on the `lauren` logger and collected, never raised; an exception from the block propagates unchanged after teardown.
+- Scopes are single-use (entering twice raises `LifecycleViolationError`), do not nest or inherit, and belong to the app's container, so two apps never share instances.
+- Several coroutines of one operation may share a scope; two of them resolving the same request-scoped token for the first time concurrently may each build an instance, exactly as within one HTTP request.
+- **Outside any request or scope**, resolving a `Scope.REQUEST` provider through the container (`await app.container.resolve(DbSession)`) is a leak: by default it falls back to transient behaviour — a new instance per call that is never torn down — and logs a WARN on the `lauren` logger once per provider: *"DbSession is request-scoped but was resolved outside a request or `app.scope()`; it will never be torn down. Use `app.scope()` or enable `strict_request_scope=True`."* With `LaurenFactory.create(..., strict_request_scope=True)` (also `Lauren(strict_request_scope=True)`) the same resolution raises `DIScopeViolationError` with `detail={"token": "DbSession", "reason": "no_active_scope"}`. Requests, WebSocket connections and `app.scope()` blocks are unaffected. Lauren 2.0 makes strict the default. **Rule:** resolve request-scoped providers only inside a request or `app.scope()`.
+
+| Mode | `Scope.REQUEST` provider resolved outside any scope |
+|---|---|
+| default (`strict_request_scope=False`) | new instance per call, never torn down; one WARN per provider and app |
+| `strict_request_scope=True` | `DIScopeViolationError`, `detail={"token": ..., "reason": "no_active_scope"}` |
 
 ---
 
@@ -944,6 +1284,36 @@ Resolution rules:
 ### Guards (`GuardProtocol`)
 
 Guards authorize a request by returning `bool` (or raising an `HTTPError`).
+A falsy return raises `ForbiddenError` (403, `detail={"guard": "<Name>"}`)
+unless the guard class declares `deny_error` — an `HTTPError` subclass, called
+as `deny_error("guard <Name> denied the request", detail={"guard": "<Name>"})`,
+or a zero-argument factory returning an `HTTPError` instance. Authentication
+guards should declare `deny_error = UnauthorizedError` so a denial is a 401.
+`LaurenFactory.create` validates it (`GuardConfigError`,
+`detail["reason"] == "invalid_deny_error"`); subclasses inherit it like any
+class attribute. On WebSocket gateways a connect-time denial closes with 1008
+and the error's `code` as the close reason; a per-message denial answers with
+its error frame.
+
+```python run
+from typing import ClassVar
+
+from lauren import ExecutionContext, HTTPError, UnauthorizedError
+
+class ApiKeyGuard:
+    deny_error: ClassVar[type[HTTPError]] = UnauthorizedError   # 401 instead of 403
+
+    async def can_activate(self, ctx: ExecutionContext) -> bool:
+        return ctx.request.headers.get("x-api-key") == "secret"
+
+class BasicAuthGuard:
+    @staticmethod
+    def deny_error() -> HTTPError:                                # factory: adds a challenge
+        return UnauthorizedError("login required", challenge='Basic realm="admin"')
+
+    async def can_activate(self, ctx: ExecutionContext) -> bool:
+        return ctx.request.headers.get("authorization") == "Basic YWRtaW46cHc="
+```
 
 ```python run
 from lauren import ExecutionContext
@@ -972,6 +1342,12 @@ class RoleGuard:
 @set_metadata("required_role", "admin")
 async def purge(self) -> dict: ...
 ```
+
+`PUBLIC_METADATA_KEY` (`"lauren.public"`) is the well-known key for public
+routes: `@set_metadata(PUBLIC_METADATA_KEY, True)` marks one, and a global
+authentication guard honours it with `if ctx.get_metadata(PUBLIC_METADATA_KEY,
+False): return True`. The framework never skips a guard by itself; the
+`HealthModule` probe routes carry the key (see [Health & Readiness](#health--readiness)).
 
 ### Middleware (`MiddlewareProtocol`)
 
@@ -1078,19 +1454,12 @@ Three attachment scopes — global, per-controller, per-route.
 ### Class form
 
 ```python run
-from lauren import HTTPError, LaurenFactory, controller, exception_handler, get, module
+from lauren import ConflictError, LaurenFactory, NotFoundError, controller, exception_handler, get, module
 from lauren.logging import Logger, NullLogger
 from lauren.testing import TestClient
 from lauren.types import Request, Response
 
-class NotFoundError(HTTPError):      # domain errors: subclass HTTPError
-    status_code = 404
-    code = "not_found"
-
-class ConflictError(HTTPError):
-    status_code = 409
-    code = "conflict"
-
+# NotFoundError / ConflictError are built in; the handler also claims subclasses.
 @exception_handler(NotFoundError, ConflictError)
 class DomainErrors:
     def __init__(self, log: Logger) -> None:
@@ -1179,6 +1548,9 @@ whose declared types match (`isinstance(exc, declared)`) wins.
   it was handling (`origin="exception_handler"`, `handler`, `cause`).
 * Errors raised by a **global** middleware (or the session engine) are
   outside any route, so only **global** handlers can claim them.
+* A handler that returns its own `Response` owns it: the error's `headers`
+  (`WWW-Authenticate`, `Retry-After`, …) are **not** merged — copy them from
+  `exc.headers` if needed.
 
 ---
 
@@ -1244,7 +1616,7 @@ async def r3(self) -> None:
 
 @post("/r4")
 async def r4(self):
-    return {"id": 42}, 201                  # -> JSON, 201 (tuple form)
+    return {"id": 42}, 201                  # -> JSON, 201 (tuple form; undeclared to OpenAPI)
 
 @post("/r5")
 async def r5(self):
@@ -1261,7 +1633,21 @@ async def r7(self) -> list[BaseModel]:
 @get("/r8")
 async def r8(self):
     return Response.html("<h1>hi</h1>")     # raw Response is honored
+
+@post("/r9", status_code=201)
+async def r9(self) -> dict:
+    return {"id": 42}                       # -> JSON, 201 (declared: documented in OpenAPI)
+
+@post("/r10")
+async def r10(self) -> Created[dict]:
+    return Created({"id": 42}, location="/r/42")  # -> JSON, 201 + Location (typed result)
 ```
+
+A status set by `status_code=` or a typed result (`Ok`, `Created`, `Accepted`,
+`NoContent`, `Annotated[T, Status(206)]`) is **declared**: OpenAPI documents it.
+The tuple form is **undeclared** (chosen at runtime, invisible to OpenAPI). A
+dataclass or model is dumped by its *runtime* type unless the route enforces a
+response contract — see [Response Contracts](#response-contracts).
 
 ### JSON Serialisation
 
@@ -1282,6 +1668,12 @@ frame.  Pass it once at factory time and every output path honours it.
 | `MsgspecEncoder` | `msgspec` | Fastest when returning `msgspec.Struct` directly |
 | `PydanticEncoder` | `pydantic` (v2) | Pydantic-heavy APIs; honours all `@field_serializer` / `model_config` rules; skips the intermediate `model_dump()` dict |
 | `JSONEncoder` | — | Protocol — implement `encode(obj) -> bytes` and `encode_compact(obj) -> bytes` |
+
+The built-in encoders accept `fallback="dict" | "warn" | "error"` (e.g.
+`StdlibJSONEncoder(fallback="error")`) to pin the `json_fallback` policy for
+objects no rule covers; without it they follow the app's
+`LaurenFactory.create(json_fallback=...)` (default `"warn"`), and `"dict"`
+outside an app.
 
 ```python run
 from lauren import LaurenFactory, PydanticEncoder, auto_encoder
@@ -1334,6 +1726,339 @@ handler is in scope at those points.
 never bare `@use_encoder`.  Passing a class instead of an instance
 (`@use_encoder(OrjsonEncoder)`) is rejected at decoration time with a clear
 error.
+
+---
+
+## Response Contracts
+
+A route declares its output like its input — by types. `status_code=` and typed
+results declare the statuses, the return annotation (or `response_model=`)
+declares the body, and `response_validation=` decides whether the wire honours
+it. Everything is read in `LaurenFactory.create`; the request path runs prebuilt
+closures.
+
+```python run
+from dataclasses import dataclass
+
+from lauren import (
+    Created, LaurenFactory, NoContent, NotFoundError, Ok, controller, delete, get, module, post, put, raises,
+)
+from lauren.testing import TestClient
+
+
+@dataclass
+class UserOut:
+    id: int
+    name: str
+
+
+@dataclass
+class UserInDB(UserOut):
+    password_hash: str
+
+
+USERS = {1: UserInDB(1, "ada", "bcrypt$...")}
+
+
+@controller("/accounts")
+class AccountController:
+    @get("/{id}")
+    @raises(NotFoundError, description="No account with that id")
+    async def show(self, id: int) -> UserOut:
+        if id not in USERS:
+            raise NotFoundError(f"no account {id}")
+        return USERS[id]                       # internal record: filtered to UserOut
+
+    @post("/", status_code=201)
+    async def create(self) -> UserOut:
+        return USERS[1]
+
+    @put("/{id}")
+    async def upsert(self, id: int) -> Ok[UserOut] | Created[UserOut]:
+        if id in USERS:
+            return Ok(USERS[id])
+        return Created(UserOut(id, "new"), location=f"/accounts/{id}")
+
+    @delete("/{id}")
+    async def remove(self, id: int) -> NoContent:
+        return NoContent()
+
+
+@module(controllers=[AccountController])
+class AccountsModule:
+    pass
+
+
+app = LaurenFactory.create(AccountsModule, response_validation="filter")
+client = TestClient(app)
+assert client.get("/accounts/1").json() == {"id": 1, "name": "ada"}   # no password_hash
+assert client.post("/accounts/").status_code == 201
+assert client.put("/accounts/9").header("location") == "/accounts/9"
+assert client.delete("/accounts/1").status_code == 204
+responses = app.openapi()["paths"]["/accounts/{id}"]["put"]["responses"]
+assert sorted(responses) == ["200", "201"]
+```
+
+### Typed results — `Ok[T]`, `Created[T]`, `Accepted[T]`, `NoContent`, `Status`
+
+Frozen generic dataclasses (`from lauren import Ok, Created, Accepted, NoContent, Status`):
+
+| Class | Status | Fields |
+|---|---|---|
+| `Ok(value, headers=None)` | 200 | |
+| `Created(value, location=None, headers=None)` | 201 | `location` → `Location` header |
+| `Accepted(value=None, location=None, headers=None)` | 202 | `location` → `Location` header |
+| `NoContent(headers=None)` | 204 | empty body |
+| `Status(code, description=None)` | — | `Annotated` metadata: `-> Annotated[Chunk, Status(206)]` |
+
+The wrapper's class picks the status (`.status` class attribute); `headers` are
+added and `location` wins over a `Location` entry in them; a `None` value sends
+an empty body. The value is serialized with the route's encoder (`@use_encoder`
+→ app `json_encoder`) — use `Created(user)` rather than `Response.created(user)`,
+which uses the process-wide default encoder. A union of results documents one
+response per member; at runtime the returned instance's class picks it, and a
+plain value maps to the route's `status_code=` (default 200). Typed results also
+work on unannotated routes (`return Created(x)` replaces `return x, 201`).
+
+Startup checks (`DecoratorUsageError`, `detail = {"decorator": "route", "target", "reason"}`):
+`status_code` 204/304 with a body type (`reason="body_not_allowed"`; allowed:
+`None`, `NoContent`, no annotation, `Response`), `status_code=` contradicting a
+result or `Status` (`"status_conflict"`), one status declared twice
+(`Ok[A] | Ok[B]` → `"duplicate_status"`; write `Ok[A | B]`), plain types with
+different `Status` codes (`"ambiguous_status"`), an invalid `Status` code
+(`"invalid_status_code"`).
+
+### `response_validation="off" | "filter" | "strict"`
+
+Set app-wide (`LaurenFactory.create(response_validation=...)`, `Lauren(...)`) and
+per route (`@get(..., response_validation="strict")`). The declared body type is
+`response_model=` when set, else the return annotation (each typed result's `T`).
+
+| Mode | Instance (or subclass) of the declared type | Mapping | Other object (ORM row) | Wrong leaf types |
+|---|---|---|---|---|
+| `"off"` (1.x default) | dumped by its runtime type (subclass fields leak) | as is | `__dict__` fallback | not checked |
+| `"filter"` | declared fields only | undeclared keys dropped, recursively | declared attributes read | passed through |
+| `"strict"` | projected + validated | projected + validated | read + validated | 500 |
+
+- Models emit declared fields under their wire names (`Alias`, `rename="camel"`, pydantic aliases), as the OpenAPI schema documents them.
+- A missing required field, a scalar where a model or list is declared, or a value no union member produces is a violation in both modes → 500 `{"error": {"code": "response_validation_error", ...}}`. The body never contains the payload; the violation is logged at ERROR with `issues` (`{"loc": ["response", "name"], "type": "missing", "msg": ...}`); with `debug=` the issues are also in `detail.issues`. Exception handlers do not see violations; interceptors see the exception.
+- Pydantic models and `msgspec.Struct` types use their library (the declared type's serializer drops a subclass's fields); non-instances are converted with `from_attributes=True`, so an unconvertible value is a violation in `filter` too.
+- `StreamingResponse[T]` items are projected one by one: a bad first item → 500, a later one → a `response_validation_error` error frame, then the stream ends.
+- Untyped routes and returned `Response` objects are never enforced. An unsupported declared type under `filter` / `strict` fails startup with `UnresolvableParameterError` (`detail["reason"] == "unsupported_response_type"`, `detail["param"] == "<return>"`).
+- `response_model=` with the contract `"off"` only documents: `create()` logs one warning listing those routes. lauren 2.0 makes `"filter"` the default.
+
+### `@raises(*http_errors, description=None)`
+
+Declares the `HTTPError` subclasses a route raises (metadata only — runtime
+behaviour is unchanged). On a method it propagates like `@get`; on a controller
+it covers the class's own routes (not a subclass's). Stacking accumulates. Feeds
+OpenAPI (one response per status with the error envelope schema —
+`LaurenErrorEnvelope`, or `LaurenProblemDetails` under `error_format="rfc9457"`
+— and the codes in `x-lauren-error-codes`) and `ReflectedRoute.raises`. Each
+argument must be an `HTTPError` subclass with an integer `status_code`; bare
+`@raises` / `@raises()` are rejected (`DecoratorUsageError`). With `debug=` on, a
+route that declares `@raises` logs one warning per undeclared `HTTPError` class
+its handler raises.
+
+### `json_fallback="dict" | "warn" | "error"`
+
+An object no encoder rule covers (not a dict, list, model, dataclass, struct,
+date, enum, …) used to ship its public attributes. `"dict"` keeps that, `"warn"`
+(the default) also logs one warning per type and app, `"error"` raises
+`TypeError` → 500 `internal_error`. `StdlibJSONEncoder(fallback=...)` (and the
+other built-in encoders) pin their own policy; outside an app the fallback stays
+`"dict"`. lauren 2.0 makes `"error"` the default.
+
+---
+
+## Pagination
+
+Validated paging parameters, page responses with one envelope per app, RFC
+8288 `Link` headers and opaque signed cursors. Public names live in
+`lauren.pagination` and are exported from `lauren`: `OffsetPagination`,
+`PageNumberPagination`, `CursorPagination`, `PaginationConfig`, `Page`,
+`CursorPage`, `paginate_sequence`.
+
+```python run
+from dataclasses import dataclass
+
+from lauren import (
+    CursorPage,
+    CursorPagination,
+    LaurenFactory,
+    OffsetPagination,
+    Page,
+    PaginationConfig,
+    controller,
+    get,
+    module,
+)
+from lauren.testing import TestClient
+
+
+@dataclass
+class PgUserOut:
+    id: int
+    name: str
+
+
+@dataclass(frozen=True)
+class PgUserKey:                                     # the keyset; validated when a cursor is decoded
+    id: int
+
+
+PG_USERS = [PgUserOut(id=i, name=f"u{i}") for i in range(1, 36)]
+
+
+@controller("/pg")
+class PgController:
+    @get("/users")
+    async def users(self, paging: OffsetPagination) -> Page[PgUserOut]:
+        rows = PG_USERS[paging.offset : paging.offset + paging.limit]
+        return Page.of(rows, paging, total=len(PG_USERS))       # total optional
+
+    @get("/feed")
+    async def feed(self, paging: CursorPagination[PgUserKey]) -> CursorPage[PgUserOut]:
+        after = paging.cursor.id if paging.cursor else 0
+        if paging.direction == "next":                           # rows after the keyset, ascending
+            rows = [u for u in PG_USERS if u.id > after]
+        else:                                                    # "prev": rows before it, descending
+            rows = [u for u in reversed(PG_USERS) if u.id < after]
+        return CursorPage.from_rows(rows[: paging.limit + 1], paging, key=lambda u: PgUserKey(id=u.id))
+
+
+@module(controllers=[PgController])
+class PgModule: ...
+
+
+pg_client = TestClient(LaurenFactory.create(PgModule, pagination=PaginationConfig(cursor_secret="pg-key")))
+
+r = pg_client.get("/pg/users?limit=10&offset=10&q=x")
+assert r.json()["meta"] == {"limit": 10, "offset": 10, "total": 35, "has_next": True}
+assert '</pg/users?limit=10&offset=20&q=x>; rel="next"' in r.headers["link"]
+assert pg_client.get("/pg/users?limit=500").status_code == 422             # loc ["query", "limit"]
+
+feed = pg_client.get("/pg/feed?limit=5").json()
+nxt = pg_client.get("/pg/feed", params={"cursor": feed["meta"]["next_cursor"], "limit": 5}).json()
+assert [u["id"] for u in nxt["items"]] == [6, 7, 8, 9, 10]
+bad = pg_client.get("/pg/feed", params={"cursor": "forged.0000"})
+assert (bad.status_code, bad.json()["error"]["code"]) == (400, "invalid_cursor")
+```
+
+### Paging parameters
+
+A handler parameter annotated with a paging type is a built-in extraction
+source (no marker, no `Depends`), compiled at startup; it may be wrapped in
+`Annotated[..., PaginationConfig(...)]`.
+
+| Type | Query | Attributes |
+|---|---|---|
+| `OffsetPagination` | `?limit=&offset=` | `limit`, `offset` |
+| `PageNumberPagination` | `?page=&per_page=` (1-based) | `page`, `per_page`, `limit` (= `per_page`), `offset` (= `(page - 1) * per_page`) |
+| `CursorPagination[C]` | `?cursor=&limit=` | `cursor: C \| None` (`None` on the first page), `direction` (`"next"` / `"prev"`), `limit`, `encode_cursor(key, *, direction="next") -> str` |
+
+* Integers are validated by the native engine (`Ge` / `Le` markers): `limit` /
+  `per_page` in `1..max_limit`, `offset` in `0..max_offset`, `page >= 1` (and
+  `(page - 1) * per_page <= max_offset`). Failures are a 422
+  `ExtractorFieldError` with `issues[].loc == ["query", <name>]`, merged with
+  the request's other parameter failures. Missing → default; repeated → first
+  value.
+* `C` is any type the validation engine compiles (dataclass, `TypedDict`,
+  `NamedTuple`, pydantic, msgspec, scalars); bare `CursorPagination` accepts any
+  JSON keyset. Unsupported → `UnresolvableParameterError`
+  (`reason="unsupported_cursor_type"`) at startup. A field descriptor on a
+  paging parameter → `UnresolvableParameterError`
+  (`reason="pagination_field_descriptor"`); pipes run as usual.
+* A tampered, truncated, malformed, expired or wrong-version cursor → 400
+  `BadRequestError` with `code="invalid_cursor"`,
+  `detail={"param": "cursor", "reason": "signature" | "malformed" | "version" | "expired" | "payload"}`.
+  An empty `?cursor=` means the first page.
+* Built outside a request (`OffsetPagination(limit=10, offset=0)`,
+  `PageNumberPagination(page=1, per_page=20)`,
+  `CursorPagination(cursor=None, *, limit=20, direction="next", secret=None)`)
+  they are plain values for unit tests (invalid arguments → `ValueError`); such
+  pages render without links. `CursorPagination` needs `secret=` there to sign.
+
+### `PaginationConfig(*, default_limit=None, max_limit=None, max_offset=None, limit_param=None, offset_param=None, page_param=None, per_page_param=None, cursor_param=None, envelope=None, meta_keys=None, total_header=None, base_url=None, cursor_secret=None, cursor_max_age=None)`
+
+Frozen dataclass; every `None` field inherits. App-wide:
+`LaurenFactory.create(..., pagination=PaginationConfig(...))` /
+`Lauren(pagination=...)`; per parameter: `Annotated[OffsetPagination,
+PaginationConfig(...)]`. Precedence: parameter → app → built-in default.
+
+| Field | Built-in | Notes |
+|---|---|---|
+| `default_limit` / `max_limit` | `20` / `100` | ints >= 1; `default_limit > max_limit` is an error unless the maximum comes from a more specific level — then the inherited default follows it down |
+| `max_offset` | `None` (unbounded) | int >= 0; links beyond it are omitted |
+| `limit_param` / `offset_param` / `page_param` / `per_page_param` / `cursor_param` | `limit` / `offset` / `page` / `per_page` / `cursor` | non-empty, distinct within a style |
+| `envelope` | `"items"` | `"items"` \| `"data"` \| `"bare"` — app level only |
+| `meta_keys` | `"snake"` | `"camel"` → `hasNext`, `perPage`, `totalPages`, `nextCursor`, `prevCursor` — app level only |
+| `total_header` | on for `"bare"`, else off | `X-Total-Count` when `total` is known |
+| `base_url` | `None` (relative links) | trusted `http(s)://` origin → absolute `Link` URLs |
+| `cursor_secret` | `None` | str / bytes / `Secret` or a sequence (first signs, all verify); required by any `CursorPagination` route |
+| `cursor_max_age` | `None` (never expire) | seconds; older cursors → `reason="expired"` |
+
+Invalid values → `StartupError` (`detail["reason"] == "invalid_pagination_config"`,
+`detail["field"]`, plus `route` / `handler` / `param` for a parameter layer); a
+non-`PaginationConfig` `pagination=` → the same reason with `detail["got"]`. A
+`CursorPagination` route without a secret → `StartupError`
+(`detail["reason"] == "pagination_secret_missing"`, `detail["route"]`). The
+secret never appears in `repr` or error messages.
+
+### `Page[T]` / `CursorPage[T]` and helpers
+
+* `Page[T]`: frozen keyword-only dataclass `items: list[T]`, `limit: int`,
+  `offset: int = 0`, `total: int | None = None`, `has_next: bool`.
+* `CursorPage[T]`: `items`, `limit`, `has_next`, `next_cursor: str | None = None`,
+  `prev_cursor: str | None = None`.
+* `Page.of(items, paging, *, total=None, has_next=None)` — `has_next` is
+  `offset + len(items) < total`; without `total` pass `has_next=` (never
+  guessed: `ValueError`); more than `paging.limit` items → `ValueError`.
+* `Page.from_rows(rows, paging, *, total=None)` — give `limit + 1` rows; the
+  probe row is trimmed and sets `has_next`.
+* `CursorPage.from_rows(rows, paging, *, key)` — `limit + 1` rows in the
+  direction of travel (`"next"`: after the keyset ascending; `"prev"`: before
+  it descending, returned ascending); signs `key(row)` of the boundary rows.
+* `paginate_sequence(seq, paging)` — any iterable; offset / page-number →
+  `Page` with `total=len`; cursor → `CursorPage` with positional cursors (use
+  bare `CursorPagination` or `CursorPagination[int]`).
+
+Returning a page renders (one `isinstance` check in response coercion):
+
+| `envelope` | Body | Headers |
+|---|---|---|
+| `"items"` | `{"items": [...], "meta": {...}}` | `Link` (+ `X-Total-Count` if `total_header`) |
+| `"data"` | `{"data": [...], "meta": {...}, "links": {"self", "first", "prev", "next", "last"}}` (`null` when unavailable) | `Link` |
+| `"bare"` | `[...]` | `Link`, `X-Total-Count` |
+
+`meta`: offset → `limit, offset, total, has_next`; page number → `page,
+per_page, total, total_pages, has_next`; cursor → `limit, has_next,
+next_cursor, prev_cursor` (`total` / `total_pages` are `null` when unknown).
+`Link` relations: `first` always, `prev` unless on the first page, `next` only
+with `has_next`, `last` only with a known `total` (never for cursors). URLs come
+from a copy of the request path and query: only the pagination parameters
+change, others keep their order and encoding; they are path-absolute and
+include the root path (`root_path=` or the ASGI `root_path`), absolute with
+`base_url`. A page built directly (not via the helpers) renders the app
+envelope without links. Items of any backend serialise through the app encoder;
+`(page, 206)` tuples work.
+Under `response_validation="filter"` / `"strict"` a page stays a page: only
+its `items` are projected onto `T` (issues at `["response", "items", n]`), and a
+route's `status_code=` applies to it.
+
+OpenAPI: pagination parameters with `minimum` / `maximum` / `default`; bodies
+as components `<Item>Page`, `<Item>NumberedPage`, `<Item>CursorPage` in the
+app's envelope (a plain array for `"bare"`); `Link` (and `X-Total-Count`)
+response headers.
+
+**Rules:**
+
+* Never expose raw database ids or offsets as cursors — use `CursorPagination`
+  (signed, opaque; signed, not encrypted).
+* Use a dedicated `cursor_secret`, never the session secret (cursors are signed
+  in their own namespace with the shared signer, `lauren._signing`).
+* `total` is optional — for large tables fetch `limit + 1` rows
+  (`Page.from_rows`) or use cursors instead of counting.
 
 ---
 
@@ -1458,6 +2183,564 @@ Three `LifecycleEvent` subclasses are emitted on the shared `SignalBus`:
 
 ---
 
+## Hosted Services & Scheduling
+
+Work that is not a request lives in `lauren.scheduling` (key names are also
+exported from `lauren`). **Hosted services** are classes whose `run(ctx)` the
+framework starts after startup, supervises and stops during shutdown;
+**scheduled methods** (`@interval`, `@cron`, `@run_once`) run on singleton
+injectables. Everything is discovered and validated in `LaurenFactory.create`
+(Phase 6a); nothing reflects at run time. Time flows through a `Clock`, so
+tests use `ManualClock` and never wait on wall-clock time.
+
+```python run
+import asyncio
+
+from lauren import LaurenFactory, Scope, injectable, module
+from lauren.scheduling import (
+    JobContext, ManualClock, ScheduleModule, ServiceContext, cron, hosted_service, interval, run_once,
+)
+
+
+@injectable(scope=Scope.REQUEST)
+class JobDbSession:                       # one instance per job run, torn down after it
+    async def aclose(self) -> None: ...
+
+
+@injectable()
+class JobStats:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+
+@hosted_service(restart="on-failure", stop_timeout=10.0)
+class HeartbeatService:
+    def __init__(self, stats: JobStats) -> None:
+        self._stats = stats
+
+    async def run(self, ctx: ServiceContext) -> None:
+        while await ctx.sleep(30):     # False as soon as stop is requested
+            self._stats.events.append("beat")
+
+
+@injectable()
+class MaintenanceJobs:
+    def __init__(self, stats: JobStats) -> None:
+        self._stats = stats
+
+    @interval(seconds=60, initial_delay=5, jitter=5)
+    async def warm_cache(self) -> None:
+        self._stats.events.append("warm")
+
+    @cron("0 3 * * *", tz="UTC", name="purge-sessions", timeout=300, exclusive=True)
+    async def purge(self, ctx: JobContext, db: JobDbSession) -> None:
+        self._stats.events.append(f"purge {ctx.scheduled_at:%H:%M}")
+
+    @run_once(delay=10)
+    async def prime(self) -> None:
+        self._stats.events.append("prime")
+
+
+jobs_clock = ManualClock()   # production: omit clock= for the real clock
+
+
+@module(imports=[ScheduleModule.for_root(clock=jobs_clock)], providers=[JobStats, HeartbeatService, MaintenanceJobs, JobDbSession])
+class JobsAppModule: ...
+
+
+async def run_jobs_demo() -> list[str]:
+    app = LaurenFactory.create(JobsAppModule)
+    await app.startup()
+    await jobs_clock.advance(hours=3, seconds=10)
+    await app.shutdown()
+    return app.container.singletons()[JobStats].events
+
+
+job_events = asyncio.run(run_jobs_demo())
+assert "purge 03:00" in job_events and job_events.count("prime") == 1 and "beat" in job_events
+```
+
+### `@hosted_service(*, name=None, restart="on-failure", max_restarts=5, restart_window=300.0, backoff=(1.0, 30.0), on_exhausted="fail_readiness", wait_ready=False, start_timeout=30.0, stop_timeout=10.0, enabled=True)`
+
+- Must be called with parentheses. The class must define `run(self, ctx)` —
+  `async def` (recommended) or plain `def` (runs on its own daemon thread and
+  must poll `ctx.stop_requested`; a thread past `stop_timeout` is abandoned).
+  A missing or malformed `run` raises `LifecycleConfigError` at decoration.
+- Stores `HostedServiceMeta` on the class's own `__dict__` and marks the class
+  `@injectable(scope=SINGLETON)` unless it has its own `@injectable`. List it in
+  a module's `providers`. A registered subclass that is not re-decorated raises
+  `MetadataInheritanceError`.
+- `name` defaults to the class name (unique app-wide, else
+  `DuplicateBindingError`). `restart`: `"never"` / `"on-failure"` / `"always"`
+  (also after a normal return); at most `max_restarts` restarts within
+  `restart_window` seconds; the n-th restart waits `uniform(0, min(cap, base * 2**n))`
+  (`backoff=(base, cap)`). When restarts run out: `on_exhausted="fail_readiness"`
+  sets `HostedServiceInfo.healthy=False`, `"log"` only logs.
+- `wait_ready=True`: `startup()` waits up to `start_timeout` real seconds for
+  `ctx.mark_ready()`; a timeout (or an early exit) stops the services already
+  started and raises `LifecycleError`.
+- Services do **not** require `ScheduleModule`; with it they share its clock.
+
+`ServiceContext`: `stop_requested` (thread-safe), `await sleep(seconds) -> bool`
+(`False` when interrupted by stop), `await wait_stopped(timeout=None) -> bool`,
+`mark_ready()` / `ready` (reset on restart), `name`, `restart_count`, `log`
+(bound `context="Service:<name>"`), and `scope(name=None)` — a new
+`OperationScope` (seeded with the context) for one iteration's request-scoped
+dependencies: `async with ctx.scope() as scope: db = await scope.resolve(DbSession)`.
+
+### `@interval(seconds, *, initial_delay=0, mode="fixed_rate", ...)`, `@cron(expression, *, tz=None, ...)`, `@run_once(delay=0, ...)`
+
+- `@interval`: `"fixed_rate"` fires on a grid anchored at `READY + initial_delay`
+  (the first run is `initial_delay` seconds after startup); `"fixed_delay"`
+  waits `seconds` after each run completes. `@cron`: next fire computed in `tz`
+  (default: the `ScheduleModule` timezone). `@run_once`: once, `delay` seconds
+  after `READY`.
+- Common options and defaults: `name=None` (→ `Class.method`; stacked schedules
+  on one method → `Class.method#1`, `#2`), `overlap="skip"` (`"skip"` |
+  `"queue"` — one run right after the current one | `"allow"`),
+  `max_instances=1` (3 with `"allow"`), `timeout=None` (cancel →
+  `JobFailed(error=TimeoutError)`), `jitter=0` (random `0..jitter` s per fire,
+  no drift), `misfire="coalesce"` (woke later than `misfire_grace`: run once now
+  for the latest missed fire; `"skip"` → `JobSkipped(reason="misfire")`),
+  `misfire_grace=None` (→ `min(60, period)`), `exclusive=False` (take the
+  `SchedulerLock` per fire), `enabled=True`. Seconds options accept `timedelta`.
+- Bad arguments (non-positive `seconds`, malformed cron, unknown `tz`, bare
+  `@interval`) raise `DecoratorUsageError` at decoration. The marker
+  `__lauren_schedule__` is a list: stacking accumulates.
+- Method rules (startup): the provider must be `Scope.SINGLETON`
+  (`LifecycleConfigError`); parameters are `self`, an optional `JobContext`
+  (matched by annotation) and dependencies visible from the provider's module
+  (`UnresolvableParameterError` otherwise), resolved per run in a fresh
+  `OperationScope` — `Scope.REQUEST` providers get one instance per run, torn
+  down after it, and may take a `JobContext` constructor parameter. Sync
+  methods run in a worker thread. Inherited methods count; an undecorated
+  override removes the schedule.
+- Scheduled methods without `ScheduleModule.for_root()` → `LifecycleConfigError`
+  (`detail["reason"] == "scheduling_not_enabled"`); importing it twice →
+  `LifecycleConfigError` (`"duplicate_schedule_module"`).
+
+`JobContext`: `name`, `scheduled_at` (nominal fire time, aware, job time zone),
+`fired_at`, `attempt` (always 1), `log` (bound `context="Job:<name>"`),
+`cancelled` (set on timeout / shutdown; sync jobs poll it), `scope` (the run's
+`OperationScope` when the method takes dependencies, else `None`).
+
+### `ScheduleModule.for_root(*, timezone="UTC", lock=None, enabled=True, clock=None, job_drain_timeout=None)`
+
+Returns a module for `@module(imports=[...])`. `lock` backs `exclusive=True`
+(default: per-process `InMemorySchedulerLock`); `enabled=False` keeps
+discovery, validation and `trigger()` but fires nothing; `clock` (pass a fresh
+`ManualClock` per app in tests); `job_drain_timeout` bounds how long shutdown
+waits for in-flight runs (default: what is left of `drain_timeout`). Importing
+it registers the app's `SchedulerRegistry` as a global provider.
+
+### `SchedulerRegistry`
+
+Inject it anywhere (one per app). `jobs() -> tuple[JobInfo, ...]`, `job(name)`,
+`services() -> tuple[HostedServiceInfo, ...]`, `await trigger(name) -> JobRun`
+(runs now, respects `overlap` and `exclusive`; works with firing disabled;
+`LifecycleViolationError` before `startup()` or during shutdown), `pause(name)`,
+`resume(name)`, `remove(name)`, `add_interval(name, fn, *, seconds, ...)`,
+`add_cron(name, fn, expression, *, tz=None, ...)`. Dynamic jobs call `fn()` or
+`fn(ctx)` — no DI — and a name collision raises `DuplicateBindingError`.
+Unknown names raise `KeyError`.
+
+- `JobInfo` (frozen; `as_dict()` is JSON-friendly): `name`, `kind`
+  (`"interval"` | `"cron"` | `"once"`), `schedule`, `next_run_at`,
+  `last_run_at`, `last_status` (`"completed"` | `"failed"` | `"cancelled"`),
+  `last_error`, `last_duration_s`, `running`, `paused`, `enabled`, `dynamic`,
+  `runs`, `failures`, `skips`. Bounded: no history.
+- `JobRun`: `name`, `status` (`"completed"` | `"failed"` | `"skipped"`),
+  `scheduled_at`, `duration_s`, `error`, `reason`.
+- `HostedServiceInfo`: `name`, `state` (`"pending"` | `"disabled"` |
+  `"running"` | `"restarting"` | `"stopping"` | `"stopped"` | `"failed"`),
+  `ready`, `restart_count`, `last_error`, `healthy`; `as_dict()`.
+
+### `CronExpression(expression, *, tz=None)`
+
+Five fields `minute hour day-of-month month day-of-week` or six with a
+**leading seconds** field; `*`, `a,b`, `a-b`, `*/n`, `a-b/n`, `a/n`,
+`JAN`-`DEC`, `SUN`-`SAT` (0 and 7 = Sunday), macros `@yearly` / `@annually`,
+`@monthly`, `@weekly`, `@daily` / `@midnight`, `@hourly`. Both day fields
+restricted → either matches (POSIX). `L`, `W`, `#`, `?`, `@reboot` and
+never-firing expressions are rejected with `DecoratorUsageError`
+(`detail`: `field`, `value`, `allowed`, `reason`). Methods: `next_after(dt)`,
+`iter_from(dt)` (strictly after `dt`, increasing), `matches(dt)`,
+`with_tz(tz)`; properties `expression`, `tz`, `has_seconds`. DST: a local time
+in a spring-forward gap fires once at the first valid instant after it; an
+ambiguous fall-back time fires once, at its first occurrence. Interval jobs
+use the monotonic clock.
+
+```python run
+from datetime import datetime, timezone
+from itertools import islice
+
+from lauren import CronExpression
+
+nightly = CronExpression("0 3 * * MON-FRI", tz="UTC")
+friday_noon = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+assert [d.day for d in islice(nightly.iter_from(friday_noon), 3)] == [26, 27, 28]
+```
+
+### `SchedulerLock` (Protocol), `InMemorySchedulerLock(*, clock=None)`
+
+`async acquire(key, *, ttl) -> bool` / `async release(key)`. For each fire of
+an `exclusive=True` job the scheduler acquires
+`"lauren:job:{name}:{fire_time_iso}"` with `ttl` = the job's `timeout`, else
+`min(period, 3600)`; a lost race emits `JobSkipped(reason="locked")`. The claim
+is held until the TTL expires (not released after the run), so a late worker
+cannot re-run the fire. The in-memory default is per process (one INFO log at
+startup says so); share a Redis / database lock across workers, or run
+scheduled work in one process.
+
+### Clocks: `Clock` (Protocol), `SystemClock`, `ManualClock(start=None)`
+
+`Clock`: `monotonic()`, `now()` (aware UTC), `async sleep(seconds)`.
+`ManualClock` starts at `2000-01-01T00:00:00Z` (or `start`): `await
+advance(seconds=0, *, minutes=0, hours=0, days=0)` wakes every sleeper due in
+the window in order and lets the loop settle (sync jobs on threads included);
+`await jump(...)` moves time without waking anything on the way (simulates a
+suspended process — misfire tests); `sleepers` counts pending sleeps. Fire
+times, jitter, misfire, per-run timeouts, restart backoff and
+`ServiceContext.sleep` follow the clock; `start_timeout`, `stop_timeout` and
+the job drain stay in real time.
+
+### Lifecycle order
+
+Startup: `StartupBegin` → `@post_construct` (topological) → hosted services
+start (dependency order; `wait_ready` awaited) → scheduler armed →
+`StartupComplete` → scheduler fires (`run_once` / `initial_delay` count from
+here). Shutdown: `ShutdownBegin` + scheduler stops firing → requests drain →
+in-flight job runs awaited, then cancelled → hosted services stop (reverse
+order) → `on_shutdown` → `@pre_destruct`.
+
+### Testing
+
+`ScheduleModule.for_root(clock=ManualClock())` + `await clock.advance(...)`;
+`ScheduleModule.for_root(enabled=False)` or `LaurenFactory.create(...,
+scheduler=False)` + `await registry.trigger("name")`;
+`LaurenFactory.create(..., hosted_services=False)`. `with TestClient(app):`
+runs startup, requests and shutdown on one persistent event loop, so hosted
+services and the scheduler keep running between requests and stop when the
+block exits.
+
+**Rules:**
+
+- Never `asyncio.create_task(...)` from `@post_construct` for a background
+  loop; use `@hosted_service`.
+- Scheduled jobs require `ScheduleModule.for_root()` (or
+  `ScheduleModule.for_root(enabled=False)` to disable them explicitly).
+- With several workers every job runs in each one: use `exclusive=True` with a
+  shared `SchedulerLock`, or a dedicated scheduler process.
+- Durable, retried jobs are out of scope: runs missed while the process was
+  down are not replayed (beyond `misfire_grace`).
+
+---
+
+## Standalone Context & Commands
+
+Run the application's DI graph and lifecycle without serving HTTP — for
+scripts, one-off admin tasks, Kubernetes `CronJob`s and queue workers. The API
+lives in `lauren.context` and `lauren.commands`; `ApplicationContext`,
+`command`, `Opt`, `CommandContext` and `CommandResult` are also exported from
+`lauren`.
+
+### `LaurenFactory.create_context(root_module, *, hosted_services=False, scheduler=False, drain_timeout=10.0, **create_kwargs)`
+
+Builds the app with `LaurenFactory.create(root_module, **create_kwargs)` —
+every phase, routes included, so if a script boots, the server boots — and
+returns an `ApplicationContext`. Nothing is served. Two other ways to get one:
+
+- `app.context(*, hosted_services=False, scheduler=False, drain_timeout=10.0)`
+  wraps a built, **not yet started** `LaurenApp` (for tooling that only knows
+  `main:app`). An app that was already started raises
+  `LifecycleViolationError` (`reason="app_already_started"`): one lifecycle
+  has one owner.
+- `ApplicationContext.from_lauren(lauren_app, *, hosted_services=False,
+  scheduler=False, drain_timeout=10.0)` compiles an imperative `Lauren` app
+  (without starting it) and wraps it.
+
+```python run
+import asyncio
+
+from lauren import LaurenFactory, Scope, injectable, module, post_construct, pre_destruct
+from lauren.commands import CommandContext, command
+
+
+@injectable()
+class Database:
+    def __init__(self) -> None:
+        self.rows: list[str] = []
+        self.connected = False
+
+    @post_construct
+    async def connect(self) -> None:
+        self.connected = True
+
+    @pre_destruct
+    async def disconnect(self) -> None:
+        self.connected = False
+
+
+@injectable(scope=Scope.REQUEST)
+class UnitOfWork:
+    def __init__(self, db: Database) -> None:
+        self.db = db
+        self.closed = False
+
+    async def aclose(self) -> None:  # runs when the scope ends
+        self.closed = True
+
+
+@injectable()
+class SeedCommands:
+    @command("db:seed", help="Insert fixture rows.")
+    async def seed(self, ctx: CommandContext, uow: UnitOfWork, *, count: int = 3) -> int:
+        uow.db.rows.extend(f"row-{i}" for i in range(count))
+        ctx.echo(f"seeded {count} rows")
+        return 0
+
+
+@module(providers=[Database, UnitOfWork, SeedCommands])
+class ToolsModule:
+    pass
+
+
+async def main() -> None:
+    async with LaurenFactory.create_context(ToolsModule) as ctx:  # startup: @post_construct
+        db = ctx.get(Database)  # an already constructed singleton
+        assert db.connected
+        async with ctx.scope("backfill") as scope:  # the request scope without a request
+            uow = await scope.resolve(UnitOfWork)
+        assert uow.closed
+        result = await ctx.run_command("db:seed", "--count", "2")
+        assert (result.exit_code, result.stdout) == (0, "seeded 2 rows\n")
+        assert db.rows == ["row-0", "row-1"]
+    assert not db.connected  # shutdown: @pre_destruct
+
+
+asyncio.run(main())
+```
+
+`ApplicationContext` members:
+
+| Member | Semantics |
+|---|---|
+| `async with ctx:` | `await app.startup()` on enter — `@post_construct`, then `Lauren.on_startup` hooks; hosted services and the scheduler only when enabled on the context **and** the app. `await app.shutdown(drain_timeout=...)` on exit — `on_shutdown`, then `@pre_destruct`. An exception from the block propagates after shutdown; a startup failure shuts down whatever had started, then propagates. Single-use |
+| `ctx.app`, `ctx.container` | Escape hatches: the `LaurenApp` and its `DIContainer` |
+| `ctx.active` | `True` inside the block |
+| `ctx.get(token)` | The already constructed singleton, synchronously (a list for a `list[T]` or multi-bound token). `MissingProviderError` for an unknown token, `DIScopeViolationError` (`reason="not_singleton"`) for a request-scoped or transient one |
+| `await ctx.resolve(token, *, owning_module=None)` | General resolution (singletons, new transients). A `Scope.REQUEST` token raises `DIScopeViolationError` (`reason="no_active_scope"`): use a scope |
+| `ctx.scope(name="context", *, values=None)` | A new `OperationScope`, as `app.scope()` |
+| `await ctx.run_command(name, *argv, stdin=None, interactive=False, assume_yes=False, verbose=False)` | Runs a discovered command like `python -m lauren exec` and returns a `CommandResult`; failures become exit codes, never exceptions |
+| `ctx.commands(*, include_hidden=False)` | `tuple[CommandInfo, ...]` sorted by name; works before entering |
+| `await ctx.wait_for_shutdown_signal(signals=(SIGINT, SIGTERM))` | Blocks until one of the signals arrives and returns its number. The handlers exist for this call only, so a second signal gets the default behaviour |
+| `ctx.lifecycle_state` | The wrapped app's `AppLifecycleState` (`CREATED` before enter, `READY` inside the block, `STOPPED` after exit) |
+
+`get`, `resolve`, `scope`, `run_command` and `wait_for_shutdown_signal` raise
+`LifecycleViolationError` (`reason="context_not_active"`) outside the block. A
+worker wants hosted services but no HTTP:
+
+```python fragment
+async def worker_main() -> None:
+    async with LaurenFactory.create_context(WorkerModule, hosted_services=True) as ctx:
+        await ctx.wait_for_shutdown_signal()  # SIGINT / SIGTERM → leave the block → graceful shutdown
+```
+
+### `@command(name, *, help=None, aliases=(), hidden=False)`
+
+Marks a method of any provider as a command. It must be called with
+parentheses, and `name` must match `^[a-z0-9][a-z0-9._:-]*$`
+(`DecoratorUsageError` otherwise). It appends a `CommandMeta` to
+`__lauren_command__` and returns the function unchanged; stacking registers
+several names. `help` defaults to the docstring's first line; `aliases` are
+extra names; `hidden=True` keeps a command runnable but out of listings.
+
+Commands are discovered app-wide by the Phase 6a discovery pass of
+`LaurenFactory.create` (method lookup follows the MRO like routes) and
+validated there: a duplicate name or alias raises `DuplicateBindingError`
+(`reason="duplicate_command_name"`, `targets` names both methods), and a
+parameter that is neither injectable nor a CLI type raises
+`UnresolvableParameterError` (`reason="unsupported_command_parameter"`, with
+`command` and `param`). The provider may have any scope: every invocation runs
+in its own `OperationScope`, seeded with the `CommandContext`, so a
+`Scope.REQUEST` command class or dependency is built per run and torn down
+afterwards.
+
+Parameters are mapped once, at startup, where the `argparse` parser is built
+too:
+
+| Parameter | Becomes |
+|---|---|
+| annotated `CommandContext` | injected |
+| `Annotated[T, Inject(token)]`, or a type the provider's module can resolve | injected from the command's scope (route-handler precedence; a provider another module does not export is **not** visible) |
+| `bool`, wherever declared | `--name / --no-name` flag (`bool \| None` defaults to `None`) |
+| keyword-only (after `*`) | `--kebab-case` option; required when it has no default |
+| any other parameter without a default | required positional argument |
+| any other parameter with a default | optional positional argument |
+| `list[T]` / `tuple[T, ...]` | repeatable option (`--tag a --tag b`); as a positional, one or more values (zero or more with a default) |
+| `T \| None` | optional, default `None` |
+| `Enum`, `Literal[...]` | choices (enum values or member names) |
+| anything else | `UnresolvableParameterError` at startup |
+
+CLI types are `str`, `int`, `float`, `Decimal`, `bool`, `Path`, `UUID`,
+`datetime` / `date` / `time` (ISO 8601), `timedelta` (seconds or an ISO 8601
+duration), `Enum` and `Literal`, converted with the lax table typed
+configuration uses. An unannotated parameter is a `str` (or its default's
+type). `Annotated[T, Opt(short="-n", env="SEED_COUNT", help="rows")]` adds a
+short flag, an environment-variable fallback (read at run time; the command
+line wins) and help text; `short` and `env` apply to options only
+(`DecoratorUsageError`, `reason="opt_on_positional"`). Help is generated from
+`help=` or the docstring, `Opt(help=...)`, defaults, choices and env names;
+`-h` / `--help` prints it.
+
+```python fragment
+@injectable()
+class SeedCommands:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    @command("db:seed", help="Insert fixture data.", aliases=("seed",))
+    async def seed(
+        self,
+        ctx: CommandContext,
+        fixture: Fixture = Fixture.DEMO,  # optional positional, choices
+        *,
+        count: Annotated[int, Opt(short="-n", help="rows per table")] = 50,  # -n / --count
+        reset: bool = False,  # --reset / --no-reset
+    ) -> int:
+        if reset and not ctx.confirm("Truncate every table?"):
+            return 1
+        ctx.echo(f"seeded {await self._db.seed(fixture, count)} rows")
+        return 0
+
+    @command("db:export")
+    async def export(self, target: Path, *, tables: list[str] | None = None) -> dict:
+        ...  # the returned dict is printed as JSON
+```
+
+### Results, output and exit codes
+
+| Outcome | Exit code | Output |
+|---|---|---|
+| returns `None` | 0 | — |
+| returns an `int` | that int | — |
+| returns a `bool` | 0 if true, else 1 | — |
+| returns another value | 0 | JSON-encoded with the app's `json_encoder` to stdout (exit 1 if it cannot be encoded) |
+| `ctx.fail("message", exit_code=2)` | 2 | message to stderr; raises `SystemExit`, so `finally` blocks and scope teardown run |
+| unknown command or argument error | 2 | message or argparse usage to stderr |
+| uncaught exception | 1 | one-line summary to stderr; the full traceback with `--verbose` |
+| the app cannot be built or started (runner) | 3 | the rendered error and its `detail` |
+| first SIGINT / SIGTERM (runner) | 130 / 143 | the command task is cancelled (`finally` runs), the scope is torn down, the app shuts down; a second signal exits immediately |
+
+`CommandContext` — annotate a command parameter, or a request-scoped
+provider's constructor parameter, with it: `name` (the canonical name), `argv`,
+`echo(*parts, sep=" ", end="\n")` → stdout, `error(*parts)` → stderr, the
+`stdout` / `stderr` streams, `is_interactive` (the runner's stdin is a
+terminal), `assume_yes` (`--yes`), `confirm(prompt, *, default=False)`
+(`--yes` answers yes; when nobody can answer it **refuses** — a note to stderr,
+returns `False` — instead of hanging), `fail(message, exit_code=1)` and `log`
+(the app logger bound to `context="Command:<name>"`). Write output with
+`ctx.echo`, not `print()`, so it can be captured.
+
+`CommandResult(exit_code, value=None, stdout="", stderr="", exception=None)`
+is frozen: `value` is the return value and `exception` the uncaught exception,
+if any. For tooling, `lauren.commands` also has
+`CommandInfo(name, aliases, help, hidden, parameters, module, target)` and
+`CommandParameter(name, kind, flags, type, required, default, repeatable,
+choices, env, help)` (`kind` is `"positional"`, `"option"` or `"flag"`).
+
+### `python -m lauren`
+
+```text
+python -m lauren exec    [-t TARGET] [-y] [-v] [TARGET] COMMAND [ARGS...]
+python -m lauren commands [-t TARGET] [--all] [TARGET]
+python -m lauren console  [-t TARGET] [-v] [TARGET]
+```
+
+`TARGET` is `pkg.module:attr` — or `--target`, or `$LAUREN_TARGET` — naming a
+`@module` class (→ `create_context`), a `LaurenApp` (→ `app.context()`), a
+`Lauren` app (→ `from_lauren`), an `ApplicationContext`, or a zero-argument
+(sync or async) factory returning one of them (`main:create_app`).
+
+- `exec` looks the command up and parses its arguments **before** starting the
+  app, so an unknown command, `--help` or a usage error never runs
+  `@post_construct`; then it starts the app (hosted services and the scheduler
+  off), runs the command in a fresh scope and shuts down. `--yes` / `--verbose`
+  are also accepted after `COMMAND` unless the command declares those options.
+- `commands` lists the commands without starting the app (`--all` adds hidden
+  ones).
+- `console` starts the app and opens a Python REPL with `ctx`, `app`,
+  `container`, `get`, `resolve`, `scope` and `asyncio` preloaded; top-level
+  `await` works and `exit()` / Ctrl-D shuts the app down.
+
+Exit codes follow the table above; a malformed TARGET is a usage error (2), and
+an import failure or a TARGET of the wrong kind is 3. The runner is
+stdlib-only and keeps no state between runs; `lauren-cli`'s `lauren exec`,
+`lauren commands` and `lauren console` run it in-process.
+
+### Testing commands
+
+`Test.create_testing_module(...)` overrides apply to contexts exactly as to
+apps; `ctx.run_command` captures the output:
+
+```python run
+import asyncio
+
+from lauren import injectable, module
+from lauren.commands import CommandContext, command
+from lauren.testing import Test
+
+
+@injectable()
+class Mailer:
+    def send(self, to: str) -> str:
+        raise RuntimeError("would send real mail")
+
+
+@injectable()
+class MailCommands:
+    def __init__(self, mailer: Mailer) -> None:
+        self._mailer = mailer
+
+    @command("mail:test")
+    def send_test(self, ctx: CommandContext, to: str) -> None:
+        ctx.echo(self._mailer.send(to))
+
+
+@module(providers=[Mailer, MailCommands])
+class MailModule:
+    pass
+
+
+class FakeMailer:
+    def send(self, to: str) -> str:
+        return f"queued for {to}"
+
+
+async def main() -> None:
+    app = Test.create_testing_module(MailModule).override_provider(Mailer).use_value(FakeMailer()).compile()
+    async with app.context() as ctx:
+        result = await ctx.run_command("mail:test", "ada@example.com")
+    assert (result.exit_code, result.stdout) == (0, "queued for ada@example.com\n")
+
+
+asyncio.run(main())
+```
+
+**Rules:**
+
+- Never expose admin or maintenance tasks (seeding, migrations, purges) as HTTP
+  endpoints: write a `@command` and run it with `python -m lauren exec` (a
+  Kubernetes `CronJob` for periodic work).
+- Resolve request-scoped providers only inside a request, `app.scope()` /
+  `ctx.scope()` or a command; anywhere else they leak (see
+  [Operation scopes](#operation-scopes-appscope) and `strict_request_scope=True`).
+- Keep commands thin adapters over services, like controllers.
+- A context owns its app's lifecycle: never `await app.startup()` on an app you
+  wrap.
+
+---
+
 ## Error Catalog
 
 All exceptions live in `lauren.exceptions` and inherit from `LaurenError`.
@@ -1477,7 +2760,7 @@ by `LaurenFactory.create` or at decoration time and are never HTTP-mapped;
 | `MissingProviderError` | `StartupError` | — | `missing_provider` | No provider is registered for a requested token. |
 | `ProtocolAmbiguityError` | `StartupError` | — | `protocol_ambiguity` | A protocol has multiple providers but `multi=False` was requested. |
 | `ModuleExportViolation` | `StartupError` | — | `module_export_violation` | A module exports a provider it neither declares nor imports. |
-| `LifecycleConfigError` | `StartupError` | — | `lifecycle_config` | `@post_construct` / `@pre_destruct` decorates something other than a method. |
+| `LifecycleConfigError` | `StartupError` | — | `lifecycle_config` | A lifecycle-bound declaration is misused (a hook on a non-method, a hosted service or job on a non-singleton, …). |
 | `MetadataInheritanceError` | `StartupError` | — | `metadata_inheritance` | Injectable metadata was inherited from a base class (forbidden). |
 | `DuplicateBindingError` | `StartupError` | — | `duplicate_binding` | The same class or token is registered twice in one container. |
 | `UnresolvableParameterError` | `StartupError` | — | `unresolvable_parameter` | A handler or provider parameter cannot be resolved to an extractor or dep. |
@@ -1487,17 +2770,27 @@ by `LaurenFactory.create` or at decoration time and are never HTTP-mapped;
 | `InterceptorConfigError` | `StartupError` | — | `interceptor_config` | An interceptor lacks `intercept(ctx, call_handler)`, or `@use_interceptors` cannot run where placed. |
 | `ExceptionHandlerConfigError` | `StartupError` | — | `exception_handler_config` | An `@exception_handler` / `@use_exception_handlers` was misused. |
 | `SessionConfigError` | `StartupError` | — | `session_config` | A `SessionConfig` was invalid, or a `Session` was injected into a handler in an app that did not enable sessions. |
+| `ConfigValidationError` | `StartupError` | — | `config_validation` | One or more settings classes failed to load or validate. |
 | `OpenAPISchemaError` | `StartupError` | — | `openapi_schema` | Reserved for strict OpenAPI generation — not raised yet. |
 | `DecoratorUsageError` | `StartupError` | — | `decorator_usage` | A decorator or provider helper was used incorrectly — most often without parentheses. |
 | `HTTPError` | `LaurenError` | 500 | `http_error` | Base class for errors mapped to HTTP responses. |
 | `ExtractorError` | `HTTPError` | 422 | `extractor_error` | A request value could not be extracted or validated. |
 | `ExtractorFieldError` | `ExtractorError` | 422 | `extractor_field_error` | One parameter is missing or violates a field constraint. |
-| `RouteNotFoundError` | `HTTPError` | 404 | `route_not_found` | No route matches the request path. |
-| `MethodNotAllowedError` | `HTTPError` | 405 | `method_not_allowed` | The path matches, but not for this HTTP method (the response sets `Allow`). |
+| `BadRequestError` | `HTTPError` | 400 | `bad_request` | The request is malformed in a way that is not schema validation. |
+| `NotFoundError` | `HTTPError` | 404 | `not_found` | The requested resource does not exist — the domain 404. |
+| `RouteNotFoundError` | `NotFoundError` | 404 | `route_not_found` | No route matches the request path. |
+| `MethodNotAllowedError` | `HTTPError` | 405 | `method_not_allowed` | The path matches, but not for this HTTP method; `allow=` sets the `Allow` header. |
+| `NotAcceptableError` | `HTTPError` | 406 | `not_acceptable` | No available representation matches the request's `Accept` headers. |
+| `ConflictError` | `HTTPError` | 409 | `conflict` | The request conflicts with the current state of the resource. |
+| `GoneError` | `HTTPError` | 410 | `gone` | The resource existed but has been removed permanently. |
+| `PreconditionFailedError` | `HTTPError` | 412 | `precondition_failed` | A conditional request header (`If-Match`, `If-Unmodified-Since`) evaluated to false. |
 | `RequestBodyTooLarge` | `HTTPError` | 413 | `request_body_too_large` | The request body exceeds `max_body_size`. |
 | `UnsupportedMediaTypeError` | `HTTPError` | 415 | `unsupported_media_type` | The request body's `Content-Type` is not one the route accepts. |
-| `UnauthorizedError` | `HTTPError` | 401 | `unauthorized` | Authentication is missing or invalid. |
-| `ForbiddenError` | `HTTPError` | 403 | `forbidden` | The caller is not allowed — also what a guard returning `False` raises. |
+| `TooManyRequestsError` | `HTTPError` | 429 | `too_many_requests` | The client sent too many requests; `retry_after=` sets `Retry-After`. |
+| `ServiceUnavailableError` | `HTTPError` | 503 | `service_unavailable` | The server cannot handle the request right now; `retry_after=` sets `Retry-After`. |
+| `RequestTimeoutError` | `HTTPError` | 504 | `request_timeout` | A server-side deadline was exceeded while handling the request (504). |
+| `UnauthorizedError` | `HTTPError` | 401 | `unauthorized` | Authentication is missing or invalid; `challenge=` sets `WWW-Authenticate`. |
+| `ForbiddenError` | `HTTPError` | 403 | `forbidden` | The caller is not allowed — also what a guard returning `False` raises by default. |
 | `MissingStateError` | `HTTPError` | 500 | `missing_state` | `request.state.require(key, T)` found no value for `key`. |
 | `StateTypeError` | `HTTPError` | 500 | `state_type_error` | A `request.state` value has the wrong type for `get_typed` / `require`. |
 | `LifecycleError` | `LaurenError` | — | `lifecycle_error` | Base class for errors around startup, shutdown and lifecycle hooks. |
@@ -1513,18 +2806,136 @@ All HTTP errors serialize as:
 {"error": {"code": "...", "message": "...", "detail": { ... }}}
 ```
 
-To surface a custom domain error with a specific status, subclass `HTTPError`:
+### Built-in HTTP errors
 
-```python
-from lauren.exceptions import HTTPError
+Raise the everyday statuses directly — never re-declare them:
+`BadRequestError` (400), `UnauthorizedError` (401), `ForbiddenError` (403),
+`NotFoundError` (404; routing misses raise its subclass `RouteNotFoundError`),
+`MethodNotAllowedError` (405), `NotAcceptableError` (406), `ConflictError`
+(409), `GoneError` (410), `PreconditionFailedError` (412), `RequestBodyTooLarge`
+(413), `UnsupportedMediaTypeError` (415), `ExtractorError` (422),
+`TooManyRequestsError` (429), `ServiceUnavailableError` (503),
+`RequestTimeoutError` (504 — a *server-side* deadline, code `request_timeout`;
+not HTTP 408). For a domain code, subclass the matching built-in (it keeps the
+status, and `@exception_handler(NotFoundError)` claims it too):
 
-class NotFoundError(HTTPError):
-    status_code = 404
-    code = "not_found"
+```python run
+from datetime import datetime, timezone
 
-# In a handler:
-raise NotFoundError("user not found", detail={"id": user_id})
+from lauren import (
+    ConflictError,
+    HTTPError,
+    LaurenFactory,
+    MethodNotAllowedError,
+    NotFoundError,
+    ServiceUnavailableError,
+    TooManyRequestsError,
+    UnauthorizedError,
+    controller,
+    get,
+    module,
+)
+from lauren.testing import TestClient
+
+class UserNotFound(NotFoundError):
+    code = "user_not_found"
+
+class EmailTaken(ConflictError):
+    code = "email_taken"
+
+# headers= on every error (mapping, or (name, value) pairs to repeat a name);
+# typed sugar for the headers HTTP requires:
+UnauthorizedError("bad token", challenge='Bearer realm="api"')     # WWW-Authenticate
+TooManyRequestsError("slow down", retry_after=30)                  # Retry-After: 30
+ServiceUnavailableError("draining", retry_after=datetime(2026, 10, 23, 18, 0, tzinfo=timezone.utc))
+                                                                   # Retry-After: Fri, 23 Oct 2026 18:00:00 GMT
+MethodNotAllowedError("use PUT", allow=["PUT"])                    # Allow: PUT (wherever raised)
+NotFoundError("gone", headers={"cache-control": "no-store"})
+# Instance overrides (escape hatch; subclass for stable codes):
+HTTPError("I'm a teapot", status_code=418, code="teapot")
+
+@controller("/users")
+class UserController:
+    @get("/{user_id}")
+    async def show(self, user_id: int) -> dict:
+        raise UserNotFound("user does not exist", detail={"id": user_id})
+
+@module(controllers=[UserController])
+class UsersModule: ...
+
+r = TestClient(LaurenFactory.create(UsersModule)).get("/users/7")
+assert r.status_code == 404
+assert r.json() == {"error": {"code": "user_not_found", "message": "user does not exist", "detail": {"id": 7}}}
 ```
+
+Rules: header names are lower-cased (`err.headers` is a tuple of pairs); CR /
+LF / NUL, non-latin-1 values and `content-type` / `content-length` raise
+`ValueError` at construction. `challenge=` (str or list of str) is
+`UnauthorizedError`-only; `retry_after=` (seconds, `timedelta`, or an aware
+`datetime` — naive raises `ValueError`) is accepted by `TooManyRequestsError`,
+`ServiceUnavailableError` and `RequestTimeoutError`. Instance `status_code=`
+must be 400–599 and `code=` non-empty. The headers are sent in every
+`error_format`, from handlers, guards, extractors and global middleware alike.
+
+### Problem details (`error_format="rfc9457"`)
+
+```python run
+app = LaurenFactory.create(
+    UsersModule,
+    error_format="rfc9457",                           # "default" | "rfc9457" | "rfc7807"
+    problem_type_base="https://errors.example.com/",  # optional
+)
+r = TestClient(app).get("/users/7")
+assert r.header("content-type") == "application/problem+json"
+assert r.json() == {
+    "type": "https://errors.example.com/user_not_found",
+    "title": "Not Found",
+    "status": 404,
+    "detail": "user does not exist",
+    "instance": "/users/7",
+    "code": "user_not_found",
+    "context": {"id": 7},
+}
+```
+
+* `type`: the class's `problem_type`, else `problem_type_base + code`, else
+  `"about:blank"`. `title`: the class's `problem_title`, else the status phrase.
+* `detail`: the message (the title when empty). `instance`: the request path.
+  `code`: Lauren's stable code. `context`: the error's `detail` dict (omitted
+  when empty).
+* `errors`: an **array**, for validation failures only — each entry has
+  `detail`, plus `pointer` (RFC 6901 JSON Pointer into the body, e.g.
+  `"#/address/city"`) or `in` + `parameter`, and `code` when known. Built from an
+  `issues` list of `{"loc", "type", "msg"}` in the error's `detail`, or one entry
+  per message of an `ExtractorError` that names a `field`.
+* Class-level `problem_type` / `problem_title` attributes on any `HTTPError`
+  subclass set `type` / `title`.
+* `error_format="rfc7807"` is the **legacy** shape, byte-identical to earlier
+  releases (`urn:ietf:rfc:7231:<status>` default `type`, no `instance`, detail
+  dict in an object-valued `errors`). Unknown values fall back to `"default"`
+  with a warning (a `StartupError` in 2.0).
+
+### Error catalog as data
+
+`lauren.reflect.error_catalog(*, include_user=True) -> tuple[ReflectedError, ...]`
+walks `LaurenError` and its subclasses at call time (depth-first);
+`include_user=False` keeps lauren's own public classes. `ReflectedError` (frozen)
+fields: `cls`, `code`, `status_code` (`None` outside `HTTPError`), `category`
+(`"startup" | "http" | "lifecycle" | "websocket" | "other"`), `problem_type`,
+`problem_title`, `summary` (first docstring paragraph). Startup / tooling only —
+never on the request path.
+
+```python run
+from lauren import error_catalog
+
+entry = next(e for e in error_catalog() if e.cls is UserNotFound)
+assert (entry.code, entry.status_code, entry.category) == ("user_not_found", 404, "http")
+assert all(e.cls.__module__.startswith("lauren") for e in error_catalog(include_user=False))
+```
+
+**Deprecation notice:** `detail.type` on `internal_error` 500s and
+`detail.guard` on guard denials expose class names; they stay in 1.x and will
+be emitted only with debug pages enabled in 2.0. Match on `code`, not on them.
 
 ### Errors: Decorator & Interceptor
 
@@ -1548,26 +2959,217 @@ or applied without parentheses).
 
 ---
 
+## Debug Error Pages
+
+`LaurenFactory.create(..., debug=True)` (or `debug=DebugConfig(...)`; also
+`Lauren(debug=...)`) replaces the `500 internal_error` of an **unhandled**
+exception with a read-only report for allowed clients: exception type, message
+and `__cause__` / `__context__` chain; traceback frames with source context;
+the matched route (template, handler, controller, owning module), the effective
+middleware → guard → interceptor chain, exception handlers and parameter
+sources; a redacted request summary; Lauren / Python versions and
+`error_format`. Clients whose `Accept` prefers `text/html` get a
+self-contained HTML page (inline CSS, no JS, all strings escaped); others get
+the normal envelope plus a top-level `debug` member. Both send
+`Cache-Control: no-store`.
+
+```python run
+from lauren import DebugConfig, LaurenFactory, controller, get, module
+from lauren.testing import TestClient
+
+@controller("/orders")
+class OrderController:
+    @get("/{order_id}")
+    async def show(self, order_id: int) -> dict:
+        return {"total": {}[order_id]}          # KeyError — a bug
+
+@module(controllers=[OrderController])
+class OrdersModule: ...
+
+client = TestClient(LaurenFactory.create(OrdersModule, debug=True))   # TestClient is 127.0.0.1
+report = client.get("/orders/7", headers={"accept": "application/json"}).json()
+assert report["error"]["code"] == "internal_error"
+assert report["debug"]["exception"]["type"] == "KeyError"
+assert report["debug"]["route"]["path_template"] == "/orders/{order_id}"
+assert "KeyError" in client.get("/orders/7", headers={"accept": "text/html"}).text
+assert DebugConfig().allow_remote is False
+```
+
+`DebugConfig(include_4xx=False, allow_remote=False, redact_headers=("authorization", "cookie", "set-cookie", "proxy-authorization", "x-api-key"), redact_query_keys=("token", "password", "secret", "api_key"), source_context=5, max_frames=40, include_locals=False)`:
+
+| Field | Effect |
+|---|---|
+| `include_4xx` | Rendered `HTTPError` responses (any status) also get `debug.raised_at` + `debug.traceback` |
+| `allow_remote` | Serve every client; by default only loopback (`127.0.0.0/8`, `::1`) — **not** a boundary behind a same-host proxy |
+| `redact_headers` / `redact_query_keys` | Values replaced by `[redacted]` when the name *contains* an entry (case-insensitive); query keys also redact frame locals |
+| `source_context` / `max_frames` | Source lines around each frame / innermost frames kept |
+| `include_locals` | Show frame locals (`repr`, truncated); off because locals hold secrets |
+
+Safety: never inferred from the environment; `create()` logs a WARN
+("Debug error pages enabled — never use in production"); with the typed
+configuration module, a production `Profile` makes `debug=` a
+`StartupError(detail={"reason": "debug_in_production", ...})`; invalid values
+raise `StartupError(detail={"reason": "invalid_debug_config", ...})`; a failing
+renderer falls back to the plain 500 and logs `origin="debug_renderer"`. When
+debug is off the renderer is never imported.
+
+---
+
 ## Testing
 
 ```python run
 from lauren.testing import TestClient
 
 app = LaurenFactory.create(AppModule)
-c = TestClient(app)
-
-r = c.get("/users/42", headers={"Authorization": "Bearer ..."})
-assert r.status_code == 200
-assert r.json()["id"] == 42
+with TestClient(app) as c:             # startup() on enter, shutdown() on exit
+    r = c.get("/users/42", headers={"Authorization": "Bearer ..."})
+    assert r.status_code == 200
+    assert r.json()["id"] == 42
+    assert r.headers.get("content-type") == "application/json"
 ```
 
-`TestClient`:
-- `get / post / put / patch / delete / options / head`
-- `request(method, url, *, headers=None, json=None, content=None, params=None, cookies=None)`
-- All methods return a `TestResponse` with `status_code`, `headers` (list of tuples), `body` (bytes), `text` (str), `json()`, `header(name)`, `headers_all(name)`.
-- Works inside `asyncio.run(...)` tests — it auto-switches to a background thread when called from within a running event loop.
-- Starts the app for you (singletons built, `@post_construct` hooks run), mirroring the ASGI lifespan — immediately for a `LaurenApp`, on the first request for a `Lauren` app (so routes added after creating the client still count).
-- Passes the URL path to the app as written: it does **not** percent-decode it the way ASGI servers do, so a path like `/files/a%2Fb` reaches a handler as `a%2Fb` in tests but `a/b` under uvicorn.
+`lauren.testing` (all names import from there): `TestClient`, `AsyncTestClient`,
+`TestResponse`, `StreamingTestResponse`, `ResponseHeaders`,
+`HTTPStatusAssertionError`, `CookieJar`, `StoredCookie`, `Test`,
+`TestingModuleBuilder`, `lifespan`, `WsTestClient`, `WebSocketTestSession`,
+`WebSocketSession`; opt-in fixtures in `lauren.testing.pytest_plugin`.
+
+### `TestClient(app, *, base_url="http://testserver", headers=None, cookies=None, follow_redirects=False, timeout=30.0, raise_server_exceptions=False, lifespan="auto", backend="asyncio", backend_options=None, root_path="", strict_cookies=False, persist_cookies=None)`
+
+- **One persistent event loop per client**: startup, requests, background tasks,
+  WebSockets and shutdown share it, so `asyncio.Event`/`Queue`/`Lock`, pools and
+  tasks created in `@post_construct` keep working. A call from sync test code
+  runs that loop in the test's thread (thread-local state and context variables
+  are visible, as in 1.x); a daemon thread runs it between calls. Calling the
+  sync client inside a running loop works but warns once — use `AsyncTestClient`.
+- **Lifespan**: `with TestClient(app)` runs `startup()` on enter and the full
+  shutdown (drain → `on_shutdown` → `@pre_destruct` → generator teardown) on
+  exit; failures raise the original exception. A bare `TestClient(app)` keeps
+  1.x behaviour: a `LaurenApp` starts at construction, a `Lauren` app on its
+  first request; `close()` shuts down; garbage collection stops the loop
+  without shutdown hooks. `lifespan="off"` never starts/stops; `"on"` also
+  drives a foreign ASGI app's lifespan outside `with` and fails if unsupported.
+- **One driver per app**: a second `TestClient(app)` attaches to the live
+  client's loop; entering it with `with` raises — use `client.new_session()`
+  (same app and loop, empty jar). Restarting a shut-down app raises.
+- **Requests**: `request(method, url, *, params, headers, cookies, json, data, files, content, follow_redirects, timeout, disconnect_after)`
+  and `get/post/put/patch/delete/head/options(url, **kw)`; `await arequest(...)`.
+  `data=` → urlencoded form, `files=` → multipart (`{"f": ("a.png", b"...", "image/png")}`,
+  file objects, lists), `content=` bytes/str or an (async) iterable streamed per
+  chunk. A `host` header comes from `base_url`; an explicit `content-type` wins.
+- **Timeouts**: `timeout` (30 s; `None` for a bare client) bounds each request;
+  on expiry the app task is cancelled and `TimeoutError` is raised.
+- **Cookies**: `client.cookies` is a browser-like `CookieJar` (domain/path
+  matching, `Max-Age`/`Expires`, `Max-Age=0` deletes, `__Host-`/`__Secure-`
+  rules; `Secure` cookies work on `testserver`/`localhost`/`127.0.0.1`/`::1`
+  unless `strict_cookies=True`). `Set-Cookie` is stored for `with`-managed and
+  `new_session()` clients (`persist_cookies=None`); a bare client stores none
+  unless `persist_cookies=True`. Per-request `cookies=` merge without
+  persisting; an explicit `Cookie` header bypasses the jar.
+  `client.set_session({...})` issues a valid signed session cookie.
+- **Streaming**: `with client.stream("GET", "/events") as r:` →
+  `StreamingTestResponse` with `iter_bytes()/iter_text()/iter_lines()/iter_sse()`
+  (`ServerSentEvent` items); leaving the block (or `r.close()`) delivers
+  `http.disconnect`; `timeout` bounds each chunk.
+- **Disconnects**: `receive()` blocks after the body until the response is
+  complete, then reports `http.disconnect`. `disconnect_after=0.2` simulates a
+  client abort: a blocked `receive()` gets `http.disconnect`, a streamed body is
+  truncated, later sends are dropped, and the call returns after the app's
+  coroutine finished with `r.aborted is True` (`status_code` is `None` if the
+  response never started).
+- **Diagnostics**: `raise_server_exceptions=True` re-raises errors that became a
+  500 (not `HTTPError`s) via a `lauren.testing` scope extension
+  (`request.extensions`); `with client.capture(RequestComplete) as events:`
+  collects the app's lifecycle events; `client.resolve(Token)` resolves DI on
+  the client's loop.
+- **WebSockets**: `with client.websocket_connect("/chat", timeout=5.0) as ws:` —
+  sync `send_text/send_bytes/send_json/send_event(event, data)` and
+  `receive/receive_text/receive_bytes/receive_json/receive_event()`, carrying
+  the jar's cookies. `WsTestClient(app).connect(path, server_timeout=2.0)` is the
+  async variant.
+- Passes the URL path to the app as written: it does **not** percent-decode it
+  the way ASGI servers do, so `/files/a%2Fb` reaches a handler as `a%2Fb` in
+  tests but `a/b` under uvicorn.
+
+`TestResponse`: `status_code`, `headers` (`ResponseHeaders` — still a
+`list[tuple[str, str]]`, plus case-insensitive `get`, `getall`, `["name"]`,
+`keys()`, `in`), `body`/`content`, `text`, `json()`, `header(name)`,
+`headers_all(name)`, `cookies`, `is_success`/`is_redirect`/`is_client_error`/
+`is_server_error`, `raise_for_status()` (raises
+`HTTPStatusAssertionError(AssertionError)`), `aborted`, `url`, `request`,
+`elapsed`, `history`.
+
+`AsyncTestClient` has the same keywords and methods, awaited, on the caller's
+loop (`async with AsyncTestClient(app) as client`, `await client.get(...)`,
+`async with client.stream(...)` with `aiter_*`). An app driven by a client on
+another loop raises `RuntimeError`. `async with lauren.testing.lifespan(app):`
+runs startup/shutdown around a third-party client such as
+`httpx.AsyncClient(transport=ASGITransport(app))`.
+
+### Provider overrides — `Test.create_testing_module(root, *, overrides=(), **factory_kwargs)`
+
+```python run
+from lauren import controller, get, injectable, module
+from lauren.testing import Test, TestClient
+
+@injectable()
+class Clock:
+    def now(self) -> str:
+        return "real time"
+
+@controller("/time")
+class TimeController:
+    def __init__(self, clock: Clock) -> None:
+        self.clock = clock
+
+    @get("/")
+    async def now(self) -> dict:
+        return {"now": self.clock.now()}
+
+@module(providers=[Clock], exports=[Clock])
+class ClockModule:
+    pass
+
+@module(imports=[ClockModule], controllers=[TimeController])
+class TimeModule:
+    pass
+
+class FrozenClock:
+    def now(self) -> str:
+        return "2026-01-01T00:00:00Z"
+
+app = Test.create_testing_module(TimeModule).override_provider(Clock).use_class(FrozenClock).compile()
+with TestClient(app) as client:
+    assert client.get("/time/").json() == {"now": "2026-01-01T00:00:00Z"}
+```
+
+`TestingModuleBuilder` steps: `override_provider(token)` →
+`use_value(v)` / `use_class(cls, scope=None)` / `use_factory(fn, injects=[...], scope=None)` /
+`use_existing(token)` / `use_values([...])` (whole multi-binding set), with
+`.optional()` to tolerate a missing target; `override_guard(G)` → `allow()` /
+`deny()` / `use_value` / `use_class`; `override_interceptor(I)` and
+`override_middleware(M)` → `passthrough()` / `use_value` / `use_class`;
+`override_exception_handler(H)` → `use_value(obj_or_fn)` / `use_class` (class
+form); `override_module(Old).with_module(New)`. `compile()` runs the full
+`LaurenFactory.create` (same kwargs) with the overrides applied: the
+replacement keeps the target's token, owning module, `provides` and `multi`, so
+visibility and Protocol / `list[T]` bindings are unchanged; the replaced
+provider is never instantiated; `use_class`/`use_factory` inherit the target's
+scope. Errors: `MissingProviderError` with `detail["reason"] == "override_target_missing"`
+(target nothing registers), `StartupError` (same reason, module not imported),
+`DIScopeViolationError` (scope narrowing), `DecoratorUsageError` (same token
+overridden twice). Declarative form: `overrides=[use_value(provide=Repo, value=fake)]`.
+No user class is mutated and nothing is consulted per request.
+
+### pytest plugin (opt-in)
+
+`pytest_plugins = ["lauren.testing.pytest_plugin"]` in `conftest.py`. Ini:
+`lauren_app = "pkg.main:AppModule"` (a `@module` class, a
+`TestingModuleBuilder`, or — with `lauren_client_scope = session` — an app
+object) and `lauren_client_scope` (default `function`). Fixtures: `lauren_app`
+(compiles a `lauren_testing_module` fixture when you define one),
+`lauren_client` (lifespan-managed), `lauren_aclient` (pytest-asyncio),
+`lauren_ws`, `lauren_capture`.
 
 ### Test tiers
 
@@ -1642,7 +3244,7 @@ Method-level decorators (`@get`, `@post`, etc.) DO propagate through inheritance
 - Controller `@controller(prefix=..., tags=..., summary=..., description=..., deprecated=..., security=...)`
 - Handler `@get(..., summary=..., description=..., response_model=..., responses=..., deprecated=..., operation_id=..., include_in_schema=..., tags=...)`
 
-The response schema comes from `response_model=` or, when omitted, from the handler's return annotation (`-> UserOut`, `-> list[UserOut]`, `-> tuple[UserOut, int]`). Pydantic models, msgspec structs, dataclasses, `TypedDict`s and `Discriminated[...]` unions are all supported; a type that cannot be described degrades to a generic object schema.
+The response schema comes from `response_model=` or, when omitted, from the handler's return annotation (`-> UserOut`, `-> list[UserOut]`, `-> tuple[UserOut, int]`). The status is the declared one — `status_code=`, each member of a typed-result union (`Ok[A] | Created[A]` → `"200"` and `"201"`, with a `Location` header for `Created` / `Accepted`), `Annotated[T, Status(206)]` — and `-> None` / `-> NoContent` are documented as `"204"` without content. `@raises(...)` adds one response per error status; `response_headers=` documents headers on the success response. Pydantic models, msgspec structs, dataclasses, `TypedDict`s and `Discriminated[...]` unions are all supported; a type that cannot be described degrades to a generic object schema.
 
 ```python run
 class UserOut(BaseModel):
@@ -1661,7 +3263,7 @@ spec = LaurenFactory.create(OpenApiModule).openapi()
 assert spec["paths"]["/users/{id}"]["get"]["operationId"] == "getUser"
 ```
 
-Schemas are emitted under `components.schemas` and referenced from the path operation's `responses.200.content["application/json"].schema`.
+Schemas are emitted under `components.schemas` and referenced from the path operation's `responses.<status>.content["application/json"].schema`.
 
 ### OpenAPI Security
 
@@ -1742,14 +3344,23 @@ error/verbose`` sugar methods.
 
 ``LaurenApp.shutdown()`` is the canonical teardown path. It:
 
-1. Flips the ``_running`` flag so no new work is scheduled.
+1. Stops admitting new work and moves ``READY → DRAINING`` (a no-op when
+   ``app.begin_draining()`` already did); the scheduler stops firing (hosted
+   services keep running).
 2. Drains in-flight requests (up to ``drain_timeout`` seconds).
-3. Runs any ``on_shutdown`` callbacks the user registered (LIFO).
-4. Runs ``@pre_destruct`` hooks in reverse topological order.
+3. Awaits in-flight scheduled job runs (``job_drain_timeout``, default what is
+   left of ``drain_timeout``), then cancels them.
+4. Stops hosted services in reverse start order (each gets its
+   ``stop_timeout``, then is cancelled).
+5. Awaits running ``@on_event`` handler tasks with what is left of the budget
+   and cancels the rest (see [Application Events](#application-events)).
+6. Runs any ``on_shutdown`` callbacks the user registered (LIFO).
+7. Runs ``@pre_destruct`` hooks in reverse topological order.
 
-All four steps are logged through the installed logger. Calls are
-idempotent: concurrent or repeated ``shutdown()`` invocations return once
-the first shutdown has finished.
+All steps are logged through the installed logger, and the app ends
+``STOPPED`` (a ``FAILED`` app stays ``FAILED``). Calls are idempotent:
+concurrent or repeated ``shutdown()`` invocations return once the first
+shutdown has finished.
 
 ```python run
 app = LaurenFactory.create(AppModule, logger=default_logger())
@@ -1763,15 +3374,65 @@ async def flush_metrics() -> None:
 from lauren.signals import install_signal_handlers, wait_for_shutdown
 
 async def main():
-    event = install_signal_handlers(app, drain_timeout=30)
+    # SIGTERM / SIGINT: app.begin_draining(), keep serving 10 s, then app.shutdown().
+    event = install_signal_handlers(app, drain_timeout=30, shutdown_delay=10)
     # ... run the app (e.g. via uvicorn.run) ...
     await wait_for_shutdown(event)
 ```
 
+`install_signal_handlers(app, *, signals=(SIGINT, SIGTERM), drain_timeout=10.0,
+shutdown_delay=0.0, loop=None) -> asyncio.Event` — on the first handled signal
+it calls `app.begin_draining(reason="signal SIGTERM")`, waits `shutdown_delay`
+seconds (readiness answers 503 while connections are still accepted), then
+schedules `app.shutdown(drain_timeout=...)`. Later signals are logged and
+ignored; a negative or non-numeric `shutdown_delay` raises `ValueError`.
+
 When running under a well-behaved ASGI server (uvicorn, hypercorn), the
 server already delivers SIGTERM to the lifespan protocol, so you typically
 won't need ``install_signal_handlers`` — it's for standalone scripts and
-customised runners.
+customised runners. Note that uvicorn stops listening and drains connections
+*before* it sends ``lifespan.shutdown``: a readiness flip inside ``shutdown()``
+is invisible to load balancers, so announce termination earlier with
+``app.begin_draining()`` (a ``preStop`` window, a signal handler, a custom runner).
+
+### Lifecycle state
+
+`app.lifecycle_state` is an `AppLifecycleState` (exported from `lauren` and
+`lauren.signals`); every transition emits `LifecycleStateChanged(app, previous,
+current, reason)` on the app's `SignalBus`.
+
+| Transition | Where |
+|---|---|
+| `CREATED → STARTING` | top of `startup()`, before `StartupBegin` |
+| `STARTING → READY` | after every `@post_construct` hook, before `StartupComplete` |
+| `STARTING → FAILED` | `startup()` raised (the lifespan answers `lifespan.startup.failed`) |
+| `FAILED → STARTING` | `startup()` called again to retry (e.g. an async configuration source recovered) |
+| `READY → DRAINING` | `app.begin_draining(reason=...)`, or the first step of `shutdown()` |
+| `DRAINING → STOPPED` | end of `shutdown()` (`CREATED → STOPPED` for an app never started) |
+
+`STOPPED` is terminal; `FAILED` lasts until `startup()` is retried (a `FAILED`
+app that shuts down stays `FAILED`, and `startup()` then raises). During
+`DRAINING` requests are served normally; only readiness fails.
+
+```python run
+from lauren import AppLifecycleState, LifecycleStateChanged, SignalBus, module
+
+
+@module()
+class LsAppModule: ...
+
+
+ls_signals = SignalBus()
+ls_seen: list[str] = []
+ls_signals.on(LifecycleStateChanged)(lambda event: ls_seen.append(event.current.value))
+ls_app = LaurenFactory.create(LsAppModule, signals=ls_signals)
+assert ls_app.lifecycle_state is AppLifecycleState.CREATED
+await ls_app.startup()
+assert ls_app.begin_draining(reason="preStop") is True   # readiness fails; requests still served
+assert ls_app.begin_draining() is False                   # idempotent
+await ls_app.shutdown()
+assert ls_seen == ["starting", "ready", "draining", "stopped"]
+```
 
 ### Signals & Lifecycle Events
 
@@ -1807,8 +3468,357 @@ Full event hierarchy:
 | `BackgroundTaskStarted` | Background task begins |
 | `BackgroundTaskComplete` | Background task finishes successfully |
 | `BackgroundTaskFailed` | Background task raises |
+| `EventHandlerFailed` | An `@on_event` handler raised or was cancelled at shutdown (`event_type`, `handler`, `error`, `mode`, `event`) |
+| `HostedServiceStarted` / `HostedServiceStopped` / `HostedServiceFailed` | A hosted service starts (each restart too), ends for good, raises (see [Hosted Services & Scheduling](#hosted-services--scheduling)) |
+| `JobStarted` / `JobCompleted` / `JobFailed` / `JobSkipped` | A scheduled job run starts, completes, fails (timeouts, cancellation) or is skipped |
+| `LifecycleStateChanged` | `app.lifecycle_state` changed (`app`, `previous`, `current`, `reason`) |
+| `HealthChanged` | A health check's status, or the report's aggregate (`name=None`), changed (`app`, `name`, `previous`, `current`, `details`) — see [Health & Readiness](#health--readiness) |
 
-`LifecycleEvent` is the common base class for all events above.
+`LifecycleEvent` is the common base class for all events above. Domain
+events do not belong here: publish them on the application `EventBus`
+([Application Events](#application-events)).
+
+---
+
+## Health & Readiness
+
+Liveness, readiness and startup probes plus a full report, driven by the
+application lifecycle state and by `@health_check` methods on singleton
+providers. Public names live in `lauren.health` (`HealthModule`,
+`health_check`, `HealthResult`, `HealthStatus`); `HealthModule`,
+`HealthChanged` and `PUBLIC_METADATA_KEY` are also exported from `lauren`.
+
+```python run
+from lauren import LaurenFactory, Scope, injectable, module
+from lauren.health import HealthModule, HealthResult, HealthStatus, health_check
+from lauren.testing import TestClient
+
+
+@injectable(scope=Scope.SINGLETON)
+class HcDatabase:
+    def __init__(self) -> None:
+        self.reachable = True
+
+    @health_check("database", timeout=2.0, cache_ttl=5.0)   # tags=("ready",), critical=True
+    async def ping(self) -> bool:
+        return self.reachable                                 # e.g. await pool.execute("SELECT 1")
+
+
+@injectable(scope=Scope.SINGLETON)
+class HcSearch:
+    @health_check("search", critical=False, timeout=1.0)     # down/degraded => report degraded
+    def ping(self) -> HealthResult:                           # sync: runs in a worker thread
+        return HealthResult.degraded(latency_ms=612.0, reason="slow")
+
+
+@module(imports=[HealthModule.for_root(details="always", version="1.4.2")], providers=[HcDatabase, HcSearch])
+class HcAppModule: ...
+
+
+hc_app = LaurenFactory.create(HcAppModule)
+hc_client = TestClient(hc_app)                                # runs startup(): READY
+assert hc_client.get("/health/live").json() == {"status": "up"}
+assert hc_client.get("/health/ready").json() == {"status": "degraded"}   # 200 (degraded_status)
+report = hc_client.get("/health").json()
+assert (report["status"], report["lifecycle"], report["version"]) == ("degraded", "ready", "1.4.2")
+assert report["checks"]["search"]["reason"] == "slow"
+hc_app.begin_draining(reason="preStop")
+assert hc_client.get("/health/ready").status_code == 503     # out of rotation...
+assert hc_client.get("/health/live").status_code == 200      # ...but never restarted for it
+assert HealthResult.down(error="x").status is HealthStatus.DOWN
+```
+
+### `HealthModule.for_root(*, path="/health", details="never", details_guard=None, format="lauren", event_loop_lag_ms=None, disk_paths=None, max_rss_bytes=None, version=None, report_status_code=True, degraded_status=200)`
+
+Returns a generated module; import it into the root module. Routes (GET,
+`include_in_schema=False`, metadata `PUBLIC_METADATA_KEY=True`):
+
+| Endpoint | 200 when | 503 when |
+|---|---|---|
+| `{path}/live` | state not `FAILED`/`STOPPED` and no `"live"` check down | otherwise |
+| `{path}/startup` | state `READY`/`DRAINING` and no `"startup"` check down | `CREATED`, `STARTING`, `FAILED`, `STOPPED` |
+| `{path}/ready` | state `READY` and no **critical** `"ready"` check down | any other state or a critical check down |
+| `{path}` | aggregate up or degraded | aggregate down (unless `report_status_code=False`) |
+
+* Probes answer `{"status": "up" | "degraded" | "down"}` only (never details);
+  a degraded answer uses `degraded_status`. All responses send
+  `Cache-Control: no-store`.
+* Aggregate: any critical check down → `down`; else any down or degraded →
+  `degraded`; else `up`. In the report the lifecycle state is a critical input
+  that is up only in `READY`; checks run only in `READY` / `DRAINING`
+  (otherwise `"checks": {}`).
+* Report: `{"status", "lifecycle", "checks": {name: {...}}, "version"?}`.
+  Names and statuses always; `critical`, `latency_ms`, the result's details,
+  `reason` (`"timeout"`), `error` (`"Type: message"` for a raising check) and
+  `cached: true` only when details are allowed: `details="never"` (default),
+  `"always"`, or `"when_authorized"` with `details_guard` — a guard class
+  (`can_activate(ctx)`) resolved through DI with the request's
+  `ExecutionContext`; a denial (falsy, or an `HTTPError` raised) hides the
+  details and never turns into a 403.
+* `format="ietf"`: `application/health+json`, statuses `pass`/`warn`/`fail`,
+  each check a one-element list, `error` → `output`.
+* Built-in indicators (off by default; names reserved): `event_loop_lag_ms` →
+  `event_loop` (`live` + `ready`; p99 lag over 10 s sampled every 0.5 s while
+  `READY`; degraded above half), `disk_paths={path: min_free_bytes}` →
+  `disk:<path>` (`ready`), `max_rss_bytes` → `memory` (`ready`; current RSS on
+  Linux, peak RSS elsewhere on POSIX; `DecoratorUsageError` on Windows).
+* One `HealthModule` per app: different options → `StartupError`
+  (`reason="conflicting_health_options"`); two at the same path →
+  `RouterConflictError`. Invalid options → `DecoratorUsageError`
+  (`detail["helper"] == "HealthModule.for_root"`); details-guard mistakes →
+  `GuardConfigError` (`reason` `missing_details_guard` / `invalid_details_guard`
+  / `unused_details_guard`).
+
+### `@health_check(name, *, critical=True, timeout=2.0, cache_ttl=0.0, tags=("ready",))`
+
+* On a method of a `Scope.SINGLETON` provider (else `LifecycleConfigError`,
+  `detail = {"check", "provider", "method", "scope", "reason"}`); discovered
+  app-wide at startup, resolved through the provider's own module — no export
+  needed. Must be called with a name; stacking registers several checks.
+  Static/class methods work. Validated even without `HealthModule`.
+* Returns `None`/`True` (up), `False` (down) or a `HealthResult`
+  (`HealthResult.up(**details)` / `.degraded(...)` / `.down(...)`; frozen,
+  `status: HealthStatus`, `details: dict`); raising → down with `error`.
+* Parameters: only dependencies the provider's module can resolve
+  (request-scoped ones get a fresh `app.scope("health:<name>")` per run);
+  anything else → `UnresolvableParameterError` at startup.
+* `tags` ⊆ `{"live", "ready", "startup"}` (`()` = report only); names unique
+  per app (`DuplicateBindingError`, `detail["providers"]` lists both; also for
+  the reserved `lifecycle`, `event_loop`, `memory`, `disk:*`).
+* Execution: concurrent, each run bounded by `timeout` (down,
+  `reason="timeout"`), single-flight across concurrent probes, result reused
+  for `cache_ttl` seconds (`cached: true`). Sync checks run in a worker thread
+  the timeout abandons; while that thread is still busy later runs fail fast
+  (`error="the previous run is still running"`).
+* Status changes emit `HealthChanged(app, name, previous, current, details)` on
+  the app's `SignalBus` (`previous=None` on a check's first run; `name=None`
+  for the report's aggregate).
+
+### Draining before the socket closes
+
+Uvicorn stops listening before it sends `lifespan.shutdown`, so readiness must
+fail earlier: a Kubernetes `preStop` sleep (Kubernetes removes the pod from its
+endpoints itself), `install_signal_handlers(app, shutdown_delay=10)` (drains on
+SIGTERM, keeps serving, then shuts down), or a custom runner calling
+`app.begin_draining()` before triggering the server's graceful shutdown.
+
+**Rules:**
+
+* Liveness must not check dependencies: a database outage takes pods out of
+  rotation (readiness) but must not restart them. Tag a check `"live"` only
+  when its failure means this process is broken.
+* Never hand-roll a `{"status": "ok"}` endpoint: it answers "ok" before
+  startup, during shutdown and while dependencies are down. Use
+  `HealthModule.for_root()`, or at least answer from `app.lifecycle_state`.
+* A global auth guard should let `ctx.get_metadata(PUBLIC_METADATA_KEY, False)`
+  routes through; Lauren never skips a guard on its own.
+
+---
+
+## Application Events
+
+Typed, in-process domain events: one module announces that something happened
+(`UserRegistered`) and other modules react with `@on_event` handlers, without
+the publisher importing them or widening its module's `imports`. Public names
+live in `lauren.events` (`EventBus`, `EventPublisher`, `on_event`,
+`EventContext`, `EmitResult` and `EventHandlerFailed` are also exported from
+`lauren`). Handlers are discovered on every provider and validated inside
+`LaurenFactory.create`; an emission is a lookup in a compiled per-app table.
+
+```python run
+from dataclasses import dataclass
+
+from lauren import LaurenFactory, Scope, controller, injectable, module, post
+from lauren.events import EventBus, EventContext, EventPublisher, on_event
+from lauren.testing import TestClient
+
+
+@dataclass(frozen=True)
+class EvDomainEvent:                      # optional common base: its handlers see every subclass
+    pass
+
+
+@dataclass(frozen=True)
+class EvUserRegistered(EvDomainEvent):
+    user_id: str
+    email: str
+
+
+@injectable(scope=Scope.REQUEST)
+class EvDbSession:                        # one per request (or per operation scope)
+    def __init__(self) -> None:
+        self.rows: list[str] = []
+
+
+@injectable()
+class EvAuditTrail:                       # lives in its own module in a real app
+    @on_event(priority=100)               # class inferred from the annotation; mode="inline"
+    async def record(self, event: EvDomainEvent, db: EvDbSession, ctx: EventContext) -> None:
+        db.rows.append(f"audit {type(event).__name__} {ctx.event_id}")
+
+
+@injectable()
+class EvWelcomeMailer:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    @on_event(EvUserRegistered, mode="background")   # after the HTTP response
+    async def send_welcome(self, event: EvUserRegistered) -> None:
+        self.sent.append(event.email)
+
+
+@controller("/ev-users")
+class EvUserController:
+    @post("/")
+    async def register(self, events: EventPublisher, db: EvDbSession) -> dict:
+        db.rows.append("insert u1")
+        await events.emit(EvUserRegistered("u1", "ada@example.com"))   # inline handlers share `db`
+        return {"rows": len(db.rows)}
+
+
+@module(controllers=[EvUserController], providers=[EvDbSession, EvAuditTrail, EvWelcomeMailer])
+class EvAppModule: ...
+
+
+ev_app = LaurenFactory.create(EvAppModule)
+await ev_app.startup()
+response = await TestClient(ev_app).arequest("POST", "/ev-users/")
+assert response.json() == {"rows": 2}                     # the audit row joined the request's session
+assert (await ev_app.container.resolve(EvWelcomeMailer)).sent == ["ada@example.com"]
+
+bus = await ev_app.container.resolve(EventBus)            # the per-app singleton bus
+with bus.recording() as rec:
+    result = await bus.emit(EvUserRegistered("u2", "bob@example.com"), wait=True)
+assert (result.handled, result.scheduled, result.ok) == (2, 1, True)
+assert rec.handler_calls("EvWelcomeMailer.send_welcome") == 1
+assert bus.handlers_for(EvUserRegistered) == ("EvAuditTrail.record", "EvWelcomeMailer.send_welcome")
+await ev_app.shutdown()
+```
+
+### `@on_event(event_type=None, *, mode="inline", priority=0, errors=None, enabled=True)`
+
+* Decorates a method of any provider (`@injectable`, controller, any scope);
+  must be called with parentheses. Stacking subscribes one method to several
+  classes. Returns the method unchanged (metadata in `__lauren_on_event__`).
+* `event_type=None` infers the class from the annotation of the first
+  parameter after `self` (a union subscribes to each member, `None` ignored).
+  With an explicit class, that annotation must be the class or a base of it
+  (or absent / `object` / `Any`).
+* A handler on a base class receives every subclass. A method subscribed
+  along an event's MRO runs once, under its most specific subscription.
+* Other parameters: `EventContext` (any name) and dependencies resolvable from
+  the provider's own module. `Request` is never injectable into a handler.
+* `priority`: higher runs first; ties keep discovery order (provider
+  registration order, then method order).
+* `errors`: `"propagate"` (default for inline) re-raises from `emit()`;
+  `"isolate"` (default and only option for deferred modes) logs the error,
+  signals `EventHandlerFailed` and lists it in `EmitResult.errors`.
+* `enabled=False`: validated at startup, never called.
+* Sync (`def`) handlers run in a worker thread; method-level MRO propagation
+  applies (an undecorated override removes the handler).
+
+| `mode` | When it runs | Request-scoped deps through `EventPublisher` | through `EventBus` |
+|---|---|---|---|
+| `"inline"` | inside `emit()`, sequentially | the request's (or connection's) DI scope | one `OperationScope` per `emit()`, shared by its inline handlers |
+| `"concurrent"` | tracked task, started after every inline handler succeeded | a fresh `OperationScope` per call | same |
+| `"background"` | in an HTTP request: after the response, on its `BackgroundTasks` queue; elsewhere (WebSocket, `EventBus`): like `"concurrent"` | a fresh `OperationScope` per call | same |
+
+### Publishing
+
+| Injectable | Scope | Use in |
+|---|---|---|
+| `EventBus` | singleton, one per app (always registered) | services, jobs, commands, `@post_construct` |
+| `EventPublisher` | request (framework factory) | route handlers, WebSocket hooks, request-scoped providers, `@on_event` handlers |
+
+`await events.emit(event, *, wait=False) -> EmitResult`:
+
+1. Handlers for `type(event)` and its bases, ordered by `(-priority, discovery index)`.
+2. Inline handlers run one by one. A `"propagate"` failure stops the rest,
+   schedules **no** deferred handler and re-raises.
+3. Then deferred handlers are scheduled. `wait=True` also awaits the tasks
+   this call started (not request-queued background handlers).
+4. `EmitResult(event, handled, scheduled, errors)`; `.ok` is `not errors`.
+
+Also on `EventPublisher`:
+
+* `emit(event, after=TransactionPhase.COMMIT)` defers the whole emission
+  until the request's `UnitOfWork` commits (dropped on rollback), then
+  delivers it like `EventBus.emit`. `UnitOfWork` is a runtime-checkable
+  protocol (`on_commit(cb)`, `on_rollback(cb)`, callbacks are async) that a
+  database integration provides; without one the call raises
+  `LifecycleViolationError` (`reason="no_unit_of_work"`).
+* `emit_threadsafe(event) -> concurrent.futures.Future[EmitResult]` for sync
+  handlers running in a worker thread; call `.result()` before returning.
+* `in_request` — `True` inside an HTTP request or WebSocket connection.
+
+Resolving `EventPublisher` outside a request, a connection or an `@on_event`
+handler (a job, `app.scope()`) raises `LifecycleViolationError`
+(`reason="no_request_scope"`); a singleton depending on it fails startup with
+`DIScopeViolationError`.
+
+### `EventContext`
+
+Frozen; fields: `event_id` (hex, unique per `emit()`), `emitted_at` (UTC
+`datetime`), `depth` (0 top-level, +1 per re-emission), `mode`, `in_request`,
+`log` (app logger with `context="Event:<EventType>"`). It never exposes the
+`Request`: requests are pooled and deferred handlers outlive them.
+
+### Startup validation and lifecycle
+
+* Wiring errors fail `LaurenFactory.create` with `UnresolvableParameterError`,
+  `detail = {"handler": "Class.method", "param": ..., "reason": ...}`, reasons
+  `"event_type_mismatch"` (annotation narrower than the subscribed class),
+  `"missing_event_parameter"` (no event parameter, or nothing to infer
+  from), `"invalid_event_type"` (annotation is not a class) and
+  `"unresolvable_dependency"`. Bad decorator arguments (including
+  `errors="propagate"` with a deferred mode) raise `DecoratorUsageError`.
+* During `startup()` inline handlers only reach singletons whose
+  `@post_construct` already ran (otherwise `LifecycleViolationError`,
+  `reason="app_not_ready"`); deferred handlers wait until the app is ready.
+* `shutdown()` awaits running handler tasks after the request drain, with what
+  is left of `drain_timeout`, then cancels the rest (each reported as
+  `EventHandlerFailed` with a `CancelledError`). After shutdown `emit()`
+  raises `LifecycleViolationError` (`reason="app_stopped"`).
+* Handlers re-emitting deeper than `max_depth` (default 16) raise
+  `RecursionError` naming the chain of event classes.
+* `EventsModule.for_root(max_depth=16, drain_timeout=None)` is optional tuning;
+  `drain_timeout=None` means "the rest of the shutdown budget".
+
+### Testing
+
+* `with bus.recording() as rec:` captures `rec.events`, `rec.calls`
+  (`"Class.method"` per finished call), `rec.failures`; `rec.of(Type)`,
+  `rec.handler_calls(Class.method | "Class.method")`.
+* `await bus.drain(timeout=None)` waits for running deferred handlers
+  (`TimeoutError` past the timeout).
+* `with bus.disabled(Mailer.send_welcome):` mutes handlers.
+* `bus.handlers_for(Type)` lists handler names in dispatch order.
+* A bare `EventBus()` has no handlers: a recording stand-in for unit tests.
+* `TestClient` keeps one event loop for the client's lifetime, so
+  `"concurrent"` handlers a request starts keep running after the response:
+  call `await bus.drain()` (or emit with `wait=True`) before asserting on their
+  side effects; async tests can use `AsyncTestClient` on their own loop.
+
+### `SignalBus` vs `EventBus`
+
+| | `SignalBus` | `EventBus` |
+|---|---|---|
+| Purpose | framework lifecycle telemetry | application domain events |
+| Event types | `LifecycleEvent` subclasses | any class |
+| Listeners | plain callables, imperative or a process-global default bus | DI-discovered methods, startup-validated |
+| Errors | always logged and swallowed | `propagate` (inline default) or `isolate` |
+| Modes | sequential inline | inline / concurrent / background |
+| Scope | default bus copied into every app | per app only |
+
+**Rules:**
+
+* Inline handlers are part of the publisher's unit of work; deferred handlers
+  run only if every inline handler succeeded.
+* Never put the `Request` (or a request-scoped instance) inside an event;
+  copy the values a handler needs.
+* Use `SignalBus` for telemetry about the framework, `EventBus` for domain
+  events; never subclass `LifecycleEvent` for domain events.
+* Events are in-process and non-durable; deferred work is lost on a crash.
 
 ---
 
@@ -2029,8 +4039,12 @@ Errors related to WebSockets:
 
 * `WebSocketError` — base class.
 * `WebSocketDisconnect(close_code=...)` — the peer closed.
-* `WebSocketValidationError` — frame failed Pydantic validation.
+* `WebSocketValidationError` — a frame failed validation (the same compiled
+  validator as an HTTP body of that type); `detail = {"event", "issues",
+  "errors"}` with issue locations rooted at `["frame", "data"]`.
 * `WebSocketRouteNotFoundError` — no gateway matched the path.
+* `SocketIOError` (code `socketio_error`) — a Socket.IO-layer misuse, e.g.
+  emitting on a closed connection (raised in-process, never sent).
 
 ### Testing
 
@@ -2137,7 +4151,9 @@ Negotiation rules:
 | missing, `*/*`, or anything else     | JSON Lines (default)    |
 
 The `Stream` extractor and `StreamReader[T]` consumer give the same
-typed-iteration story for *receiving* a stream from the client.
+typed-iteration story for *receiving* a stream from the client. Each inbound
+item is validated by the app's compiled validator for `T`; a bad item raises
+`ExtractorError` whose issues are rooted at `["item", <index>]`.
 
 ---
 
@@ -2211,6 +4227,8 @@ app = LaurenFactory.create(
 ```
 
 - `secret` accepts a list for **rotation**: the first signs, all verify.
+  Each entry may be a `lauren.config.Secret` (unwrapped internally), so
+  `SessionConfig(secret=settings.session_secret)` works with typed configuration.
 - `same_site="none"` requires `secure=True`; a `__Host-`/`__Secure-`
   `cookie_name` is validated against `secure`/`path`/`domain`; `max_age` /
   `idle_timeout` must be positive — each rejected with `SessionConfigError`.
@@ -2270,17 +4288,21 @@ class SessionStore(Protocol):
     def new_id(self) -> str: ...
 ```
 
-- `InMemorySessionStore` — process-local dict under an `asyncio.Lock`, lazy
-  TTL expiry. Dev / single-worker only.
+- `InMemorySessionStore(*, max_entries=100_000, sweep_interval=60.0, clock=None)`
+  — process-local and bounded: sessions expire after `max_age` (checked on
+  load and swept proactively, so write-once sessions do not linger) and the
+  least recently used are evicted beyond `max_entries`. Values are kept as
+  Python objects. Dev / single-worker only.
 - `SignedCookieSessionStore(*, max_bytes=4096)` — stateless: the whole
   (signed) payload rides in the cookie, no server row. Signed ≠ encrypted —
   never put confidential data here; an over-size payload raises `ValueError`.
-- Production multi-worker: implement the Protocol over Redis/DB and pass an
-  instance via `SessionConfig(store=...)`. The instance is registered as a
-  **value** provider (also injectable as `store: SessionStore`), so DI
-  lifecycle hooks never run on it — `@post_construct` / `@pre_destruct` on the
-  store class are ignored. Open the connection pool lazily on first use (or
-  before passing the store in) and close it from `app.on_shutdown(...)`.
+- Production multi-worker: pass any `Store` (e.g. a Redis store) as
+  `SessionConfig(store=...)` — it is adapted with `StoreSessionStore` (see
+  [Stores & Caching](#stores--caching)) — or implement the Protocol yourself.
+  The store is injectable as `store: SessionStore` and is registered as a
+  lifecycle-managed singleton: its `@post_construct` / `@pre_destruct` (or
+  `startup()` / `aclose()`) hooks run at `app.startup()` / `app.shutdown()`,
+  so a store may open its connection pool in `@post_construct`.
 
 ### `SessionSerializer` (Protocol)
 
@@ -2329,8 +4351,12 @@ Two mechanisms, both automatic once enabled:
   force-logout-on-password-change. Any session minted before the cutoff is
   rejected (works for the cookie store *and* server-side stores).
 
-`InMemoryRevocationStore` is the dev default (TTL-pruned). The store is
-registered as a global provider, so handlers can inject it directly.
+`InMemoryRevocationStore(*, max_entries=100_000, sweep_interval=60.0, clock=None)`
+is the dev default: TTL-pruned and bounded (an entry evicted beyond
+`max_entries` is no longer enforced; a warning is logged the first time).
+Any `Store` passed as `revocation_store=` is adapted with
+`StoreRevocationStore`. The store is registered as a global provider (with
+its lifecycle hooks), so handlers can inject it directly.
 
 **Rule:** revocation requires a finite `max_age` (or `idle_timeout`) so
 deny-list entries can self-prune — `SessionConfigError` at startup
@@ -2364,6 +4390,373 @@ until a policy is chosen. Fix:
 
 ---
 
+## Stores & Caching
+
+One async key-value contract — `Store` — sits under every stateful feature:
+sessions, session revocation, the `Cache` service, response caching,
+idempotency keys and locks. Core ships the protocol, a bounded `MemoryStore`,
+`Lock`, the session adapters, `StoresModule` (`lauren.stores`) and
+`CacheModule`, `Cache`, `@cache_response`, `@idempotent` (`lauren.cache`).
+Networked backends (Redis, …) live in companion packages; nothing here adds a
+dependency. `Store`, `MemoryStore`, `StoresModule`, `StoreRegistry`, `Lock`,
+`Cache`, `CacheModule`, `cache_response` and `idempotent` are also exported
+from `lauren`.
+
+```python run
+from lauren import LaurenFactory, controller, get, injectable, module, post
+from lauren.cache import Cache, CacheModule, cache_response, idempotent
+from lauren.stores import MemoryStore, StoresModule
+from lauren.testing import TestClient
+
+shop_store = MemoryStore(max_entries=10_000)          # bounded; one backend for everything
+
+
+@injectable()
+class ShopPrices:
+    def __init__(self, cache: Cache) -> None:
+        self._cache = cache
+        self.lookups = 0
+
+    async def price(self, sku: str) -> int:
+        async def load() -> int:                        # the expensive call
+            self.lookups += 1
+            return 42
+
+        return await self._cache.get_or_set(f"price:{sku}", load, ttl=60, tags=("prices",), type=int)
+
+
+@controller("/shop")
+class ShopController:
+    def __init__(self, prices: ShopPrices, cache: Cache) -> None:
+        self.prices, self.cache = prices, cache
+        self.orders = 0
+
+    @get("/price/{sku}")
+    @cache_response(ttl=30, tags=("prices",))           # GET/HEAD only; guards run first
+    async def price(self, sku: str) -> dict:
+        return {"sku": sku, "price": await self.prices.price(sku)}
+
+    @post("/reprice")
+    async def reprice(self) -> dict:
+        await self.cache.invalidate_tags("prices")      # O(1): one incr per tag
+        return {"ok": True}
+
+    @post("/orders")
+    @idempotent(ttl=3600)                               # Idempotency-Key header required
+    async def order(self) -> dict:
+        self.orders += 1
+        return {"order": self.orders}
+
+
+@module(
+    imports=[StoresModule.for_root(default=shop_store), CacheModule.for_root(default_ttl=300)],
+    providers=[ShopPrices],
+    controllers=[ShopController],
+)
+class ShopModule:
+    pass
+
+
+shop_app = LaurenFactory.create(ShopModule)
+with TestClient(shop_app) as client:
+    assert client.get("/shop/price/a").json() == {"sku": "a", "price": 42}
+    assert "age" in client.get("/shop/price/a").headers          # served from the cache
+    client.post("/shop/reprice")
+    assert client.get("/shop/price/a").json()["price"] == 42     # recomputed after invalidation
+    assert client.resolve(ShopPrices).lookups == 2
+    first = client.post("/shop/orders", headers={"Idempotency-Key": "k1"})
+    retry = client.post("/shop/orders", headers={"Idempotency-Key": "k1"})
+    assert first.json() == retry.json() == {"order": 1}
+    assert retry.headers["idempotent-replayed"] == "true"
+```
+
+### `Store` (Protocol)
+
+```python
+@runtime_checkable
+class Store(Protocol):
+    async def get(self, key: str) -> bytes | None: ...
+    async def set(self, key: str, value: bytes, *, ttl: float | None = None) -> None: ...
+    async def delete(self, *keys: str) -> int: ...                     # how many existed
+    async def exists(self, key: str) -> bool: ...
+    async def expire(self, key: str, ttl: float) -> bool: ...          # False when absent
+    async def ttl(self, key: str) -> float | None: ...                 # None: absent or no expiry
+    async def incr(self, key: str, amount: int = 1, *, ttl: float | None = None) -> int: ...
+    async def set_if_absent(self, key: str, value: bytes, *, ttl: float | None = None) -> bool: ...
+    async def delete_if_equal(self, key: str, expected: bytes) -> bool: ...  # compare-and-delete
+    def namespace(self, prefix: str) -> Store: ...                     # keys become "prefix:key"
+```
+
+- Values are `bytes`, keys `str`; `ttl` is seconds (`float`), `None` = no
+  expiry, `<= 0` raises `ValueError`.
+- `incr` is atomic, creates the key at `0` and applies `ttl` **only when it
+  creates the key** (the quota idiom); a non-integer value raises `ValueError`.
+- `set_if_absent` is atomic `SET NX` (locks, idempotency, single-flight);
+  `delete_if_equal` is atomic compare-and-delete (safe lock release).
+- `namespace("cache")` is a cheap view writing `"cache:<key>"`; views nest and
+  share the parent's capacity, clock and connection. `PrefixedStore(store,
+  prefix)` (in `lauren.stores`) is the reusable implementation.
+- No `keys()` / `scan()` / `clear()`: bulk invalidation uses generation
+  counters (`incr`), which every backend supports.
+- A backend may define `async def startup(self)` / `async def aclose(self)`;
+  `StoresModule`, `CacheModule(store=...)` and `SessionConfig(store=...)` run
+  them with the app (`@post_construct` / `@pre_destruct` win when declared).
+  Pre-built instances start before any provider the container constructs (so
+  a service's `@post_construct` may already use the cache) and stop after them.
+
+### `MemoryStore(*, max_entries, sweep_interval=60.0, clock=None)`
+
+Bounded, process-local `Store`. `max_entries` is **required** (`ValueError`
+unless a positive int): least recently used entries are evicted beyond it.
+Expired entries are dropped on read and swept proactively at most every
+`sweep_interval` seconds, so write-once keys never accumulate. Every
+operation is a short synchronous critical section under a `threading.Lock`
+(never awaits while holding it), so one store works across event loops and
+threads. `clock` is a zero-argument callable returning seconds
+(`time.monotonic`) — inject a fake clock to test TTLs without sleeping.
+`len(store)` counts held entries; `store.sweep()` sweeps now.
+
+**Rule:** stores must be bounded — framework-created stores (`StoresModule`
+without `default=`, `CacheModule` without a store, the in-memory session
+stores) use `max_entries=100_000`. The bound is a count of entries, and
+namespaces of one store share it: when a bounded store also holds public
+response-cache entries, give revocation, sessions and idempotency records a
+store of their own (or a backend that does not evict them) so cache traffic
+cannot push them out.
+
+### `StoresModule.for_root(*, default=None, named=None)`
+
+Returns a generated `@module` (put it in `imports=`). Registers, globally:
+the default store under `Store`, each named store under `StoreToken(name)`
+and a `StoreRegistry`. Values are `Store` instances or zero-argument
+factories called **once per app** (several apps built from one module never
+share a store); `default=None` creates a per-app
+`MemoryStore(max_entries=100_000)`. Each store is a lifecycle-managed
+singleton: its `startup()` / `aclose()` hooks run at `app.startup()` /
+`app.shutdown()` — unlike `use_value`, which never runs hooks.
+
+```python
+from typing import Annotated
+from lauren import Inject, injectable
+from lauren.stores import Store, StoreRegistry, StoreToken
+
+@injectable()
+class RateCounter:
+    def __init__(
+        self,
+        store: Store,                                             # the default store
+        local: Annotated[Store, Inject(StoreToken("local"))],     # a named store
+        registry: StoreRegistry,                                  # registry.get("local")
+    ) -> None:
+        self.store, self.local = store, local
+```
+
+Errors (`StartupError`, `detail["reason"]`): `invalid_store` (a factory
+returned a non-store; a bad `for_root` argument raises `DecoratorUsageError`
+with the same reason), `duplicate_store_name` (two `default=`, a name
+registered twice, or a `Store` provider already registered).
+`StoreRegistry.get(name="default")` raises `LookupError` for unknown names.
+
+### `Lock(store, name, *, ttl, wait=None, poll_interval=0.05)`
+
+Async context manager over the key `"lock:<name>"`: acquired with
+`set_if_absent(token, ttl=ttl)` (random token), released with
+`delete_if_equal`, so a holder whose lease expired can never release a newer
+holder's lock. `await lock.acquire(wait=...)` returns a bool (`wait=None` / `0`
+tries once, otherwise retries with capped backoff); `async with` raises
+`TimeoutError` when it cannot acquire; `locked`, `key`, `release()`. The TTL
+is the lease — choose one longer than the critical section (no automatic
+extension).
+
+A distributed lock for another feature (for example a scheduler's
+single-runner lock with `acquire(key, *, ttl) -> bool` / `release(key)`) is
+these two primitives:
+
+```python fragment
+import secrets
+from lauren.stores import Store
+
+class StoreBackedLock:
+    def __init__(self, store: Store) -> None:
+        self._store = store.namespace("locks")
+        self._tokens: dict[str, bytes] = {}
+
+    async def acquire(self, key: str, *, ttl: float) -> bool:
+        token = secrets.token_hex(16).encode()
+        if await self._store.set_if_absent(key, token, ttl=ttl):
+            self._tokens[key] = token
+            return True
+        return False
+
+    async def release(self, key: str) -> None:
+        token = self._tokens.pop(key, None)
+        if token is not None:
+            await self._store.delete_if_equal(key, token)
+```
+
+### Sessions and revocation on a `Store`
+
+`SessionConfig(store=..., revocation_store=...)` accept any `Store` and adapt
+it automatically: `StoreSessionStore(store, *, namespace="session",
+serializer=None)` (payloads JSON-serialised, `ttl=max_age`) and
+`StoreRevocationStore(store, *, namespace="revocation")` (revoked tokens and
+user cutoffs are keys with TTLs). One `MemoryStore` or Redis store can serve
+sessions, revocation and the cache side by side (size a bounded store so cache
+traffic cannot evict revocation entries — see the `MemoryStore` rule):
+
+```python fragment
+store = MemoryStore(max_entries=200_000)
+app = LaurenFactory.create(
+    AppModule,
+    sessions=SessionConfig(secret="…", store=store, revocation_store=store, max_age=3600),
+)
+```
+
+**Rule:** a store handed to `SessionConfig(store=...)` / `revocation_store=`
+(or the backend an adapter wraps) gets its `@post_construct` /
+`@pre_destruct` — or `startup()` / `aclose()` — hooks run with the app,
+exactly once per object even when the same backend is also a `StoresModule`
+store.
+
+### `CacheModule.for_root(*, store=None, namespace="cache", default_ttl=300.0, codec=None, lock_ttl=30.0, lock_wait=5.0, clock=None)`
+
+Registers the app's `Cache` globally. `store=None` uses the default `Store`
+provider when one exists, else a private per-app
+`MemoryStore(max_entries=100_000)`; a string names a `StoresModule` store; a
+`Store` instance or zero-argument factory is used directly (its lifecycle
+runs with the app). Entries live under `"<namespace>:"`. `codec=None` encodes
+with the app's JSON encoder (`JsonCacheCodec`). `clock` (wall-clock seconds)
+drives stale-while-revalidate and `Age` — inject it in tests. A `Cache` the
+application registers itself wins. Errors: two different `for_root` modules →
+`StartupError(reason="conflicting_cache_options")`; an unknown store name or
+a factory returning a non-store → `reason="invalid_store"`; bad arguments →
+`DecoratorUsageError`.
+
+### `Cache(store, *, default_ttl=300.0, codec=None, lock_ttl=30.0, lock_wait=5.0, clock=None)`
+
+| Method | Semantics |
+|---|---|
+| `await get(key, *, type=None)` | Decoded value or `None` (miss). `type=` validates into a model / dataclass / TypedDict / msgspec struct, `list[T]`, `tuple[T, ...]`, `dict[str, T]`, `T \| None` or a scalar; data that no longer validates is a miss. |
+| `await set(key, value, *, ttl=<default>, tags=())` | Encode and store; `ttl=None` = no expiry. |
+| `await delete(*keys) -> int` | Remove entries. |
+| `await get_or_set(key, factory, *, ttl=<default>, tags=(), type=None, lock=False, stale_ttl=None)` | Cache-aside. `factory()` may return an awaitable. Concurrent misses in one process share **one** call; an exception reaches every waiter and nothing is cached. `lock=True` adds a store lease (others poll up to `lock_wait`, then compute themselves — never deadlock). `stale_ttl` serves the expired value for that long while one caller refreshes in the background (errors logged). |
+| `await invalidate_tags(*tags)` | One `incr` per tag; every entry written under the tag misses. |
+| `typed(T) -> TypedCache` | A view whose reads decode into `T`. |
+
+- Tags use generation counters (no `KEYS` / `SCAN`): an entry records the
+  generations of its tags; a read compares them. Generations are read before
+  the factory runs, so an invalidation that lands mid-computation leaves the
+  new entry stale. Counters are seeded randomly, so an evicted counter never
+  resurrects old entries.
+- Without `type=` a hit returns JSON data (`dict` / `list` / scalars) while a
+  miss returns the factory's own value — pass `type=` to get models both ways.
+- A `stale_ttl` factory may run after the request that triggered it ended:
+  never close over request-scoped objects there.
+- `CacheCodec` (`encode(value) -> bytes`, `decode(bytes) -> Any`) is the codec
+  protocol. There is no pickle codec: values cross process boundaries.
+
+### `@cache_response(*, ttl, vary=(), key=None, tags=(), methods=("GET", "HEAD"), statuses=DEFAULT_CACHEABLE_STATUSES, debug_header=False, respect_client_no_cache=False, query=None, allow_authenticated=False)`
+
+Server-side response caching for a route handler. Metadata only: validated at
+decoration (`DecoratorUsageError` for bare usage, a missing / non-positive
+`ttl`, an unsafe method, a `key` that does not take one argument, bad
+statuses, stacking, or combining with `@idempotent`), compiled at startup into
+a framework interceptor that is the route's **innermost** interceptor — after
+guards (authorization always runs before a lookup) and inside user
+interceptors (they observe hits). Routes without a policy pay nothing.
+
+- **Key:** method (`HEAD` reads the `GET` entry, never writes it) + route
+  template + path params + query (order-insensitive across names, repeated
+  values keep their order; `query=("page", …)` keeps only those parameters, so
+  `?_=<random>` cannot bust the cache) + the request headers named in `vary` +
+  `key(ctx)`, hashed into `resp:<route template>:<sha256>`. `key=` is
+  **mandatory for per-user data**; `key(ctx)` returning `None` bypasses the
+  cache for that request. `tags` may be names or a callable of the
+  `ExecutionContext`.
+- **Credentials:** a request carrying `Authorization` bypasses the cache (no
+  lookup, no store) unless `key=` or `vary` on `authorization` / `cookie`
+  makes entries per caller, or `allow_authenticated=True` declares the
+  response identical for every caller.
+- **Stored only when** the status is in `statuses`
+  (`DEFAULT_CACHEABLE_STATUSES` = 200, 203, 204, 300, 301, 404, 405, 410 —
+  returned, not raised), the body is not streamed, there is no `Set-Cookie`,
+  `Cache-Control` has no `private` / `no-store` / `no-cache`, and `Vary` names
+  only headers listed in `vary` (never `*`). Anything else is a pass-through
+  miss, never an error.
+- **Hit:** status, headers (minus hop-by-hop) and body are replayed with
+  `Age`; `debug_header=True` adds `X-Cache: HIT|MISS`. Session cookies are
+  applied outside the cache by the session engine, so a hit never replays
+  another user's cookie.
+- Concurrent misses for one key share one handler run when its response is
+  storable; otherwise each request runs its own.
+- It never emits `Cache-Control`; handler-set `Cache-Control` / `ETag` /
+  `Last-Modified` are stored and replayed. `respect_client_no_cache=True` lets
+  a request's `Cache-Control: no-cache` force a refresh (off by default — a
+  trivial cache-busting lever).
+- OpenAPI marks the operation with `x-cache-ttl`.
+- Startup: no `Cache` provider → `StartupError(reason="cache_module_missing",
+  handler=..., method=..., path=...)`; a cached route that injects `Session`
+  without `key=` (or `vary` on `cookie` / `authorization`) logs a warning.
+
+### `@idempotent(*, ttl=86400.0, header="Idempotency-Key", required=True, scope=None, lock_ttl=60.0)`
+
+Retries of an unsafe request with the same key run the handler once
+(Stripe / IETF `Idempotency-Key` semantics), stored under the cache store's
+`idem:` namespace:
+
+| Situation | Response |
+|---|---|
+| No header, `required=True` | `400` `BadRequestError` (`code="idempotency_key_missing"`); a key over 255 characters → `code="idempotency_key_invalid"` |
+| No header, `required=False` | handler runs normally |
+| First request with key `K` | handler runs; its response (status < 500, not streamed, `Set-Cookie` dropped) is stored for `ttl` |
+| Same `K`, same payload, completed | stored response replayed with `Idempotent-Replayed: true` |
+| Same `K` while the first still runs | `409` `ConflictError` (`code="idempotency_key_in_use"`, `Retry-After: 1`) |
+| Same `K`, different payload | `422` (`code="idempotency_key_mismatch"`) |
+| Handler raised | nothing stored — the retry runs again |
+
+The payload fingerprint is SHA-256 over method, route template, path, query
+and body. `scope(ctx)` partitions keys per user / tenant; `lock_ttl` bounds
+how long an in-flight request holds its key. Needs a `Cache` (same startup
+check as `@cache_response`).
+
+### Testing stores
+
+`lauren.testing.store_contract.run_store_contract(make_store, *, advance=None,
+checks=None, concurrency=1000)` runs the normative contract (round-trip, TTL
+semantics and validation, `incr` atomicity under concurrency, `set_if_absent`
+exclusivity, `delete_if_equal`, namespaces, expiry) against fresh stores and
+raises `AssertionError` on the first violation. `advance(seconds)` moves the
+store's clock (sync or async; a networked backend may pass `asyncio.sleep`
+with short TTLs); without it the expiry check is skipped.
+`STORE_CONTRACT_CHECKS` lists the check names for `pytest.mark.parametrize`.
+
+```python run
+import asyncio
+from lauren.stores import MemoryStore
+from lauren.testing.store_contract import run_store_contract
+
+
+class ContractClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+contract_clock = ContractClock()
+asyncio.run(run_store_contract(lambda: MemoryStore(max_entries=10_000, clock=contract_clock),
+                               advance=contract_clock.advance, concurrency=100))
+```
+
+**Rule:** never cache `Set-Cookie` or per-user responses without `key=`, and
+keep values JSON-encodable — there is no pickle codec.
+
+---
+
 ## Content-type policy (`ContentConfig`)
 
 ```python run
@@ -2393,6 +4786,188 @@ and `UploadFile` parameters are not gated. `Request.json()` called inside a
 handler is not gated. The 415 is an ordinary `HTTPError`: exception handlers
 can claim it. An invalid value (or a non-`ContentConfig` `content=`) raises
 `StartupError` with `detail["reason"] == "invalid_content_config"`.
+
+---
+
+## Configuration
+
+Typed settings, validated inside `LaurenFactory.create` (factory Phase 2b,
+before the DI graph compiles). Settings classes are DI providers; every
+missing or invalid value in every settings class is raised together as one
+`ConfigValidationError`; `Secret[T]` is redacted everywhere; `os.environ` is
+read, never written. Public names live in `lauren.config` (`ConfigModule` and
+`Secret` are also exported from `lauren`; `ConfigValidationError` from
+`lauren` and `lauren.exceptions`).
+
+```python run
+from dataclasses import dataclass, field
+from typing import Annotated
+
+from lauren import LaurenFactory, controller, get, injectable, module
+from lauren.config import ConfigModule, Env, EnvSource, Profile, Secret
+from lauren.testing import TestClient
+
+
+@dataclass(frozen=True)
+class CfgDatabaseSettings:
+    url: str                                    # required
+    pool_size: int = 10
+
+
+@dataclass(frozen=True)
+class CfgAppSettings:
+    session_secret: Secret[str]                 # required, redacted
+    database: CfgDatabaseSettings               # nested section: APP_DATABASE__URL
+    debug: bool = False
+    allowed_origins: list[str] = field(default_factory=list)   # "a, b" or '["a","b"]'
+    llm_api_key: Annotated[Secret[str], Env("LLM_API_KEY")] = Secret("")  # explicit name, no prefix
+
+
+@injectable()
+class CfgMailer:
+    def __init__(self, settings: CfgAppSettings, profile: Profile) -> None:  # typed injection
+        self.debug = settings.debug
+        self.sandbox = not profile.is_production
+
+
+@controller("/cfg")
+class CfgController:
+    def __init__(self, mailer: CfgMailer, settings: CfgAppSettings) -> None:
+        self.mailer, self.settings = mailer, settings
+
+    @get("/")
+    async def show(self) -> dict:
+        return {"debug": self.mailer.debug, "pool": self.settings.database.pool_size,
+                "secret": self.settings.session_secret}        # JSON-encodes as "**********"
+
+
+@module(
+    imports=[ConfigModule.for_root(
+        CfgAppSettings,
+        env_prefix="APP_",
+        sources=[EnvSource()],                  # production: omit -> .env, .env.{profile}, environment
+        environ={"APP_SESSION_SECRET": "s3cr3t", "APP_DATABASE__URL": "sqlite://",
+                 "APP_DATABASE__POOL_SIZE": "5"},   # tests: replaces os.environ; production: omit
+    )],
+    controllers=[CfgController],
+    providers=[CfgMailer],
+)
+class CfgAppModule:
+    pass
+
+
+cfg_app = LaurenFactory.create(CfgAppModule)
+assert TestClient(cfg_app).get("/cfg/").json() == {"debug": False, "pool": 5, "secret": "**********"}
+```
+
+### `ConfigModule.for_root(settings_cls, *, env_prefix="", sources=None, section=None, profile=None, profiles=("development", "test", "production"), environ=None, overrides=None, is_global=True, expose_sections=False)`
+
+Returns a new generated `@module` class per call (put it in `imports=`).
+Global by default: every module can inject `settings_cls` without importing
+anything. `profile=`, `profiles=` and `environ=` are app-wide (several
+`for_root` modules must agree on them, else `StartupError`
+`reason="conflicting_config_roots"`). `is_global=False` makes it
+module-scoped like `for_feature`.
+
+### `ConfigModule.for_feature(settings_cls, *, env_prefix="", sources=None, section=None, overrides=None, expose_sections=False)`
+
+Module-scoped: the importing module, and importers of a module that
+re-exports the class, can inject it; anyone else gets `MissingProviderError`.
+`sources=None` inherits the root's sources (or the default stack).
+`section="database"` reads the `[database]` table of TOML / YAML files.
+Declaring the same class in two feature modules is a `ModuleExportViolation`.
+`expose_sections=True` (both factories) also provides every nested section
+class as its own token; a section type used twice is a
+`DuplicateBindingError`.
+
+### Sources and precedence
+
+Lowest → highest: class defaults < `sources` in list order < `EnvSource()`
+(must be **last**; a `.env` file never overrides the real environment) <
+`overrides={"dotted.path": value}`. `sources=None` =
+`[DotenvSource(".env", required=False), DotenvSource(".env.{profile}", required=False), EnvSource()]`.
+
+| Source | Notes |
+|---|---|
+| `EnvSource()` | `os.environ`, or the `environ=` mapping |
+| `DotenvSource(path, *, required=True, encoding="utf-8")` | stdlib parser: `KEY=VALUE`, `export`, `#` comments, `'literal'`, `"escaped\n"` multi-line; no `${VAR}` interpolation; never writes `os.environ` |
+| `TomlSource(path, *, required=True)` | `tomllib`; tables → nested sections; values checked strictly |
+| `YamlSource(path, *, required=True)` | needs PyYAML (`lauren[yaml]`); like TOML |
+| `SecretsDirSource(path, *, required=True)` | one file per key (Docker/Kubernetes `/run/secrets`); name = env name or its lower case |
+| `AsyncSource` (Protocol) | `async def load(self, keys) -> Mapping[str, str]`; optional `name` attribute |
+
+`{profile}` in paths is substituted. Env names: `APP_` + field path joined
+with `__`, upper case (`database.url` → `APP_DATABASE__URL`);
+`Annotated[T, Env("A", "B")]` reads the first present of `A`, `B` with no
+prefix. String values (env, `.env`, secret files, async) use the lax table:
+`int`/`float`/`Decimal`, `bool` (`1/0 true/false yes/no on/off` — anything
+else is **invalid**), `Enum` (value then name), `Literal`, `Path`, `UUID`,
+ISO `datetime`/`date`/`time`, `timedelta` (seconds or `PT5M`),
+`list`/`tuple`/`set` (JSON array or comma-separated), `dict` (JSON object),
+`X | None` (`""` → `None`), `Secret[T]`. TOML/YAML values are already typed and
+checked strictly.
+
+Settings shapes: frozen `@dataclass` (recommended, stdlib-only), pydantic
+`BaseModel` (coerced, then `model_validate`; constraint errors mapped back),
+`msgspec.Struct` (coerced, then `msgspec.convert(strict=False)`), and
+`pydantic_settings.BaseSettings` (delegated entirely; `env_prefix=`,
+`sources=`, `section=` rejected). TypedDict is rejected. A non-frozen
+dataclass logs a startup warning.
+
+### Profiles — `Profile(name)`
+
+Active profile: `for_root(profile=...)`, else `LAUREN_PROFILE` (from
+`environ=` when given), else `"development"`. Not in `profiles=` →
+`ConfigValidationError` (`reason="unknown_profile"`), never a fallback.
+`Profile` (frozen: `name`, `is_development`, `is_test`, `is_production`) is
+registered globally whenever the app has a `ConfigModule`.
+
+### `Secret[T]`
+
+`Secret(value)`; `get_secret_value()` reads it. `repr`/`str`/f-strings print
+`Secret('**********')`; Lauren's JSON encoders (and pydantic JSON mode for a
+`Secret[T]` model field) print `"**********"`, as they do for pydantic
+`SecretStr`/`SecretBytes`. `==`/`hash` compare the value; `bool()` follows it.
+`SessionConfig(secret=Secret(...))` (or a list of them) is accepted.
+
+### `load_settings(settings_cls, *, env_prefix="", sources=None, section=None, profile=None, profiles=..., environ=None, overrides=None)`
+
+Same loader and aggregated error, outside the module graph — for values
+needed *before* the factory (`sessions=`, `docs_url=`, `logger=`). Then pass
+`global_providers=[use_value(provide=AppSettings, value=settings)]`.
+`await aload_settings(...)` also awaits async sources (`load_settings`
+rejects them with `DecoratorUsageError`).
+
+### `ConfigValidationError`
+
+`StartupError` subclass (`code="config_validation"`). Message: one line per
+problem, e.g. `AppSettings.database.pool_size  [APP_DATABASE__POOL_SIZE]  invalid int 'ten' (from environment)`.
+`detail = {"profile": str, "errors": [entry, ...]}`; each entry has `reason`:
+`missing` (`settings`, `field`, `key`, `searched`), `invalid` (`settings`,
+`field`, `key`, `expected`, `source`, `value` — omitted for secrets —,
+`message`), `unknown_field` (an `overrides` key), `unknown_profile`
+(`profile`, `allowed`, `source`), `missing_file` / `parse_error` (`line` for
+`.env`) / `source_error` (`source`, `message`). Feature-module entries add
+`module`. Misuse of the API itself (TypedDict, `EnvSource()` not last, bad
+argument types) raises `DecoratorUsageError` when the module is declared.
+
+### Async sources
+
+Settings that list an `AsyncSource` finish loading at the start of
+`LaurenApp.startup()` (lifespan / `TestClient`), before `@post_construct` —
+the one exception to "validated in `create()`". `create()` still raises for
+problems an async source cannot fix (e.g. an invalid value in the
+higher-precedence `EnvSource()`). Resolving such settings before startup
+raises `StartupError` (`reason="settings_not_loaded"`).
+
+`create()` logs one INFO line, context `Config`:
+`profile=production settings=AppSettings(8 keys) MailSettings(2 keys) sources=.env.production, environment`
+(sources actually read; never values).
+
+**Rule:** never read `os.environ` in `__init__` or at import time, and never
+`load_dotenv(override=True)` — declare a settings class, import a
+`ConfigModule`, inject the class. Tests pass `environ={...}` instead of
+mutating the process environment.
 
 ---
 
@@ -2574,11 +5149,13 @@ route = get_route_metadata(app, "GET", "/users/{id}")  # ReflectedRoute | None
 
 | Type | Key fields |
 |---|---|
-| `ReflectedRoute` | `method`, `path`, `full_path`, `summary`, `response_model`, `tags`, `deprecated`, `handler` |
+| `ReflectedRoute` | `method`, `path`, `full_path`, `summary`, `response_model`, `tags`, `deprecated`, `handler`, `status_code` (effective success status), `responses_typed`, `raises` |
+| `ReflectedResponse` | `status`, `body_type` (`None`: no body), `description`, `source` (`"declared"` / `"raises"` / `"manual"`) — the entries of `ReflectedRoute.responses_typed` |
 | `ReflectedWsMessage` | `event`, `payload_model` (reserved — always `None` today), `summary`, `handler` |
 | `ReflectedController` | `cls`, `meta`, `guards`, `interceptors`, `middlewares`, `exception_handlers`, `routes` |
 | `ReflectedModule` | `cls`, `meta` |
 | `ReflectedWsGateway` | `cls`, `path_template`, `meta`, `guards`, `interceptors`, `middlewares`, `messages`, `owning_module` |
+| `ReflectedError` | `cls`, `code`, `status_code`, `category`, `problem_type`, `problem_title`, `summary` — from `error_catalog(include_user=True)` (see [Error catalog as data](#error-catalog-as-data)) |
 
 ### `reflect` module
 
@@ -2640,7 +5217,7 @@ class C:
     def __init__(self, db: DbSession): ...
 ```
 
-Lauren's runtime awaits `aclose()` on every request-scoped instance after each request, so DB sessions close deterministically.
+Lauren's runtime awaits `aclose()` on every request-scoped instance after each request, so DB sessions close deterministically. Outside a request (a script, a background job), open `async with app.scope() as scope:` and `await scope.resolve(DbSession)` to get the same per-scope instance and teardown.
 
 ### Pattern: extract the user at the handler level
 
@@ -2663,14 +5240,21 @@ class MeController:
 
 Better than threading an AuthContext through the controller constructor — the dependency is visible per-route.
 
-### Pattern: return tuple for non-default status
+### Pattern: declare the success status
 
-```python
-@post("/")
-async def create(self, body: Json[CreateUser]):
+```python fragment
+@post("/", status_code=201)
+async def create(self, body: Json[CreateUser]) -> UserOut:
+    return await self._repo.create(body)
+
+@post("/with-location")
+async def create_with_location(self, body: Json[CreateUser]) -> Created[UserOut]:
     user = await self._repo.create(body)
-    return user, 201, {"location": f"/users/{user.id}"}
+    return Created(user, location=f"/users/{user.id}")
 ```
+
+The tuple form (`return user, 201, {"location": ...}`) still works but is
+invisible to OpenAPI.
 
 ### Anti-pattern: subclassing to "inherit" routes
 
@@ -2711,6 +5295,49 @@ class ProxyController:
         return resp.json()
 ```
 
+### Anti-pattern: starting a background loop in `@post_construct`
+
+```python
+@injectable()
+class Bad:
+    @post_construct
+    async def start(self) -> None:
+        asyncio.create_task(self.loop())   # unsupervised, outlives its dependencies, dies under TestClient
+```
+
+Use a hosted service instead — supervised, stopped before `@pre_destruct`:
+
+```python fragment
+@hosted_service()
+class Good:
+    async def run(self, ctx: ServiceContext) -> None:
+        while await ctx.sleep(5.0):
+            await self.tick()
+```
+
+### Anti-pattern: admin tasks as HTTP endpoints
+
+```python fragment
+@controller("/api")
+class SeedController:
+    @post("/seed")                      # anyone who reaches the API can re-seed the database
+    async def seed(self, db: DatabaseService) -> dict: ...
+```
+
+Write a command instead and run it where the operator controls the process
+(`python -m lauren exec app.main:AppModule db:seed`, a Kubernetes `CronJob`):
+
+```python fragment
+@injectable()
+class SeedCommands:
+    def __init__(self, db: DatabaseService) -> None:
+        self._db = db
+
+    @command("db:seed")
+    async def seed(self, ctx: CommandContext, *, count: int = 50) -> None:
+        ctx.echo(f"seeded {await run_seed(self._db, count=count)} rows")
+```
+
 ### Anti-pattern: calling asyncio primitives from a sync handler
 
 ```python
@@ -2728,6 +5355,22 @@ class EventController:
         # ✅ Safe — schedules work back on the event loop
         asyncio.get_running_loop().call_soon_threadsafe(_queue.put_nowait, body)
 ```
+
+### Anti-pattern: a hand-rolled `{"status": "ok"}` health endpoint
+
+```python
+# Don't: "ok" before startup, during shutdown and while the database is down.
+@get("/health")
+async def health(self) -> dict:
+    return {"status": "ok"}
+
+# Do: probes that follow the lifecycle state and real checks.
+@module(imports=[HealthModule.for_root()], providers=[Database])   # Database has @health_check("database")
+class AppModule: ...
+```
+
+Point `livenessProbe` at `/health/live` (no dependency checks) and
+`readinessProbe` at `/health/ready`.
 
 ### Anti-pattern: building `Response.json(...)` manually for every handler
 
@@ -2852,7 +5495,9 @@ request.
 | Extract URL param | `id: Path[int]` |
 | Extract query param | `q: Query[str] = QueryField(default="", ge=..., le=...)` |
 | Extract JSON body | `body: Json[MyPydanticModel]` |
-| Raise 404 in handler | define `class NotFound(HTTPError): status_code = 404; code = "not_found"`, then `raise NotFound("...")` |
+| Raise 404 in handler | `raise NotFoundError("...")` (built in); for a domain code, `class UserNotFound(NotFoundError): code = "user_not_found"`; declare it with `@raises(NotFoundError)` for OpenAPI |
+| Declare a success status | `@post("/", status_code=201)` or `-> Created[UserOut]` + `return Created(user, location=...)` |
+| Keep internal fields off the wire | annotate the public type and set `response_validation="filter"` (app or route) |
 | Add a guard to one route | `@use_guards(MyGuard)` on the method |
 | Add a guard to all routes on a controller | `@use_guards(MyGuard)` on the class |
 | Override JSON encoder for one route | `@use_encoder(OrjsonEncoder())` on the method |
@@ -2860,11 +5505,24 @@ request.
 | Read per-route metadata in a guard | `ctx.get_metadata("key", default)` |
 | Attach a singleton explicitly | `app.container.set_singleton(MyCls, instance)` |
 | Run post-construct hook | `@post_construct` on an `async def` method of an `@injectable` |
+| Run a long-lived loop for the app's lifetime | `@hosted_service()` class with `async def run(self, ctx)`; list it in `providers` |
+| Run code on a schedule | `@interval(seconds=60)` / `@cron("0 3 * * *")` on a singleton method + `ScheduleModule.for_root()` |
+| Run one job now (admin endpoint, test) | `await registry.trigger("name")` with `registry: SchedulerRegistry` |
+| Fail readiness before the server stops accepting traffic | `app.begin_draining()`, or `install_signal_handlers(app, shutdown_delay=10)` |
+| Expose liveness / readiness / startup probes | `@module(imports=[HealthModule.for_root()])` + `@health_check("db")` on a singleton method |
+| Let a global guard skip public routes | `if ctx.get_metadata(PUBLIC_METADATA_KEY, False): return True` |
+| Run code with the app's DI graph outside HTTP | `async with LaurenFactory.create_context(AppModule) as ctx:` then `ctx.get(...)` / `ctx.scope()` |
+| Admin / maintenance task | `@command("db:seed")` on a provider method; `python -m lauren exec app.main:AppModule db:seed` |
+| Test a command | `result = await ctx.run_command("db:seed", "--count", "3")` → `result.exit_code`, `result.stdout` |
 | Serve a file (auto MIME, streamed) | `return await Response.file("/path/to/file.pdf")` |
 | Serve a file with custom name | `return await Response.file(path, filename="report.pdf")` |
 | Serve a file inline (browser preview) | `return await Response.file(path, inline=True)` |
 | Serve XML | `return Response.xml("<root>...</root>")` |
 | Serve Server-Sent Events | `Response.sse(async_iterable_of_dicts)` |
+| Cache an expensive computation | `await cache.get_or_set(key, factory, ttl=60, tags=(...), type=T)` with `CacheModule.for_root()` imported |
+| Cache a GET response | `@cache_response(ttl=30, vary=(...), key=lambda ctx: ...)` on the handler |
+| Make a POST safe to retry | `@idempotent(ttl=86400)` (clients send `Idempotency-Key`) |
+| Share state across workers | one `Store` (`StoresModule.for_root(default=...)`) behind sessions and the cache |
 
 ---
 

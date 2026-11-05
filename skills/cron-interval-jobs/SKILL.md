@@ -1,118 +1,119 @@
 ---
 name: cron-interval-jobs
-description: Registers and runs recurring interval jobs inside a Lauren app. Use when you need periodic background work (cache warm-up, heartbeat, cleanup) without an external scheduler.
+description: Runs recurring jobs inside a Lauren app with @interval, @cron and @run_once plus ScheduleModule.for_root(). Use when you need periodic background work (cache warm-up, heartbeat, nightly cleanup) without an external scheduler.
 ---
 
 > Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
 > exact file + line range and is faster than grep across the whole repo.
 
-# Cron & Interval Job Registration
+# Cron & Interval Jobs
 
-## Overview
+Scheduling is built in (`lauren.scheduling`). Decorate methods of a singleton
+`@injectable`, import `ScheduleModule.for_root()` once, and the framework
+discovers, validates and runs the jobs — no `SchedulerService`, no
+`asyncio.create_task` in `@post_construct`. Full capability skill:
+[`building-lauren-scheduling`](../building-lauren-scheduling/).
 
-`SchedulerService` holds a registry of `(callable, interval_seconds)` pairs.
-`@post_construct` starts an `asyncio.Task` per job that loops forever with
-`asyncio.sleep`. `@pre_destruct` cancels all tasks cleanly when the app shuts
-down. Register jobs in the module factory or from other services that inject
-`SchedulerService`.
-
-## SchedulerService
+## Jobs
 
 ```python
-import asyncio
-from typing import Callable
-from lauren import injectable, Scope, post_construct, pre_destruct
+from datetime import timedelta
 
-@injectable(scope=Scope.SINGLETON)
-class SchedulerService:
-    def __init__(self):
-        self._tasks: list[asyncio.Task] = []
-        self._jobs: list[tuple[Callable, float, str]] = []
-        self.executed_jobs: list[str] = []  # for testing/observability
+from lauren import Scope, injectable, module
+from lauren.scheduling import JobContext, ScheduleModule, cron, interval, run_once
 
-    def register(self, func: Callable, interval_seconds: float, name: str = "") -> None:
-        """Register a coroutine function to run every interval_seconds."""
-        self._jobs.append((func, interval_seconds, name or func.__name__))
 
-    @post_construct
-    async def start(self) -> None:
-        for func, interval, name in self._jobs:
-            task = asyncio.create_task(self._run_interval(func, interval, name))
-            self._tasks.append(task)
+@injectable(scope=Scope.REQUEST)
+class DbSession:
+    async def aclose(self) -> None: ...          # torn down after every run
 
-    @pre_destruct
-    async def stop(self) -> None:
-        for task in self._tasks:
-            task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        self._tasks.clear()
 
-    async def _run_interval(self, func: Callable, interval: float, name: str) -> None:
-        while True:
-            try:
-                await func()
-                self.executed_jobs.append(name)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                pass  # log in production
-            await asyncio.sleep(interval)
-```
+@injectable()
+class CacheService:
+    async def warm_up(self) -> None: ...
 
-## Registering jobs
 
-Register from a module-level `@post_construct` on any injectable:
-
-```python
-@injectable(scope=Scope.SINGLETON)
-class CacheWarmupJob:
-    def __init__(self, cache: CacheService, scheduler: SchedulerService) -> None:
+@injectable()
+class Maintenance:
+    def __init__(self, cache: CacheService) -> None:
         self._cache = cache
-        scheduler.register(self.run, interval_seconds=60.0, name="cache-warmup")
 
-    async def run(self) -> None:
+    @interval(seconds=60, initial_delay=5, jitter=5)           # every minute, first 5 s after startup
+    async def cache_warmup(self) -> None:
         await self._cache.warm_up()
-```
 
-Or register programmatically before `LaurenFactory.create`:
+    @cron("0 3 * * *", tz="Europe/Paris", name="purge-sessions", timeout=300)
+    async def purge(self, ctx: JobContext, db: DbSession) -> None:   # db: fresh per run
+        cutoff = ctx.scheduled_at - timedelta(days=30)
+        ctx.log.info("purging", before=cutoff.isoformat())
 
-```python
-scheduler = SchedulerService()
-scheduler.register(my_async_func, 30.0, "heartbeat")
-app = LaurenFactory.create(AppModule, global_providers=[use_value(provide=SchedulerService, value=scheduler)])
-```
+    @run_once(delay=10)                                        # once, 10 s after startup
+    async def prime(self) -> None: ...
 
-## Module wiring
 
-```python
-@module(providers=[SchedulerService, CacheWarmupJob])
-class SchedulerModule:
+@module(imports=[ScheduleModule.for_root(timezone="UTC")], providers=[Maintenance, CacheService, DbSession])
+class AppModule:
     pass
 ```
+
+## Options that matter
+
+| Option | Default | Use |
+|---|---|---|
+| `overlap` | `"skip"` | `"queue"` runs once after a slow run; `"allow"` runs concurrently (`max_instances`) |
+| `timeout` | `None` | Cancel a run after N seconds (`JobFailed(error=TimeoutError)`) |
+| `jitter` | `0` | Random 0..N s delay per fire to spread load |
+| `misfire` / `misfire_grace` | `"coalesce"` / `min(60, period)` | Late wake-up: run once now, or `"skip"` to the next fire |
+| `exclusive` | `False` | One runner per fire across workers (needs a shared `SchedulerLock`) |
+| `mode` (`@interval`) | `"fixed_rate"` | `"fixed_delay"` waits `seconds` after each run completes |
 
 ## Status endpoint
 
 ```python
+from lauren import controller, get, post
+from lauren.scheduling import SchedulerRegistry
+
+
 @controller("/scheduler")
 class SchedulerController:
-    def __init__(self, scheduler: SchedulerService) -> None:
-        self._scheduler = scheduler
+    def __init__(self, registry: SchedulerRegistry) -> None:
+        self._registry = registry
 
     @get("/status")
-    async def status(self) -> dict:
-        return {
-            "running_tasks": len(self._scheduler._tasks),
-            "executed_jobs": len(self._scheduler.executed_jobs),
-        }
+    async def status(self) -> list:
+        return [job.as_dict() for job in self._registry.jobs()]   # bounded stats, no history
+
+    @post("/{name}/run")
+    async def run_now(self, name: str) -> dict:
+        return {"status": (await self._registry.trigger(name)).status}
 ```
+
+Dynamic jobs: `registry.add_interval("heartbeat", fn, seconds=30)` /
+`registry.add_cron(name, fn, "*/5 * * * *")` (they receive a `JobContext`
+only), plus `pause`, `resume` and `remove`.
+
+## Testing
+
+```python fragment
+clock = ManualClock()
+
+@module(imports=[ScheduleModule.for_root(clock=clock)], providers=[Maintenance, CacheService, DbSession])
+class TestModule: ...
+
+app = LaurenFactory.create(TestModule)
+await app.startup()
+await clock.advance(minutes=5)      # fires everything due, no real waiting
+await app.shutdown()
+```
+
+Or `ScheduleModule.for_root(enabled=False)` and `await registry.trigger("purge-sessions")`.
 
 ## Notes
 
-- `asyncio.CancelledError` must be re-raised in the loop body so `stop()` can
-  cancel tasks cleanly.
-- For cron-style scheduling (specific times rather than fixed intervals)
-  use APScheduler (`pip install apscheduler`) and register it as a singleton
-  that integrates with `@post_construct` / `@pre_destruct`.
-- In multi-worker deployments, elect a leader (e.g. via Redis `SET NX`) to
-  avoid duplicate job execution.
+- Scheduled methods without `ScheduleModule.for_root()` fail at startup
+  (`LifecycleConfigError`); so does a scheduled method on a non-singleton
+  provider. Bad cron expressions fail at decoration (`DecoratorUsageError`).
+- Cron: five fields or six with leading seconds, names, `@daily`-style macros,
+  IANA zones; DST gaps fire once after the gap, repeated hours once.
+- Several workers run every job: use `exclusive=True` with a shared lock, or a
+  dedicated scheduler process (`enabled=False` in the web workers).

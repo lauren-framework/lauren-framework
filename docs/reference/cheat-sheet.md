@@ -244,7 +244,7 @@ async def create(self, body: Json[Order], tasks: BackgroundTasks) -> dict:
 ## Exception handlers
 
 ```python
-@exception_handler(NotFoundError, ConflictError)
+@exception_handler(NotFoundError, ConflictError)   # built-in classes; claims subclasses too
 class DomainErrors:
     def __init__(self, log: Logger) -> None: self.log = log
     async def catch(self, exc, request) -> Response:
@@ -320,23 +320,52 @@ class CurrentUser(ExtractionMarker):
 | `(body, status)` | body + status |
 | `(body, status, headers)` | body + status + headers |
 | `Response.json(...)` etc. | passed through |
+| `Page[T]` / `CursorPage[T]` | the app's page envelope + `Link` (and `X-Total-Count`) headers |
+
+## Pagination
+
+```python
+from lauren import CursorPage, CursorPagination, OffsetPagination, Page, PaginationConfig
+
+@get("/users")
+async def users(self, paging: OffsetPagination) -> Page[UserOut]:          # ?limit=&offset= (422 above max)
+    rows, total = await self.repo.list(limit=paging.limit, offset=paging.offset)
+    return Page.of(rows, paging, total=total)                              # or Page.from_rows(limit + 1 rows)
+
+@get("/events")
+async def events(self, paging: CursorPagination[EventKey]) -> CursorPage[EventOut]:
+    rows = await self.repo.page(paging.cursor, paging.direction, paging.limit + 1)
+    return CursorPage.from_rows(rows, paging, key=lambda e: EventKey(id=e.id))
+
+app = LaurenFactory.create(AppModule, pagination=PaginationConfig(max_limit=200, cursor_secret=key))
+```
 
 ## HTTP errors
 
 ```python
-from lauren.exceptions import HTTPError
-
-class NotFoundError(HTTPError):
-    status_code = 404
-    code = "not_found"
+from lauren import NotFoundError, TooManyRequestsError, UnauthorizedError
 
 raise NotFoundError("user not found", detail={"id": user_id})
+
+class UserNotFound(NotFoundError):          # domain code, same 404
+    code = "user_not_found"
+
+raise UnauthorizedError("bad token", challenge='Bearer realm="api"')   # WWW-Authenticate
+raise TooManyRequestsError("slow down", retry_after=30)                # Retry-After: 30
 ```
 
 Renders as:
 ```json
 {"error": {"code": "not_found", "message": "user not found", "detail": {"id": 7}}}
 ```
+
+Built in: `BadRequestError` 400, `UnauthorizedError` 401, `ForbiddenError` 403,
+`NotFoundError` 404, `MethodNotAllowedError` 405, `NotAcceptableError` 406,
+`ConflictError` 409, `GoneError` 410, `PreconditionFailedError` 412,
+`UnsupportedMediaTypeError` 415, `TooManyRequestsError` 429,
+`ServiceUnavailableError` 503, `RequestTimeoutError` 504. Problem details:
+`LaurenFactory.create(..., error_format="rfc9457")`. Dev error pages:
+`LaurenFactory.create(..., debug=True)`.
 
 ## Streaming
 
@@ -445,6 +474,43 @@ async def alert(event: BackgroundTaskFailed) -> None:
     await pagerduty.trigger(str(event.error))
 ```
 
+## Application events
+
+```python
+from dataclasses import dataclass
+from lauren.events import EventBus, EventContext, EventPublisher, EventsModule, TransactionPhase, on_event
+
+@dataclass(frozen=True)
+class UserRegistered:
+    user_id: str
+    email: str
+
+@injectable()
+class Mailer:
+    @on_event(mode="background")                   # class from the annotation; after the response
+    async def welcome(self, event: UserRegistered) -> None: ...
+
+    @on_event(UserRegistered, priority=10, errors="isolate")   # inline, isolated failures
+    async def audit(self, event: object, db: DbSession, ctx: EventContext) -> None: ...
+
+# Publish from a service (singleton) …
+result = await bus.emit(UserRegistered("u1", "a@b.c"), wait=True)   # EmitResult(handled, scheduled, errors)
+# … or from a request: inline handlers share the request's DI scope
+await publisher.emit(UserRegistered("u1", "a@b.c"))
+await publisher.emit(UserRegistered("u1", "a@b.c"), after=TransactionPhase.COMMIT)
+
+# Tests
+with bus.recording() as rec:
+    ...
+    await bus.drain()
+rec.of(UserRegistered); rec.handler_calls(Mailer.welcome)
+with bus.disabled(Mailer.welcome): ...
+
+# Optional tuning
+@module(imports=[EventsModule.for_root(max_depth=16, drain_timeout=None)])
+class AppModule: ...
+```
+
 ## Logging
 
 ```python
@@ -471,6 +537,30 @@ await wait_for_shutdown(event)
 ```
 
 Phases: drain → `on_shutdown` callbacks (LIFO) → `@pre_destruct` hooks (reverse topo) → goodbye. Idempotent.
+
+## Contexts & commands
+
+<!-- docs-contract: fragment -->
+```python
+from lauren import LaurenFactory, injectable
+from lauren.commands import CommandContext, command
+
+async with LaurenFactory.create_context(AppModule) as ctx:   # startup / shutdown, no HTTP
+    svc = ctx.get(UserService)                                # constructed singleton
+    async with ctx.scope("job") as scope:                     # request scope without a request
+        db = await scope.resolve(DbSession)
+
+@injectable()
+class Seed:
+    @command("db:seed")
+    async def seed(self, ctx: CommandContext, *, count: int = 50) -> int:
+        ctx.echo(f"seeded {count}")
+        return 0
+
+result = await ctx.run_command("db:seed", "--count", "3")   # CommandResult(exit_code, value, stdout, stderr)
+```
+
+Shell: `python -m lauren exec app.main:AppModule db:seed --count 3`, `python -m lauren commands app.main:AppModule`, `python -m lauren console app.main:AppModule`. Exit codes: 0 ok, 1 error, 2 usage, 3 cannot start, 130/143 signal.
 
 ## Testing
 

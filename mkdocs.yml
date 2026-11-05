@@ -167,27 +167,38 @@ nav:
     - Custom Providers: guides/custom-providers.md
     - Dependency Injection — Complete Reference: guides/dependency-injection.md
     - Implicit Parameter Extraction: guides/implicit-params.md
+    - Validation: guides/validation.md
+    - Pagination: guides/pagination.md
     - Sync vs Async Handlers: guides/sync-handlers.md
     - Custom Extractors: guides/custom-extractors.md
     - Pipes: guides/pipes.md
     - File Uploads: guides/file-uploads.md
     - File Responses & XML: guides/file-responses.md
     - Custom Responses: guides/custom-responses.md
+    - Response Contracts: guides/response-contracts.md
     - Custom Guards: guides/custom-guards.md
     - Custom Middleware: guides/custom-middleware.md
     - Interceptors: guides/interceptors.md
     - Propagate Metadata: guides/propagate-metadata.md
     - Custom Exception Handlers: guides/custom-exception-handlers.md
+    - Debug Error Pages: guides/debugging.md
     - WebSockets: guides/websockets.md
     - Server-Sent Events: guides/server-sent-events.md
     - Typed Streaming: guides/typed-streaming.md
     - Signals & Lifecycle Events: guides/signals.md
+    - Health & Readiness Probes: guides/health-checks.md
+    - Application Events: guides/events.md
     - Socket.IO: guides/socketio.md
     - Circular Module Imports: guides/circular-module-imports.md
     - OpenAPI Security from Guards: guides/openapi-security.md
     - Proxy & Static Files: guides/proxy-and-static-files.md
     - Background Tasks: guides/background-tasks.md
+    - Scheduling & Hosted Services: guides/scheduling.md
+    - Commands & Scripts: guides/commands-and-scripts.md
     - Sessions: guides/sessions.md
+    - Stores & Caching: guides/caching.md
+    - Typed Configuration: guides/configuration.md
+    - Testing: guides/testing.md
     - DI with Data Model Types: guides/di-model-types.md
     - Logging in Production: guides/logging.md
     - Agent Skills: guides/agent-skills.md
@@ -202,6 +213,9 @@ nav:
     - App & Factory: reference/app.md
     - Decorators: reference/decorators.md
     - Extractors: reference/extractors.md
+    - Validation: reference/validation.md
+    - Responses: reference/responses.md
+    - Pagination: reference/pagination.md
     - WebSockets: reference/websockets.md
     - Reflect: reference/reflect.md
     - SSE & Streaming: reference/sse.md
@@ -209,8 +223,15 @@ nav:
     - Exception Catalog: reference/exceptions.md
     - Types: reference/types.md
     - Background Tasks: reference/background.md
+    - Scheduling: reference/scheduling.md
+    - Contexts & Commands: reference/commands.md
     - Sessions: reference/sessions.md
+    - Stores: reference/stores.md
+    - Cache: reference/cache.md
+    - Configuration: reference/config.md
     - Signals: reference/signals.md
+    - Health: reference/health.md
+    - Events: reference/events.md
     - Testing: reference/testing.md
     - Cheat Sheet: reference/cheat-sheet.md
     - Error Catalog: reference/errors.md

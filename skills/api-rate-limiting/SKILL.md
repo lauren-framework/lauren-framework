@@ -54,12 +54,10 @@ class TokenBucketLimiter:
 ## Rate limit guard
 
 ```python
-from lauren import injectable, Scope
+from lauren import TooManyRequestsError, injectable, Scope
 from lauren.types import ExecutionContext
-from lauren.exceptions import HTTPError
 
-class RateLimitError(HTTPError):
-    status_code = 429
+class RateLimitError(TooManyRequestsError):   # built-in 429, domain code
     code = "rate_limit_exceeded"
 
 @injectable(scope=Scope.SINGLETON)
@@ -70,7 +68,7 @@ class RateLimitGuard:
     async def can_activate(self, ctx: ExecutionContext) -> bool:
         client_ip = ctx.request.headers.get("x-forwarded-for", "127.0.0.1")
         if not self._limiter.consume(client_ip):
-            raise RateLimitError("Rate limit exceeded")
+            raise RateLimitError("Rate limit exceeded", retry_after=1)   # Retry-After: 1
         return True
 ```
 
@@ -120,6 +118,6 @@ Then read `ctx.get_metadata("rate_limit_cost", 1)` inside `can_activate`.
 ## Key points
 
 - `TokenBucketLimiter` is a singleton so its state persists across requests within a process. For multi-worker setups, back the bucket store with Redis.
-- `RateLimitError` subclasses `HTTPError` with `status_code = 429` — the ASGI adapter converts it to a JSON 429 response automatically.
+- `RateLimitError` subclasses the built-in `TooManyRequestsError` (429) — the ASGI adapter converts it to a JSON 429 response automatically, and `retry_after=` adds the `Retry-After` header (seconds, a `timedelta`, or an aware `datetime`).
 - Use `x-forwarded-for` for IP extraction when behind a reverse proxy; validate trust level in production.
 - Applying `@use_guards` on the controller class applies the guard to all routes on that controller.

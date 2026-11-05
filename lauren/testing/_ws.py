@@ -1,223 +1,16 @@
-"""In-process ASGI test client.
+"""In-process WebSocket test sessions (async API).
 
-This client drives a :class:`LaurenApp` using the ASGI protocol directly, with
-no socket or server needed. It mirrors a small subset of the ``httpx`` API.
+:class:`WsTestClient` / :class:`WebSocketTestSession` drive a WebSocket
+connection through the ASGI protocol in the caller's event loop.
+:meth:`lauren.testing.TestClient.websocket_connect` wraps the same session in
+a synchronous API running on the client's own loop.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json as jsonlib
-from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
-from urllib.parse import urlencode, urlsplit
-
-
-@dataclass
-class TestResponse:
-    __test__ = False  # not a pytest test class
-
-    status_code: int
-    headers: list[tuple[str, str]]
-    body: bytes
-
-    @property
-    def text(self) -> str:
-        return self.body.decode("utf-8")
-
-    def json(self) -> Any:
-        return jsonlib.loads(self.body.decode("utf-8"))
-
-    def header(self, name: str) -> str | None:
-        name_l = name.lower()
-        for k, v in self.headers:
-            if k.lower() == name_l:
-                return v
-        return None
-
-    def headers_all(self, name: str) -> list[str]:
-        name_l = name.lower()
-        return [v for k, v in self.headers if k.lower() == name_l]
-
-
-class TestClient:
-    """Synchronous-friendly test client for :class:`LaurenApp`."""
-
-    # Tell pytest not to collect this class as a test.
-    __test__ = False
-
-    def __init__(self, app: Any) -> None:
-        self._app = app
-        # Run startup so @post_construct hooks and lifecycle signals fire
-        # before the first request, matching what the ASGI lifespan protocol
-        # delivers in production (uvicorn, hypercorn, …).
-        # Guard against reusing the same app across multiple TestClient
-        # instances — a second startup() raises under strict_lifecycle.
-        # A ``Lauren`` app compiles lazily: start it on the first request so
-        # routes registered after the client was created still count.
-        self._ensure_started = getattr(app, "_ensure_started", None)
-        if self._ensure_started is None and hasattr(app, "startup") and not getattr(app, "_started", True):
-            self._run_sync(app.startup())
-
-    def _run_sync(self, coro: Any) -> None:
-        """Run a coroutine synchronously, even when called from an async context."""
-        try:
-            _ = asyncio.get_running_loop()
-            # Inside a running event loop — delegate to a background thread
-            # that creates its own loop (asyncio.run is not re-entrant).
-            import threading
-
-            err: list[BaseException] = []
-
-            def _runner() -> None:
-                try:
-                    asyncio.run(coro)
-                except BaseException as exc:
-                    err.append(exc)
-
-            t = threading.Thread(target=_runner)
-            t.start()
-            t.join()
-            if err:
-                raise err[0]
-        except RuntimeError:
-            asyncio.run(coro)
-
-    async def _request(
-        self,
-        method: str,
-        url: str,
-        *,
-        headers: Mapping[str, str] | Iterable[tuple[str, str]] | None = None,
-        json: Any = None,
-        content: bytes | str | None = None,
-        params: Mapping[str, Any] | None = None,
-        cookies: Mapping[str, str] | None = None,
-    ) -> TestResponse:
-        if self._ensure_started is not None:
-            await self._ensure_started()
-        parts = urlsplit(url)
-        path = parts.path or "/"
-        query = parts.query
-        if params:
-            extra = urlencode(list(_flatten_params(params)))
-            query = f"{query}&{extra}" if query else extra
-        req_headers: list[tuple[bytes, bytes]] = []
-        if headers:
-            if isinstance(headers, Mapping):
-                items = list(headers.items())
-            else:
-                items = list(headers)
-            for k, v in items:
-                req_headers.append((k.encode("latin-1"), str(v).encode("latin-1")))
-        if cookies:
-            cookie_val = "; ".join(f"{k}={v}" for k, v in cookies.items())
-            req_headers.append((b"cookie", cookie_val.encode("latin-1")))
-        body: bytes = b""
-        if json is not None:
-            body = jsonlib.dumps(json).encode("utf-8")
-            req_headers.append((b"content-type", b"application/json"))
-        elif content is not None:
-            body = content.encode("utf-8") if isinstance(content, str) else content
-        if body and not any(k == b"content-length" for k, _ in req_headers):
-            req_headers.append((b"content-length", str(len(body)).encode("latin-1")))
-
-        scope: dict[str, Any] = {
-            "type": "http",
-            "asgi": {"version": "3.0"},
-            "http_version": "1.1",
-            "method": method.upper(),
-            "scheme": "http",
-            "path": path,
-            "raw_path": path.encode("utf-8"),
-            "query_string": query.encode("latin-1"),
-            "headers": req_headers,
-            "client": ("127.0.0.1", 12345),
-            "server": ("testserver", 80),
-        }
-
-        sent_body = False
-
-        async def receive() -> dict[str, Any]:
-            nonlocal sent_body
-            if sent_body:
-                return {"type": "http.disconnect"}
-            sent_body = True
-            return {"type": "http.request", "body": body, "more_body": False}
-
-        status = 500
-        out_headers: list[tuple[str, str]] = []
-        out_body = bytearray()
-        started = asyncio.Event()
-
-        async def send(msg: dict[str, Any]) -> None:
-            nonlocal status, out_headers
-            if msg["type"] == "http.response.start":
-                status = msg["status"]
-                out_headers = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in msg.get("headers", [])]
-                started.set()
-            elif msg["type"] == "http.response.body":
-                out_body.extend(msg.get("body", b""))
-
-        await self._app(scope, receive, send)
-        return TestResponse(status_code=status, headers=out_headers, body=bytes(out_body))
-
-    async def arequest(self, method: str, url: str, **kwargs: Any) -> TestResponse:
-        return await self._request(method, url, **kwargs)
-
-    def request(self, method: str, url: str, **kwargs: Any) -> TestResponse:
-        try:
-            _ = asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(self._request(method, url, **kwargs))
-        # When called from inside a running loop, block via a thread.
-        import threading
-
-        result: list[Any] = []
-        err: list[BaseException] = []
-
-        def runner() -> None:
-            try:
-                result.append(asyncio.run(self._request(method, url, **kwargs)))
-            except BaseException as exc:  # pragma: no cover - re-raised
-                err.append(exc)
-
-        t = threading.Thread(target=runner)
-        t.start()
-        t.join()
-        if err:
-            raise err[0]
-        return result[0]
-
-    def get(self, url: str, **kw: Any) -> TestResponse:
-        return self.request("GET", url, **kw)
-
-    def post(self, url: str, **kw: Any) -> TestResponse:
-        return self.request("POST", url, **kw)
-
-    def put(self, url: str, **kw: Any) -> TestResponse:
-        return self.request("PUT", url, **kw)
-
-    def delete(self, url: str, **kw: Any) -> TestResponse:
-        return self.request("DELETE", url, **kw)
-
-    def patch(self, url: str, **kw: Any) -> TestResponse:
-        return self.request("PATCH", url, **kw)
-
-    def options(self, url: str, **kw: Any) -> TestResponse:
-        return self.request("OPTIONS", url, **kw)
-
-    def head(self, url: str, **kw: Any) -> TestResponse:
-        return self.request("HEAD", url, **kw)
-
-
-def _flatten_params(params: Mapping[str, Any]) -> Iterable[tuple[str, str]]:
-    for k, v in params.items():
-        if isinstance(v, (list, tuple)):
-            for item in v:
-                yield k, str(item)
-        else:
-            yield k, str(v)
 
 
 # ---------------------------------------------------------------------------
@@ -256,10 +49,17 @@ class WebSocketTestSession:
         headers: Mapping[str, str] | Iterable[tuple[str, str]] | None = None,
         subprotocols: Iterable[str] | None = None,
         query_string: str = "",
+        server_timeout: float = 2.0,
+        scheme: str = "ws",
+        server: tuple[str, int] = ("testserver", 80),
     ) -> None:
         self._app = app
         self._path = path
         self._query_string = query_string
+        #: Seconds the session waits for the server coroutine to finish on exit.
+        self._server_timeout = server_timeout
+        self._scheme = scheme
+        self._server = server
         if headers is None:
             items: list[tuple[bytes, bytes]] = []
         elif isinstance(headers, Mapping):
@@ -287,13 +87,13 @@ class WebSocketTestSession:
             "type": "websocket",
             "asgi": {"version": "3.0"},
             "http_version": "1.1",
-            "scheme": "ws",
+            "scheme": getattr(self, "_scheme", "ws"),
             "path": self._path,
             "raw_path": self._path.encode("utf-8"),
             "query_string": self._query_string.encode("latin-1"),
             "headers": self._headers,
             "client": ("127.0.0.1", 12345),
-            "server": ("testserver", 80),
+            "server": getattr(self, "_server", ("testserver", 80)),
             "subprotocols": list(self._subprotocols),
         }
 
@@ -353,6 +153,10 @@ class WebSocketTestSession:
     async def send_json(self, payload: Any) -> None:
         await self.send_text(jsonlib.dumps(payload))
 
+    async def send_event(self, event: str, data: Any = None) -> None:
+        """Send Lauren's ``{"event": ..., "data": ...}`` message envelope."""
+        await self.send_json({"event": event, "data": data})
+
     # -- Reception --------------------------------------------------------
 
     async def receive(self) -> dict[str, Any]:
@@ -397,6 +201,13 @@ class WebSocketTestSession:
     async def receive_json(self) -> Any:
         return jsonlib.loads(await self.receive_text())
 
+    async def receive_event(self) -> dict[str, Any]:
+        """Receive the next JSON frame — Lauren's ``{"event", "data"}`` envelope — as a dict."""
+        frame = await self.receive_json()
+        if not isinstance(frame, dict):
+            raise RuntimeError(f"expected a JSON object frame, got {type(frame).__name__}")
+        return frame
+
     # -- Termination ------------------------------------------------------
 
     async def close(self, code: int = 1000) -> None:
@@ -416,17 +227,17 @@ class WebSocketTestSession:
     async def _wait_server(self) -> None:
         if self._server_task is None:
             return
+        timeout = getattr(self, "_server_timeout", 2.0)
         try:
-            # Generous timeout so a stuck gateway doesn't deadlock the
-            # test forever — one second is plenty for in-process ASGI.
-            await asyncio.wait_for(self._server_task, timeout=2.0)
+            # Bounded so a stuck gateway cannot deadlock the test forever
+            # (``server_timeout=`` on ``WsTestClient.connect``).
+            await asyncio.wait_for(self._server_task, timeout=timeout)
         except asyncio.TimeoutError:
+            # ``wait_for`` already cancelled the task; wait for it without
+            # re-raising its CancelledError into the test.
             self._server_task.cancel()
-            try:
-                await self._server_task
-            except Exception:
-                pass
-            raise RuntimeError("WebSocket server task did not complete in time")
+            await asyncio.wait({self._server_task})
+            raise RuntimeError(f"WebSocket server task did not complete in time ({timeout}s)") from None
         finally:
             self._server_task = None
 
@@ -455,14 +266,17 @@ class WsTestClient:
         headers: Mapping[str, str] | Iterable[tuple[str, str]] | None = None,
         subprotocols: Iterable[str] | None = None,
         query_string: str = "",
+        server_timeout: float = 2.0,
     ) -> WebSocketTestSession:
+        """Open a session; ``server_timeout`` bounds the server's wind-down on exit."""
         return WebSocketTestSession(
             self._app,
             path,
             headers=headers,
             subprotocols=subprotocols,
             query_string=query_string,
+            server_timeout=server_timeout,
         )
 
 
-__all__ = ["TestClient", "TestResponse", "WsTestClient", "WebSocketTestSession"]
+__all__ = ["WsTestClient", "WebSocketTestSession"]

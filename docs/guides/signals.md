@@ -5,6 +5,16 @@
 > without touching framework internals. Listeners are sync or async, error-isolated,
 > and dispatched in MRO order so a base-class listener is a firehose of every event.
 
+!!! note "Signals vs events"
+    `SignalBus` carries telemetry **about the framework** (startup, requests,
+    background tasks). For **domain events** between your own modules
+    (`UserRegistered`, `OrderPlaced`) use the application
+    [`EventBus`](events.md): its `@on_event` handlers are DI components
+    validated at startup, inline handlers can fail the publishing operation,
+    and deferred handlers run concurrently or after the response. Never
+    subclass `LifecycleEvent` for a domain event. Handler failures on the
+    event bus are reported here, as the `EventHandlerFailed` signal.
+
 ---
 
 ## Two surfaces, one module
@@ -69,6 +79,31 @@ Three additional events relate to background tasks:
 | `BackgroundTaskStarted` | Just before a background task executes | `task_id`, `func` |
 | `BackgroundTaskComplete` | After successful completion | `task_id`, `func`, `duration_s` |
 | `BackgroundTaskFailed` | After an exception is raised | `task_id`, `func`, `error` |
+
+The [application event bus](events.md) adds one more:
+
+| Event | When fired | Key fields |
+|---|---|---|
+| `EventHandlerFailed` | An `@on_event` handler raised, or was cancelled at shutdown | `event_type`, `handler`, `error`, `mode`, `event` |
+
+Hosted services and scheduled jobs ([Scheduling & Hosted Services](scheduling.md)) add:
+
+| Event | When fired | Key fields |
+|---|---|---|
+| `HostedServiceStarted` | Each time a hosted service's `run()` starts (restarts too) | `name` |
+| `HostedServiceStopped` | The service ended for good (stopped, returned, out of restarts) | `name`, `duration_s` |
+| `HostedServiceFailed` | `run()` raised | `name`, `error`, `restart_count`, `will_restart` |
+| `JobStarted` | A scheduled run begins | `name`, `scheduled_at` |
+| `JobCompleted` | The run returned | `name`, `duration_s`, `scheduled_at` |
+| `JobFailed` | The run raised, timed out (`TimeoutError`) or was cancelled at shutdown | `name`, `error`, `duration_s`, `scheduled_at` |
+| `JobSkipped` | A fire did not run | `name`, `reason` (`overlap`, `locked`, `misfire`, `disabled`), `scheduled_at` |
+
+The application lifecycle state and [health checks](health-checks.md) add two more:
+
+| Event | When fired | Key fields |
+|---|---|---|
+| `LifecycleStateChanged` | `app.lifecycle_state` changed (`STARTING`, `READY`, `DRAINING`, `STOPPED`, `FAILED`) | `app`, `previous`, `current`, `reason` |
+| `HealthChanged` | A health check's status, or the report's aggregate (`name=None`), changed | `app`, `name`, `previous`, `current`, `details` |
 
 All events inherit from `LifecycleEvent` which carries a `timestamp: float` (monotonic)
 so listeners can compute deltas without recording wall-clock time themselves.
@@ -237,20 +272,20 @@ class MetricsSink:
 Register `MetricsSink` as a singleton provider. The constructor wires itself into the
 bus — no explicit subscription call at startup needed.
 
-### Readiness flip on `StartupComplete`
+### Readiness from the lifecycle state
+
+Do not hand-roll a readiness flag: `app.lifecycle_state` is already the source
+of truth, and it fails readiness while the app drains too. Prefer
+[`HealthModule.for_root()`](health-checks.md); to react to transitions, listen
+for `LifecycleStateChanged`:
 
 ```python
-from lauren.signals import StartupComplete
+from lauren import AppLifecycleState, LifecycleStateChanged
 
-ready = {"ok": False}
-
-@app.signals.on(StartupComplete)
-def flip_ready(event: StartupComplete) -> None:
-    ready["ok"] = True
-
-@get("/health/ready")
-async def readiness(self) -> dict:
-    return {"ready": ready["ok"]}
+@app.signals.on(LifecycleStateChanged)
+def announce(event: LifecycleStateChanged) -> None:
+    if event.current is AppLifecycleState.DRAINING:
+        registry.deregister(instance_id)   # e.g. a service registry
 ```
 
 ### Background task failure alerting
@@ -473,8 +508,8 @@ app.signals.clear()
 ```python
 from lauren.signals import install_signal_handlers, wait_for_shutdown
 
-# Wire SIGTERM + SIGINT to app.shutdown():
-event = install_signal_handlers(app, drain_timeout=30)
+# SIGTERM / SIGINT: app.begin_draining(), keep serving 10 s, then app.shutdown():
+event = install_signal_handlers(app, drain_timeout=30, shutdown_delay=10)
 
 # In your main loop:
 await wait_for_shutdown(event)
@@ -484,8 +519,11 @@ await wait_for_shutdown(event)
 received. `wait_for_shutdown` is a thin wrapper for `await event.wait()`.
 
 The handlers are idempotent — multiple signals don't trigger multiple shutdowns.
+During `shutdown_delay` the app is `DRAINING`: readiness probes answer 503 while
+requests are still served, so load balancers stop routing to it before the
+socket closes (see [Draining before the socket closes](health-checks.md#draining-before-the-socket-closes)).
 
-See also the [Lifecycle Hooks](../core-concepts/lifecycle.md) guide for the four-phase
+See also the [Lifecycle Hooks](../core-concepts/lifecycle.md) guide for the full
 shutdown sequence.
 
 ---
@@ -494,5 +532,8 @@ shutdown sequence.
 
 * [WebSockets](websockets.md) — the gateway, `EventForwarder`, and token service from the real-world example above.
 * [Background Tasks](background-tasks.md) — `BackgroundTaskStarted/Complete/Failed` signals.
+* [Application Events](events.md) — the domain event bus (`@on_event`, `EventBus`, `EventPublisher`) and its `EventHandlerFailed` signal.
+* [Scheduling & Hosted Services](scheduling.md) — `HostedService*` and `Job*` signals.
+* [Health & Readiness Probes](health-checks.md) — `app.lifecycle_state`, `begin_draining()`, `HealthModule` and `HealthChanged`.
 * [Lifecycle Hooks](../core-concepts/lifecycle.md) — `@post_construct` / `@pre_destruct` and shutdown phases.
 * [Reference → Cheat Sheet](../reference/cheat-sheet.md) — one-line signal patterns.
