@@ -123,6 +123,8 @@ async def test_nothing_fires_before_startup_complete() -> None:
 
 async def test_a_request_scoped_dependency_is_fresh_per_run_and_torn_down() -> None:
     clock = ManualClock()
+    # Keep instances alive: Python may recycle id() after a run is torn down.
+    instances: list[object] = []
     created: list[int] = []
     closed: list[int] = []
     destructed: list[int] = []
@@ -132,6 +134,7 @@ async def test_a_request_scoped_dependency_is_fresh_per_run_and_torn_down() -> N
     class DbSession:
         def __init__(self, ctx: JobContext) -> None:
             self.ctx = ctx
+            instances.append(self)
             created.append(id(self))
 
         @pre_destruct
@@ -155,6 +158,7 @@ async def test_a_request_scoped_dependency_is_fresh_per_run_and_torn_down() -> N
     await clock.advance(60)
     await app.shutdown()
 
+    assert len(instances) == 2 and instances[0] is not instances[1]
     assert len(created) == 2 and len(set(created)) == 2
     assert closed == created and destructed == created
     assert contexts == [True, True]

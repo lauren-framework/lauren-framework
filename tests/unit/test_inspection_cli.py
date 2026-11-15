@@ -137,7 +137,9 @@ def test_github_diagnostics_render_source_paths(
     error = StartupError("bad", detail={"source": {"file": str(source), "line": 12}, "hints": ["fix"]})
     out = io.StringIO()
     assert _inspect._report_failure(error, "check", "github", out, io.StringIO()) == 1
-    assert (str(source) if outside else "local.py") in out.getvalue()
+    expected = str(source) if outside else "local.py"
+    expected = expected.replace("%", "%25").replace(":", "%3A").replace(",", "%2C")
+    assert expected in out.getvalue()
     assert "line=12" in out.getvalue()
 
 
