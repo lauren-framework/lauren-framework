@@ -305,7 +305,11 @@ class OrjsonEncoder:
     def encode(self, value: Any) -> bytes:
         try:
             return self._orjson.dumps(value, default=self._default, option=self._opts)
-        except TypeError:
+        except TypeError as exc:
+            if isinstance(exc.__cause__, TypeError):
+                # orjson wraps default-callback errors; retain the actual
+                # policy rejection instead of retrying on the outer dict.
+                raise exc.__cause__ from None
             # Mirror the stdlib encoder's permissive fallback. orjson
             # raises TypeError for nested shapes it cannot reach via
             # the ``default`` callback (e.g. a model whose ``__dict__``

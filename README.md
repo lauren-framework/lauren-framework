@@ -144,6 +144,10 @@ core ideas:
   `@use_middlewares`, `@use_encoder`, and `@set_metadata` annotations from a
   source class or function to a target — the `functools.wraps` equivalent for
   Lauren's decorator metadata.
+* **Compiled-app inspection** — `describe_app(app)` snapshots routes, module and
+  provider graphs, effective guards, WebSocket gateways and OpenAPI without
+  starting lifecycle hooks. `python -m lauren check`, `routes` and `openapi`
+  validate and inspect an app from CI, with source-linked startup hints.
 * **`lauren.reflect`** — Full metadata introspection API: static readers
   (`reflect_controller`, `reflect_routes`, `reflect_guards`, …), app-level
   readers (`get_all_routes`, `get_all_ws_gateways`, `get_route_metadata`), and

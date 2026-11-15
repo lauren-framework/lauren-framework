@@ -47,6 +47,7 @@ USAGE = f"""\
 usage: {PROG} exec [-t TARGET] [-y] [-v] [TARGET] COMMAND [ARGS...]
        {PROG} commands [-t TARGET] [--all] [TARGET]
        {PROG} console [-t TARGET] [-v] [TARGET]
+       {PROG} check|routes|openapi [TARGET] [OPTIONS]
 """
 
 HELP = (
@@ -60,6 +61,9 @@ actions:
   commands  list the app's commands (the app is built, not started)
   console   an async Python REPL with ctx, app, container, get(), resolve()
             and scope() preloaded; top-level await works
+  check     compile and validate the app without starting lifecycle hooks
+  routes    list compiled HTTP and WebSocket routes (--json for tooling)
+  openapi   export the OpenAPI document (optionally --out PATH)
 
 TARGET is pkg.module:attr: a @module class, a LaurenApp, a Lauren app, an
 ApplicationContext, or a zero-argument (sync or async) factory returning one.
@@ -303,7 +307,13 @@ def main(
     out = stdout if stdout is not None else sys.stdout
     err = stderr if stderr is not None else sys.stderr
     inp = stdin if stdin is not None else sys.stdin
-    parsed = _parse_cli(list(sys.argv[1:] if argv is None else argv), out, err)
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    if tokens and tokens[0] in ("check", "routes", "openapi"):
+        from ._inspect import inspect_main
+
+        _ensure_cwd_on_path()
+        return inspect_main(tokens[0], tokens[1:], out, err)
+    parsed = _parse_cli(tokens, out, err)
     if isinstance(parsed, int):
         return parsed
     _ensure_cwd_on_path()

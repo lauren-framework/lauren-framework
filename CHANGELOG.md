@@ -7,6 +7,26 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- `describe_app(app)` / `app.describe()` return an `AppManifest` immediately after
+  compilation, without lifecycle startup. Deterministic snapshots include
+  resolved module imports, provider dependencies and scopes, effective HTTP/WS
+  policy chains, mounts, redacted metadata and an OpenAPI fingerprint.
+- Graph-aware startup diagnostics preserve existing exceptions while adding
+  actionable hints, source locations, dependency paths, documentation links and
+  PEP 678 traceback notes.
+- `python -m lauren check`, `routes` and `openapi export` inspect an app without
+  serving it. CI checks support JSON and GitHub annotation output.
+- Compiled `ReflectedRoute` values expose `guards`, `interceptors` and
+  `middlewares`; the existing readers still require startup.
+
+### Fixed
+
+- Preserve an orjson fallback callback's original policy rejection instead of
+  replacing it with an error about the outer dictionary.
+
+
 ## [1.11.0] - 2026-11-05
 
 ### Added

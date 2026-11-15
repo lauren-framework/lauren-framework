@@ -75,6 +75,9 @@ def _reflected(method: str, path_template: str, ch: Any) -> ReflectedRoute:
         status_code=status_code,
         responses_typed=responses_typed,
         raises=raises,
+        guards=tuple(ch.guards),
+        interceptors=tuple(ch.interceptors),
+        middlewares=tuple(ch.middleware_chain),
     )
 
 

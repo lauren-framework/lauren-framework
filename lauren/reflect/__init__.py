@@ -52,6 +52,21 @@ from __future__ import annotations
 
 from ._app_reader import get_all_routes, get_all_ws_gateways, get_route_metadata
 from ._catalog import error_catalog
+from ._manifest import (
+    AppManifest,
+    ManifestApp,
+    ManifestDependency,
+    ManifestEvent,
+    ManifestGateway,
+    ManifestGlobals,
+    ManifestModule,
+    ManifestMount,
+    ManifestOpenAPI,
+    ManifestParameter,
+    ManifestProvider,
+    ManifestRoute,
+    describe_app,
+)
 from ._composer import apply_guards, apply_interceptors
 from ._context import WsConnectionContext, WsMessageContext, WsUpgradeRequest
 from ._reader import (
@@ -110,6 +125,19 @@ __all__ = [
     "reflect_user_metadata",
     "reflect_encoder",
     # App-level readers
+    "describe_app",
+    "AppManifest",
+    "ManifestApp",
+    "ManifestDependency",
+    "ManifestEvent",
+    "ManifestGateway",
+    "ManifestGlobals",
+    "ManifestModule",
+    "ManifestMount",
+    "ManifestOpenAPI",
+    "ManifestParameter",
+    "ManifestProvider",
+    "ManifestRoute",
     "get_all_routes",
     "get_all_ws_gateways",
     "get_route_metadata",

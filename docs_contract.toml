@@ -71,7 +71,7 @@
 ]
 "lauren.LaurenApp" = [
     "router", "container", "app_state", "routes", "openapi",
-    "startup", "shutdown", "on_shutdown", "mount", "mounts", "scope", "context", "error_format",
+    "startup", "shutdown", "on_shutdown", "mount", "mounts", "scope", "context", "error_format", "describe",
     "type_compiler", "validation_policy", "response_validation", "json_fallback",
     "lifecycle_state", "begin_draining",
 ]
@@ -81,7 +81,16 @@
 "lauren.NoContent" = ["headers", "status"]
 "lauren.Status" = ["code", "description"]
 "lauren.decorators.RaisesSpec" = ["exc_type", "description", "status_code", "code"]
-"lauren.ReflectedRoute" = ["status_code", "responses_typed", "raises", "response_model", "handler"]
+"lauren.ReflectedRoute" = ["status_code", "responses_typed", "raises", "response_model", "handler", "guards", "interceptors", "middlewares"]
+"lauren.AppManifest" = [
+    "manifest_version", "lauren_version", "app", "globals", "modules", "providers", "routes",
+    "websocket_gateways", "mounts", "openapi", "sections", "to_dict", "to_json",
+]
+"lauren.reflect.ManifestApp" = ["root_module", "error_format", "json_encoder", "max_body_size", "root_path", "docs", "sessions", "profile", "debug"]
+"lauren.reflect.ManifestRoute" = [
+    "method", "path", "name", "handler", "module", "params", "guards", "interceptors",
+    "middlewares", "exception_handlers", "metadata_keys", "status_code", "metadata_values",
+]
 "lauren.ReflectedResponse" = ["status", "body_type", "description", "source"]
 "lauren.ValidationPolicy" = ["stdlib_models", "json_mode", "extra", "include_input", "max_issues"]
 "lauren.ValidationIssue" = ["loc", "type", "msg", "input", "ctx", "to_dict", "prefixed"]
