@@ -197,6 +197,7 @@ nav:
     - Circular Module Imports: guides/circular-module-imports.md
     - OpenAPI Security from Guards: guides/openapi-security.md
     - Proxy & Static Files: guides/proxy-and-static-files.md
+    - URLs, Proxies & Signed Links: guides/urls-and-proxies.md
     - Background Tasks: guides/background-tasks.md
     - Scheduling & Hosted Services: guides/scheduling.md
     - Commands & Scripts: guides/commands-and-scripts.md
@@ -221,6 +222,7 @@ nav:
     - Validation: reference/validation.md
     - Responses: reference/responses.md
     - Pagination: reference/pagination.md
+    - URLs & Proxies: reference/urls.md
     - WebSockets: reference/websockets.md
     - Reflect: reference/reflect.md
     - SSE & Streaming: reference/sse.md

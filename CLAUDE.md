@@ -111,6 +111,8 @@ lauren/                      — framework package
 ├── _stores/                 — Store protocol, bounded MemoryStore/TTLMap, Lock, StoresModule (private)
 ├── _cache/                  — Cache service, @cache_response / @idempotent runtime, CacheModule (private)
 ├── _codecs/                 — body codecs, Accept parser, per-route content gate / decoding / negotiation (private)
+
+├── _urls/                   — route-name registry, URL templates, URL type, forwarded-header resolver, URL signer (private)
 ├── _schema/                 — native validation engine (F02); `_contract.py` = response projectors
 ├── responses.py             — typed results: Ok / Created / Accepted / NoContent / Status
 ├── reflect/                 — public sub-package: full metadata introspection API
@@ -142,6 +144,8 @@ lauren/                      — framework package
 ├── stores.py                — public Store / MemoryStore / StoresModule / Lock / session adapters
 ├── cache.py                 — public Cache / CacheModule / cache_response / idempotent
 ├── codecs.py                — public Codec / JsonCodec / MsgpackCodec (+ ContentConfig)
+
+├── urls.py                  — URL, UrlBuilder, ProxyConfig, UrlSigningConfig, ValidSignature (named routes, proxies, signed URLs)
 ├── socketio.py              — public Socket.IO controller surface
 ├── testing/                 — TestClient / AsyncTestClient, Test.create_testing_module, pytest_plugin
 ├── types.py                 — Request, Response, State, Headers, Scope, Discriminated, …
@@ -279,6 +283,10 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Share state across workers (sessions, cache, locks) | One `Store` via `StoresModule.for_root(default=...)` |
 | Paginate a list endpoint | `paging: OffsetPagination` / `PageNumberPagination` / `CursorPagination[C]` + return `Page[T]` / `CursorPage[T]` (`Page.of`, `Page.from_rows`, `CursorPage.from_rows`); `PaginationConfig` app-wide or in `Annotated[...]` |
 | Sign a value the client must not forge | `lauren._signing.Signer(secrets, namespace="<feature>")` (first key signs, all verify) — never hand-rolled `hmac` |
+| Link to another route (`Location`, redirects, HATEOAS) | `request.url_path_for(UserController.show, id=7)` (handler reference) / `request.url_for("users.show", id=7)`; name routes with `@get(..., name=)` |
+| Build a link without a request (email, webhook, job) | Inject `UrlBuilder` + `LaurenFactory.create(..., public_base_url=...)`; `urls.url_for(...)` |
+| Get the real client IP / scheme / host behind a proxy | `LaurenFactory.create(..., proxy=ProxyConfig(trusted=[...]))`, then `request.client` / `request.scheme` / `request.host`; test with `TestClient(app, client=(ip, port))` |
+| Expiring, tamper-proof link (download, unsubscribe) | `url_signing=UrlSigningConfig(secret=...)` + `urls.signed_url_for(...)` + `@use_guards(ValidSignature)` |
 | Read typed configuration | `ConfigModule.for_root(Settings)` (or `for_feature`) + inject `Settings`; `load_settings` for factory kwargs |
 | Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
 | Accept a non-JSON body / serve MessagePack | `consumes=` / `produces=` on the route or controller + `ContentConfig(codecs=[MsgpackCodec()])` |
@@ -543,6 +551,21 @@ exit).
 - ❌ Silent fallbacks that change semantics. The lenient ForwardRef
   resolver is an exception; it returns a `ForwardRef` so the caller
   can detect the fallback explicitly.
+- ❌ Building internal URLs with f-strings (`location=f"/users/{user.id}"`) — the
+  link breaks under a mount, `root_path`, a proxy prefix or a renamed route,
+  and nothing checks it. Use `request.url_path_for(UserController.show, id=...)`
+  (or a route name); outside a request inject `UrlBuilder`.
+- ❌ Parsing `X-Forwarded-For` / `-Proto` / `-Host` in your own middleware or
+  guard — every package ends up with its own trust rules, and headers from an
+  untrusted peer are client-controlled. Configure `ProxyConfig(trusted=[...])`
+  once and read `request.client` / `request.scheme` / `request.host`.
+- ❌ Absolute links that leave the request (password-reset emails, webhooks,
+  cached responses) built with `request.url_for` — without a trusted proxy the
+  `Host` header is client-chosen. Use `UrlBuilder.url_for` with
+  `public_base_url=`.
+- ❌ Hand-rolled signed links (`hmac` over an ad-hoc string) — use
+  `UrlSigningConfig` + `UrlBuilder.signed_url_for` + `ValidSignature` (rotation,
+  constant-time verify, startup check); signed is not encrypted.
 - ❌ Using bare `@decorator` instead of `@decorator()` when the
   decorator takes options — see rule 7 above. The framework rejects
   this loudly via `DecoratorUsageError`; mirror that pattern in any
@@ -927,6 +950,15 @@ exit).
   `@cache_response` / `@idempotent` policies and their interceptors, compiled
   in Phase 5 by `compile_cache_routes`. Response-cache keying and header rules
   live together in `_cache/_response.py`.
+- `lauren/urls.py` / `lauren/_urls/` — `UrlBuilder` and the per-app route-name
+  `RouteTable` (`_registry.py`, built at the end of Phase 5 by
+  `_module.build_route_table`), compiled `UrlTemplate`s and the path-parameter
+  `formatter_for` hook (`_template.py`, the seam typed converters' `to_url`
+  plug into), `URL` + the `url_for` accessors shared by `Request` /
+  `WebSocket` / `WsUpgradeRequest` (`_url.py`), `ProxyConfig` and the pure
+  `resolve_forwarded` (`_forwarded.py`, applied once per request in
+  `LaurenApp.__call__` / `_websocket` and to mounted sub-apps' scopes), and the
+  URL signer + `ValidSignature` (`_signing.py`, `urls.py`).
 - `lauren/testing/` — `TestClient` (one persistent loop per client, lifespan
   via `with`), `AsyncTestClient`, `Test.create_testing_module` overrides,
   cookie jar, `WsTestClient`, opt-in `pytest_plugin`.

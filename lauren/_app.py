@@ -42,6 +42,7 @@ from . import context as _context
 from .decorators import controller, module
 from .exceptions import LifecycleViolationError
 from .signals import AppLifecycleState
+from ._urls._module import APP_ROUTES_FLAG
 from .types import AppState, DebugConfig
 
 
@@ -101,6 +102,9 @@ class Lauren:
         json_fallback: str = "warn",
         pagination: Any | None = None,
         routing: Any | None = None,
+        proxy: Any | None = None,
+        public_base_url: str | None = None,
+        url_signing: Any | None = None,
     ) -> None:
         self._title = title
         self._version = version
@@ -145,6 +149,9 @@ class Lauren:
         self._json_fallback = json_fallback
         self._pagination = pagination
         self._routing = routing
+        self._proxy = proxy
+        self._public_base_url = public_base_url
+        self._url_signing = url_signing
         self._startup_handlers: list[Callable[[], Any]] = []
         self._shutdown_handlers: list[Callable[[], Any]] = []
 
@@ -375,6 +382,15 @@ class Lauren:
             raise ValueError("mount path must not be empty")
         self._mounts[path] = app
 
+    def url_path_for(self, target: Any, /, *, route: str | None = None, **params: Any) -> Any:
+        """The app-relative path of a route (see :meth:`LaurenApp.url_path_for`); compiles the app.
+
+        Routes registered with ``@app.get`` are named after their function
+        (``app.url_path_for("read_item", item_id=1)``) unless they pass
+        ``name=``; the function itself works as a handler reference too.
+        """
+        return self._compile_now().url_path_for(target, route=route, **params)
+
     # ------------------------------------------------------------------
     # Lifecycle hooks
     # ------------------------------------------------------------------
@@ -516,6 +532,9 @@ class Lauren:
             json_fallback=self._json_fallback,
             pagination=self._pagination,
             routing=self._routing,
+            proxy=self._proxy,
+            public_base_url=self._public_base_url,
+            url_signing=self._url_signing,
         )
         # --- Startup hooks run inside LaurenApp.startup(), after every
         # @post_construct hook (not here, before singletons exist) ---------
@@ -662,6 +681,8 @@ def _build_app_controller(routes: list[_PendingRoute]) -> type:
         attrs[name] = decorated
 
     cls = type("_LaurenAppController", (), attrs)
+    # Route names derive from the function names (``@app.get`` style).
+    setattr(cls, APP_ROUTES_FLAG, True)
     # Decorate as a controller at the app root; empty prefix keeps paths
     # exactly as the user wrote them.
     controller("")(cls)

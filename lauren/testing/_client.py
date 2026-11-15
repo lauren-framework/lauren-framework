@@ -33,6 +33,9 @@ LifespanMode = Literal["auto", "on", "off"]
 
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _MAX_REDIRECTS = 20
+#: The peer address every request reports (``scope["client"]``) unless ``client=`` says otherwise.
+_DEFAULT_CLIENT: tuple[str, int] = ("127.0.0.1", 12345)
+
 #: Per-request time limit (seconds) unless the client says otherwise.
 DEFAULT_TIMEOUT = 30.0
 #: Sentinel: "use the client's configured value".
@@ -284,6 +287,7 @@ class _ClientBase:
         root_path: str,
         strict_cookies: bool,
         persist_cookies: bool | None,
+        client: tuple[str, int] | None = _DEFAULT_CLIENT,
     ) -> None:
         if lifespan not in ("auto", "on", "off"):
             raise ValueError(f"lifespan must be 'auto', 'on' or 'off', got {lifespan!r}")
@@ -301,6 +305,8 @@ class _ClientBase:
         self._timeout_setting: Any = timeout
         self.raise_server_exceptions = raise_server_exceptions
         self.root_path = root_path
+        #: The peer address sent as ``scope["client"]`` (``None``: no client, like a Unix socket).
+        self.client_address: tuple[str, int] | None = client
         self._lifespan: LifespanMode = lifespan
         self._strict_cookies = strict_cookies
         self._persist_cookies = persist_cookies
@@ -384,7 +390,7 @@ class _ClientBase:
             "query_string": query,
             "root_path": self.root_path,
             "headers": [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in sent],
-            "client": ("127.0.0.1", 12345),
+            "client": self.client_address,
             "server": (target.host, target.port),
         }
         if driver.foreign is not None:
@@ -755,6 +761,7 @@ class TestClient(_ClientBase):
         root_path: str = "",
         strict_cookies: bool = False,
         persist_cookies: bool | None = None,
+        client: tuple[str, int] | None = _DEFAULT_CLIENT,
     ) -> None:
         super().__init__(
             app,
@@ -768,6 +775,7 @@ class TestClient(_ClientBase):
             root_path=root_path,
             strict_cookies=strict_cookies,
             persist_cookies=persist_cookies,
+            client=client,
         )
         # 1.x compatibility: a bare ``TestClient(app)`` neither stored cookies
         # nor limited request time; ``with TestClient(app)`` (and
@@ -916,6 +924,7 @@ class TestClient(_ClientBase):
             root_path=self.root_path,
             strict_cookies=self._strict_cookies,
             persist_cookies=self._persist_cookies,
+            client=self.client_address,
         )
         child._backend_options = self._backend_options
         child._closed = False
@@ -1103,6 +1112,7 @@ class TestClient(_ClientBase):
                 server_timeout=timeout if timeout is not None else 2.0,
                 scheme=scheme,
                 server=server,
+                client=self.client_address,
             )
             return await session.__aenter__()
 
@@ -1197,6 +1207,7 @@ class AsyncTestClient(_ClientBase):
         root_path: str = "",
         strict_cookies: bool = False,
         persist_cookies: bool | None = None,
+        client: tuple[str, int] | None = _DEFAULT_CLIENT,
     ) -> None:
         super().__init__(
             app,
@@ -1210,6 +1221,7 @@ class AsyncTestClient(_ClientBase):
             root_path=root_path,
             strict_cookies=strict_cookies,
             persist_cookies=persist_cookies,
+            client=client,
         )
         self._driver: _Driver | None = None
         self._owner = False
@@ -1292,6 +1304,7 @@ class AsyncTestClient(_ClientBase):
             root_path=self.root_path,
             strict_cookies=self._strict_cookies,
             persist_cookies=self._persist_cookies,
+            client=self.client_address,
         )
         child._driver = self._driver
         child._child = True
@@ -1433,6 +1446,7 @@ class AsyncTestClient(_ClientBase):
             server_timeout=timeout if timeout is not None else 2.0,
             scheme=scheme,
             server=server,
+            client=self.client_address,
         )
         async with session as ws:
             yield ws

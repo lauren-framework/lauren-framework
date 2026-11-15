@@ -155,6 +155,20 @@ app = LaurenFactory.create(AppModule, content=ContentConfig(strict_content_type=
 Start with `strict_content_type="warn"` to log offending clients first. Keep
 `lauren-guards`' `csrf()` for form-encoded routes that use cookie auth.
 
+## HTTPS redirect behind a reverse proxy
+
+Configure `proxy=ProxyConfig(trusted=["10.0.0.0/8"])` on `LaurenFactory.create`
+and have your proxy supply `X-Forwarded-Proto`. Middleware should read
+`request.scheme` (`"https"` for a client using TLS), **not** parse
+`X-Forwarded-Proto` itself or derive a scheme from `request.url` (which is
+`path?query` in 1.x). The `lauren-middlewares` HTTPS redirect needs to use
+`request.scheme` rather than its private forwarded-header parsing; until
+that companion is updated, use a redirect that reads `request.scheme` after
+`ProxyConfig` resolves the trusted peer. Only send HSTS over HTTPS; for
+signed URLs use `Referrer-Policy: no-referrer` to avoid leaking `sig`/`exp`
+through outbound links. See
+[URLs, Proxies & Signed Links](../../docs/guides/urls-and-proxies.md).
+
 ## Testing
 
 ```python

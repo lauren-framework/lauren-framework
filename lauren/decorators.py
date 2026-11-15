@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, ForwardRef, TypeVar
 
 from ._di import INJECTABLE_META, InjectableMeta
+from ._urls._names import check_name, name_problem
 from .exceptions import (
     DecoratorUsageError,
     ExceptionHandlerConfigError,
@@ -149,6 +150,7 @@ class ModuleMeta:
         imports: list[type | ForwardRef | str] | None = None,
         exports: list[type] | None = None,
         host: str | None = None,
+        name: str | None = None,
     ) -> None:
         self.controllers = tuple(controllers or [])
         self.providers = tuple(providers or [])
@@ -158,6 +160,8 @@ class ModuleMeta:
         self.exports = tuple(exports or [])
         #: Host pattern for the module's own controllers / gateways that set none.
         self.host = host
+        #: Namespace prefixed to the explicit route names of the module's controllers.
+        self.name = name
 
 
 def module(
@@ -167,6 +171,7 @@ def module(
     imports: list[type | ForwardRef | str] | None = None,
     exports: list[type] | None = None,
     host: str | None = None,
+    name: str | None = None,
 ) -> Callable[[C], C]:
     """Declare a module boundary.
 
@@ -178,6 +183,10 @@ def module(
     controllers and WebSocket gateways by the request's ``Host`` header,
     unless a controller declares its own ``host=``; it does not apply to
     imported modules.
+    ``name`` (dot-separated identifiers) namespaces the explicit route names
+    of the module's controllers: ``@module(name="accounts")`` +
+    ``@controller(name="users")`` + ``@get(name="show")`` is
+    ``"accounts.users.show"``.
     """
     if args:
         _reject_bare_usage("module", args[0])
@@ -194,6 +203,7 @@ def module(
                 imports=imports,
                 exports=exports,
                 host=host,
+                name=check_name(name, decorator="module", target=cls),
             ),
         )
         return cls
@@ -220,6 +230,7 @@ class ControllerMeta:
         produces: tuple[str, ...] | None = None,
         max_body_size: int | None = None,
         host: str | None = None,
+        name: str | None = None,
     ) -> None:
         self.prefix = prefix
         self.tags = tuple(tags or [])
@@ -234,6 +245,8 @@ class ControllerMeta:
 
         #: Host pattern (``"{tenant}.example.com"``); ``None`` serves every host.
         self.host = host
+        #: Namespace prefixed to the explicit route names of the controller.
+        self.name = name
 
 
 def controller(
@@ -248,6 +261,7 @@ def controller(
     produces: Sequence[str] | str | None = None,
     max_body_size: int | None = None,
     host: str | None = None,
+    name: str | None = None,
 ) -> Callable[[C], C]:
     """Declare a controller class.
 
@@ -278,6 +292,9 @@ def controller(
     ``host`` (``"admin.example.com"``, ``"{tenant}.example.com"``) restricts
     the controller's routes to requests whose ``Host`` matches; ``{name}``
     labels are read with :class:`~lauren.extractors.HostParam`.
+    ``name`` (dot-separated identifiers) namespaces the explicit route names
+    of the controller: ``@controller("/users", name="users")`` with
+    ``@get("/{id}", name="show")`` is the route ``"users.show"``.
     """
     # ``prefix`` defaults to an empty string, so bare ``@controller`` would
     # pass the decorated class as ``prefix``. Detect and reject.
@@ -306,6 +323,7 @@ def controller(
                 security=security,
                 **content_options,
                 host=host,
+                name=check_name(name, decorator="controller", target=cls),
             ),
         )
         # Mark this class as injectable in its OWN __dict__ — never by
@@ -337,6 +355,7 @@ class RouteMeta:
         consumes: tuple[str, ...] | None = None,
         produces: tuple[str, ...] | None = None,
         max_body_size: int | None = None,
+        name: str | None = None,
     ) -> None:
         self.method = method.upper()
         self.path = path
@@ -360,6 +379,8 @@ class RouteMeta:
         self.produces = produces
         #: Body size limit in bytes (``None``: controller / app default).
         self.max_body_size = max_body_size
+        #: Route name (``name=``); namespaced by the controller / module names.
+        self.name = name
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +503,13 @@ def _check_route_methods(value: Any) -> tuple[str, ...]:
     return tuple(names)
 
 
+def _check_route_name(value: Any) -> str:
+    problem = name_problem(value)
+    if problem is not None:
+        raise _RouteOptionError("invalid_route_name", problem)
+    return str(value)
+
+
 #: Route-decorator option validators: keyword name → ``validate(value)``.
 #:
 #: Every verb decorator (``@get`` … ``@options``, and ``Lauren``'s ``@app.get``
@@ -501,6 +529,7 @@ _ROUTE_OPTION_VALIDATORS: dict[str, Callable[[Any], Any]] = {
     "produces": _check_produces,
     "max_body_size": _check_max_body_size,
     "methods": _check_route_methods,
+    "name": _check_route_name,
 }
 
 
@@ -580,6 +609,7 @@ def _route_decorator(method: str) -> Callable[..., Callable[[F], F]]:
         consumes: Sequence[str] | str | None = None,
         produces: Sequence[str] | str | None = None,
         max_body_size: int | None = None,
+        name: str | None = None,
     ) -> Callable[[F], F]:
         # Bare usage — ``@get`` on a function — passes the function as
         # ``path``. Reject loudly: the undetected case would silently
@@ -599,6 +629,7 @@ def _route_decorator(method: str) -> Callable[..., Callable[[F], F]]:
                     "consumes": consumes,
                     "produces": produces,
                     "max_body_size": max_body_size,
+                    "name": name,
                 },
             )
             existing: list[RouteMeta] = getattr(fn, ROUTE_META, [])

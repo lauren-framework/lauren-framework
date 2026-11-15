@@ -7,7 +7,7 @@ Core request/response types and state containers.
 ### `Request`
 
 ```python
-class Request(method: str, path: str, raw_query_string: bytes = b'', headers: Headers | None = None, path_params: dict[str, str] | None = None, client: ClientInfo | None = None, server: ServerInfo | None = None, receive: Callable[[], Awaitable[dict[str, Any]]] | None = None, app_state: AppState | None = None, max_body_size: int = 1048576, extensions: dict[str, Any] | None = None)
+class Request(method: str, path: str, raw_query_string: bytes = b'', headers: Headers | None = None, path_params: dict[str, str] | None = None, client: ClientInfo | None = None, server: ServerInfo | None = None, receive: Callable[[], Awaitable[dict[str, Any]]] | None = None, app_state: AppState | None = None, max_body_size: int = 1048576, extensions: dict[str, Any] | None = None, scheme: str = 'http', root_path: str = '', authority: str | None = None, urls: Any = None)
 ```
 
 Incoming HTTP request.
@@ -15,6 +15,12 @@ Incoming HTTP request.
 The request owns its ASGI scope and the ``receive`` callable required to
 consume the body. State, route metadata, and app state are attached by the
 runtime before the handler executes.
+
+The URL model — ``scheme``, ``host``, ``port``, ``root_path``,
+``base_url``, ``full_url`` and ``client`` — comes from the ASGI scope and
+the ``Host`` header, or from a trusted proxy when the app is built with
+``proxy=ProxyConfig(...)``. ``url_for`` / ``url_path_for`` /
+``ws_url_for`` build URLs to the app's named routes.
 
 Instances are **pooled and reused** by :class:`lauren._arena.RequestArena`:
 ``reset()`` clears the instance's entire ``__dict__`` between requests, so
@@ -25,7 +31,7 @@ persist. Copy anything you need to keep.
 #### `Request.reset`
 
 ```python
-def reset(self, method: str, path: str, raw_query_string: bytes, headers: Headers, client: ClientInfo, server: ServerInfo, receive: Callable[[], Awaitable[dict[str, Any]]], app_state: AppState, max_body_size: int, extensions: dict[str, Any] | None = None) -> None
+def reset(self, method: str, path: str, raw_query_string: bytes, headers: Headers, client: ClientInfo, server: ServerInfo, receive: Callable[[], Awaitable[dict[str, Any]]], app_state: AppState, max_body_size: int, extensions: dict[str, Any] | None = None, scheme: str = 'http', root_path: str = '', authority: str | None = None, urls: Any = None) -> None
 ```
 
 Re-initialise this :class:`Request` in place for reuse.

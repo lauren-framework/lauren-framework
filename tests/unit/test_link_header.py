@@ -8,7 +8,7 @@ import pytest
 
 from lauren import CursorPage, CursorPagination, OffsetPagination, Page, PageNumberPagination, Request
 from lauren._pagination._config import resolve
-from lauren._pagination._links import ROOT_PATH_ATTR, RequestSnapshot, build_url, link_header, snapshot
+from lauren._pagination._links import RequestSnapshot, build_url, link_header, snapshot
 from lauren._pagination._page import page_links
 from lauren._pagination._params import _Bound
 from lauren.pagination import PaginationConfig
@@ -101,8 +101,7 @@ def test_base_url_makes_links_absolute() -> None:
 
 
 def test_snapshot_includes_root_path() -> None:
-    request = Request(method="GET", path="/items", raw_query_string=b"q=1")
-    setattr(request, ROOT_PATH_ATTR, "/api/")
+    request = Request(method="GET", path="/items", raw_query_string=b"q=1", root_path="/api/")
 
     snap = snapshot(request)
 

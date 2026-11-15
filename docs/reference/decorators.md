@@ -21,6 +21,11 @@ Every verb decorator takes the same options, validated at decoration time
 `@controller(..., consumes=..., produces=..., max_body_size=...)` sets the
 defaults of its routes.
 
+Every verb accepts `name=` for [named-route URL generation](../guides/urls-and-proxies.md#naming-routes).
+`@controller(name=...)` and `@module(name=...)` namespace explicit route names;
+`@ws_controller(name=...)` names a WebSocket gateway. All names are checked
+when the decorator runs; duplicates fail at app startup.
+
 ::: lauren.get
 
 ::: lauren.post

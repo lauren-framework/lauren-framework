@@ -17,7 +17,7 @@ startup, and the request path runs prebuilt closures — no reflection.
 ```python
 from dataclasses import dataclass
 
-from lauren import Created, LaurenFactory, NoContent, controller, delete, get, module, post
+from lauren import Created, LaurenFactory, NoContent, Request, controller, delete, get, module, post
 from lauren.testing import TestClient
 
 
@@ -42,9 +42,9 @@ class UserController:
         return DB[id]  # the internal record: the contract keeps the hash off the wire
 
     @post("/")
-    async def create(self) -> Created[UserOut]:
+    async def create(self, request: Request) -> Created[UserOut]:
         user = DB[1]
-        return Created(user, location=f"/users/{user.id}")
+        return Created(user, location=request.url_path_for(UserController.show, id=user.id))
 
     @delete("/{id}")
     async def remove(self, id: int) -> NoContent:
@@ -106,20 +106,28 @@ lists each of them:
 ```python
 from typing import Annotated
 
-from lauren import Accepted, Ok, Status, put
+from lauren import Accepted, Ok, Request, Status, put
 
 
 @controller("/items")
 class ItemController:
     @put("/{id}")
-    async def upsert(self, id: int) -> Ok[UserOut] | Created[UserOut]:
+    async def upsert(self, id: int, request: Request) -> Ok[UserOut] | Created[UserOut]:
         if id in DB:
             return Ok(DB[id])
-        return Created(UserOut(id, "new"), location=f"/items/{id}")
+        return Created(UserOut(id, "new"), location=request.url_path_for(ItemController.show, id=id))
+
+    @get("/{id}")
+    async def show(self, id: int) -> UserOut:
+        return UserOut(id, "new")
 
     @post("/{id}/export")
-    async def export(self, id: int) -> Accepted[dict]:
-        return Accepted({"job": id}, location=f"/jobs/{id}")
+    async def export(self, id: int, request: Request) -> Accepted[dict]:
+        return Accepted({"job": id}, location=request.url_path_for(ItemController.export_status, id=id))
+
+    @get("/{id}/export/status")
+    async def export_status(self, id: int) -> dict:
+        return {"job": id}
 
     @get("/{id}/head")
     async def head_chunk(self, id: int) -> Annotated[UserOut, Status(206, description="Partial")]:

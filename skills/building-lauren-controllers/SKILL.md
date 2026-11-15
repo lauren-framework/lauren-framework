@@ -103,7 +103,7 @@ logs dataclass/TypedDict failures; a model that uses markers or
 return {"ok": True}             # → JSON 200
 return "plain text"             # → text/plain 200
 return None                     # → 204 No Content
-return Created(user, location=f"/users/{user.id}")   # → JSON 201 + Location (typed result)
+return Created(user, location=request.url_path_for(UserController.show, id=user.id))   # → JSON 201 + Location
 return body, 201                # → JSON 201 (tuple shorthand — not documented in OpenAPI)
 return Response.json(data, status=202)          # explicit Response
 return Response.redirect("/new-url", status=301)

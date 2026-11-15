@@ -31,6 +31,7 @@ TestClient(
     root_path="",
     strict_cookies=False,
     persist_cookies=None,               # None: on with `with` / new_session(), off for a bare client
+    client=("127.0.0.1", 12345),        # scope["client"] (the peer address); None: Unix socket
 )
 ```
 

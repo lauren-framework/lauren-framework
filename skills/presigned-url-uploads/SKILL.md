@@ -1,101 +1,86 @@
 ---
 name: presigned-url-uploads
-description: Generates and verifies time-limited HMAC-signed URLs for direct client-to-storage uploads. Use when you need to let browsers upload files directly to S3/GCS/MinIO without routing the bytes through the application server.
+description: Issues expiring, method-bound URLs for Lauren-owned upload endpoints with UrlSigningConfig and ValidSignature. For direct-to-S3/GCS uploads, use the storage provider's SDK instead.
 ---
 
-> Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
-> exact file + line range and is faster than grep across the whole repo.
+# Signed URLs for Uploads
 
-# Presigned URL Generation for Direct Uploads
+Use **Lauren's signed URLs** when the bytes pass through a Lauren route.
+The app's `UrlBuilder` signs the route path, query parameters and expiry
+using the shared key-rotation-capable signer; `ValidSignature` verifies them
+before the upload handler runs. A signed URL is readable, not encrypted.
 
-## Overview
+When clients upload **directly to S3, GCS or MinIO** (not to your Lauren
+app), use the storage provider's presigning SDK (`boto3.generate_presigned_url`,
+GCS `generate_signed_url`, etc.). A Lauren signature is **not** a valid S3 or
+GCS signature; do not hand-roll HMAC for their protocols.
 
-`PresignedUrlService` signs a `(bucket, key, expires)` tuple with HMAC-SHA256
-and embeds the signature in a query string. The same service can verify incoming
-requests from clients who received the URL. This is pure Python — no S3 SDK
-required for signing. In production you would delegate signing to
-`boto3.generate_presigned_url` or the GCS equivalent; the Lauren controller
-simply calls the service to produce the JSON response.
-
-## PresignedUrlService
+## Lauren-owned upload endpoint
 
 ```python
-import hashlib
-import hmac
-import time
-from urllib.parse import urlencode
-from lauren import injectable, Scope
+from __future__ import annotations
 
-@injectable(scope=Scope.SINGLETON)
-class PresignedUrlService:
-    def __init__(self, secret: str = "presign-secret", base_url: str = "https://storage.example.com"):
-        self._secret = secret
-        self._base_url = base_url
+from lauren import Json, LaurenFactory, Request, UrlBuilder, UrlSigningConfig
+from lauren import controller, get, injectable, module, post, put, use_guards
+from lauren.urls import ValidSignature
 
-    def generate_upload_url(self, bucket: str, key: str, ttl_seconds: int = 900) -> dict:
-        expires = int(time.time()) + ttl_seconds
-        to_sign = f"{bucket}/{key}:{expires}"
-        sig = hmac.new(self._secret.encode(), to_sign.encode(), hashlib.sha256).hexdigest()
-        params = urlencode({"bucket": bucket, "key": key, "expires": expires, "signature": sig})
-        return {"url": f"{self._base_url}/upload?{params}", "method": "PUT", "expires_in": ttl_seconds}
 
-    def verify_url(self, bucket: str, key: str, expires: int, signature: str) -> bool:
-        if time.time() > expires:
-            return False
-        to_sign = f"{bucket}/{key}:{expires}"
-        expected = hmac.new(self._secret.encode(), to_sign.encode(), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(expected, signature)
-```
+@injectable()
+class UploadLinks:
+    def __init__(self, urls: UrlBuilder) -> None:
+        self.urls = urls
 
-## Controller
+    def issue(self, bucket: str, key: str, ttl: int = 900) -> dict:
+        url = self.urls.signed_url_for(StorageController.upload, bucket=bucket, key=key, expires_in=ttl)
+        return {"url": url, "method": "PUT", "expires_in": ttl}
 
-```python
-from lauren import controller, post, get, module, Path, Query, Json
 
-@controller("/storage")
+@controller("/storage", name="storage")
 class StorageController:
-    def __init__(self, svc: PresignedUrlService) -> None:
-        self._svc = svc
+    def __init__(self, links: UploadLinks) -> None:
+        self._links = links
 
     @post("/presign")
-    async def generate_presigned_url(self, body: Json[dict]) -> dict:
-        bucket = body.get("bucket", "default")
-        key = body.get("key", "file.bin")
-        ttl = int(body.get("ttl_seconds", 900))
-        return self._svc.generate_upload_url(bucket, key, ttl)
+    async def presign(self, body: Json[dict]) -> dict:
+        return self._links.issue(body["bucket"], body["key"], body.get("ttl_seconds", 900))
 
-    @get("/verify")
-    async def verify(
-        self,
-        bucket: str = Query(),
-        key: str = Query(),
-        expires: int = Query(),
-        signature: str = Query(),
-    ) -> dict:
-        valid = self._svc.verify_url(bucket, key, expires, signature)
-        return {"valid": valid}
+    @put("/upload/{bucket}/{key}", name="upload")
+    @use_guards(ValidSignature)
+    async def upload(self, bucket: str, key: str, request: Request) -> dict:
+        content = await request.body()
+        # Validate bucket/key against your own storage policy; persist content here.
+        return {"bucket": bucket, "key": key, "size": len(content)}
 
-@module(controllers=[StorageController], providers=[PresignedUrlService])
-class PresignedUrlModule:
+
+@module(controllers=[StorageController], providers=[UploadLinks])
+class UploadModule:
     pass
-```
 
-## Wiring
-
-```python
-svc = PresignedUrlService(secret="my-secret", base_url="https://cdn.example.com")
 
 app = LaurenFactory.create(
-    AppModule,
-    global_providers=[use_value(provide=PresignedUrlService, value=svc)],
+    UploadModule,
+    public_base_url="https://uploads.example.com",
+    url_signing=UrlSigningConfig(secret=["new-secret", "old-secret"], bind_method=True),
 )
 ```
 
-## Production notes
+`public_base_url` is the **trusted public URL** (include the public path prefix
+if there is one). Never build email or upload links from a client's `Host`
+header. The first secret signs, all verify; rotate by prepending a new key.
+Give URL signing its own secret, not the session secret. Keep TTLs short,
+restrict who may call `/presign`, and do not log URL query strings. For a
+reverse proxy see [URLs, Proxies & Signed Links](../../docs/guides/urls-and-proxies.md).
 
-For real S3 presigned URLs delegate to boto3:
+`ValidSignature` rejects missing, tampered or expired links with HTTP 403 and
+`detail["reason"]` (`signature_missing`, `signature_invalid`,
+`signature_expired`). `bind_method=True` stops a signed `PUT` link from
+authorising another HTTP method. Using the guard without `url_signing=` fails
+at startup. Test expiry with `UrlSigningConfig(clock=fake_clock)` — do not
+sleep or construct signatures in test code.
 
-```python
+## Direct-to-storage instead
+
+```python fragment
 import boto3
 
 s3 = boto3.client("s3")
@@ -106,5 +91,6 @@ url = s3.generate_presigned_url(
 )
 ```
 
-The Lauren controller shape stays the same — only the `PresignedUrlService`
-implementation changes.
+Only the storage SDK knows the storage provider's required canonical request,
+headers, credentials and signing scheme. Lauren returns the SDK's URL to the
+client; it does **not** verify the storage upload (the storage service does).

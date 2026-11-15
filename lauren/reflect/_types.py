@@ -107,6 +107,10 @@ class ReflectedRoute:
     max_body_size: int | None = None
     """The route's body limit in bytes (route, else controller); ``None`` means the app's
     ``max_body_size``."""
+    name: str | None = None
+    """The route's full name for URL building (``"users.show"``, or the derived
+    ``"UserController.show"``); ``None`` from :func:`~lauren.reflect.reflect_routes`
+    (names are assigned at startup) and for unnamed routes."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +181,8 @@ class ReflectedWsGateway:
     messages: tuple[ReflectedWsMessage, ...]
     owning_module: type | None
     host: str | None = None
+    name: str | None = None
+    """The gateway's full name for ``ws_url_for`` (``None`` when ambiguous)."""
 
 
 @dataclass(frozen=True, slots=True)

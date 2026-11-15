@@ -7,7 +7,7 @@ All user-facing class and method decorators exported by the framework.
 ### `module`
 
 ```python
-def module(args: Any = (), controllers: list[type] | None = None, providers: list[type] | None = None, imports: list[type | ForwardRef | str] | None = None, exports: list[type] | None = None, host: str | None = None) -> Callable[[C], C]
+def module(args: Any = (), controllers: list[type] | None = None, providers: list[type] | None = None, imports: list[type | ForwardRef | str] | None = None, exports: list[type] | None = None, host: str | None = None, name: str | None = None) -> Callable[[C], C]
 ```
 
 Declare a module boundary.
@@ -20,11 +20,15 @@ pass the decorated class where configuration is expected).
 controllers and WebSocket gateways by the request's ``Host`` header,
 unless a controller declares its own ``host=``; it does not apply to
 imported modules.
+``name`` (dot-separated identifiers) namespaces the explicit route names
+of the module's controllers: ``@module(name="accounts")`` +
+``@controller(name="users")`` + ``@get(name="show")`` is
+``"accounts.users.show"``.
 
 ### `controller`
 
 ```python
-def controller(prefix: str = '', tags: list[str] | None = None, summary: str | None = None, description: str | None = None, deprecated: bool = False, security: list[dict[str, Any]] | None = None, consumes: Sequence[str] | str | None = None, produces: Sequence[str] | str | None = None, max_body_size: int | None = None, host: str | None = None) -> Callable[[C], C]
+def controller(prefix: str = '', tags: list[str] | None = None, summary: str | None = None, description: str | None = None, deprecated: bool = False, security: list[dict[str, Any]] | None = None, consumes: Sequence[str] | str | None = None, produces: Sequence[str] | str | None = None, max_body_size: int | None = None, host: str | None = None, name: str | None = None) -> Callable[[C], C]
 ```
 
 Declare a controller class.
@@ -56,6 +60,9 @@ routes that read a body. They are validated like the route options.
 ``host`` (``"admin.example.com"``, ``"{tenant}.example.com"``) restricts
 the controller's routes to requests whose ``Host`` matches; ``{name}``
 labels are read with :class:`~lauren.extractors.HostParam`.
+``name`` (dot-separated identifiers) namespaces the explicit route names
+of the controller: ``@controller("/users", name="users")`` with
+``@get("/{id}", name="show")`` is the route ``"users.show"``.
 
 ### `injectable`
 

@@ -1,171 +1,112 @@
-"""Integration tests for the Presigned URL skill (Skill 32).
-
-Tests verify URL generation, signature validation, and expiry checking.
-"""
+"""The presigned-upload skill: Lauren-owned URLs, method binding and key rotation."""
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import time
-from urllib.parse import urlencode
+from urllib.parse import urlsplit
 
-from lauren import (
-    LaurenFactory,
-    Query,
-    Scope,
-    controller,
-    get,
-    injectable,
-    module,
-    post,
-    Json,
-)
+from lauren import Json, LaurenFactory, Request, UrlBuilder, UrlSigningConfig
+from lauren import controller, injectable, module, post, put, use_guards
 from lauren.testing import TestClient
+from lauren.urls import ValidSignature
 
 
-# ---------------------------------------------------------------------------
-# Domain
-# ---------------------------------------------------------------------------
+class Clock:
+    def __init__(self) -> None:
+        self.now = 1_800_000_000
+
+    def __call__(self) -> int:
+        return self.now
 
 
-@injectable(scope=Scope.SINGLETON)
-class PresignedUrlService:
-    def __init__(
-        self,
-        secret: str = "presign-secret",
-        base_url: str = "https://storage.example.com",
-    ) -> None:
-        self._secret = secret
-        self._base_url = base_url
+@injectable()
+class UploadLinks:
+    def __init__(self, urls: UrlBuilder) -> None:
+        self.urls = urls
 
-    def generate_upload_url(self, bucket: str, key: str, ttl_seconds: int = 900) -> dict:
-        expires = int(time.time()) + ttl_seconds
-        to_sign = f"{bucket}/{key}:{expires}"
-        sig = hmac.new(self._secret.encode(), to_sign.encode(), hashlib.sha256).hexdigest()
-        params = urlencode({"bucket": bucket, "key": key, "expires": expires, "signature": sig})
-        return {
-            "url": f"{self._base_url}/upload?{params}",
-            "method": "PUT",
-            "expires_in": ttl_seconds,
-        }
-
-    def verify_url(self, bucket: str, key: str, expires: int, signature: str) -> bool:
-        if time.time() > expires:
-            return False
-        to_sign = f"{bucket}/{key}:{expires}"
-        expected = hmac.new(self._secret.encode(), to_sign.encode(), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(expected, signature)
+    def issue(self, bucket: str, key: str, ttl: int = 900) -> dict:
+        url = self.urls.signed_url_for(StorageController.upload, bucket=bucket, key=key, expires_in=ttl)
+        return {"url": url, "method": "PUT", "expires_in": ttl}
 
 
-# ---------------------------------------------------------------------------
-# Controller & Module
-# ---------------------------------------------------------------------------
-
-
-@controller("/storage")
+@controller("/storage", name="storage")
 class StorageController:
-    def __init__(self, svc: PresignedUrlService) -> None:
-        self._svc = svc
+    def __init__(self, links: UploadLinks) -> None:
+        self._links = links
 
     @post("/presign")
-    async def generate_presigned_url(self, body: Json[dict]) -> dict:
-        bucket = body.get("bucket", "default")
-        key = body.get("key", "file.bin")
-        ttl = int(body.get("ttl_seconds", 900))
-        return self._svc.generate_upload_url(bucket, key, ttl)
+    async def presign(self, body: Json[dict]) -> dict:
+        return self._links.issue(body["bucket"], body["key"], body.get("ttl_seconds", 900))
 
-    @get("/verify")
-    async def verify(
-        self,
-        bucket: Query[str],
-        key: Query[str],
-        expires: Query[int],
-        signature: Query[str],
-    ) -> dict:
-        valid = self._svc.verify_url(bucket, key, expires, signature)
-        return {"valid": valid}
+    @put("/upload/{bucket}/{key}", name="upload")
+    @use_guards(ValidSignature)
+    async def upload(self, bucket: str, key: str, request: Request) -> dict:
+        return {"bucket": bucket, "key": key, "size": len(await request.body())}
 
 
-@module(controllers=[StorageController], providers=[PresignedUrlService])
-class PresignedUrlModule:
+@module(controllers=[StorageController], providers=[UploadLinks])
+class UploadModule:
     pass
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
+def _app(clock: Clock, secret: str | list[str] = "new-secret"):
+    return LaurenFactory.create(
+        UploadModule,
+        public_base_url="https://uploads.example.com",
+        url_signing=UrlSigningConfig(secret=secret, bind_method=True, clock=clock),
+    )
 
 
-def build_app() -> TestClient:
-    return TestClient(LaurenFactory.create(PresignedUrlModule))
+def test_upload_link_round_trips_through_guard() -> None:
+    app = _app(Clock())
+
+    with TestClient(app, base_url="https://uploads.example.com") as client:
+        issued = client.post("/storage/presign", json={"bucket": "photos", "key": "image.jpg"}).json()
+        uploaded = client.put(issued["url"], content=b"photo")
+
+    assert issued["method"] == "PUT"
+    assert issued["expires_in"] == 900
+    assert urlsplit(issued["url"]).path == "/storage/upload/photos/image.jpg"
+    assert uploaded.json() == {"bucket": "photos", "key": "image.jpg", "size": 5}
 
 
-class TestPresignedUrls:
-    def test_generate_returns_url_and_method(self) -> None:
-        client = build_app()
-        r = client.post("/storage/presign", json={"bucket": "my-bucket", "key": "video.mp4"})
-        assert r.status_code == 200
-        body = r.json()
-        assert "url" in body
-        assert body["method"] == "PUT"
-        assert "expires_in" in body
+def test_custom_ttl_is_returned() -> None:
+    with TestClient(_app(Clock()), base_url="https://uploads.example.com") as client:
+        issued = client.post("/storage/presign", json={"bucket": "b", "key": "k", "ttl_seconds": 60}).json()
 
-    def test_generated_url_contains_bucket_and_key(self) -> None:
-        client = build_app()
-        r = client.post("/storage/presign", json={"bucket": "photos", "key": "image.jpg"})
-        url = r.json()["url"]
-        assert "photos" in url
-        assert "image.jpg" in url
+    assert issued["expires_in"] == 60
 
-    def test_generated_url_contains_signature(self) -> None:
-        client = build_app()
-        r = client.post("/storage/presign", json={"bucket": "b", "key": "k"})
-        url = r.json()["url"]
-        assert "signature=" in url
 
-    def test_verify_valid_url(self) -> None:
-        svc = PresignedUrlService(secret="test-secret")
-        result = svc.generate_upload_url("bucket", "file.txt", ttl_seconds=300)
-        from urllib.parse import urlparse, parse_qs
+def test_tampering_a_parameter_fails() -> None:
+    app = _app(Clock())
 
-        parsed = parse_qs(urlparse(result["url"]).query)
-        bucket = parsed["bucket"][0]
-        key = parsed["key"][0]
-        expires = int(parsed["expires"][0])
-        signature = parsed["signature"][0]
+    with TestClient(app, base_url="https://uploads.example.com") as client:
+        url = app.urls.signed_url_for(StorageController.upload, bucket="b", key="k")
+        response = client.put(url.replace("/b/k?", "/b/other?"), content=b"hello")
 
-        _ = build_app()
-        # Use the service directly for this check
-        assert svc.verify_url(bucket, key, expires, signature) is True
+    assert response.status_code == 403
+    assert response.json()["error"]["detail"]["reason"] == "signature_invalid"
 
-    def test_verify_expired_url_returns_false(self) -> None:
-        svc = PresignedUrlService(secret="test-secret")
-        expired_time = int(time.time()) - 100  # already expired
-        to_sign = f"bucket/file.txt:{expired_time}"
-        sig = hmac.new(svc._secret.encode(), to_sign.encode(), hashlib.sha256).hexdigest()
-        assert svc.verify_url("bucket", "file.txt", expired_time, sig) is False
 
-    def test_verify_wrong_signature_returns_false(self) -> None:
-        svc = PresignedUrlService(secret="test-secret")
-        expires = int(time.time()) + 300
-        assert svc.verify_url("bucket", "file.txt", expires, "badsignature") is False
+def test_expiry_fails_without_sleeping() -> None:
+    clock = Clock()
+    app = _app(clock)
 
-    def test_verify_endpoint(self) -> None:
-        svc = PresignedUrlService(secret="presign-secret")
-        result = svc.generate_upload_url("b", "k.txt", ttl_seconds=600)
-        from urllib.parse import urlparse, parse_qs
+    with TestClient(app, base_url="https://uploads.example.com") as client:
+        url = app.urls.signed_url_for(StorageController.upload, bucket="b", key="k", expires_in=60)
+        clock.now += 61
+        response = client.put(url, content=b"hello")
 
-        parsed = parse_qs(urlparse(result["url"]).query)
-        expires = parsed["expires"][0]
-        signature = parsed["signature"][0]
+    assert response.status_code == 403
+    assert response.json()["error"]["detail"]["reason"] == "signature_expired"
 
-        client = build_app()
-        r = client.get(f"/storage/verify?bucket=b&key=k.txt&expires={expires}&signature={signature}")
-        assert r.status_code == 200
-        assert r.json()["valid"] is True
 
-    def test_custom_ttl(self) -> None:
-        client = build_app()
-        r = client.post("/storage/presign", json={"bucket": "b", "key": "k", "ttl_seconds": 60})
-        assert r.json()["expires_in"] == 60
+def test_previous_secret_verifies_after_rotation() -> None:
+    clock = Clock()
+    old = _app(clock, secret="old-secret")
+    rotated = _app(clock, secret=["new-secret", "old-secret"])
+    url = old.urls.signed_url_for(StorageController.upload, bucket="b", key="k")
+
+    with TestClient(rotated, base_url="https://uploads.example.com") as client:
+        response = client.put(url, content=b"ok")
+
+    assert response.json()["size"] == 2

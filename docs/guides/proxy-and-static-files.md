@@ -3,7 +3,10 @@
 ## Running Behind a Reverse Proxy
 
 When your app is served at a sub-path (e.g. `/api`) behind nginx or another
-reverse proxy, pass `root_path` to `LaurenFactory.create`.
+reverse proxy, pass `root_path` to `LaurenFactory.create`. To trust the
+proxy's `X-Forwarded-For` / `-Proto` / `-Host` / `-Prefix` headers (real
+client address, `https` scheme, public host) and to build URLs that include
+the prefix, see [URLs, Proxies & Signed Links](urls-and-proxies.md).
 
 ### nginx scenario
 

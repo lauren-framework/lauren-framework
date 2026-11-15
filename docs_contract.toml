@@ -42,7 +42,10 @@
     "receive", "receive_text", "receive_bytes", "receive_json", "receive_event", "close",
     "close_code", "close_reason", "accepted_subprotocol",
 ]
-"lauren.types.Request" = ["extensions", "host_params"]
+"lauren.types.Request" = [
+    "extensions", "host_params", "scheme", "host", "port", "root_path", "base_url", "full_url",
+    "path_with_query", "url_for", "url_path_for", "ws_url_for",
+]
 "lauren.types.UploadFile" = ["filename", "content_type", "headers", "name", "size", "read", "read_sync"]
 "lauren.types.Headers" = ["get", "getall", "items", "keys", "values"]
 "lauren.types.State" = ["get", "set", "has", "get_typed", "require", "asdict", "__getitem__", "__setitem__", "__contains__"]
@@ -69,17 +72,15 @@
     "json", "text", "html", "bytes", "xml", "file", "empty", "redirect", "stream", "sse",
 ]
 "lauren.Lauren" = [
-    "get", "post", "put", "patch", "delete", "head", "options", "route", "any_method",
-    "include_module", "add_middleware", "add_guard", "add_interceptor",
-    "add_exception_handler", "add_provider", "mount", "on_startup", "on_shutdown",
-    "startup", "shutdown", "openapi", "routes", "container", "scope", "state", "debug",
-    "lifecycle_state", "begin_draining",
+    "get", "post", "put", "patch", "delete", "head", "options", "route", "any_method", "include_module",
+    "add_middleware", "add_guard", "add_interceptor", "add_exception_handler", "add_provider", "mount",
+    "on_startup", "on_shutdown", "startup", "shutdown", "openapi", "routes", "container", "scope", "state",
+    "debug", "lifecycle_state", "begin_draining", "url_path_for",
 ]
 "lauren.LaurenApp" = [
-    "router", "container", "app_state", "routes", "openapi",
-    "startup", "shutdown", "on_shutdown", "mount", "mounts", "scope", "context", "error_format", "describe",
-    "type_compiler", "validation_policy", "response_validation", "json_fallback",
-    "lifecycle_state", "begin_draining",
+    "router", "container", "app_state", "routes", "openapi", "startup", "shutdown", "on_shutdown", "mount",
+    "mounts", "scope", "context", "error_format", "describe", "type_compiler", "validation_policy",
+    "response_validation", "json_fallback", "lifecycle_state", "begin_draining", "url_path_for", "urls",
 ]
 "lauren.Ok" = ["value", "headers", "status"]
 "lauren.Created" = ["value", "location", "headers", "status"]
@@ -87,7 +88,10 @@
 "lauren.NoContent" = ["headers", "status"]
 "lauren.Status" = ["code", "description"]
 "lauren.decorators.RaisesSpec" = ["exc_type", "description", "status_code", "code"]
-"lauren.ReflectedRoute" = ["status_code", "responses_typed", "raises", "response_model", "handler", "consumes", "produces", "max_body_size", "host", "guards", "interceptors", "middlewares"]
+"lauren.ReflectedRoute" = [
+    "status_code", "responses_typed", "raises", "response_model", "handler", "name", "consumes",
+    "produces", "max_body_size", "host", "guards", "interceptors", "middlewares",
+]
 "lauren.AppManifest" = [
     "manifest_version", "lauren_version", "app", "globals", "modules", "providers", "routes",
     "websocket_gateways", "mounts", "openapi", "sections", "to_dict", "to_json",
@@ -97,6 +101,8 @@
     "method", "path", "name", "handler", "module", "params", "guards", "interceptors",
     "middlewares", "exception_handlers", "metadata_keys", "status_code", "metadata_values", "host",
 ]
+"lauren.ReflectedWsGateway" = ["cls", "path_template", "meta", "owning_module", "name"]
+"lauren._routing.RouteEntry" = ["method", "path_template", "handler", "name"]
 "lauren.ReflectedResponse" = ["status", "body_type", "description", "source"]
 "lauren.ValidationPolicy" = ["stdlib_models", "json_mode", "extra", "include_input", "max_issues", "missing_state"]
 "lauren.ValidationIssue" = ["loc", "type", "msg", "input", "ctx", "to_dict", "prefixed"]
@@ -146,7 +152,10 @@
     "event", "payload",
 ]
 "lauren.types.ExecutionContext" = ["request", "handler_class", "handler_func", "route_template", "metadata", "get_metadata"]
-"lauren.reflect.WsUpgradeRequest" = ["headers", "path", "path_params", "query_string", "client", "method", "state", "app_state"]
+"lauren.reflect.WsUpgradeRequest" = [
+    "headers", "path", "path_params", "query_string", "client", "method", "state", "app_state", "scheme",
+    "host", "port", "root_path", "base_url", "ws_url_for",
+]
 "lauren.MetadataKey" = ["name", "default", "merge", "validate", "public", "description", "site", "read"]
 "lauren.MetadataSetKey" = ["name", "merge", "validate", "public", "description", "site", "read"]
 "lauren.StateKey" = ["name", "on_missing", "require_provider", "description", "site", "missing_error"]
@@ -173,6 +182,22 @@
     "cursor_secret", "cursor_max_age",
 ]
 "lauren.OffsetPagination" = ["limit", "offset"]
+"lauren.URL" = [
+    "scheme", "netloc", "host", "port", "path", "query", "fragment", "is_absolute",
+    "with_query", "with_fragment", "replace",
+]
+"lauren.UrlBuilder" = [
+    "path_for", "url_for", "ws_url_for", "signed_url_for", "signed_ws_url_for", "public_base_url", "root_path",
+]
+"lauren.ProxyConfig" = ["trusted", "headers", "max_hops", "trust_prefix", "server_applied"]
+"lauren.UrlSigningConfig" = [
+    "secret", "default_ttl", "bind_method", "bind_host", "expires_param", "signature_param", "clock",
+]
+"lauren.ValidSignature" = ["can_activate"]
+"lauren.websockets.WebSocket" = [
+    "client", "scheme", "host", "port", "root_path", "base_url", "url_for", "url_path_for", "ws_url_for",
+]
+
 "lauren.PageNumberPagination" = ["page", "per_page", "limit", "offset"]
 "lauren.CursorPagination" = ["cursor", "direction", "limit", "encode_cursor"]
 "lauren.Page" = ["items", "limit", "offset", "total", "has_next", "of", "from_rows"]

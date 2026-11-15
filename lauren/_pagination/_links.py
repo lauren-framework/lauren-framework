@@ -9,19 +9,15 @@ so parameters are re-encoded byte for byte: ``%C3%A9`` stays ``%C3%A9``,
 spaces become ``%20`` and ``&`` / ``=`` inside a value stay escaped.
 
 URLs are path-absolute references (``/users?limit=20&offset=40``) that
-include the app's root path; ``PaginationConfig(base_url=...)`` prefixes a
-trusted origin to make them absolute.
+include the request's root path (``request.root_path``: mounts, ``root_path=``,
+a trusted proxy prefix); ``PaginationConfig(base_url=...)`` — or the app's
+``public_base_url=`` — prefixes a trusted origin to make them absolute.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from urllib.parse import quote, unquote_plus
-
-#: Request attribute holding the public path prefix (the ASGI ``root_path``)
-#: when the app runs behind one. Set by ``LaurenApp.__call__`` only when
-#: non-empty; ``Request.reset`` clears it with the rest of ``__dict__``.
-ROOT_PATH_ATTR = "_lauren_root_path"
 
 #: Characters kept verbatim in a path (RFC 3986 ``pchar`` minus ``%`` plus ``/``).
 _PATH_SAFE = "/:@!$&'()*+,;="
@@ -39,7 +35,7 @@ class RequestSnapshot:
 
 def snapshot(request: object) -> RequestSnapshot:
     """Copy what link generation needs out of a (pooled) request."""
-    prefix: str = getattr(request, ROOT_PATH_ATTR, "")
+    prefix: str = getattr(request, "root_path", "")
     path: str = getattr(request, "path")
     if prefix:
         path = prefix.rstrip("/") + path
