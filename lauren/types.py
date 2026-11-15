@@ -16,6 +16,7 @@ from typing import (
     Literal,
     Mapping,
     Protocol,
+    Sequence,
     TypeVar,
     Union,
     get_args,
@@ -329,9 +330,37 @@ class ContentConfig:
     * ``None`` (default) — ``"warn"`` when ``sessions=`` is configured,
       otherwise ``False``. Setting any explicit value also silences the
       startup warning session-enabled apps get.
+
+    The same policy applies to ``Form[...]`` bodies. Routes that declare
+    ``consumes=[...]`` and ``UploadFile`` parameters (``multipart/form-data``)
+    are always checked.
+
+    * ``malformed_body_status`` — the status of a body that cannot be decoded
+      (malformed JSON): ``422`` (default; ``detail.reason`` is
+      ``"malformed_body"``) or ``400`` (:class:`~lauren.exceptions.BadRequestError`
+      with ``line`` / ``col`` when known).
+    * ``codecs`` — extra :class:`~lauren.codecs.Codec` instances, e.g.
+      ``[MsgpackCodec()]``. The JSON codec is always present; pass a
+      ``JsonCodec(backend="stdlib")`` to configure it.
+    * ``default_produces`` — the response media types of routes without
+      ``produces=``, in preference order (``("application/json",)``).
+    * ``strict_accept`` — answer 406 :class:`~lauren.exceptions.NotAcceptableError`
+      when ``Accept`` excludes every ``produces`` entry, instead of serving
+      the first one.
     """
 
     strict_content_type: bool | Literal["warn"] | None = None
+    malformed_body_status: int = 422
+    codecs: Sequence[Any] = ()
+    default_produces: Sequence[str] = ("application/json",)
+    strict_accept: bool = False
+
+    def __post_init__(self) -> None:
+        # Lists are accepted for convenience; retain an immutable snapshot.
+        for name in ("codecs", "default_produces"):
+            value = getattr(self, name)
+            if isinstance(value, list):
+                object.__setattr__(self, name, tuple(value))
 
 
 @dataclass(frozen=True, slots=True)
@@ -597,9 +626,44 @@ class Request:
 
     # -- Body consumption --------------------------------------------------
 
+    def _set_body_limit(self, limit: int) -> None:
+        """Apply a route's ``max_body_size`` (called by the dispatcher right after routing).
+
+        Raises :class:`~lauren.exceptions.RequestBodyTooLarge` when the body was
+        already buffered (by a global middleware) and exceeds ``limit``.
+        """
+        self._max_body_size = limit
+        if self._body is not None and len(self._body) > limit:
+            raise RequestBodyTooLarge(f"body exceeds {limit} bytes", detail={"max_body_size": limit})
+
+    def _reject_declared_oversize(self) -> None:
+        """Raise ``RequestBodyTooLarge`` when ``Content-Length`` already exceeds the limit.
+
+        Runs before the first ``receive()``; an absent or invalid header leaves
+        the decision to the streaming byte count.
+        """
+        declared = self._headers.get("content-length")
+        if declared is None:
+            return
+        declared = declared.strip()
+        if not (declared.isascii() and declared.isdigit()):
+            return
+        # Compare decimal strings instead of int(declared): Python limits the
+        # number of digits it will convert, and an attacker can supply a much
+        # longer but syntactically valid Content-Length. Still answer 413 before
+        # awaiting receive, without a ValueError turning into a 500.
+        digits = declared.lstrip("0") or "0"
+        maximum = str(self._max_body_size)
+        if len(digits) > len(maximum) or (len(digits) == len(maximum) and digits > maximum):
+            raise RequestBodyTooLarge(
+                f"body exceeds {self._max_body_size} bytes",
+                detail={"max_body_size": self._max_body_size},
+            )
+
     async def body(self) -> bytes:
         if self._body is not None:
             return self._body
+        self._reject_declared_oversize()
         chunks: list[bytes] = []
         total = 0
         while True:
@@ -642,6 +706,7 @@ class Request:
         if self._body is not None:
             yield self._body
             return
+        self._reject_declared_oversize()
         total = 0
         while True:
             msg = await self._receive()
@@ -786,8 +851,10 @@ class ByteStream:
     "silent second iteration yields nothing" bug that would
     otherwise occur.
 
-    The app-wide ``max_body_size`` is enforced across the stream: if
-    the cumulative chunk total exceeds the limit, iteration raises
+    The effective ``max_body_size`` (the route's, else the app's) is
+    enforced across the stream: a ``Content-Length`` above it is rejected
+    before anything is read, and if the cumulative chunk total exceeds the
+    limit, iteration raises
     :class:`~lauren.exceptions.RequestBodyTooLarge` with the same
     semantics as :meth:`Request.body`. This means a misbehaving
     client cannot defeat the body-size cap by switching from
@@ -836,6 +903,12 @@ class ByteStream:
             if req._body:
                 return req._body
             raise StopAsyncIteration
+        if self._total == 0:
+            try:
+                req._reject_declared_oversize()
+            except RequestBodyTooLarge:
+                self._consumed = True
+                raise
         while True:
             msg = await req._receive()
             mtype = msg.get("type")
@@ -975,7 +1048,9 @@ class Response:
 
             encoder = get_active_encoder()
         body = encoder.encode_compact(data)
-        return cls(body, status=status, headers=headers, media_type="application/json")
+        # A negotiated response codec (``produces=``) labels its own bytes.
+        media_type = getattr(encoder, "lauren_media_type", None) or "application/json"
+        return cls(body, status=status, headers=headers, media_type=media_type)
 
     @classmethod
     def text(cls, data: str, *, status: int = 200, headers: Headers | None = None) -> "Response":

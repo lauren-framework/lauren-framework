@@ -78,6 +78,9 @@ def _reflected(method: str, path_template: str, ch: Any) -> ReflectedRoute:
         guards=tuple(ch.guards),
         interceptors=tuple(ch.interceptors),
         middlewares=tuple(ch.middleware_chain),
+        consumes=tuple(getattr(ch, "consumes", ())),
+        produces=tuple(getattr(ch, "produces", ())),
+        max_body_size=getattr(ch, "body_limit", None),
     )
 
 

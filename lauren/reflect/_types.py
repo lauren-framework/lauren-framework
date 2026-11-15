@@ -91,6 +91,19 @@ class ReflectedRoute:
 
     middlewares: tuple[type, ...] = ()
     """The compiled route and controller middleware chain (not globals)."""
+    consumes: tuple[str, ...] = ()
+    """Accepted request media types: ``consumes=`` (route, else controller). From
+    :func:`~lauren.reflect.get_all_routes`, the effective list — including the types
+    inferred from body parameters (``Json[T]`` → ``application/json``, …)."""
+
+    produces: tuple[str, ...] = ()
+    """Response media types: ``produces=`` (route, else controller). From
+    :func:`~lauren.reflect.get_all_routes`, the effective list (``ContentConfig.default_produces``
+    when undeclared)."""
+
+    max_body_size: int | None = None
+    """The route's body limit in bytes (route, else controller); ``None`` means the app's
+    ``max_body_size``."""
 
 
 @dataclass(frozen=True, slots=True)

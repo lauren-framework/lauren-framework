@@ -26,9 +26,10 @@ import json as _jsonlib
 import logging
 import types
 from collections.abc import Callable, Mapping
-from typing import Annotated, Any, Union, get_args, get_origin
+from typing import Annotated, Any, Union, cast, get_args, get_origin
 
-from ..exceptions import ExtractorError, ExtractorFieldError, HTTPError
+from .._codecs._media import is_json_media, media_type_of
+from ..exceptions import BadRequestError, ExtractorError, ExtractorFieldError, HTTPError
 from ._backends import (
     MsgspecDecodeError,
     MsgspecStructNode,
@@ -401,23 +402,54 @@ class ScalarPlan(ParamPlan):
 class JsonPlan(ParamPlan):
     """``Json[T]`` and implicit model bodies."""
 
-    __slots__ = ("inner", "single_decode")
+    __slots__ = ("inner", "single_decode", "typed_json", "decoding")
 
     def __init__(self, *args: Any, inner: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.inner = inner
         #: msgspec ``Struct`` bodies decode and validate in one ``msgspec.json.decode``.
         self.single_decode = isinstance(self.node, MsgspecStructNode) and self.strategy == NATIVE
+        #: pydantic bodies may validate in one ``model_validate_json`` (fast JSON codecs only).
+        self.typed_json = isinstance(self.node, (PydanticModelNode, PydanticAdapterNode)) and (
+            self.strategy == NATIVE
+        )
+        #: The route's body codecs (:class:`lauren._codecs._plan.BodyDecoding`), set
+        #: by the factory; ``None`` for hand-built plans (stdlib JSON, 422).
+        self.decoding: Any = None
 
-    def _invalid_json(self, ext: Any, exc: Exception) -> ExtractorError:
-        if isinstance(exc, (_jsonlib.JSONDecodeError, MsgspecDecodeError)):
-            err = ExtractorError(f"invalid JSON: {exc}", detail={"field": ext.name})
+    def _malformed(self, ext: Any, exc: Exception, media_type: str = "application/json") -> HTTPError:
+        """The error of a body its codec cannot decode (422, or 400 when configured)."""
+        is_json = is_json_media(media_type)
+        if is_json and isinstance(exc, (_jsonlib.JSONDecodeError, MsgspecDecodeError)):
+            message = f"invalid JSON: {exc}"
+        elif is_json:
+            message = f"failed to extract {ext.name!r}: {exc}"
         else:
-            err = ExtractorError(
-                f"failed to extract {ext.name!r}: {exc}", detail={"field": ext.name, "source": "json"}
+            message = f"invalid {media_type} body: {exc}"
+        if is_json:
+            issue = make_issue("json_invalid", ctx={"error": str(exc)}, loc=self.loc)
+        else:
+            issue = make_issue(
+                "body_invalid", ctx={"media_type": media_type, "error": str(exc)}, loc=self.loc
             )
-        issue = make_issue("json_invalid", ctx={"error": str(exc)}, loc=self.loc)
-        return attach_issues(err, [issue], include_input=False)
+        decoding = self.decoding
+        if decoding is not None and decoding.malformed_status == 400:
+            detail: dict[str, Any] = {"field": ext.name, "reason": "malformed_body"}
+            line = getattr(exc, "lineno", None)
+            if isinstance(line, int):
+                detail["line"] = line
+                detail["col"] = getattr(exc, "colno", None)
+            return cast(
+                HTTPError,
+                attach_issues(BadRequestError(message, detail=detail), [issue], include_input=False),
+            )
+        if is_json and not isinstance(exc, (_jsonlib.JSONDecodeError, MsgspecDecodeError)):
+            err = ExtractorError(
+                message, detail={"field": ext.name, "source": "json", "reason": "malformed_body"}
+            )
+        else:
+            err = ExtractorError(message, detail={"field": ext.name, "reason": "malformed_body"})
+        return cast(HTTPError, attach_issues(err, [issue], include_input=False))
 
     async def extract(self, request: Any, ext: Any) -> Any:
         body = await request.body()
@@ -426,29 +458,74 @@ class JsonPlan(ParamPlan):
                 return ext.default
             err = ExtractorFieldError("missing JSON body", detail={"field": ext.name})
             raise attach_issues(err, [make_issue("missing", loc=self.loc)], include_input=False)
-        return self.validate_body(body, ext)
+        decoding = self.decoding
+        if decoding is None:
+            return self.validate_body(body, ext)
+        codec = decoding.select(request.headers)
+        if codec is decoding.json:
+            return self.validate_body(body, ext, codec)
+        return self.validate_codec_body(body, ext, codec, request)
 
-    def validate_body(self, body: bytes, ext: Any) -> Any:
-        """Decode and validate one JSON body (the single decode step F03's codecs extend)."""
+    def _struct_failure(self, ext: Any, exc: _Invalid) -> ExtractorError:
+        err = ExtractorError(
+            f"Validation failed for field '{ext.name}'",
+            detail={"field": ext.name, "errors": [exc.text or "validation error"]},
+        )
+        return cast(
+            ExtractorError,
+            attach_issues(err, self._absolute(exc.issues), include_input=self.runtime.include_input),
+        )
+
+    def validate_body(self, body: bytes, ext: Any, codec: Any = None) -> Any:
+        """Decode and validate one JSON body (``codec``: the app's ``JsonCodec``, else stdlib)."""
         if self.single_decode:
             node = self.node
             assert isinstance(node, MsgspecStructNode)
             try:
                 return node.decode_json(body)
-            except MsgspecDecodeError as exc:
-                raise self._invalid_json(ext, exc) from None
-            except _Invalid as exc:
-                err = ExtractorError(
-                    f"Validation failed for field '{ext.name}'",
-                    detail={"field": ext.name, "errors": [exc.text or "validation error"]},
-                )
-                raise attach_issues(
-                    err, self._absolute(exc.issues), include_input=self.runtime.include_input
-                ) from None
+            except (MsgspecDecodeError, _Invalid):
+                # A typed decoder can reject JSON that the general decoder
+                # accepts (NaN, UTF-16, large integers), or describe a schema
+                # issue differently. On failure, let the shared decoder and
+                # validation plan decide so accepted values, 400 locations and
+                # 422 issues stay independent of the fast path.
+                pass
+        if self.typed_json and codec is not None and getattr(codec, "fast", False):
+            try:
+                return self.node.validate_json(body)  # type: ignore[union-attr]
+            except _Invalid:
+                # Not a verdict: the generic path below re-validates and reports,
+                # so the 422 body is identical whichever plan ran.
+                pass
         try:
-            data = _jsonlib.loads(body)
-        except ValueError as exc:
-            raise self._invalid_json(ext, exc) from exc
+            data = codec.decode(body) if codec is not None else _jsonlib.loads(body)
+        except (ValueError, RecursionError) as exc:  # RecursionError: absurdly deep nesting
+            raise self._malformed(ext, exc) from exc
+
+        def legacy(value: Any) -> Any:
+            from ..extractors import _validate_json
+
+            return _validate_json(value, self.inner, ext.name)
+
+        return self.run(data, legacy)
+
+    def validate_codec_body(self, body: bytes, ext: Any, codec: Any, request: Any) -> Any:
+        """Decode a non-JSON body (``consumes=``) with its codec, then validate it."""
+        media_type = media_type_of(request.headers.get("content-type") or "") or "application/octet-stream"
+        decode_struct = getattr(codec, "decode_struct", None)
+        if self.single_decode and decode_struct is not None:
+            node = self.node
+            assert isinstance(node, MsgspecStructNode)
+            try:
+                return node.decode_with(decode_struct, body)
+            except MsgspecDecodeError as exc:
+                raise self._malformed(ext, exc, media_type) from None
+            except _Invalid as exc:
+                raise self._struct_failure(ext, exc) from None
+        try:
+            data = codec.decode(body)
+        except ValueError as exc:  # codec syntax errors (msgspec.DecodeError is a ValueError)
+            raise self._malformed(ext, exc, media_type) from exc
 
         def legacy(value: Any) -> Any:
             from ..extractors import _validate_json

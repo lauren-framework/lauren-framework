@@ -168,6 +168,13 @@ class UserController:
 
 When no body is sent and the default is `None`, the parameter resolves to `None`. When a body **is** required (no default), an empty request body returns `422`.
 
+An implicit body is a JSON body like `Json[T]`: it follows
+`ContentConfig(strict_content_type=...)` and a route's `consumes=` (415 for other
+media types), and a body that is not valid JSON is `422` with
+`detail.reason == "malformed_body"` (or `400` with
+`ContentConfig(malformed_body_status=400)`). See
+[Content Negotiation & Body Limits](content-negotiation.md).
+
 ## Mixing sources
 
 All three auto-detected sources can appear in one handler:

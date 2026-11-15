@@ -79,6 +79,7 @@ MESSAGES: dict[str, str] = {
     ),
     "union_no_match": "Input does not match any member of the union",
     "json_invalid": "Invalid JSON: {error}",
+    "body_invalid": "Invalid {media_type} body: {error}",
     "value_error": "{error}",
 }
 

@@ -326,12 +326,13 @@ class _ClientBase:
         headers: Any,
         cookies: Mapping[str, str] | None,
         json: Any,
+        msgpack: Any,
         data: Any,
         files: Any,
         content: Any,
     ) -> _Spec:
         target = self._base.target(url, params)
-        body = encode_body(json=json, data=data, files=files, content=content)
+        body = encode_body(json=json, msgpack=msgpack, data=data, files=files, content=content)
         explicit = _header_items(headers)
         overridden = {k.lower() for k, _ in explicit}
         merged = [(k, v) for k, v in self.headers.items() if k.lower() not in overridden] + explicit
@@ -924,6 +925,7 @@ class TestClient(_ClientBase):
         headers: Any = None,
         cookies: Mapping[str, str] | None = None,
         json: Any = None,
+        msgpack: Any = None,
         data: Any = None,
         files: Any = None,
         content: Any = None,
@@ -941,6 +943,7 @@ class TestClient(_ClientBase):
             headers=headers,
             cookies=cookies,
             json=json,
+            msgpack=msgpack,
             data=data,
             files=files,
             content=content,
@@ -967,6 +970,7 @@ class TestClient(_ClientBase):
             headers=kwargs.pop("headers", None),
             cookies=kwargs.pop("cookies", None),
             json=kwargs.pop("json", None),
+            msgpack=kwargs.pop("msgpack", None),
             data=kwargs.pop("data", None),
             files=kwargs.pop("files", None),
             content=kwargs.pop("content", None),
@@ -1016,6 +1020,7 @@ class TestClient(_ClientBase):
         headers: Any = None,
         cookies: Mapping[str, str] | None = None,
         json: Any = None,
+        msgpack: Any = None,
         data: Any = None,
         files: Any = None,
         content: Any = None,
@@ -1037,6 +1042,7 @@ class TestClient(_ClientBase):
             headers=headers,
             cookies=cookies,
             json=json,
+            msgpack=msgpack,
             data=data,
             files=files,
             content=content,
@@ -1296,6 +1302,7 @@ class AsyncTestClient(_ClientBase):
         headers: Any = None,
         cookies: Mapping[str, str] | None = None,
         json: Any = None,
+        msgpack: Any = None,
         data: Any = None,
         files: Any = None,
         content: Any = None,
@@ -1312,6 +1319,7 @@ class AsyncTestClient(_ClientBase):
             headers=headers,
             cookies=cookies,
             json=json,
+            msgpack=msgpack,
             data=data,
             files=files,
             content=content,
@@ -1355,6 +1363,7 @@ class AsyncTestClient(_ClientBase):
         headers: Any = None,
         cookies: Mapping[str, str] | None = None,
         json: Any = None,
+        msgpack: Any = None,
         data: Any = None,
         files: Any = None,
         content: Any = None,
@@ -1370,6 +1379,7 @@ class AsyncTestClient(_ClientBase):
             headers=headers,
             cookies=cookies,
             json=json,
+            msgpack=msgpack,
             data=data,
             files=files,
             content=content,

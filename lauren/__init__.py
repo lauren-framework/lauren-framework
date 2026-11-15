@@ -98,6 +98,7 @@ from ._di.custom import (
     use_value,
 )
 from ._routing import Router, RouteEntry
+from .codecs import Codec, JsonCodec, MsgpackCodec
 from .serialization import (
     JSONEncoder,
     MsgspecEncoder,
@@ -420,6 +421,10 @@ __all__ = [
     "MsgspecEncoder",
     "PydanticEncoder",
     "auto_encoder",
+    # body codecs & content negotiation
+    "Codec",
+    "JsonCodec",
+    "MsgpackCodec",
     "serialization",
     "docs",
     "logging",

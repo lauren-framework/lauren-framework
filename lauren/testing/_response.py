@@ -2,7 +2,7 @@
 
 :class:`TestResponse` keeps the original 1.x surface (``status_code``,
 ``headers`` as a list of ``(name, value)`` tuples, ``body``, ``text``,
-``json()``, ``header()``, ``headers_all()``) and adds the ``httpx`` names
+``json()``, ``msgpack()``, ``header()``, ``headers_all()``) and adds the ``httpx`` names
 tests reach for (``content``, case-insensitive ``headers.get``, ``cookies``,
 ``is_success``, ``raise_for_status()``, ``url``, ``history``, …).
 :class:`StreamingTestResponse` is the incremental variant returned by
@@ -223,6 +223,12 @@ class TestResponse:
     def json(self, **kwargs: Any) -> Any:
         """Parse the body as JSON (``kwargs`` go to :func:`json.loads`)."""
         return jsonlib.loads(self.body.decode("utf-8"), **kwargs)
+
+    def msgpack(self) -> Any:
+        """Decode a MessagePack response (requires the optional msgspec package)."""
+        from ..codecs import MsgpackCodec
+
+        return MsgpackCodec().decode(self.body)
 
     # -- headers & cookies ----------------------------------------------------
 

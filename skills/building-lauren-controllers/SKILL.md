@@ -159,6 +159,37 @@ async def events(self, paging: CursorPagination[EventKey]) -> CursorPage[EventOu
   a tampered cursor is a 400 `invalid_cursor`. `PageNumberPagination` reads `?page=&per_page=`.
 - `paginate_sequence(items, paging)` paginates an in-memory list.
 
+## Content types, codecs and body limits
+
+```python fragment
+from lauren import Bytes, ContentConfig, Json, LaurenFactory, MsgpackCodec, controller, get, patch, post
+
+@controller("/items", max_body_size=256 * 1024)          # default for the controller's routes
+class ItemController:
+    @patch("/{id}", consumes=["application/merge-patch+json"])
+    async def merge(self, id: int, body: Json[ItemPatch]) -> ItemOut: ...
+
+    @post("/import", consumes="text/csv", max_body_size=20 * 1024 * 1024)
+    async def import_csv(self, body: Bytes) -> dict: ...
+
+    @get("/{id}", produces=["application/json", "application/msgpack"])
+    async def show(self, id: int) -> ItemOut: ...
+
+app = LaurenFactory.create(
+    AppModule,
+    content=ContentConfig(strict_content_type=True, codecs=[MsgpackCodec()]),
+)
+```
+
+- `consumes=` is always enforced (415 with `Accept-Post` / `Accept-Patch`); without it a
+  `Json[T]` route accepts `application/json` / `+json` and is checked only under
+  `strict_content_type`. `Bytes` / `ByteStream` accept anything unless `consumes=` is set.
+- `produces=` negotiates `Accept` (adds `Vary: Accept`); `strict_accept=True` answers 406.
+  Returned `Response` / `str` / `bytes` values are never re-encoded.
+- `max_body_size=` (route → controller → app) raises or lowers the limit per route; every
+  oversize body is 413. Never raise the app-wide limit for one upload route.
+- A media type no codec serves fails startup (`reason="codec_not_registered"`).
+
 ## Choosing the JSON encoder
 
 ```python

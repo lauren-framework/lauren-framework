@@ -9,6 +9,18 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- Body codecs and content negotiation (`Codec`, `JsonCodec`, `MsgpackCodec`),
+  registered per app through `ContentConfig(codecs=...)`. Structured request
+  bodies share the native validation pipeline regardless of wire format.
+- Route/controller `consumes=`, `produces=` and `max_body_size=` options,
+  validated at startup and exposed in reflection and OpenAPI. Declared content
+  types are enforced with 415 responses; response negotiation honors Accept
+  quality values and adds `Vary: Accept` where required.
+- `ContentConfig(strict_accept=True)` opts into 406 responses, and
+  `malformed_body_status=400` opts into 400 for malformed bodies (422 remains
+  the compatibility default). Per-route limits cover buffered and streamed
+  reads; negotiated response caching isolates representations.
+
 - Typed `MetadataKey`, `MetadataSetKey` and `StateKey` declarations, additive
   decorator composition (`compose`) and composition reflection. Metadata merge
   policies compile into read-only per-route mappings; state keys work for HTTP,

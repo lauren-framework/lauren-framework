@@ -12,6 +12,15 @@ All user-facing class and method decorators exported by the framework.
 
 ## HTTP route decorators
 
+Every verb decorator takes the same options, validated at decoration time
+(`DecoratorUsageError` with `detail={"decorator", "target", "option", "reason"}`):
+`status_code`, `response_validation`, `response_headers` (see
+[Response Contracts](../guides/response-contracts.md)) and `consumes`,
+`produces`, `max_body_size` (see
+[Content Negotiation & Body Limits](../guides/content-negotiation.md)).
+`@controller(..., consumes=..., produces=..., max_body_size=...)` sets the
+defaults of its routes.
+
 ::: lauren.get
 
 ::: lauren.post

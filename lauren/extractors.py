@@ -1611,7 +1611,9 @@ async def _extract_raw(
             try:
                 data = jsonlib.loads(body)
             except jsonlib.JSONDecodeError as e:
-                raise ExtractorError(f"invalid JSON: {e}", detail={"field": extraction.name}) from e
+                raise ExtractorError(
+                    f"invalid JSON: {e}", detail={"field": extraction.name, "reason": "malformed_body"}
+                ) from e
             return _validate_json(data, inner, extraction.name)
 
         if source == "form":

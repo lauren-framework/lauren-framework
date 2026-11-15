@@ -241,6 +241,14 @@ def reflect_routes(cls: type) -> tuple[ReflectedRoute, ...]:
                     status_code=status_code,
                     responses_typed=responses_typed,
                     raises=raises,
+                    consumes=tuple(
+                        getattr(rm, "consumes", None) or getattr(ctrl_meta, "consumes", None) or ()
+                    ),
+                    produces=tuple(
+                        getattr(rm, "produces", None) or getattr(ctrl_meta, "produces", None) or ()
+                    ),
+                    max_body_size=getattr(rm, "max_body_size", None)
+                    or getattr(ctrl_meta, "max_body_size", None),
                 )
             )
     return tuple(result)

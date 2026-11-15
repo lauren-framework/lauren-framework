@@ -702,6 +702,47 @@ def _collect_guard_security(
 # ---------------------------------------------------------------------------
 
 
+def _apply_media_types(op: dict[str, Any], compiled: Any) -> None:
+    """Document a route's declared ``consumes`` and its ``produces`` media types.
+
+    The request body lists every declared ``consumes`` entry (same schema);
+    success responses documented as ``application/json`` list every
+    ``produces`` entry. Inferred JSON bodies and plain JSON responses keep
+    today's single ``application/json`` entry. F06 owns full fidelity.
+    """
+    body = op.get("requestBody")
+    consumes = getattr(compiled, "consumes", ())
+    if body is not None and consumes and getattr(compiled, "consumes_declared", False):
+        content = body.get("content") or {}
+        schema: dict[str, Any] = next(iter(content.values()), {})
+        body["content"] = {media: dict(schema) for media in consumes}
+    produces = getattr(compiled, "produces", ())
+    if (
+        not produces
+        or tuple(produces) == ("application/json",)
+        or getattr(compiled, "streaming_item_type", None)
+        or getattr(compiled, "negotiation", None) is None
+    ):
+        return
+    from ._contracts import UNTYPED  # noqa: PLC0415
+
+    table = getattr(compiled, "response_table", None)
+    untyped = {str(member.status) for member in table.members if member.body is UNTYPED} if table else set()
+    for status, response in op.get("responses", {}).items():
+        if not str(status).startswith("2") or not isinstance(response, dict):
+            continue
+        content = response.get("content")
+        if not content:
+            if status in untyped:
+                response["content"] = {media: {} for media in produces}
+            continue
+        if "application/json" not in content:
+            continue
+        response_schema: dict[str, Any] = content.pop("application/json")
+        for media in produces:
+            content.setdefault(media, dict(response_schema))
+
+
 def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
     info = getattr(app, "_openapi_info", None) or DEFAULT_INFO
     servers = getattr(app, "_openapi_servers", None)
@@ -819,6 +860,9 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
                 app_config=app._pagination,
                 item_schema=_resolve_item_schema,
             )
+
+        if compiled is not None:
+            _apply_media_types(op, compiled)
 
         # Calculates the OpenAPI `security` requirements for this operation by inspecting
         # the compiled handler's guards and the app's global guards. Resolution rules:

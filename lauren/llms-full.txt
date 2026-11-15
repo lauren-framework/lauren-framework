@@ -48,7 +48,7 @@ common mistakes.
 37. [Socket.IO Compatibility](#socketio-compatibility)
 38. [Sessions](#sessions)
 39. [Stores & Caching](#stores--caching)
-40. [Content-type policy (`ContentConfig`)](#content-type-policy-contentconfig)
+40. [Codecs & content negotiation](#codecs--content-negotiation)
 41. [Configuration](#configuration)
 42. [Static Files](#static-files)
 43. [Request Arena](#request-arena)
@@ -147,7 +147,7 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `global_ws_interceptors` | `Iterable[type]` | `None` | Interceptor classes wrapping every WebSocket `@on_connect` |
 | `global_exception_handlers` | `Iterable[Any]` | `None` | Exception handler classes/functions for every request |
 | `global_providers` | `Iterable[Any]` | `None` | Extra providers added to the root module |
-| `max_body_size` | `int` | `1048576` | Maximum request body size in bytes (413 on exceed) |
+| `max_body_size` | `int` | `1048576` | App-wide request body limit in bytes (413 on exceed); routes override it with `max_body_size=` (see [Codecs & content negotiation](#codecs--content-negotiation)) |
 | `app_state` | `AppState` | `None` | Pre-populated app-level state |
 | `logger` | `Logger` | `None` | Logger instance; `NullLogger` if not provided |
 | `openapi_info` | `dict` | `None` | OpenAPI `info` block (`title`, `version`, `description`) |
@@ -164,7 +164,7 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `root_path` | `str` | `""` | ASGI root path for reverse proxy prefix stripping |
 | `mounts` | `dict[str, Any]` | `None` | Sub-applications mounted at path prefixes |
 | `sessions` | `SessionConfig` | `None` | Enable signed-cookie sessions (see [Sessions](#sessions)) |
-| `content` | `ContentConfig` | `None` | Request-body content policy: `ContentConfig(strict_content_type=None \| False \| "warn" \| True)` (see [Content-type policy](#content-type-policy-contentconfig)) |
+| `content` | `ContentConfig` | `None` | Content policy: `ContentConfig(strict_content_type=None, malformed_body_status=422, codecs=(), default_produces=("application/json",), strict_accept=False)` (see [Codecs & content negotiation](#codecs--content-negotiation)) |
 | `problem_type_base` | `str` | `None` | Problem-details `type` prefix: `type = base + code` for errors without a `problem_type` (`StartupError` if not a non-empty string) |
 | `debug` | `bool \| DebugConfig` | `False` | Development error pages for unhandled errors (see [Debug Error Pages](#debug-error-pages)); never enabled implicitly |
 | `lazy_startup` | `bool` | `True` | Run `startup()` on the first HTTP / WebSocket request when the ASGI server never sent lifespan events (logs a warning); `False` keeps such an app cold until `await app.startup()` |
@@ -330,7 +330,7 @@ Violations raised at startup:
 - `CircularModuleError` — an import cycle exists.
 - `ModuleExportViolation` — an export is neither declared nor imported.
 
-### `@controller(prefix="", *, tags=None, summary=None, description=None, deprecated=False, security=None)`
+### `@controller(prefix="", *, tags=None, summary=None, description=None, deprecated=False, security=None, consumes=None, produces=None, max_body_size=None)`
 
 Declares a controller class. Automatically makes the class `@injectable(scope=Scope.SINGLETON)` (NestJS behaviour): one instance for the app, so a controller may depend only on singletons. For per-request construction (request-scoped dependencies, per-request `@post_construct`), add `@injectable(scope=Scope.REQUEST)` *below* `@controller`.
 
@@ -343,7 +343,7 @@ class UserController:
 
 ### Route decorators
 
-- `@get(path="", *, summary=None, description=None, response_model=None, responses=None, deprecated=False, operation_id=None, include_in_schema=True, tags=None, status_code=None, response_validation=None, response_headers=None)`
+- `@get(path="", *, summary=None, description=None, response_model=None, responses=None, deprecated=False, operation_id=None, include_in_schema=True, tags=None, status_code=None, response_validation=None, response_headers=None, consumes=None, produces=None, max_body_size=None)`
 - `@post(...)`, `@put(...)`, `@patch(...)`, `@delete(...)`, `@head(...)`, `@options(...)`
 
 Each decorator attaches a `RouteMeta` to the method. Multiple route decorators on the same method register multiple routes.
@@ -352,6 +352,9 @@ Each decorator attaches a `RouteMeta` to the method. Multiple route decorators o
 - `response_validation` — `"off"` / `"filter"` / `"strict"` for this route; `None` follows the app's `response_validation=` (see [Response Contracts](#response-contracts)).
 - `response_headers` — documentation-only success-response headers: `{"Location": "URL of the user"}` (a description or an OpenAPI Header Object dict).
 - `response_model` — the declared body type (any model kind, or a container of them); it wins over the return annotation for OpenAPI and for the response contract.
+- `consumes` — accepted request media types (a string or a list; `type/subtype`, wildcards `*/*`, `type/*`, `application/*+json` allowed); always enforced with 415. See [Codecs & content negotiation](#codecs--content-negotiation).
+- `produces` — response media types, negotiated from `Accept` (concrete types only, first = default).
+- `max_body_size` — this route's body limit in bytes (positive `int`; larger or smaller than the app's).
 
 Invalid option values fail at decoration time with `DecoratorUsageError`
 (`detail = {"decorator", "target", "option", "reason"}`, e.g. `reason="invalid_status_code"`).
@@ -641,9 +644,11 @@ async def ingest(self, stream: ByteStream) -> dict:
     return {"bytes_received": total}
 ```
 
-The body is bounded by `max_body_size` (default 1 MB). An oversize body raises
-`RequestBodyTooLarge` (413) — for `ByteStream`, `Json[T]`, `Bytes` and form
-parameters alike.
+The body is bounded by the effective `max_body_size` (the route's
+`max_body_size=`, else the controller's, else the app's 1 MB default). An
+oversize body raises `RequestBodyTooLarge` (413) — for `ByteStream`, `Json[T]`,
+`Bytes`, form and `UploadFile` parameters alike, and before anything is read
+when `Content-Length` already announces too much.
 
 ### File uploads
 
@@ -3272,11 +3277,14 @@ with TestClient(app) as c:             # startup() on enter, shutdown() on exit
 - **One driver per app**: a second `TestClient(app)` attaches to the live
   client's loop; entering it with `with` raises — use `client.new_session()`
   (same app and loop, empty jar). Restarting a shut-down app raises.
-- **Requests**: `request(method, url, *, params, headers, cookies, json, data, files, content, follow_redirects, timeout, disconnect_after)`
+- **Requests**: `request(method, url, *, params, headers, cookies, json, msgpack, data, files, content, follow_redirects, timeout, disconnect_after)`
   and `get/post/put/patch/delete/head/options(url, **kw)`; `await arequest(...)`.
   `data=` → urlencoded form, `files=` → multipart (`{"f": ("a.png", b"...", "image/png")}`,
   file objects, lists), `content=` bytes/str or an (async) iterable streamed per
-  chunk. A `host` header comes from `base_url`; an explicit `content-type` wins.
+  chunk. `msgpack=` encodes with `MsgpackCodec()` and sets `application/msgpack`
+  (requires msgspec, mutually exclusive with other body arguments); decode
+  replies with `response.msgpack()`. A `host` header comes from `base_url`;
+  an explicit `content-type` wins.
 - **Timeouts**: `timeout` (30 s; `None` for a bare client) bounds each request;
   on expiry the app task is cancelled and `TimeoutError` is raised.
 - **Cookies**: `client.cookies` is a browser-like `CookieJar` (domain/path
@@ -3313,7 +3321,7 @@ with TestClient(app) as c:             # startup() on enter, shutdown() on exit
 
 `TestResponse`: `status_code`, `headers` (`ResponseHeaders` — still a
 `list[tuple[str, str]]`, plus case-insensitive `get`, `getall`, `["name"]`,
-`keys()`, `in`), `body`/`content`, `text`, `json()`, `header(name)`,
+`keys()`, `in`), `body`/`content`, `text`, `json()`, `msgpack()`, `header(name)`,
 `headers_all(name)`, `cookies`, `is_success`/`is_redirect`/`is_client_error`/
 `is_server_error`, `raise_for_status()` (raises
 `HTTPStatusAssertionError(AssertionError)`), `aborted`, `url`, `request`,
@@ -4606,7 +4614,7 @@ listing the JSON POST routes (the method cross-site simple requests can use)
 until a policy is chosen. Fix:
 `content=ContentConfig(strict_content_type=True)` (text/plain JSON → 415), and
 `lauren-guards.csrf` for form-encoded routes. See
-[Content-type policy](#content-type-policy-contentconfig).
+[Codecs & content negotiation](#codecs--content-negotiation).
 
 ---
 
@@ -4977,35 +4985,172 @@ keep values JSON-encodable — there is no pickle codec.
 
 ---
 
-## Content-type policy (`ContentConfig`)
+## Codecs & content negotiation
 
 ```python run
-from lauren import ContentConfig, LaurenFactory
+from dataclasses import dataclass
+
+from lauren import Bytes, ContentConfig, Json, LaurenFactory, controller, get, module, patch, post
+from lauren.testing import TestClient
+
+
+@dataclass
+class Item:
+    name: str
+
+
+@controller("/items", max_body_size=64 * 1024)          # controller default
+class Items:
+    @post("/")                                          # consumes inferred: JSON
+    async def create(self, body: Json[Item]) -> Item:
+        return body
+
+    @patch("/{id}", consumes=["application/merge-patch+json"])
+    async def merge(self, id: int, body: Json[Item]) -> dict:
+        return {"id": id, "name": body.name}
+
+    @post("/import", consumes="text/csv", max_body_size=20 * 1024 * 1024)
+    async def import_csv(self, body: Bytes) -> dict:
+        return {"bytes": len(body)}
+
+    @get("/{id}", produces=["application/json", "application/problem+json"])
+    async def show(self, id: int) -> Item:
+        return Item(name=f"item-{id}")
+
+
+@module(controllers=[Items])
+class AppModule:
+    pass
+
 
 app = LaurenFactory.create(AppModule, content=ContentConfig(strict_content_type=True))
-# also: Lauren(content=ContentConfig(...))
+client = TestClient(app)
+assert client.post("/items/", json={"name": "a"}).status_code == 200
+assert client.post("/items/", content=b'{"name": "a"}', headers={"content-type": "text/plain"}).status_code == 415
+shown = client.get("/items/1", headers={"accept": "application/problem+json"})
+assert shown.headers["content-type"] == "application/problem+json" and shown.headers["vary"] == "Accept"
 ```
 
-`ContentConfig(strict_content_type=None)` is a frozen dataclass (importable
-from `lauren` and `lauren.types`). `strict_content_type` decides what a JSON
-body parameter — `Json[T]`, an implicit model body, `Discriminated[...]` — does
-with the request's `Content-Type`. The check runs right **after guards**
-(401/403 still win), **before interceptors** and **before any body byte is
-read**.
+### `ContentConfig`
 
-| Value | Behaviour |
+`ContentConfig(strict_content_type=None, malformed_body_status=422, codecs=(), default_produces=("application/json",), strict_accept=False)`
+is a frozen dataclass (importable from `lauren`, `lauren.types` and
+`lauren.codecs`; lists are stored as tuples), passed as
+`LaurenFactory.create(..., content=...)` or `Lauren(content=...)`. Invalid
+values raise `StartupError` (`detail["reason"] == "invalid_content_config"`).
+
+| Field | Meaning |
 |---|---|
-| `True` | Accept only `application/json` and `application/*+json` (case-insensitive; `charset` absent or UTF-8). Anything else, and a body announced by `Content-Length` > 0 or `Transfer-Encoding` without a `Content-Type`, raises `UnsupportedMediaTypeError` → 415 `{"error": {"code": "unsupported_media_type", "detail": {"content_type": <received or null>, "supported": ["application/json", "application/*+json"]}}}`. |
-| `"warn"` | Same check, but mismatches are accepted; the first occurrence of each media type per route is logged at WARN (app logger, context `"ContentPolicy"`, and the stdlib `"lauren"` logger; at most 16 media types remembered per route). |
-| `False` | No check. |
-| `None` (default) | `"warn"` when `sessions=` is configured, else `False`. Any explicit value silences the session startup warning. |
+| `strict_content_type` | `Content-Type` policy of JSON (`Json[T]`, implicit model, `Discriminated[...]`) and `Form[...]` bodies — table below. |
+| `malformed_body_status` | `422` (default): an undecodable body is an `ExtractorError` (`code="extractor_error"`) with `detail["reason"] == "malformed_body"` and a `json_invalid` (JSON) / `body_invalid` (other codecs) issue. `400`: a `BadRequestError` (`code="bad_request"`, `detail={"field", "reason": "malformed_body", "line", "col", "issues"}`; `line`/`col` when the parser reports them). Schema errors stay 422. 2.0 flips the default to 400. |
+| `codecs` | Extra `Codec` instances (`[MsgpackCodec()]`). The JSON codec is always registered; a `JsonCodec(...)` entry configures it. Two codecs claiming one media type → `StartupError(reason="codec_conflict")`. |
+| `default_produces` | Response media types of routes without `produces=` (`("application/json",)` = 1.x behaviour). Each needs a codec (`reason="codec_not_registered"`). |
+| `strict_accept` | `True`: a request whose `Accept` excludes every `produces` entry gets 406 `NotAcceptableError` (`detail={"available": [...]}`). `False` (default): the first `produces` entry is served. |
 
-An empty body without `Content-Type` still reaches the extractor (422
-`missing JSON body`, or the parameter default). `Bytes`, `ByteStream`, `Form`
-and `UploadFile` parameters are not gated. `Request.json()` called inside a
-handler is not gated. The 415 is an ordinary `HTTPError`: exception handlers
-can claim it. An invalid value (or a non-`ContentConfig` `content=`) raises
-`StartupError` with `detail["reason"] == "invalid_content_config"`.
+| `strict_content_type` | Behaviour |
+|---|---|
+| `True` | JSON bodies accept only `application/json` and `application/*+json` (case-insensitive; `charset` absent or UTF-8); form bodies `application/x-www-form-urlencoded` (typed multipart forms arrive with F04). Anything else, and a body announced by `Content-Length` > 0 or `Transfer-Encoding` without a `Content-Type`, raises `UnsupportedMediaTypeError` → 415 `{"error": {"code": "unsupported_media_type", "detail": {"content_type": <received or null>, "supported": ["application/json", "application/*+json"]}}}`. |
+| `"warn"` | Same check, but mismatches are accepted; the first occurrence of each media type per route is logged at WARN (app logger, context `"ContentPolicy"`, and the stdlib `"lauren"` logger; at most 16 media types remembered per route). |
+| `False` | No check of inferred types. |
+| `None` (default) | `"warn"` when `sessions=` is configured, else `False`. Any explicit value silences the session startup warning. 2.0 makes `True` the default. |
+
+The check runs right **after guards** (401/403 still win), **before
+interceptors** and **before any body byte is read**. An empty body without
+`Content-Type` still reaches the extractor (422 `missing JSON body`, or the
+parameter default). The 415 is an ordinary `HTTPError` (exception handlers can
+claim it) and carries `Accept-Post` (POST) / `Accept-Patch` (PATCH) listing
+the supported types. `Request.json()` called inside a handler is not gated.
+
+### `consumes=` — what a route accepts
+
+| Body parameter | Accepted without `consumes=` | Checked |
+|---|---|---|
+| `Json[T]`, implicit model, `Discriminated[...]` | `application/json`, `application/*+json` | under `strict_content_type` |
+| `Form[T]` | `application/x-www-form-urlencoded` | under `strict_content_type` (F04 adds typed multipart form decoding) |
+| `UploadFile` / `list[UploadFile]` | `multipart/form-data` | always (a JSON body is 415) |
+| `Bytes`, `ByteStream`, `Stream[T]` | anything | only with `consumes=` |
+
+A declared `consumes=` (route, else controller) replaces the inferred list
+and is **always** enforced (415), whatever `strict_content_type` says. A
+controller's `consumes=` applies to its routes that read a body. Entries are
+`type/subtype` (no parameters), case-insensitive, and may be ranges (`*/*`,
+`text/*`, `application/*+json`). A JSON body parameter decodes each request
+with the codec of its `Content-Type`: every concrete entry needs one
+(`+json` types use the JSON codec), else `LaurenFactory.create` raises
+`StartupError(detail={"reason": "codec_not_registered", "media_type", "route",
+"handler"})`. Raw parameters (`Bytes`, …) need no codec. Invalid entries fail
+at decoration (`DecoratorUsageError`, `reason="invalid_consumes"`).
+
+### `max_body_size=` — per-route limits
+
+`@post(..., max_body_size=n)` and `@controller(..., max_body_size=n)` (positive
+`int` bytes; `0`, negatives, floats, strings → `DecoratorUsageError`,
+`reason="invalid_max_body_size"`) set a route's limit — route, else controller,
+else the app's `max_body_size`. It is applied right after routing, before
+per-route middleware; global middleware that reads the body *before* routing
+is bounded by the app limit (keep the app default small), and a body such
+middleware already buffered is re-checked against the route limit.
+`Request.body()`, `Request.stream()` and `ByteStream` reject a valid
+`Content-Length` above the limit before the first `receive()`; without one the
+byte count decides. Every oversize body is 413 `RequestBodyTooLarge`
+(`detail={"max_body_size": n}`), never 422.
+
+### `produces=` — response negotiation
+
+`produces=` (route, else controller, else `default_produces`) lists the
+response media types in preference order; each needs a codec unless the
+route only returns `Response` / text / bytes. Negotiation follows RFC 9110
+§12.5.1: an offer's quality is the `q` of the most specific matching `Accept`
+range, `q=0` excludes it, ties go to `produces` order, parameters other than
+`q` are ignored and a missing `Accept` selects the first entry. It applies to
+structured values the framework serializes (dicts, lists, models,
+dataclasses, Structs, typed results, `(body, status)` tuples, pages, response
+contracts); `Response` objects, `str` and `bytes` pass through untouched.
+Routes with several entries add `Vary: Accept`; `@cache_response` keys such
+routes on the negotiated type. JSON types are written by the route's encoder
+(`@use_encoder` / `json_encoder=`); `+json` types are labelled as negotiated.
+Error envelopes stay JSON. With `strict_accept=True` the 406 is raised before
+the handler runs when the route declares `produces=` or a structured return
+type, otherwise when the value is serialized. Invalid entries (wildcards,
+parameters) fail at decoration (`reason="invalid_produces"`).
+`StreamingResponse[T]` keeps its own SSE / NDJSON / JSON Lines negotiation,
+which reads the same parser (q-values count, `q=0` excludes a format).
+
+### Codecs
+
+`Codec` is a protocol: `media_types: tuple[str, ...]` (concrete types; the
+first is canonical), `decode(data: bytes) -> Any` (`ValueError` / subclass = malformed
+body; other exceptions propagate as 500) and `encode(value) -> bytes` (receives JSON-compatible data). Built-ins
+(importable from `lauren` and `lauren.codecs`):
+
+- `JsonCodec(*, backend="auto", encoder=None)` — always registered.
+  `backend`: `"auto"` (msgspec when installed, else stdlib), `"msgspec"`,
+  `"orjson"`, `"stdlib"`; `.backend` is the resolved name, `.fast` whether a
+  native parser is used. A body the fast parser rejects is re-parsed by
+  `json`, which decides — accepted documents and error messages never depend
+  on what is installed (opt-in `"orjson"` decodes integers beyond 64 bits as
+  floats). With a fast backend pydantic bodies validate in one pass
+  (`model_validate_json`; on failure the generic path reports, so 422 bodies
+  are identical); msgspec `Struct` bodies always decode in one
+  `msgspec.json.decode`.
+- `MsgpackCodec()` — `application/msgpack` (also `application/x-msgpack`,
+  `application/vnd.msgpack`); requires msgspec (`RuntimeError` with an
+  install hint otherwise). `Struct` bodies decode with
+  `msgspec.msgpack.decode(type=T)`.
+
+```python fragment
+from lauren import ContentConfig, Json, LaurenFactory, MsgpackCodec, post
+
+@post("/events", consumes=["application/json", "application/msgpack"],
+      produces=["application/json", "application/msgpack"])
+async def ingest(self, body: Json[Event]) -> Ack: ...
+
+app = LaurenFactory.create(AppModule, content=ContentConfig(codecs=[MsgpackCodec()]))
+```
+
+OpenAPI lists declared `consumes` as the request body's content types and
+`produces` as the success responses' content types. `ReflectedRoute.consumes`
+/ `.produces` / `.max_body_size` expose the same data.
 
 ---
 
@@ -5454,7 +5599,7 @@ free — put connections in `@post_construct`.
 
 | Type | Key fields |
 |---|---|
-| `ReflectedRoute` | `method`, `path`, `full_path`, `summary`, `response_model`, `tags`, `deprecated`, `handler`, `status_code` (effective success status), `responses_typed`, `raises`, `guards`, `interceptors`, `middlewares` |
+| `ReflectedRoute` | `method`, `path`, `full_path`, `summary`, `response_model`, `tags`, `deprecated`, `handler`, `status_code` (effective success status), `responses_typed`, `raises`, `guards`, `interceptors`, `middlewares`, `consumes`, `produces`, `max_body_size` |
 | `ReflectedResponse` | `status`, `body_type` (`None`: no body), `description`, `source` (`"declared"` / `"raises"` / `"manual"`) — the entries of `ReflectedRoute.responses_typed` |
 | `ReflectedWsMessage` | `event`, `payload_model` (reserved — always `None` today), `summary`, `handler` |
 | `ReflectedController` | `cls`, `meta`, `guards`, `interceptors`, `middlewares`, `exception_handlers`, `routes` |
@@ -5837,6 +5982,10 @@ request.
 | Cache a GET response | `@cache_response(ttl=30, vary=(...), key=lambda ctx: ...)` on the handler |
 | Make a POST safe to retry | `@idempotent(ttl=86400)` (clients send `Idempotency-Key`) |
 | Share state across workers | one `Store` (`StoresModule.for_root(default=...)`) behind sessions and the cache |
+| Reject cross-site `text/plain` JSON posts | `content=ContentConfig(strict_content_type=True)` (415) |
+| Accept a non-JSON body | `@post("/import", consumes="text/csv")` with `body: Bytes`, or a codec + `consumes=` with `Json[T]` |
+| Serve MessagePack next to JSON | `ContentConfig(codecs=[MsgpackCodec()])` + `@get(..., produces=["application/json", "application/msgpack"])` |
+| Allow one large upload | `@post("/video", max_body_size=500 * 1024 * 1024)` — keep the app `max_body_size` small |
 
 ---
 

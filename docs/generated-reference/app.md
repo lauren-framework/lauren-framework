@@ -39,7 +39,18 @@ route handlers are tried first, then globals.
 ``content`` sets the request-body content policy
 (:class:`~lauren.types.ContentConfig`). Left unset, apps with
 ``sessions=`` log mismatched JSON ``Content-Type`` values ("warn")
-and other apps do not check them.
+and other apps do not check them. It also registers body codecs
+(``codecs=[MsgpackCodec()]``), the response media types of routes
+without ``produces=`` (``default_produces``), the 406 policy
+(``strict_accept``) and the status of malformed bodies
+(``malformed_body_status``). A media type named by a route's
+``consumes=`` / ``produces=`` that no codec serves fails here
+(``reason="codec_not_registered"``).
+
+``max_body_size`` is the app-wide body limit, also the ceiling for
+global middleware that reads the body before routing;
+``@post(..., max_body_size=...)`` and ``@controller(..., max_body_size=...)``
+set a route's own limit (larger or smaller), applied right after routing.
 
 ``error_format`` picks the error wire shape: ``"default"`` (the
 ``{"error": {...}}`` envelope), ``"rfc9457"`` (RFC 9457 Problem

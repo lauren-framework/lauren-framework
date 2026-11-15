@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Callable, ForwardRef, TypeVar
 
@@ -204,6 +204,9 @@ class ControllerMeta:
         description: str | None = None,
         deprecated: bool = False,
         security: list[dict[str, Any]] | None = None,
+        consumes: tuple[str, ...] | None = None,
+        produces: tuple[str, ...] | None = None,
+        max_body_size: int | None = None,
     ) -> None:
         self.prefix = prefix
         self.tags = tuple(tags or [])
@@ -211,6 +214,10 @@ class ControllerMeta:
         self.description = description
         self.deprecated = deprecated
         self.security = tuple(security or [])
+        #: Default ``consumes`` / ``produces`` / ``max_body_size`` of the controller's routes.
+        self.consumes = consumes
+        self.produces = produces
+        self.max_body_size = max_body_size
 
 
 def controller(
@@ -221,6 +228,9 @@ def controller(
     description: str | None = None,
     deprecated: bool = False,
     security: list[dict[str, Any]] | None = None,
+    consumes: Sequence[str] | str | None = None,
+    produces: Sequence[str] | str | None = None,
+    max_body_size: int | None = None,
 ) -> Callable[[C], C]:
     """Declare a controller class.
 
@@ -243,6 +253,10 @@ def controller(
     ``@controller`` must always be invoked with parentheses. Writing bare
     ``@controller`` on a class is rejected with :class:`DecoratorUsageError`
     because it would otherwise silently bind the class as the URL prefix.
+
+    ``consumes`` / ``produces`` / ``max_body_size`` are defaults for the
+    controller's routes (a route's own value wins); ``consumes`` applies to the
+    routes that read a body. They are validated like the route options.
     """
     # ``prefix`` defaults to an empty string, so bare ``@controller`` would
     # pass the decorated class as ``prefix``. Detect and reject.
@@ -250,6 +264,11 @@ def controller(
         _reject_bare_usage("controller", prefix)
 
     def decorator(cls: C) -> C:
+        content_options = _validate_route_options(
+            "controller",
+            cls,
+            {"consumes": consumes, "produces": produces, "max_body_size": max_body_size},
+        )
         setattr(
             cls,
             CONTROLLER_META,
@@ -260,6 +279,7 @@ def controller(
                 description=description,
                 deprecated=deprecated,
                 security=security,
+                **content_options,
             ),
         )
         # Mark this class as injectable in its OWN __dict__ — never by
@@ -288,6 +308,9 @@ class RouteMeta:
         status_code: int | None = None,
         response_validation: str | None = None,
         response_headers: Mapping[str, Any] | None = None,
+        consumes: tuple[str, ...] | None = None,
+        produces: tuple[str, ...] | None = None,
+        max_body_size: int | None = None,
     ) -> None:
         self.method = method.upper()
         self.path = path
@@ -305,6 +328,12 @@ class RouteMeta:
         self.response_validation = response_validation
         #: Documentation-only response headers: name → description or OpenAPI Header Object.
         self.response_headers: dict[str, Any] = dict(response_headers or {})
+        #: Accepted request media types (``None``: inferred from the body parameters).
+        self.consumes = consumes
+        #: Response media types, negotiated from ``Accept`` (``None``: controller / app default).
+        self.produces = produces
+        #: Body size limit in bytes (``None``: controller / app default).
+        self.max_body_size = max_body_size
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +396,42 @@ def _check_response_headers(value: Any) -> dict[str, Any]:
     return out
 
 
+def _check_media_types(value: Any, *, option: str, wildcards: bool) -> tuple[str, ...]:
+    from ._codecs._media import normalize_media_range
+
+    entries = (value,) if isinstance(value, str) else value
+    if not isinstance(entries, (list, tuple)) or not entries:
+        raise _RouteOptionError(
+            f"invalid_{option}", f"{option} must be a media type or a non-empty list of them, got {value!r}"
+        )
+    out: list[str] = []
+    for entry in entries:
+        try:
+            media = normalize_media_range(entry, wildcards=wildcards)
+        except ValueError as exc:
+            raise _RouteOptionError(f"invalid_{option}", f"{option}: {exc}") from None
+        if media not in out:
+            out.append(media)
+    return tuple(out)
+
+
+def _check_consumes(value: Any) -> tuple[str, ...]:
+    return _check_media_types(value, option="consumes", wildcards=True)
+
+
+def _check_produces(value: Any) -> tuple[str, ...]:
+    return _check_media_types(value, option="produces", wildcards=False)
+
+
+def _check_max_body_size(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise _RouteOptionError(
+            "invalid_max_body_size",
+            f"max_body_size must be a positive int (bytes, e.g. 10 * 1024 * 1024), got {value!r}",
+        )
+    return value
+
+
 #: Route-decorator option validators: keyword name → ``validate(value)``.
 #:
 #: Every verb decorator (``@get`` … ``@options``, and ``Lauren``'s ``@app.get``
@@ -381,6 +446,9 @@ _ROUTE_OPTION_VALIDATORS: dict[str, Callable[[Any], Any]] = {
     "status_code": _check_status_code,
     "response_validation": _check_response_validation,
     "response_headers": _check_response_headers,
+    "consumes": _check_consumes,
+    "produces": _check_produces,
+    "max_body_size": _check_max_body_size,
 }
 
 
@@ -418,6 +486,9 @@ def _route_decorator(method: str) -> Callable[..., Callable[[F], F]]:
         status_code: int | None = None,
         response_validation: str | None = None,
         response_headers: Mapping[str, Any] | None = None,
+        consumes: Sequence[str] | str | None = None,
+        produces: Sequence[str] | str | None = None,
+        max_body_size: int | None = None,
     ) -> Callable[[F], F]:
         # Bare usage — ``@get`` on a function — passes the function as
         # ``path``. Reject loudly: the undetected case would silently
@@ -433,6 +504,9 @@ def _route_decorator(method: str) -> Callable[..., Callable[[F], F]]:
                     "status_code": status_code,
                     "response_validation": response_validation,
                     "response_headers": response_headers,
+                    "consumes": consumes,
+                    "produces": produces,
+                    "max_body_size": max_body_size,
                 },
             )
             existing: list[RouteMeta] = getattr(fn, ROUTE_META, [])

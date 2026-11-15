@@ -155,6 +155,13 @@ from .._pagination import (
 from .._pagination._config import BUILTIN_DEFAULTS as _PAGINATION_DEFAULTS
 from .._pagination._links import ROOT_PATH_ATTR as _ROOT_PATH_ATTR
 from ._problem import instance_reference as _instance_reference, problem_payload as _problem_payload
+from .._codecs._plan import (
+    ContentRuntime,
+    add_vary_accept as _add_vary_accept,
+    compile_route_content,
+    produces_structured as _produces_structured,
+    resolve_content,
+)
 from ._contracts import (
     ResponseContractViolation,
     _coerce_result,
@@ -271,10 +278,20 @@ class CompiledHandler:
     raises: tuple[Any, ...] = ()
     #: Typed metadata declarations captured at compile time for manifest visibility.
     metadata_key_defs: tuple[Any, ...] = ()
+    #: ``Content-Type`` check (:class:`lauren._codecs._plan.ContentGate`), or
+    #: ``None`` when the route does not check it.
+    content_gate: Any = None
+    #: Response negotiation (:class:`lauren._codecs._plan.Negotiation`), or
+    #: ``None`` for plain JSON responses.
+    negotiation: Any = None
+    #: The route's ``max_body_size`` (route → controller), ``None``: the app's.
+    body_limit: int | None = None
+    #: Effective accepted / produced media types (docs and reflection).
+    consumes: tuple[str, ...] = ()
+    produces: tuple[str, ...] = ()
+    #: ``consumes`` was declared (``consumes=``) rather than inferred.
+    consumes_declared: bool = False
 
-
-#: Media types a JSON body parameter accepts under ``strict_content_type``.
-_JSON_MEDIA_TYPES: tuple[str, ...] = ("application/json", "application/*+json")
 
 #: The only method of a cross-site "simple" request that carries a body
 #: (forms and ``no-cors`` fetches; PUT/PATCH/DELETE need a CORS preflight).
@@ -284,37 +301,6 @@ _SIMPLE_REQUEST_BODY_METHODS: frozenset[str] = frozenset({"POST"})
 #: mode — the media type is client-chosen, so memory must stay bounded, and a
 #: flood on one route must not silence the others.
 _CONTENT_TYPE_WARN_LIMIT = 16
-
-
-def _json_content_type_problem(headers: Headers) -> str | None:
-    """Return why a JSON body parameter may not accept this request, or ``None``.
-
-    ``application/json`` and ``application/*+json`` with no charset or UTF-8
-    pass. A missing ``Content-Type`` is only a problem when the request
-    announces a body (``Content-Length`` above zero, or ``Transfer-Encoding``);
-    an empty body falls through to the usual "missing JSON body" handling.
-    """
-    raw = headers.get("content-type")
-    if raw is None or not raw.strip():
-        if headers.get("transfer-encoding") is not None:
-            return "no Content-Type"
-        length = headers.get("content-length")
-        if length is None:
-            return None
-        try:
-            return "no Content-Type" if int(length) > 0 else None
-        except ValueError:
-            return "no Content-Type"
-    media, _, params = raw.partition(";")
-    media = media.strip().lower()
-    if media != "application/json" and not (media.startswith("application/") and media.endswith("+json")):
-        return media
-    for param in params.split(";"):
-        name, _, value = param.partition("=")
-        charset = value.strip().strip('"').lower()
-        if name.strip().lower() == "charset" and charset not in ("utf-8", "utf8"):
-            return f"{media}; charset={charset}"
-    return None
 
 
 def _compile_handler_signature(
@@ -982,6 +968,7 @@ class LaurenApp:
         # resolved by the factory) and the warn-once memory for "warn" mode,
         # keyed by (method, route template) → media types already reported.
         self._strict_content_type: bool | str = strict_content_type
+        self._content: ContentRuntime | None = None  # factory binds this app's codec registry
         self._content_type_warned: dict[tuple[str, str], set[str]] = {}
         self._app_state = app_state
         self._strict_lifecycle = strict_lifecycle
@@ -1776,34 +1763,57 @@ class LaurenApp:
             )
         return error
 
-    def _enforce_json_content_type(self, request: Request, compiled: CompiledHandler) -> None:
-        """Apply ``strict_content_type`` to a request bound for a JSON body parameter.
+    def _enforce_content_type(self, request: Request, gate: Any, route: str) -> None:
+        """Apply a route's :class:`~lauren._codecs._plan.ContentGate` before the body is read.
 
-        Strict mode raises :class:`UnsupportedMediaTypeError` (415) before any
-        body byte is read; "warn" mode logs the first occurrence of each media
-        type per route (up to a bounded number per route) and lets the request
-        through.
+        A strict gate raises :class:`UnsupportedMediaTypeError` (415, with
+        ``Accept-Post`` / ``Accept-Patch`` listing what is supported); a "warn"
+        gate logs the first occurrence of each media type per route (up to a
+        bounded number per route) and lets the request through.
         """
-        problem = _json_content_type_problem(request.headers)
+        problem = gate.problem(request.headers)
         if problem is None:
             return
-        method, route = request.method, compiled.path_template
-        if self._strict_content_type is True:
-            received = request.headers.get("content-type")
+        method = request.method
+        if gate.strict:
+            headers = {gate.allow_header: ", ".join(gate.supported)} if gate.allow_header else None
             raise UnsupportedMediaTypeError(
-                f"{method} {route} expects a JSON body (application/json), got {problem}",
-                detail={"content_type": received, "supported": list(_JSON_MEDIA_TYPES)},
+                f"{method} {route} expects {gate.label}, got {problem}",
+                detail={
+                    "content_type": request.headers.get("content-type"),
+                    "supported": list(gate.supported),
+                },
+                headers=headers,
             )
         seen = self._content_type_warned.setdefault((method, route), set())
         if problem in seen or len(seen) >= _CONTENT_TYPE_WARN_LIMIT:
             return
         seen.add(problem)
         message = (
-            f"{method} {route} accepted a JSON body with {problem}; "
+            f"{method} {route} accepted a body with {problem} (expects {gate.label}); "
             "set ContentConfig(strict_content_type=True) to reject such requests with 415"
         )
         logger.warning(message)
         self._logger.warn(message, context="ContentPolicy", method=method, path=route, content_type=problem)
+
+    def _negotiated_response(
+        self,
+        raw: Any,
+        negotiation: Any,
+        media: str | None,
+        json_encoder: Any,
+        plan: Any,
+        request: Request,
+    ) -> Response:
+        """Serialize a structured result in the media type negotiated from ``Accept``."""
+        if media is None:  # ``strict_accept`` and nothing acceptable
+            raise negotiation.not_acceptable(request.headers.get("accept"))
+        encoder = negotiation.encoder(media, json_encoder)
+        if plan is not None:
+            response = plan.coerce(raw, encoder)
+        else:
+            response = _coerce_to_response(raw, encoder=encoder, pagination=self._pagination)
+        return _add_vary_accept(response) if negotiation.vary else response
 
     def _log_unhandled(self, exc: BaseException, request: Request, *, origin: str) -> None:
         """Log an exception that no handler claimed, with its traceback."""
@@ -2181,8 +2191,19 @@ class LaurenApp:
                         # Content-type gate: right after guards (401/403 still
                         # win), before interceptors and before any body byte
                         # is read.
-                        if compiled.json_body and self._strict_content_type is not False:
-                            self._enforce_json_content_type(req2, compiled)
+                        if compiled.content_gate is not None:
+                            self._enforce_content_type(req2, compiled.content_gate, compiled.path_template)
+                        # Response negotiation (``produces=``): chosen once, before
+                        # interceptors, so a response cache can key on it.
+                        _negotiation = compiled.negotiation
+                        _negotiated: str | None = None
+                        if _negotiation is not None:
+                            _accept = req2.headers.get("accept")
+                            _negotiated = _negotiation.select(_accept)
+                            if _negotiated is None and _negotiation.early:
+                                raise _negotiation.not_acceptable(_accept)
+                            if _negotiation.vary:
+                                req2._negotiated_media_type = _negotiated or _negotiation.offers[0]  # type: ignore[attr-defined]
 
                         # ------------ inner invocation (wrapped by interceptors) ---
                         async def _invoke_handler() -> Any:
@@ -2305,6 +2326,15 @@ class LaurenApp:
                                     plan=_plan,
                                     on_violation=self._log_contract_violation,
                                 )
+                            if _negotiation is not None and _produces_structured(raw):
+                                return self._negotiated_response(
+                                    raw,
+                                    _negotiation,
+                                    _negotiated,
+                                    _captured_effective_encoder,
+                                    _plan,
+                                    _captured_req2,
+                                )
                             if _plan is not None:
                                 return _plan.coerce(raw, _captured_effective_encoder)
                             return _coerce_to_response(
@@ -2392,6 +2422,11 @@ class LaurenApp:
                         # torn down by ``handle`` once the whole request —
                         # global middleware and outer error rendering
                         # included — is done with them.
+                        # The route's own body limit, before per-route middleware
+                        # can read the body (global middleware is bounded by the
+                        # app limit).
+                        if compiled.body_limit is not None:
+                            req._set_body_limit(compiled.body_limit)
                         chain: CallNext = run_handler
                         for mw_cls in reversed(mw_classes):
                             # Middleware declared on the controller resolves
@@ -2867,7 +2902,12 @@ def _coerce_to_response(
             return resp
 
     if isinstance(value, Response):
-        if encoder is not None and isinstance(value, EventStream):
+        # SSE frames are JSON: a negotiated response codec never reframes them.
+        if (
+            encoder is not None
+            and isinstance(value, EventStream)
+            and not hasattr(encoder, "lauren_media_type")
+        ):
             value._reframe(encoder)
         return value
     # Private hook until F01's response-conversion protocol lands: pages
@@ -3303,7 +3343,18 @@ class LaurenFactory:
         ``content`` sets the request-body content policy
         (:class:`~lauren.types.ContentConfig`). Left unset, apps with
         ``sessions=`` log mismatched JSON ``Content-Type`` values ("warn")
-        and other apps do not check them.
+        and other apps do not check them. It also registers body codecs
+        (``codecs=[MsgpackCodec()]``), the response media types of routes
+        without ``produces=`` (``default_produces``), the 406 policy
+        (``strict_accept``) and the status of malformed bodies
+        (``malformed_body_status``). A media type named by a route's
+        ``consumes=`` / ``produces=`` that no codec serves fails here
+        (``reason="codec_not_registered"``).
+
+        ``max_body_size`` is the app-wide body limit, also the ceiling for
+        global middleware that reads the body before routing;
+        ``@post(..., max_body_size=...)`` and ``@controller(..., max_body_size=...)``
+        set a route's own limit (larger or smaller), applied right after routing.
 
         ``error_format`` picks the error wire shape: ``"default"`` (the
         ``{"error": {...}}`` envelope), ``"rfc9457"`` (RFC 9457 Problem
@@ -3382,22 +3433,10 @@ class LaurenFactory:
             from ._debug import resolve_config as _resolve_debug_config
 
             debug_config = _resolve_debug_config(debug)
-        content_config = content if content is not None else ContentConfig()
-        if not isinstance(content_config, ContentConfig):
-            raise StartupError(
-                f"content= expects a ContentConfig, got {type(content).__name__}",
-                detail={"reason": "invalid_content_config", "got": type(content).__name__},
-            )
-        declared_strict = content_config.strict_content_type
-        if not (declared_strict is None or isinstance(declared_strict, bool) or declared_strict == "warn"):
-            raise StartupError(
-                f"ContentConfig(strict_content_type={declared_strict!r}) is invalid; "
-                'use True, False, "warn" or None',
-                detail={"reason": "invalid_content_config", "strict_content_type": repr(declared_strict)},
-            )
-        effective_strict_content_type: bool | str = (
-            declared_strict if declared_strict is not None else ("warn" if sessions is not None else False)
-        )
+        # ``ContentConfig``: content-type policy, codecs, default produces, 406.
+        content_runtime: ContentRuntime = resolve_content(content, sessions=sessions is not None)
+        declared_strict = content_runtime.declared_strict
+        effective_strict_content_type: bool | str = content_runtime.strict
         policy = validation if validation is not None else ValidationPolicy()
         if not isinstance(policy, ValidationPolicy):
             raise StartupError(
@@ -3826,6 +3865,19 @@ class LaurenFactory:
                         fn=fn,
                         route=route_label,
                     )
+                    # Content rules: Content-Type gate, body codecs, produces
+                    # negotiation and body limit (unknown media types fail here).
+                    route_content = compile_route_content(
+                        content_runtime,
+                        method=rmeta.method,
+                        route=route_label,
+                        handler=f"{ctrl_cls.__name__}.{fn.__name__}",
+                        route_meta=rmeta,
+                        controller_meta=ctrl_meta,
+                        extractions=extractions,
+                        table=response_table,
+                        streaming=streaming_item is not None,
+                    )
                     compiled = CompiledHandler(
                         controller_cls=ctrl_cls,
                         handler_fn=fn,
@@ -3856,6 +3908,12 @@ class LaurenFactory:
                         response_table=response_table,
                         response_plan=response_plan,
                         raises=tuple(route_raises),
+                        content_gate=route_content.gate,
+                        negotiation=route_content.negotiation,
+                        body_limit=route_content.body_limit,
+                        consumes=route_content.consumes,
+                        produces=route_content.produces,
+                        consumes_declared=route_content.consumes_declared,
                     )
                     compiled_handlers[(entry.method, entry.path_template)] = compiled
                     _log.log(
@@ -4117,6 +4175,10 @@ class LaurenFactory:
         app._config_pending = config_pending
         app._commands = commands
         app._pagination = pagination_config
+        # The codec registry and content policy belong to this app, never to
+        # a process-global encoder or parser cache. Route plans keep references
+        # to the same registry for request decoding and response negotiation.
+        app._content = content_runtime
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via
         # ``lauren.serialization.set_active_encoder``). Pinning the
