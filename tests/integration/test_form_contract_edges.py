@@ -96,3 +96,22 @@ def test_unsupported_form_field_type_fails_startup_with_context() -> None:
         _app(Invalid)
     assert caught.value.detail["param"] == "form"
     assert caught.value.detail["reason"] == "unsupported_type"
+
+
+@pytest.mark.parametrize("media", ["application/json", "text/plain", "*/*"])
+def test_typed_forms_reject_unparseable_consumes_at_startup(media) -> None:
+    from lauren import StartupError
+
+    @controller("/bad-form-media")
+    class Invalid:
+        @post("/", consumes=media)
+        async def create(self, name: Form[str]) -> dict:
+            return {"name": name}
+
+    @module(controllers=[Invalid])
+    class Root:
+        pass
+
+    with pytest.raises(StartupError) as caught:
+        LaurenFactory.create(Root)
+    assert caught.value.detail["reason"] == "invalid_form_consumes"

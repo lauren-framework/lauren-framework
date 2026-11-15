@@ -39,6 +39,8 @@ def _plan(*exts: Extraction):
         {"min_files": 2, "max_files": 1},
         {"content_types": "image/png"},
         {"content_types": ["not-media"]},
+        {"content_types": None},
+        {"description": 123},
         {"alias": ""},
         {"sniff": 1},
     ],
@@ -448,3 +450,199 @@ async def test_nullable_standalone_forms_require_an_explicit_default(monkeypatch
         assert caught.value.issues[0].type == "missing"
     else:
         assert await ext.compiled.extract(object(), ext) is None
+
+
+@pytest.mark.parametrize("source", ["query", "depends"])
+def test_upload_descriptor_rejects_nonform_parameter_sources(source):
+    ext = _ext(str, source=source, fd=UploadField())
+
+    with pytest.raises(UnresolvableParameterError) as caught:
+        build_param_plan(ext, str, _runtime(), route="/", owner="Forms", handler="submit")
+
+    assert caught.value.detail["reason"] == "upload_field_placement"
+    assert caught.value.detail["param"] == "value"
+
+
+def test_json_model_rejects_upload_constraints_even_without_a_file_value():
+    @dataclass
+    class Model:
+        title: Annotated[str, UploadField(max_size=10)]
+
+    with pytest.raises(UnresolvableParameterError) as caught:
+        build_param_plan(
+            _ext(Model, source="json"), Model, _runtime(), route="/", owner="Forms", handler="submit"
+        )
+
+    assert caught.value.detail["reason"] == "upload_field_placement"
+
+
+def test_invalid_pydantic_discriminator_is_reported_as_a_contextual_startup_error():
+    pydantic = pytest.importorskip("pydantic")
+    target = Annotated[int, pydantic.Field(discriminator="kind")]
+
+    with pytest.raises(UnresolvableParameterError) as caught:
+        _plan(_ext(target))
+
+    assert caught.value.detail["reason"] == "unsupported_type"
+    assert caught.value.detail["class"] == "Forms"
+    assert "discriminated union" in caught.value.message
+
+
+@pytest.mark.asyncio
+async def test_pydantic_dataclass_forbids_extra_fields_alongside_transport_failures(monkeypatch):
+    pydantic = pytest.importorskip("pydantic")
+    from pydantic.dataclasses import dataclass as pydantic_dataclass
+
+    from lauren._forms import _runtime as form_runtime
+
+    @pydantic_dataclass(config=pydantic.ConfigDict(extra="forbid"))
+    class Model:
+        title: str
+        count: int
+
+    async def read(_request):
+        return FormData([("title", "Docs"), ("count", "invalid"), ("unknown", "x")])
+
+    monkeypatch.setattr(form_runtime, "read_form_data", read)
+    ext = _ext(Model)
+    _plan(ext)
+    with pytest.raises(ExtractorError) as caught:
+        await ext.compiled.extract(object(), ext)
+
+    assert [(issue.loc, issue.type) for issue in caught.value.issues] == [
+        (("form", "count"), "int_parsing"),
+        (("form", "unknown"), "extra_forbidden"),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("file_field", [False, True])
+async def test_compiled_field_coercer_rejects_the_wrong_part_kind(file_field):
+    from lauren._schema._issues import _Invalid
+
+    async with UploadFile(data=b"a", filename="a.txt", content_type="text/plain") as upload:
+        plan = _plan(_ext(UploadFile if file_field else str))
+        form = FormData([("value", "not a file" if file_field else upload)])
+
+        with pytest.raises(_Invalid) as caught:
+            plan.bindings[0].fields[0].collect(form)
+
+        assert caught.value.issues[0].ctx["reason"] == ("expected_file" if file_field else "expected_text")
+        assert caught.value.issues[0].loc == ("value",)
+
+
+def test_compiled_upload_coercer_enforces_minimum_file_count():
+    from lauren._schema._issues import _Invalid
+
+    plan = _plan(_ext(list[UploadFile], fd=UploadField(min_files=1)))
+
+    with pytest.raises(_Invalid) as caught:
+        plan.bindings[0].fields[0].collect(FormData([]))
+
+    assert caught.value.issues[0].ctx == {"reason": "file_count", "min_files": 1, "max_files": None}
+
+
+def test_nullable_upload_items_receive_binary_media_hint_on_the_nonnull_branch():
+    plan = _plan(_ext(list[UploadFile | None], fd=UploadField(content_types=["image/png"])))
+
+    items = plan.schema()["properties"]["value"]["items"]["anyOf"]
+
+    assert {"type": "string", "format": "binary", "contentMediaType": "image/png"} in items
+    assert {"type": "null"} in items
+
+
+def test_shared_text_part_schemas_intersect_each_bindings_constraints():
+    plan = _plan(
+        _ext(int, name="first", fd=FormField(alias="shared", ge=1)),
+        _ext(int, name="second", fd=FormField(alias="shared", le=9)),
+    )
+
+    schema = plan.schema()
+
+    assert schema["properties"]["shared"] == {
+        "allOf": [
+            {"type": "integer", "minimum": 1},
+            {"type": "integer", "maximum": 9},
+        ]
+    }
+    assert schema["required"] == ["shared"]
+
+
+def test_raw_form_dict_annotation_must_match_the_multivalue_contract():
+    with pytest.raises(UnresolvableParameterError) as caught:
+        _plan(_ext(dict[str, str]))
+
+    assert caught.value.detail["reason"] == "unsupported_form_type"
+    assert "dict[str, list[str]]" in caught.value.message
+
+
+def test_empty_tuple_annotation_is_not_misidentified_as_an_upload_sequence():
+    from lauren.extractors import parse_extractor_hint
+
+    source, inner, *_ = parse_extractor_hint(tuple[()])
+
+    assert source is None
+    assert inner == tuple[()]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_files", [1, 2])
+async def test_cached_route_rechecks_text_and_multiple_files_without_sniffing(max_files):
+    from lauren.types import Request
+
+    plan = _plan(
+        _ext(str, name="title"),
+        _ext(
+            list[UploadFile],
+            source="upload_file",
+            name="files",
+            fd=UploadField(max_size=10, max_files=max_files),
+        ),
+    )
+    async with UploadFile(data=b"a", filename="a.txt", content_type="text/plain") as first:
+        async with UploadFile(data=b"b", filename="b.txt", content_type="text/plain") as second:
+            form = FormData([("title", "Docs"), ("files", first), ("files", second)])
+            request = Request(method="POST", path="/")
+            if max_files == 1:
+                with pytest.raises(ExtractorError) as caught:
+                    await plan.validate_cached(request, form)
+                assert caught.value.detail["reason"] == "too_many_files"
+            else:
+                await plan.validate_cached(request, form)
+                assert request.__dict__["__lauren_form_validated_plan__"] is plan
+                assert await first.read() == b"a"
+                assert await second.read() == b"b"
+
+
+@pytest.mark.asyncio
+async def test_uncompiled_form_and_upload_helpers_share_a_real_multipart_parse():
+    from lauren.extractors import extract_parameter
+    from lauren.testing._encoding import encode_multipart
+    from lauren.types import Headers, Request
+
+    body, media = encode_multipart(
+        [("title", "a"), ("title", "b")], [("file", ("a.txt", b"a")), ("file", ("b.txt", b"b"))]
+    )
+    reads = 0
+
+    async def receive():
+        nonlocal reads
+        reads += 1
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request = Request(method="POST", path="/", headers=Headers([("content-type", media)]), receive=receive)
+    uploads = []
+    try:
+        assert await extract_parameter(request, _ext(dict)) == {"title": ["a", "b"]}
+        first = await extract_parameter(request, _ext(UploadFile, source="upload_file", name="file"))
+        uploads = await extract_parameter(request, _ext(list[UploadFile], source="upload_file", name="file"))
+        assert first is uploads[0]
+        assert [upload.filename for upload in uploads] == ["a.txt", "b.txt"]
+        assert await first.read() == b"a"
+        compiled = _ext(dict)
+        _plan(compiled)
+        assert await extract_parameter(request, compiled) == {"title": ["a", "b"]}
+        assert reads == 1
+    finally:
+        for upload in uploads:
+            await upload.close()

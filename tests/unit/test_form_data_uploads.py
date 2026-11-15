@@ -18,7 +18,7 @@ def test_form_data_is_a_first_value_multi_mapping() -> None:
     assert form.getall("a") == ["1", "3"]
     assert form.getall("missing") == []
     with pytest.raises(KeyError):
-        form["missing"]
+        _ = form["missing"]
     with pytest.raises(TypeError):
         form["a"] = "changed"  # type: ignore[index]
 
@@ -48,14 +48,19 @@ async def test_upload_safe_filename_is_only_a_normalized_safe_basename(filename,
 
 async def test_upload_cursor_writes_and_legacy_snapshot() -> None:
     async with UploadFile(data=b"abc", filename="a", content_type="text/plain") as upload:
-        assert await upload.read(1) == b"a"
-        assert upload.read_sync() == b"abc"
-        assert await upload.read() == b"bc"
+        first = await upload.read(1)
+        snapshot = upload.read_sync()
+        rest = await upload.read()
+        assert first == b"a"
+        assert snapshot == b"abc"
+        assert rest == b"bc"
         await upload.seek(1)
-        assert await upload.write(b"XYZ") == 3
+        written = await upload.write(b"XYZ")
+        assert written == 3
         assert upload.size == 4
         await upload.seek(0)
-        assert b"".join([chunk async for chunk in upload.stream(2)]) == b"aXYZ"
+        streamed = b"".join([chunk async for chunk in upload.stream(2)])
+        assert streamed == b"aXYZ"
     assert upload.file.closed
     await upload.close()
     with pytest.raises(ValueError):
@@ -66,12 +71,15 @@ async def test_upload_save_preserves_cursor_and_does_not_overwrite(tmp_path) -> 
     async with UploadFile(data=b"abc", filename="a", content_type="text/plain") as upload:
         await upload.read(1)
         destination = tmp_path / "copy"
-        assert await upload.save(destination) == 3
+        written = await upload.save(destination)
+        rest = await upload.read()
+        assert written == 3
         assert destination.read_bytes() == b"abc"
-        assert await upload.read() == b"bc"
+        assert rest == b"bc"
         with pytest.raises(FileExistsError):
             await upload.save(destination)
-        assert await upload.save(destination, overwrite=True) == 3
+        overwritten = await upload.save(destination, overwrite=True)
+        assert overwritten == 3
 
 
 async def test_upload_rolls_over_and_keeps_its_size(tmp_path) -> None:
@@ -93,3 +101,31 @@ async def test_upload_stream_requires_a_positive_chunk_size(size) -> None:
     async with UploadFile(data=b"abc", filename="a", content_type="text/plain") as upload:
         with pytest.raises(ValueError):
             _ = [part async for part in upload.stream(size)]
+
+
+def test_pydantic_file_schema_hook_exposes_a_binary_string() -> None:
+    pydantic = pytest.importorskip("pydantic")
+    assert pydantic.TypeAdapter(UploadFile).json_schema() == {"type": "string", "format": "binary"}
+
+
+async def test_msgspec_file_schema_and_validation_preserve_instances() -> None:
+    msgspec = pytest.importorskip("msgspec")
+    from lauren.validation import TypeCompiler, ValidationFailed
+
+    fields = msgspec.defstruct("UploadFields", [("file", UploadFile)])
+    batch = msgspec.defstruct("UploadBatch", [("items", list[fields])])
+    compiled = TypeCompiler().compile(batch)
+    schema = compiled.json_schema()
+    assert schema["$defs"]["UploadFields"]["properties"]["file"] == {"type": "string", "format": "binary"}
+    async with UploadFile(data=b"x", filename="x", content_type="text/plain") as upload:
+        result = compiled.validate({"items": [{"file": upload}]})
+        assert result.items[0].file is upload
+        with pytest.raises(ValidationFailed):
+            compiled.validate({"items": [{"file": "not an upload"}]})
+
+
+def test_msgspec_file_schema_hook_rejects_unrelated_types() -> None:
+    from lauren._schema._backends import _upload_schema_hook
+
+    with pytest.raises(NotImplementedError):
+        _upload_schema_hook(str)

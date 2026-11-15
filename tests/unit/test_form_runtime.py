@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
 from lauren import ContentConfig, MultipartConfig, UploadFile
 from lauren._codecs._plan import resolve_content
-from lauren._forms._config import _UploadSpec, resolve_multipart
+from lauren._forms._config import _PartSpec, _UploadSpec, resolve_multipart
 from lauren._forms._runtime import _UploadOwner, _check_sniff, read_form_data
 from lauren._multipart import _Part
 from lauren.exceptions import (
@@ -150,3 +151,57 @@ async def test_concurrent_multipart_calls_share_the_parse_and_its_resource_owner
     finally:
         await request.__dict__["__lauren_upload_owner__"].close()
     assert one["file"].file.closed
+
+
+async def test_concurrent_failed_parses_share_the_cached_error() -> None:
+    request = _request(b"not multipart", media="multipart/form-data; boundary=B")
+    original = request._receive
+    started = asyncio.Event()
+    proceed = asyncio.Event()
+
+    async def receive():
+        started.set()
+        await proceed.wait()
+        return await original()
+
+    request._receive = receive
+    first = asyncio.create_task(request.multipart())
+    await started.wait()
+    second = asyncio.create_task(request.multipart())
+    proceed.set()
+    failures = await asyncio.gather(first, second, return_exceptions=True)
+    assert isinstance(failures[0], ExtractorError)
+    assert failures[0] is failures[1]
+
+
+async def test_eof_delimiter_and_exact_sniff_prefix_do_not_lose_bytes() -> None:
+    prefix = b"\x89PNG\r\n\x1a\n" + b"x" * 504
+    body = (
+        b'--B\r\nContent-Disposition: form-data; name="file"; filename="x.png"\r\n'
+        b"Content-Type: image/png\r\n\r\n" + prefix + b"\r\n--B--"
+    )
+    request = _request(body, media="multipart/form-data; boundary=B")
+    request.__dict__["__lauren_form_plan__"] = SimpleNamespace(
+        rules={"file": _PartSpec("file", (_UploadSpec(sniff=True),))},
+        takes_all=False,
+        legacy_urlencoded=False,
+    )
+    try:
+        form = await request.multipart()
+        contents = await form["file"].read()
+        assert contents == prefix
+    finally:
+        await request.__dict__["__lauren_upload_owner__"].close()
+
+
+def test_merged_upload_rules_can_combine_sniffing_with_other_constraints() -> None:
+    part = _Part("file", "x.png", "image/png", b"", [])
+    _check_sniff(part, (_UploadSpec(max_size=100), _UploadSpec(sniff=True)), b"\x89PNG\r\n\x1a\n")
+
+
+async def test_request_stream_cannot_be_started_again_after_consumption() -> None:
+    request = _request(b"x")
+    chunks = [chunk async for chunk in request.stream()]
+    assert chunks == [b"x"]
+    with pytest.raises(RuntimeError, match="already been consumed"):
+        _ = [chunk async for chunk in request.stream()]

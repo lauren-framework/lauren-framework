@@ -28,14 +28,6 @@ def _request(chunks, *, config=None, rules=None, takes_all=True, status=422):
     iterator = iter(chunks)
     reads = []
 
-    async def receive():
-        reads.append(1)
-        try:
-            chunk = next(iterator)
-        except StopIteration:
-            raise AssertionError("the body was read twice") from None
-        return {"type": "http.request", "body": chunk, "more_body": True}
-
     # Mark the final frame without materializing a potentially large iterator.
     pending = next(iterator, None)
 
@@ -180,6 +172,7 @@ async def test_cancellation_closes_a_disk_backed_partial_upload(monkeypatch) -> 
             return {"type": "http.request", "body": _body(b"x" * 100)[:-9], "more_body": True}
         waiting.set()
         await asyncio.Event().wait()
+        raise AssertionError("the blocked receive unexpectedly resumed")
 
     request, _ = _request([], config=MultipartConfig(spool_threshold=4))
     request._receive = receive
@@ -198,7 +191,7 @@ async def test_a_lower_route_limit_checks_previously_streamed_multipart_bytes() 
         with pytest.raises(RequestBodyTooLarge):
             request._set_body_limit(5)
         with pytest.raises(RuntimeError, match="already been consumed"):
-            await request.body()
+            _ = await request.body()
     finally:
         await _close(request)
 

@@ -208,11 +208,11 @@ def _compile(compiler: TypeCompiler, tp: Any, where: Mapping[str, Any]) -> Node:
     try:
         return compiler.node(tp, STRING)
     except CompileError as exc:
-        _fail(
+        return _fail(
             where, exc.reason, exc.message, type=type_name(tp), **({"field": exc.field} if exc.field else {})
         )
     except Exception as exc:
-        _fail(where, "unsupported_type", str(exc), type=type_name(tp))
+        return _fail(where, "unsupported_type", str(exc), type=type_name(tp))
 
 
 def _keeps_blank(tp: Any) -> bool:
@@ -384,7 +384,7 @@ class FormBinding(ParamPlan):
             ENFORCE,
             loc=("form",),
             route=route,
-            field=ext.name,
+            field=fields[0].wire if scalar else ext.name,
             error_cls=ExtractorError,
             source=ext.source,
             name=ext.name,
@@ -394,8 +394,6 @@ class FormBinding(ParamPlan):
         self.known = frozenset(field.wire for field in fields)
         self.route_plan: RouteFormPlan | None = None
         self.forbid_extra = False
-        if scalar:
-            self.field = fields[0].wire
 
     async def extract(self, request: Any, ext: Any) -> Any:
         from ._runtime import read_form_data
