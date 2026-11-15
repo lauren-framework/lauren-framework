@@ -181,6 +181,7 @@ nav:
     - Custom Middleware: guides/custom-middleware.md
     - Interceptors: guides/interceptors.md
     - Propagate Metadata: guides/propagate-metadata.md
+    - Typed Metadata, State Keys & Composition: guides/typed-metadata-and-state.md
     - Custom Exception Handlers: guides/custom-exception-handlers.md
     - Debug Error Pages: guides/debugging.md
     - WebSockets: guides/websockets.md

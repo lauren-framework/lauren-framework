@@ -325,6 +325,15 @@ the instance method form above.
 class State
 ```
 
+Legacy name-based state extractor (``lauren.StateExtractor``).
+
+Reads ``request.state`` (then ``app_state``) under the *parameter name*.
+Prefer a :class:`~lauren.StateKey` — ``user: Annotated[AuthUser,
+CurrentUser]`` — whose missing value is a server error. A missing value
+here answers 422 with a ``DeprecationWarning`` unless
+``ValidationPolicy(missing_state="error")`` is set (the 2.0 default),
+which raises :class:`~lauren.MissingStateError` (500) instead.
+
 ### `FieldDescriptor`
 
 ```python

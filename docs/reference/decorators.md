@@ -42,6 +42,26 @@ All user-facing class and method decorators exported by the framework.
 
 ::: lauren.use_exception_handlers
 
+## Metadata, state keys & composition
+
+See the [Typed Metadata, State Keys & Composition guide](../guides/typed-metadata-and-state.md).
+
+::: lauren.set_metadata
+
+::: lauren.MetadataKey
+
+::: lauren.MetadataSetKey
+
+::: lauren.StateKey
+
+::: lauren.provides_state
+
+::: lauren.compose
+
+::: lauren.reject_bare_usage
+
+::: lauren.propagate_metadata
+
 ## Lifecycle
 
 ::: lauren.post_construct

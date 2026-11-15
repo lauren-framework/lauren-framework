@@ -89,8 +89,10 @@ from ._reader import (
     # Phase 3 — user metadata + encoder
     reflect_user_metadata,
     reflect_encoder,
+    reflect_composed,
 )
 from ._types import (
+    ReflectedComposition,
     ReflectedController,
     ReflectedError,
     ReflectedModule,
@@ -124,6 +126,7 @@ __all__ = [
     # User metadata + encoder
     "reflect_user_metadata",
     "reflect_encoder",
+    "reflect_composed",
     # App-level readers
     "describe_app",
     "AppManifest",
@@ -149,6 +152,7 @@ __all__ = [
     "ReflectedModule",
     "ReflectedWsGateway",
     "ReflectedError",
+    "ReflectedComposition",
     # Error catalog
     "error_catalog",
     # Composing utilities

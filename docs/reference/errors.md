@@ -121,7 +121,7 @@ best-effort, so they are collected rather than aborting shutdown.
 | `RequestTimeoutError` | `HTTPError` | 504 | `request_timeout` | <span id="request-timeout"></span>A server-side deadline was exceeded while handling the request (504). |
 | `UnauthorizedError` | `HTTPError` | 401 | `unauthorized` | <span id="unauthorized"></span>Authentication is missing or invalid; `challenge=` sets `WWW-Authenticate`. |
 | `ForbiddenError` | `HTTPError` | 403 | `forbidden` | <span id="forbidden"></span>The caller is not allowed — also what a guard returning `False` raises by default. |
-| `MissingStateError` | `HTTPError` | 500 | `missing_state` | <span id="missing-state"></span>`request.state.require(key, T)` found no value for `key`. |
+| `MissingStateError` | `HTTPError` | 500 | `missing_state` | <span id="missing-state"></span>A required `request.state` value is missing (`require(key, T)`, `state[key]`, a `StateKey` parameter). |
 | `StateTypeError` | `HTTPError` | 500 | `state_type_error` | <span id="state-type-error"></span>A `request.state` value has the wrong type for `get_typed` / `require`. |
 | `LifecycleError` | `LaurenError` | — | `lifecycle_error` | <span id="lifecycle-error"></span>Base class for errors around startup, shutdown and lifecycle hooks. |
 | `LifecycleViolationError` | `LifecycleError` | — | `lifecycle_violation` | <span id="lifecycle-violation"></span>A lifecycle operation was used in the wrong state (`startup()` twice, a mutator after compile). |

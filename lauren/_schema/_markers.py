@@ -196,6 +196,7 @@ def to_camel(name: str) -> str:
 
 _STDLIB_MODES = ("legacy", "warn", "enforce")
 _JSON_MODES = ("lax", "strict")
+_MISSING_STATE_MODES = ("warn", "error")
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +222,12 @@ class ValidationPolicy:
     default for unknown keys in stdlib models. ``include_input`` echoes the
     rejected ``input`` in issues (``None``: only when ``debug`` is on).
     ``max_issues`` caps the issues reported for one request.
+
+    ``missing_state`` picks what a missing legacy name-based ``State``
+    parameter (``lauren.StateExtractor``) answers: ``"warn"`` (the 1.x
+    default) keeps the deprecated 422 and emits a ``DeprecationWarning``;
+    ``"error"`` (the 2.0 default) raises ``MissingStateError`` (500) — the
+    server-side wiring bug it is, and what a ``StateKey`` parameter does.
     """
 
     stdlib_models: Literal["legacy", "warn", "enforce"] = "warn"
@@ -228,6 +235,7 @@ class ValidationPolicy:
     extra: Literal["ignore", "forbid"] = "ignore"
     include_input: bool | None = None
     max_issues: int = 50
+    missing_state: Literal["warn", "error"] = "warn"
 
     def __post_init__(self) -> None:
         problems: list[tuple[str, Any, str]] = []
@@ -241,6 +249,8 @@ class ValidationPolicy:
             problems.append(("include_input", self.include_input, "True, False or None"))
         if isinstance(self.max_issues, bool) or not isinstance(self.max_issues, int) or self.max_issues < 1:
             problems.append(("max_issues", self.max_issues, "a positive int"))
+        if self.missing_state not in _MISSING_STATE_MODES:
+            problems.append(("missing_state", self.missing_state, "'warn' or 'error'"))
         if problems:
             field, value, expected = problems[0]
             raise StartupError(

@@ -11,7 +11,8 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 | [building-lauren-apps](building-lauren-apps/) | Project layout, `LaurenFactory.create()`, root module, `StaticFilesModule`, mount system, app bootstrap |
 | [building-lauren-controllers](building-lauren-controllers/) | Route handlers, HTTP method decorators, typed extractors, pipes, serialization, `@use_encoder` |
 | [building-lauren-services](building-lauren-services/) | DI scopes (`SINGLETON`/`REQUEST`/`TRANSIENT`), custom providers (`Token`, `use_value`, `use_class`, `use_factory`, `use_existing`), lifecycle hooks |
-| [building-lauren-guards](building-lauren-guards/) | Guards (`can_activate`), interceptors (`CallHandler`), middleware (`dispatch`/`call_next`), `@exception_handler`, `@use_guards`/`@use_interceptors`/`@use_middlewares`/`@use_exception_handlers` |
+| [building-lauren-guards](building-lauren-guards/) | Guards (`can_activate`), interceptors (`CallHandler`), middleware (`dispatch`/`call_next`), `@exception_handler`, typed `MetadataKey` / `StateKey` policy, `compose`, `@provides_state`, `@use_guards` / `@use_interceptors` / `@use_middlewares` |
+| [rbac-engine](rbac-engine/) / [abac-evaluation](abac-evaluation/) | Guard policies using typed metadata (`MetadataKey` / `MetadataSetKey`), typed `StateKey` and reusable `compose` bundles |
 | [building-lauren-streaming](building-lauren-streaming/) | SSE (`EventStream`, `ServerSentEvent`), WebSocket gateways (`@ws_controller`), `StreamingResponse[T]`, Socket.IO adapter |
 | [building-lauren-background-tasks](building-lauren-background-tasks/) | `BackgroundTasks`, `TaskHandle`, fire-and-forget patterns |
 | [building-lauren-events](building-lauren-events/) | Typed domain events between modules: `@on_event` handlers, `EventBus` / `EventPublisher`, delivery modes, priorities, error policies, after-commit emission, `recording()` / `drain()` |
@@ -49,7 +50,7 @@ reference files (e.g. `extractors.md`, `custom-providers.md`).
 
 - [`AGENTS.md`](../AGENTS.md) — by-task lookup, common errors, definition of done
 - [`CLAUDE.md`](../CLAUDE.md) — golden rules, conventions, pattern selection guide
-- [`lauren/llms-full.txt`](../lauren/llms-full.txt) — complete 25-section API reference
+- [`lauren/llms-full.txt`](../lauren/llms-full.txt) — complete API reference
 
 ## Updating Docs After Code Changes
 

@@ -203,9 +203,42 @@ assert client.get("/reports/admin").header("www-authenticate") == 'Basic realm="
   frame, and a connect-time denial closes with `1008` and the error's `code`
   (e.g. `"unauthorized"`) as the close reason.
 
-## Parametric guards with `@set_metadata`
+## Parametric guards with typed metadata keys
 
-Instead of writing one guard per role / scope / permission, write **one** guard and parametrize it via `@set_metadata`:
+Instead of writing one guard per role / scope / permission, write **one** guard
+and parametrize it with a typed metadata key. Collection keys accumulate across
+the controller and the route, and reads are typed:
+
+```python
+from lauren import MetadataSetKey
+
+Roles = MetadataSetKey[str]("app.roles")
+
+@injectable(scope=Scope.SINGLETON)
+class RolesGuard:
+    async def can_activate(self, ctx: ExecutionContext) -> bool:
+        required = ctx.get_metadata(Roles)                  # tuple[str, ...]
+        user = ctx.request.state.get(CurrentUser)           # a StateKey set by the auth guard
+        return user is not None and set(required) <= set(user.roles)
+
+@Roles("staff")
+@use_guards(RolesGuard)
+@controller("/admin")
+class AdminController:
+    @get("/purge")
+    @Roles("admin")                                        # requires ("staff", "admin")
+    async def purge(self): ...
+```
+
+Bundle the guard and the key into one decorator with `compose` —
+`def admin(*roles): return compose(use_guards(RolesGuard), Roles(*roles), name="admin")`.
+The [Typed Metadata, State Keys & Composition](typed-metadata-and-state.md)
+guide covers merge policies, `StateKey` and startup provenance.
+
+### With string keys
+
+`@set_metadata("key", value)` is the untyped form; a route's value replaces the
+controller's:
 
 ```python
 from lauren import set_metadata

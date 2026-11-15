@@ -198,3 +198,28 @@ def test_manifest_reports_field_injection_and_alias_dependencies() -> None:
     alias_provider = next(p for p in manifest.providers if p.token == "Token(repo-alias)")
     assert alias_provider.deps[0].token.endswith("_Repository")
     assert manifest.globals.providers == ("'count'",)
+
+
+def test_manifest_includes_only_public_typed_values_and_redacts_secrets() -> None:
+    from lauren import MetadataKey
+
+    public = MetadataKey[dict]("visibility.public", default={}, public=True)
+    private = MetadataKey[str]("visibility.private", default="hidden")
+
+    @controller("/visibility")
+    @public({"enabled": True, "secret": Secret("do-not-publish")})
+    class Visible:
+        @get("/")
+        @private("private-value")
+        async def show(self) -> dict:
+            return {}
+
+    @module(controllers=[Visible])
+    class Root:
+        pass
+
+    app = LaurenFactory.create(Root)
+    route = describe_app(app).routes[0]
+    assert route.metadata_values == {"visibility.public": {"enabled": True, "secret": "***"}}
+    assert "private-value" not in describe_app(app).to_json()
+    assert "do-not-publish" not in describe_app(app, include_metadata_values=True).to_json()

@@ -70,6 +70,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     Authentication and authorization classes, route metadata, composition with class-level guards.
 
+-   :material-key: [__Typed Metadata, State Keys & Composition__](typed-metadata-and-state.md)
+
+    ---
+    Type-safe route policy and request-state handoff, startup provenance checks and reusable decorator bundles.
+
 -   :material-layers-triple: [__Custom Middleware__](custom-middleware.md)
 
     ---

@@ -5,13 +5,12 @@ decorator-attached metadata in a Lauren application, plus the context types and
 composing utilities that power native `@use_guards` / `@use_interceptors` support
 on `@ws_controller` classes.
 
-The main readers and result types are re-exported from the top-level `lauren`
-namespace. Nested manifest records live in `lauren.reflect`:
+The main readers and result types are re-exported from `lauren`; nested
+manifest records and composition provenance live in `lauren.reflect`:
 
 ```python
 from lauren import reflect_routes, get_all_routes, ReflectedRoute, propagate_metadata
-# or
-import lauren.reflect as reflect
+from lauren.reflect import reflect_composed, ReflectedComposition
 ```
 
 ---
@@ -82,6 +81,15 @@ Return rich result types or `None` when the class is not the expected type.
 ::: lauren.reflect_user_metadata
 
 ::: lauren.reflect_encoder
+
+### Decorator composition provenance
+
+`reflect_composed(obj)` returns `tuple[ReflectedComposition, ...]` for the
+`compose(..., name=...)` bundles applied to a function or class (own `__dict__`
+for classes). Each record names the bundle and the decorators inside it, in
+written order. See [Typed Metadata, State Keys & Composition](../guides/typed-metadata-and-state.md#composing-decorators).
+
+::: lauren.reflect.reflect_composed
 
 ---
 
@@ -157,6 +165,10 @@ For CI and command-line use, see the [tooling guide](../guides/tooling.md).
 ### `ReflectedError`
 
 ::: lauren.ReflectedError
+
+### `ReflectedComposition`
+
+::: lauren.reflect.ReflectedComposition
 
 ---
 

@@ -31,14 +31,15 @@ from __future__ import annotations
 import inspect as _inspect
 import json as _jsonlib
 import logging as _stdlib_logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Awaitable, Callable, Iterable, get_args, get_origin
+from typing import Annotated, Any, Awaitable, Callable, Iterable, TypeVar, get_args, get_origin, overload
 
 from ._di import DIContainer, INJECTABLE_META, InjectableMeta
 from ._di._scope import finalize_scope
+from ._metadata import _UNSET, MetadataKey, MetadataSetKey, merge_metadata_levels, own_metadata, read_metadata
 from ._routing import Router, RouteEntry
 from .decorators import (
-    SET_METADATA,
     USE_ENCODER,
     USE_EXCEPTION_HANDLERS,
     USE_GUARDS,
@@ -63,6 +64,7 @@ from .extractors import (
     FieldDescriptor,
     extract_parameter,
     parse_extractor_hint,
+    prepare_state_extraction,
 )
 from .streaming import _build_adapter
 from .types import Headers, Scope as DScope
@@ -94,6 +96,9 @@ from ._validation import is_pydantic_model as _is_pydantic_model  # noqa: F401
 # ---------------------------------------------------------------------------
 
 
+_V = TypeVar("_V")
+
+
 @dataclass(frozen=True, slots=True)
 class WsUpgradeRequest:
     """Read-only view of the HTTP upgrade request that opened a WS connection.
@@ -106,7 +111,9 @@ class WsUpgradeRequest:
             return ctx.request.headers.get("x-api-key") == "valid"
 
     WS upgrades have no body, so ``body()``, ``text()``, ``json()``, and
-    ``stream()`` are intentionally absent.
+    ``stream()`` are intentionally absent. ``state`` is the connection's
+    :class:`~lauren.types.State` (``ws.state``), so a guard writing
+    ``ctx.request.state[CurrentUser] = user`` works on both transports.
     """
 
     headers: Any  # lauren.types.Headers — case-insensitive
@@ -115,6 +122,8 @@ class WsUpgradeRequest:
     query_string: str = ""
     client: Any | None = None  # lauren.types.ClientInfo | None
     method: str = "GET"  # WS upgrades are always GET requests
+    state: Any = None  # lauren.types.State — the connection's ``ws.state``
+    app_state: Any = None  # lauren.types.AppState — the application state
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,11 +159,18 @@ class WsConnectionContext:
     route_template: str | None = None
     """Matched path template, e.g. ``"/chat/{room_id}"``."""
 
-    metadata: dict[str, Any] = field(default_factory=dict)
-    """Key→value pairs from ``@set_metadata`` decorators on the gateway."""
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    """The gateway's ``@set_metadata`` / typed-key values (read-only, compiled at startup)."""
 
-    def get_metadata(self, key: str, default: Any = None) -> Any:
-        return self.metadata.get(key, default)
+    @overload
+    def get_metadata(self, key: MetadataSetKey[_V]) -> tuple[_V, ...]: ...
+    @overload
+    def get_metadata(self, key: MetadataKey[_V]) -> _V: ...
+    @overload
+    def get_metadata(self, key: str, default: Any = None) -> Any: ...
+    def get_metadata(self, key: Any, default: Any = _UNSET) -> Any:
+        """Read metadata: a typed key returns its typed value (or its default); a string reads raw."""
+        return read_metadata(self.metadata, key, default)
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,9 +239,10 @@ class CompiledMessage:
     #: Interceptor classes from ``@use_interceptors`` on the handler
     #: method, outermost first. They wrap only this handler's invocation.
     interceptors: tuple[type, ...] = ()
-    #: Gateway ``@set_metadata`` merged with the method's own (method
-    #: wins) — what ``WsMessageContext.get_metadata`` reads.
-    metadata: dict[str, Any] = field(default_factory=dict)
+    #: Gateway metadata merged with the method's own at startup (typed keys
+    #: apply their merge policy; string keys: the method wins) — what
+    #: ``WsMessageContext.get_metadata`` reads.
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -267,8 +284,8 @@ class CompiledGateway:
     middlewares: tuple[type, ...] = ()
     #: Free-form metadata from ``@set_metadata`` on the gateway class.
     #: Passed to :class:`WsConnectionContext` so guards can read it via
-    #: ``ctx.get_metadata(key, default)``.
-    metadata: dict[str, Any] = field(default_factory=dict)
+    #: ``ctx.get_metadata(key, default)``. Read-only, compiled at startup.
+    metadata: Mapping[str, Any] = field(default_factory=dict)
     #: Guard classes from ``@use_guards`` on the ``@on_connect`` method.
     #: Run after the global and gateway-level guards, before accepting.
     on_connect_guards: tuple[type, ...] = ()
@@ -317,7 +334,6 @@ def compile_gateways(
         reflect_guards,
         reflect_interceptors,
         reflect_middlewares,
-        reflect_user_metadata,
     )
 
     gateways: dict[str, CompiledGateway] = {}
@@ -328,7 +344,9 @@ def compile_gateways(
         _reject_unsupported_hook_policies(cls, hooks)
         class_guards = reflect_guards(cls)
         class_interceptors = reflect_interceptors(cls)
-        class_metadata = reflect_user_metadata(cls)
+        class_values, class_keys = own_metadata(cls)
+        class_level = (f"gateway {cls.__qualname__}", class_values, class_keys)
+        class_metadata = merge_metadata_levels([class_level])
         connect_fn = hooks["on_connect"]
         connect_guards = tuple(getattr(connect_fn, USE_GUARDS, ()))
         connect_interceptors = tuple(getattr(connect_fn, USE_INTERCEPTORS, ()))
@@ -429,7 +447,9 @@ def compile_gateways(
                 payload_param=payload_param,
                 guards=tuple(getattr(fn, USE_GUARDS, ())),
                 interceptors=tuple(getattr(fn, USE_INTERCEPTORS, ())),
-                metadata={**class_metadata, **dict(getattr(fn, SET_METADATA, {}))},
+                metadata=merge_metadata_levels(
+                    [class_level, (f"handler {cls.__qualname__}.{fn.__name__}", *own_metadata(fn))]
+                ),
             )
             all_metas.append(meta)
             logger.log(
@@ -813,6 +833,8 @@ def _compile_ws_signature(
             )
             if source in ("path", "query", "header", "cookie"):
                 _attach_ws_plan(marker_ext, ann, validation, controller_cls, fn, route)
+            elif source in ("state_key", "state"):
+                prepare_state_extraction(marker_ext, ann, policy=getattr(validation, "policy", None))
             extractions.append(marker_ext)
             continue
 
@@ -1076,7 +1098,7 @@ async def handle_websocket(
             handler_class=gateway.controller_cls,
             handler_func=compiled.handler_fn,
             route_template=gateway.path_template,
-            metadata=dict(compiled.metadata),
+            metadata=compiled.metadata,
             event=event,
             payload=payload,
         )
@@ -1147,11 +1169,13 @@ async def handle_websocket(
             path_params=dict(ws.path_params),
             query_string=scope.get("query_string", b"").decode("latin-1"),
             client=scope.get("client"),
+            state=ws.state,
+            app_state=ws.app_state,
         ),
         connection=ws,
         handler_class=gateway.controller_cls,
         route_template=gateway.path_template,
-        metadata=dict(gateway.metadata),
+        metadata=gateway.metadata,
     )
 
     # Resolve the framework_values map for DI lookups within guards/interceptors.
