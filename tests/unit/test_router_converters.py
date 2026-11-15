@@ -137,6 +137,8 @@ def test_to_url_formats_a_matching_segment(spec: str, value: object, text: str) 
         ("int(max=3)", 4),
         ("float", float("inf")),
         ("float", "1"),
+        ("float(min=0, max=1)", -0.5),
+        ("float(min=0, max=1)", 1.5),
         ("slug", "Not A Slug"),
         ("re([a-z]+)", "123"),
     ],
@@ -580,3 +582,22 @@ def test_float_converter_rejects_non_finite_literal_and_bounds() -> None:
     with pytest.raises(TemplateError) as exc_info:
         build_converter("float(max=1e309)", None)
     assert exc_info.value.reason == "bad_converter_args"
+
+
+@pytest.mark.parametrize("value", ["with space", "with.dot", "-leading"])
+def test_host_build_rejects_invalid_literal_label_values(value: str) -> None:
+    pattern = parse_host("{tenant}.example.com")
+
+    with pytest.raises(ValueError, match="host label"):
+        pattern.build({"tenant": value})
+
+
+@pytest.mark.parametrize(
+    "text,key,typed",
+    [("items", "items", False), ("{id}", "str", False), ("{id:int}", "int", True), ("{*tail}", "*", False)],
+)
+def test_segment_identity_distinguishes_static_typed_and_wildcard(text: str, key: str, typed: bool) -> None:
+    segment = parse_segment(text)
+
+    assert segment.node_key == key
+    assert segment.typed is typed

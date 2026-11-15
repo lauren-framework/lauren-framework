@@ -491,14 +491,14 @@ class TestInstanceMethods:
         import threading
 
         before = Router.HTTP_METHODS
-        errors: list[BaseException] = []
+        errors: list[Exception] = []
 
         def build() -> None:
             try:
                 for i in range(200):
                     Router(methods={"WEBSOCKET"}).add_route("WEBSOCKET", f"/ws/{i}", _noop)
                     assert Router.HTTP_METHODS is before
-            except BaseException as exc:  # pragma: no cover - surfaced below
+            except Exception as exc:  # pragma: no cover - surfaced below
                 errors.append(exc)
 
         threads = [threading.Thread(target=build) for _ in range(2)]

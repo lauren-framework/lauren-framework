@@ -723,9 +723,12 @@ def test_lauren_route_helpers_and_routing_kwarg() -> None:
         return {"method": request.method}
 
     with TestClient(app) as client:
-        assert client.put("/multi").json() == {"method": "PUT"}
-        assert client.options("/multi").header("allow") == "OPTIONS, POST, PUT"
-        assert client.delete("/anything").json() == {"method": "DELETE"}
+        updated = client.put("/multi")
+        allowed = client.options("/multi")
+        deleted = client.delete("/anything")
+        assert updated.json() == {"method": "PUT"}
+        assert allowed.header("allow") == "OPTIONS, POST, PUT"
+        assert deleted.json() == {"method": "DELETE"}
 
 
 # ---------------------------------------------------------------------------
