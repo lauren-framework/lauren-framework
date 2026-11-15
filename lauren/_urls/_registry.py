@@ -28,7 +28,7 @@ from typing import Any
 
 from ..exceptions import RouterConflictError
 from ._template import UrlTemplate
-from ._url import HTTP_TO_WS, URL, compose_origin, join_root, parse_authority
+from ._url import DEFAULT_PORTS, HTTP_TO_WS, URL, compose_origin, join_root, parse_authority
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +46,24 @@ class NamedRoute:
     handler: Any
     #: The controller / gateway class.
     owner: type
+    host: str | None = None
+    host_pattern: Any = None
+
+    def expand(self, params: Mapping[str, Any]) -> str:
+        """Expand path parameters while permitting separately bound host labels."""
+        host_names = self.host_pattern.param_names if self.host_pattern is not None else ()
+        return self.template.expand(
+            {k: v for k, v in params.items() if k not in host_names}, label=self.label
+        )
+
+    def host_for(self, params: Mapping[str, Any]) -> str | None:
+        """Format a routed host, reporting missing labels as parameter errors."""
+        if self.host_pattern is None:
+            return None
+        try:
+            return self.host_pattern.build(params)
+        except KeyError as exc:
+            raise ValueError(f"route {self.label!r}: {exc.args[0]}") from None
 
     @property
     def label(self) -> str:
@@ -65,6 +83,22 @@ class RouteSpec:
     local_name: str | None
     #: Derived name candidate, or ``None`` (multi-route handler).
     derived: str | None
+    segments: tuple[Any, ...] | None = None
+    host: str | None = None
+    host_pattern: Any = None
+
+
+def _target_origin(entry: NamedRoute, params: Mapping[str, Any], origin: str) -> str:
+    """Use a route's compiled host, retaining the base scheme and public port."""
+    host = entry.host_for(params)
+    if host is None:
+        return origin
+    if not origin:
+        raise RuntimeError("absolute host-routed URLs need public_base_url= on LaurenFactory.create")
+    scheme, _, authority = origin.partition("://")
+    parsed = parse_authority(authority)
+    assert parsed is not None
+    return compose_origin(scheme, host, parsed[1] or DEFAULT_PORTS[scheme])
 
 
 def _describe(spec: RouteSpec | NamedRoute) -> str:
@@ -132,9 +166,11 @@ class _Namespace:
                 local_name=spec.local_name,
                 method=spec.method,
                 path_template=spec.path_template,
-                template=UrlTemplate(spec.path_template),
+                template=UrlTemplate(spec.path_template, segments=spec.segments),
                 handler=spec.handler,
                 owner=spec.owner,
+                host=spec.host,
+                host_pattern=spec.host_pattern,
             )
             for spec in specs
         )
@@ -276,13 +312,26 @@ class UrlBuilder:
 
     # -- hooks used by Request / WebSocket accessors and LaurenApp ----------------
 
+    def _http_url(
+        self, target: Any, route: str | None, params: Mapping[str, Any], *, origin: str, root: str
+    ) -> URL:
+        entry = self._routes.http_route(target, route)
+        path = entry.expand(params)
+        return URL(_target_origin(entry, params, origin) + join_root(root, path))
+
+    def _ws_url(self, target: Any, params: Mapping[str, Any], *, origin: str, root: str) -> URL:
+        entry = self._routes.ws_route(target)
+        path = entry.expand(params)
+        scheme, _, authority = _target_origin(entry, params, origin).partition("://")
+        return URL(f"{HTTP_TO_WS.get(scheme, scheme)}://{authority}{join_root(root, path)}")
+
     def _route_path(self, target: Any, route: str | None, params: Mapping[str, Any]) -> str:
         entry = self._routes.http_route(target, route)
-        return entry.template.expand(params, label=entry.label)
+        return entry.expand(params)
 
     def _gateway_path(self, target: Any, params: Mapping[str, Any]) -> str:
         entry = self._routes.ws_route(target)
-        return entry.template.expand(params, label=entry.label)
+        return entry.expand(params)
 
     def _verify(self, request: Any) -> str | None:
         signer = self._signer
@@ -296,7 +345,10 @@ class UrlBuilder:
         elif isinstance(query, bytes):
             query = query.decode("latin-1")
         origin = request_origin(request) if signer.bind_host else ""
-        return signer.verify(method=request.method, origin=origin, path=request.path, query=query)  # type: ignore[no-any-return]
+        path = getattr(request, "_lauren_raw_path", None) if signer.raw_path else None
+        if path is None:
+            path = request.path
+        return signer.verify(method=request.method, origin=origin, path=path, query=query)  # type: ignore[no-any-return]
 
     # -- public API ----------------------------------------------------------------
 
@@ -315,15 +367,18 @@ class UrlBuilder:
         return URL(join_root(self._root_path, self._route_path(target, route, params)))
 
     def url_for(self, target: Any, /, *, route: str | None = None, **params: Any) -> URL:
-        """The absolute URL of a route on ``public_base_url`` (``RuntimeError`` when unset)."""
-        return URL(self._require_origin("url_for") + self.path_for(target, route=route, **params))
+        """The absolute URL on the configured origin, or the target's declared host.
+
+        Require ``public_base_url`` for its scheme and public port; a host
+        pattern uses the supplied host labels instead of that origin's host.
+        """
+        return self._http_url(
+            target, route, params, origin=self._require_origin("url_for"), root=self._root_path
+        )
 
     def ws_url_for(self, target: Any, /, **params: Any) -> URL:
-        """The absolute ``ws://`` / ``wss://`` URL of a gateway on ``public_base_url``."""
-        origin = self._require_origin("ws_url_for")
-        scheme, _, rest = origin.partition("://")
-        path = join_root(self._root_path, self._gateway_path(target, params))
-        return URL(f"{HTTP_TO_WS.get(scheme, scheme)}://{rest}{path}")
+        """The absolute ``ws://`` / ``wss://`` URL, using a routed gateway's host."""
+        return self._ws_url(target, params, origin=self._require_origin("ws_url_for"), root=self._root_path)
 
     def signed_url_for(
         self,
@@ -344,8 +399,15 @@ class UrlBuilder:
         ``url_signing=`` is not configured.
         """
         entry = self._routes.http_route(target, route)
-        path = entry.template.expand(params, label=entry.label)
-        return self._signed(entry.method, path, query, expires_in, ws=False)
+        path = entry.expand(params)
+        return self._signed(
+            entry.method,
+            path,
+            query,
+            expires_in,
+            ws=False,
+            origin=_target_origin(entry, params, self._origin),
+        )
 
     def signed_ws_url_for(
         self, target: Any, /, *, expires_in: Any = None, query: Any = None, **params: Any
@@ -353,10 +415,15 @@ class UrlBuilder:
         """A signed ``ws://`` / ``wss://`` link to a gateway (name or class); needs ``public_base_url``."""
         self._require_origin("signed_ws_url_for")
         entry = self._routes.ws_route(target)
-        path = entry.template.expand(params, label=entry.label)
-        return self._signed("GET", path, query, expires_in, ws=True)
+        path = entry.expand(params)
+        return self._signed(
+            "GET", path, query, expires_in, ws=True, origin=_target_origin(entry, params, self._origin)
+        )
 
-    def _signed(self, method: str, path: str, query: Any, expires_in: Any, *, ws: bool) -> URL:
+    def _signed(
+        self, method: str, path: str, query: Any, expires_in: Any, *, ws: bool, origin: str | None = None
+    ) -> URL:
+        origin = self._origin if origin is None else origin
         signer = self._signer
         if signer is None:
             raise RuntimeError(
@@ -366,15 +433,19 @@ class UrlBuilder:
         if query is not None:
             items.extend((str(k), v) for k, v in (query.items() if isinstance(query, Mapping) else query))
         signed_query = signer.sign(
-            method=method, origin=self._origin, path=path, query=items, expires_in=expires_in
+            method="GET" if method == "*" else method,
+            origin=origin,
+            path=path,
+            query=items,
+            expires_in=expires_in,
         )
         full = f"{join_root(self._root_path, path)}?{signed_query}"
-        if not self._origin:
+        if not origin:
             return URL(full)
         if ws:
-            scheme, _, rest = self._origin.partition("://")
+            scheme, _, rest = origin.partition("://")
             return URL(f"{HTTP_TO_WS.get(scheme, scheme)}://{rest}{full}")
-        return URL(self._origin + full)
+        return URL(origin + full)
 
     def _require_origin(self, method: str) -> str:
         if not self._origin:

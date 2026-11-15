@@ -96,10 +96,12 @@ offer the same `url_for` / `url_path_for` / `ws_url_for` / `base_url`.
 checks them at import time and type checkers flag a rename. Names are for
 templates, configuration and cross-service contracts.
 
-**Parameters** are keyword arguments, rendered with `str()` (booleans as
-`true` / `false`, enums by value) and percent-encoded **per segment**:
-`name="a/b c"` becomes `a%2Fb%20c`, `.` and `..` are escaped so they are never
-dot-segments. A wildcard (`{*path}`) keeps its `/` separators.
+**Parameters** are keyword arguments. Untyped values use `str()` (booleans as
+`true` / `false`, enums by value); typed routes use the router's compiled
+converter formatters and bounds. Pass the handler's typed values to typed
+routes. Values are percent-encoded **per segment**:
+`name="a/b c"` becomes `a%2Fb%20c`; `.` and `..` values are percent-encoded
+rather than emitted literally. A wildcard (`{*path}`) keeps its `/` separators.
 
 **Mistakes are programming errors**, raised as built-in exceptions that
 surface as a logged 500 — never a silently wrong URL:
@@ -166,6 +168,23 @@ it has no path, `root_path=` is used). `url_for` / `ws_url_for` without it
 raise `RuntimeError` — a request's `Host` header is never consulted here.
 Pagination `Link` headers use the same origin when
 `PaginationConfig(base_url=...)` is not set.
+
+### Converters, hosts and strict paths
+
+Generated paths use the same compiled segments as dispatch, including custom
+converter `to_url` methods and strict trailing slashes. Invalid converter values
+raise `ValueError` instead of generating a path the converter would reject.
+
+A host-routed target overrides the base host for absolute URLs, retaining the
+base scheme and public port. Supply dynamic host labels as keyword parameters,
+for example `urls.ws_url_for("tenant.chat", tenant="acme", room="lobby")`.
+Relative path helpers only require path parameters; absolute helpers also
+require the route's host labels. App manifests and reflection expose full
+compiled route names, with host and path kept separate.
+
+Trusted forwarding applies consistently to both routing and URL accessors for
+HTTP and WebSocket requests. Untrusted forwarding headers never select a host
+route.
 
 ## The request URL model
 
@@ -348,14 +367,18 @@ link is absolute.
   verify**. Rotate by prepending a new key and dropping the oldest after
   `default_ttl`. Keep it separate from the session secret.
 - `bind_method` — the method is signed too (a link for `GET` does not
-  authorise `DELETE`).
+  authorise `DELETE`). Automatic HEAD shares GET's binding. A signed URL for
+  an `any_method()` route is a GET link.
 - `bind_host` — scheme and host are signed too (needs `public_base_url`).
 - `clock` — a callable returning unix time; tests pass a fake one to expire
   links without sleeping.
 
 The signature covers the **app-relative** path (no root path or mount
 prefix), so a link stays valid when the app is served under several
-prefixes, and the query sorted by key. It uses the framework's shared HMAC
+prefixes, and the query sorted by key. Duplicate query values retain their
+order, matching query extraction semantics. Raw-path routing preserves encoded
+segment boundaries in signatures, for HTTP and WebSocket paths. It uses the
+framework's shared HMAC
 signer (`"url"` namespace, constant-time comparison). `ValidSignature`
 answers a missing, tampered or expired link with `ForbiddenError` (403,
 `detail["reason"]` `signature_missing` / `signature_invalid` /

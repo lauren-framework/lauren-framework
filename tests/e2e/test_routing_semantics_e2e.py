@@ -118,6 +118,7 @@ def test_crawl_outcomes(tmp_path: pathlib.Path) -> None:
         assert client.get("/catalog/NOT_A_SLUG").text == "<p>Nothing here.</p>"
         assert client.get("/storefront", headers={"host": "acme.shop.test"}).json() == {"tenant": "acme"}
         assert client.get("/storefront", headers={"host": "shop.test"}).status_code == 404
-        assert client.delete("/legacy/x").header("x-method") == "DELETE"
+        deleted = client.delete("/legacy/x")
+        assert deleted.header("x-method") == "DELETE"
         assert client.options("/catalog/42").header("allow") == "GET, HEAD, OPTIONS"
         assert client.get("/static/").text == "<h1>shop</h1>"

@@ -280,20 +280,24 @@ class UrlAccess:
         return URL(join_root(root, builder._route_path(target, route, params)))
 
     def url_for(self, target: Any, /, *, route: str | None = None, **params: Any) -> URL:
-        """The absolute URL of a route on this request's scheme and host."""
+        """The URL on the request's origin, overridden by a declared target host."""
         scheme, host, port, root, builder = self._url_parts()
         if builder is None:
             raise _unbound()
-        path = builder._route_path(target, route, params)
-        return URL(compose_origin(WS_TO_HTTP.get(scheme, scheme), host, port) + join_root(root, path))
+        return builder._http_url(
+            target,
+            route,
+            params,
+            origin=compose_origin(WS_TO_HTTP.get(scheme, scheme), host, port),
+            root=root,
+        )
 
     def ws_url_for(self, target: Any, /, **params: Any) -> URL:
         """The absolute ``ws://`` / ``wss://`` URL of a WebSocket gateway (name or class)."""
         scheme, host, port, root, builder = self._url_parts()
         if builder is None:
             raise _unbound()
-        path = builder._gateway_path(target, params)
-        return URL(compose_origin(HTTP_TO_WS.get(scheme, scheme), host, port) + join_root(root, path))
+        return builder._ws_url(target, params, origin=compose_origin(scheme, host, port), root=root)
 
 
 __all__ = [

@@ -57,7 +57,10 @@ def _route_names(app: Any, kind: str) -> dict[tuple[str, str], str | None]:
     table = getattr(getattr(app, "_urls", None), "_table", None)
     if table is None:
         return {}
-    return {(r.method, r.path_template): r.name for r in getattr(table, kind).routes}
+    return {
+        (r.method, (getattr(r, "host", None) or "") + r.path_template): r.name
+        for r in getattr(table, kind).routes
+    }
 
 
 def _reflected(method: str, path_template: str, ch: Any, name: str | None = None) -> ReflectedRoute:
@@ -168,4 +171,6 @@ def get_route_metadata(app: Any, method: str, path: str, *, host: str | None = N
     ch = handlers.get((method.upper(), (host or "") + path))
     if ch is None:
         return None
-    return _reflected(method.upper(), path, ch, _route_names(app, "http").get((method.upper(), path)))
+    return _reflected(
+        method.upper(), path, ch, _route_names(app, "http").get((method.upper(), (host or "") + path))
+    )

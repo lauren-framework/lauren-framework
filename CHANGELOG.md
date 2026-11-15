@@ -9,6 +9,19 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- Named HTTP and WebSocket routes with controller/module namespaces, immutable
+  `URL` values, request/connection URL helpers and an injectable `UrlBuilder`.
+  URL expansion uses compiled path converters, strict slashes and routed host
+  patterns; manifests expose the full compiled names.
+- `ProxyConfig` resolves public clients, schemes, hosts and prefixes only from
+  trusted peers, consistently for HTTP, WebSocket and mounted applications.
+  `public_base_url` supplies canonical out-of-request and pagination origins.
+- Expiring, rotatable signed links through `UrlSigningConfig` and
+  `ValidSignature`, reusing the shared signer. Signatures preserve routing and
+  repeated-query semantics; missing signing configuration fails at startup.
+- Generated Markdown references for routing, URLs, codecs and compiled app
+  manifests, ready for the website's documentation sync.
+
 - `RoutingConfig` groups automatic HEAD, opt-in OPTIONS, trailing-slash and
   slash-merging policies, raw-path matching, converter inference and custom
   typed path converters. `PathConverter` also formats values back into paths.

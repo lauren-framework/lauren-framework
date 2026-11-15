@@ -303,6 +303,7 @@ class CompiledHandler:
     metadata_key_defs: tuple[Any, ...] = ()
     #: Canonical host pattern of this compiled route (separate from its path).
     host: str | None = None
+    route_name: str | None = None
     #: ``Content-Type`` check (:class:`lauren._codecs._plan.ContentGate`), or
     #: ``None`` when the route does not check it.
     content_gate: Any = None
@@ -2394,7 +2395,7 @@ class LaurenApp:
                             entry, params, host_params = self._router.find_host(
                                 req.method,
                                 self._routing_path(req),
-                                req.headers.get("host") or req.headers.get(":authority"),
+                                req.host,
                             )
                             if host_params:
                                 req._host_params = host_params
@@ -3051,6 +3052,11 @@ class LaurenApp:
             await send({"type": "websocket.close", "code": 1008})
             return
         from .._ws_runtime import WsConnectionInfo, handle_websocket
+
+        # Routing and URL accessors must use the same trusted public host.
+        # The marker on the lowered scope prevents double prefix/client updates.
+        if self._proxy is not None and not scope.get("_lauren_forwarding_resolved"):
+            scope = self._forwarded_scope(scope, self._proxy)
 
         # Apply the same root_path stripping as HTTP requests.
         effective_path, public_root = self._split_root(scope)
@@ -3858,6 +3864,7 @@ class LaurenFactory:
             url_signing=url_signing,
             root_path=root_path,
             logger=_log,
+            raw_path=routing_config.match_raw_path,
         )
         pagination_config = _resolve_pagination(pagination, public_origin=url_setup.builder._origin or None)
         validation_runtime = ValidationRuntime(
@@ -4484,13 +4491,22 @@ class LaurenFactory:
             guard_uses.extend((g, f"WebSocket gateway {gw.path_template}") for g in gateway_guards)
         _check_signature_guards(guard_uses, url_setup)
         # Route names: every HTTP route and gateway, uniqueness checked here.
-        route_table = _build_route_table(compiled_handlers, ws_gateways, url_setup.builder, logger=_log)
-        http_names = {(r.method, r.path_template): r.name for r in route_table.http.routes}
-        ws_names = {r.path_template: r.name for r in route_table.ws.routes}
+        route_table = _build_route_table(
+            compiled_handlers,
+            ws_gateways,
+            url_setup.builder,
+            logger=_log,
+            http_entries=router.routes(),
+            ws_entries=ws_router.routes(),
+        )
+        http_names = {(r.method, (r.host or "") + r.path_template): r.name for r in route_table.http.routes}
+        ws_names = {(r.host or "") + r.path_template: r.name for r in route_table.ws.routes}
         for entry in router.routes():
-            entry.name = http_names.get((entry.method, entry.path_template))
+            entry.name = http_names.get(entry.handler_key)
+            compiled_handlers[entry.handler_key].route_name = entry.name
         for entry in ws_router.routes():
-            entry.name = ws_names.get(entry.path_template)
+            entry.name = ws_names.get(entry.handler_key[1])
+            ws_gateways[entry.handler_key[1]].route_name = entry.name
 
         # State provenance: a parameter injecting a ``StateKey(...,
         # require_provider=True)`` needs a guard / middleware / interceptor in

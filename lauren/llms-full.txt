@@ -2518,9 +2518,15 @@ link = urls.signed_url_for("downloads.file", id=7, expires_in=600)   # urls: Url
   signer, namespace `"url"`); `query=` adds signed parameters. Absolute with
   `public_base_url`, else a root-path-aware path. `RuntimeError` without
   `url_signing=`.
-- Canonical message: method (with `bind_method`), origin (with `bind_host`),
-  the decoded **app-relative** path (valid under any mount / prefix), the
-  query sorted by key without `exp`/`sig`, and `exp`.
+- Canonical message: method (with `bind_method`; HEAD shares GET), origin
+  (with `bind_host`), the **app-relative** path (valid under any mount / prefix),
+  query sorted by key without `exp`/`sig`, and `exp`. Duplicate query values
+  keep their order; raw-path routing preserves encoded segment boundaries.
+  Signed `any_method()` links bind GET. Absolute URLs use a routed target's
+  host (including supplied host labels), not another route's request host.
+- URL templates reuse compiled path converters and strict trailing slashes.
+  A converter value that cannot match its route raises `ValueError`. Host
+  and path remain separate in manifests; names are the full compiled names.
 - `ValidSignature` (a singleton guard; HTTP and WebSocket): `ForbiddenError`
   403 with `detail["reason"]` `"signature_missing"` / `"signature_invalid"` /
   `"signature_expired"`; a WebSocket connection is closed with code 4403.

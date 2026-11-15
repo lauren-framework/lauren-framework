@@ -12,8 +12,9 @@ come from there. The canonical message is::
 (``https://host[:port]``) is empty unless ``bind_host=True``. The path is the
 app-relative path (without ``root_path`` / mount prefix), so a link stays
 valid when the app is served under several prefixes. Path and query are
-canonicalised from their decoded form, so equivalent encodings verify alike
-and no other path can reuse a signature.
+canonicalised without changing dispatch semantics. Raw-path routing keeps
+encoded segment boundaries distinct; duplicate query values retain their
+original order. Equivalent encodings of the same value still verify alike.
 """
 
 from __future__ import annotations
@@ -93,15 +94,28 @@ def _seconds(value: Any) -> float | None:
 
 
 def _canonical_query(pairs: Iterable[tuple[str, str]]) -> str:
-    return "&".join(f"{quote(key, safe='')}={quote(value, safe='')}" for key, value in sorted(pairs))
+    # Query extractors may use the first duplicate value: preserve that order.
+    return "&".join(
+        f"{quote(key, safe='')}={quote(value, safe='')}"
+        for key, value in sorted(pairs, key=lambda item: item[0])
+    )
 
 
 class UrlSigner:
     """A validated :class:`UrlSigningConfig`: signs query strings and verifies requests."""
 
-    __slots__ = ("_signer", "default_ttl", "bind_method", "bind_host", "exp_param", "sig_param", "_clock")
+    __slots__ = (
+        "_signer",
+        "default_ttl",
+        "bind_method",
+        "bind_host",
+        "exp_param",
+        "sig_param",
+        "_clock",
+        "raw_path",
+    )
 
-    def __init__(self, config: Any, *, has_origin: bool) -> None:
+    def __init__(self, config: Any, *, has_origin: bool, raw_path: bool = False) -> None:
         if not isinstance(config, UrlSigningConfig):
             raise StartupError(
                 f"url_signing= expects a UrlSigningConfig, got {type(config).__name__}",
@@ -129,6 +143,7 @@ class UrlSigner:
             raise _invalid("clock", config.clock, "expected a callable returning unix seconds")
         if config.bind_host and not has_origin:
             raise _invalid("bind_host", True, "binding the host needs public_base_url= on the app")
+        self.raw_path = raw_path
         self._signer = Signer(secrets, namespace=NAMESPACE)
         self.default_ttl = ttl
         self.bind_method = config.bind_method
@@ -140,11 +155,21 @@ class UrlSigner:
     def _message(
         self, method: str, origin: str, path: str, pairs: Iterable[tuple[str, str]], exp: str
     ) -> str:
+        method = method.upper()
+        if method == "HEAD":
+            method = "GET"
+        if self.raw_path:
+            # Decode per segment, not over the whole path: encoded separators
+            # must remain distinct when dispatch itself uses raw segments.
+            safe = PATH_SAFE.replace("/", "").replace("%", "")
+            path = "/".join(quote(unquote(part), safe=safe) for part in path.split("/"))
+        else:
+            path = quote(path, safe=PATH_SAFE)
         return "\n".join(
             (
-                method.upper() if self.bind_method else "",
+                method if self.bind_method else "",
                 origin if self.bind_host else "",
-                quote(path, safe=PATH_SAFE),
+                path,
                 _canonical_query(pairs),
                 exp,
             )
@@ -172,7 +197,9 @@ class UrlSigner:
             values = value if isinstance(value, (list, tuple)) else (value,)
             pairs.extend((key, format_value(item)) for item in values if item is not None)
         exp = str(math.ceil(self._clock() + ttl))
-        token = self._signer.sign(self._message(method, origin, unquote(path), pairs, exp))
+        token = self._signer.sign(
+            self._message(method, origin, path if self.raw_path else unquote(path), pairs, exp)
+        )
         sig = token.rsplit(".", 1)[1]
         encoded = [f"{quote(key, safe='')}={quote(value, safe='')}" for key, value in pairs]
         encoded.append(f"{quote(self.exp_param, safe='')}={exp}")
@@ -182,8 +209,8 @@ class UrlSigner:
     def verify(self, *, method: str, origin: str, path: str, query: str) -> str | None:
         """``None`` when the request URL is validly signed, else the ``detail["reason"]``.
 
-        ``path`` is the decoded app-relative request path; ``query`` the raw
-        query string.
+        ``path`` is app-relative: decoded for normal routing, encoded for
+        raw-path routing. ``query`` is the raw query string.
         """
         pairs = parse_qsl(query, keep_blank_values=True)
         exps = [value for key, value in pairs if key == self.exp_param]

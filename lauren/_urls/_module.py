@@ -42,7 +42,7 @@ class UrlSetup:
 
 
 def prepare_urls(
-    *, proxy: Any, public_base_url: Any, url_signing: Any, root_path: str, logger: Any
+    *, proxy: Any, public_base_url: Any, url_signing: Any, root_path: str, logger: Any, raw_path: bool = False
 ) -> UrlSetup:
     """Validate the URL-related factory options (``StartupError`` with a ``reason``)."""
     compiled = compile_proxy(proxy) if proxy is not None else None
@@ -61,7 +61,11 @@ def prepare_urls(
                 f"public_base_url={public_base_url!r} is invalid: {exc}",
                 detail={"reason": "invalid_public_base_url", "got": repr(public_base_url)},
             ) from None
-    signer = UrlSigner(url_signing, has_origin=bool(public_base_url)) if url_signing is not None else None
+    signer = (
+        UrlSigner(url_signing, has_origin=bool(public_base_url), raw_path=raw_path)
+        if url_signing is not None
+        else None
+    )
     builder = UrlBuilder(public_base_url=public_base_url or None, root_path=root_path, signer=signer)
     return UrlSetup(builder=builder, proxy=compiled, signing=signer is not None)
 
@@ -107,11 +111,15 @@ def build_route_table(
     builder: UrlBuilder,
     *,
     logger: Any,
+    http_entries: Iterable[Any] = (),
+    ws_entries: Iterable[Any] = (),
 ) -> RouteTable:
     """End of Phase 5: name every route and gateway, check uniqueness, bind the builder."""
     from ..decorators import CONTROLLER_META, MODULE_META
     from ..websockets import WS_CONTROLLER_META
 
+    http_entry_map = {entry.handler_key: entry for entry in http_entries}
+    ws_entry_map = {entry.handler_key[1]: entry for entry in ws_entries}
     handlers = [
         ch for ch in compiled_handlers.values() if not getattr(ch.handler_fn, "__lauren_docs_stub__", False)
     ]
@@ -137,14 +145,42 @@ def build_route_table(
                     f"{ch.route_meta.method} {ch.path_template} has no route name",
                     context="RouteNames",
                 )
-        http.append(RouteSpec(ch.route_meta.method, ch.path_template, fn, cls, explicit, local, derived))
+        entry = http_entry_map.get((ch.route_meta.method, (ch.host or "") + ch.path_template))
+        http.append(
+            RouteSpec(
+                ch.route_meta.method,
+                ch.path_template,
+                fn,
+                cls,
+                explicit,
+                local,
+                derived,
+                segments=entry._segments if entry is not None else None,
+                host=ch.host,
+                host_pattern=entry._host_pattern if entry is not None else None,
+            )
+        )
     ws: list[RouteSpec] = []
     for path_template, gateway in ws_gateways.items():
         cls = gateway.controller_cls
         local = _own_name(cls, WS_CONTROLLER_META)
         explicit = _join(_own_name(gateway.owning_module, MODULE_META), local) if local is not None else None
         derived = cls.__name__ if local is None else None
-        ws.append(RouteSpec("WEBSOCKET", path_template, cls, cls, explicit, local, derived))
+        entry = ws_entry_map.get(path_template)
+        ws.append(
+            RouteSpec(
+                "WEBSOCKET",
+                gateway.path_template,
+                cls,
+                cls,
+                explicit,
+                local,
+                derived,
+                segments=entry._segments if entry is not None else None,
+                host=gateway.host,
+                host_pattern=entry._host_pattern if entry is not None else None,
+            )
+        )
     table = RouteTable(http, ws, log=lambda message: logger.verbose(message, context="RouteNames"))
     builder._bind(table)
     return table

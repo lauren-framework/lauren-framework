@@ -10,6 +10,18 @@ Typed extractors for decomposing HTTP requests into strongly-typed Python values
 class Path
 ```
 
+### `HostParam`
+
+```python
+class HostParam
+```
+
+A ``{name}`` label of the route's ``host=`` pattern: ``tenant: HostParam[str]``.
+
+The value comes from the matched host (lower-cased, port dropped) and is
+validated like a path parameter. The parameter name must be a label of
+the controller's / module's ``host=`` pattern, else startup fails.
+
 ### `Query`
 
 ```python

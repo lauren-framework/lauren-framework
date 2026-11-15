@@ -152,6 +152,7 @@ class WsUpgradeRequest(UrlAccess):
     port: int = 80
     root_path: str = ""
     _urls: Any = field(default=None, repr=False, compare=False)
+    _lauren_raw_path: str | None = field(default=None, repr=False, compare=False)
 
     def _url_parts(self) -> tuple[str, str, int, str, Any]:
         return self.scheme, self.host, self.port, self.root_path, self._urls
@@ -329,6 +330,7 @@ class CompiledGateway:
     guarded_handlers: frozenset[Any] = frozenset()
     #: Canonical host pattern of the gateway, captured during compilation.
     host: str | None = None
+    route_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1242,6 +1244,7 @@ async def handle_websocket(
             port=ws.port,
             root_path=ws.root_path,
             _urls=ws._urls,
+            _lauren_raw_path=path if ws_router.config.match_raw_path else None,
         ),
         connection=ws,
         handler_class=gateway.controller_cls,
