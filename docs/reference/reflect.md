@@ -124,7 +124,8 @@ print(manifest.to_json())
 `app`, `globals`, `modules`, `providers`, `routes`, `websocket_gateways`,
 `mounts`, `openapi` and `sections`. Route entries include compiled extractor
 parameters and effective middleware / guard / interceptor chains (including
-globals). The default renders only metadata keys; optional
+globals). The default renders metadata keys plus explicitly public typed
+metadata values (`public=True`); optional
 `include_metadata_values=True` copies values and redacts nested `Secret`
 wrappers. `to_dict()` and `to_json(indent=2)` produce deterministic snapshots.
 

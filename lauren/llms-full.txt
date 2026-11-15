@@ -5416,9 +5416,9 @@ assert app.describe().to_json() == manifest.to_json()
 routes by path then method. Routes include `params` (name, source, type,
 required), the effective `guards` / `interceptors` / `middlewares` (global
 policies included), exception handlers, owning module, status, encoder and
-`metadata_keys`. Metadata **values are omitted** by default; pass
-`include_metadata_values=True` to copy JSON-safe values, but wrapped `Secret`
-values remain redacted. The schema is additive within `manifest_version=1`.
+`metadata_keys`. Metadata **values are omitted** by default, except typed
+keys explicitly marked `public=True`. Pass `include_metadata_values=True` to
+copy other JSON-safe values; wrapped `Secret` values remain redacted. The schema is additive within `manifest_version=1`.
 
 ### Startup diagnostics and core inspection CLI
 
