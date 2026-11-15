@@ -68,6 +68,7 @@ from .extractors import (
     prepare_state_extraction,
 )
 from .streaming import _build_adapter
+from ._urls._url import UrlAccess
 from .types import Headers, Scope as DScope
 from .websockets import (
     WebSocket,
@@ -101,7 +102,23 @@ _V = TypeVar("_V")
 
 
 @dataclass(frozen=True, slots=True)
-class WsUpgradeRequest:
+class WsConnectionInfo:
+    """The URL model of one WebSocket connection, resolved once by ``LaurenApp``.
+
+    ``client`` / ``scheme`` / ``authority`` / ``root_path`` already reflect a
+    trusted proxy (``ProxyConfig``); ``authority`` is ``None`` when the
+    ``Host`` header applies.
+    """
+
+    client: tuple[str, int | None] | None
+    scheme: str = "ws"
+    root_path: str = ""
+    authority: str | None = None
+    urls: Any = None
+
+
+@dataclass(frozen=True, slots=True)
+class WsUpgradeRequest(UrlAccess):
     """Read-only view of the HTTP upgrade request that opened a WS connection.
 
     Mirrors the fields that guards most commonly access so that the same
@@ -115,16 +132,30 @@ class WsUpgradeRequest:
     ``stream()`` are intentionally absent. ``state`` is the connection's
     :class:`~lauren.types.State` (``ws.state``), so a guard writing
     ``ctx.request.state[CurrentUser] = user`` works on both transports.
+    ``stream()`` are intentionally absent. ``client`` is the ``(host,
+    port)`` pair (a trusted proxy's client when ``ProxyConfig`` applies);
+    ``scheme`` (``"ws"`` / ``"wss"``), ``host``, ``port``, ``root_path``,
+    ``base_url`` and ``url_for`` / ``url_path_for`` / ``ws_url_for`` match the
+    HTTP :class:`~lauren.types.Request`.
     """
 
     headers: Any  # lauren.types.Headers — case-insensitive
     path: str
     path_params: dict[str, str]
     query_string: str = ""
-    client: Any | None = None  # lauren.types.ClientInfo | None
+    client: Any | None = None  # (host, port) tuple or None
     method: str = "GET"  # WS upgrades are always GET requests
     state: Any = None  # lauren.types.State — the connection's ``ws.state``
     app_state: Any = None  # lauren.types.AppState — the application state
+    scheme: str = "ws"
+    host: str = ""
+    port: int = 80
+    root_path: str = ""
+    _urls: Any = field(default=None, repr=False, compare=False)
+    _lauren_raw_path: str | None = field(default=None, repr=False, compare=False)
+
+    def _url_parts(self) -> tuple[str, str, int, str, Any]:
+        return self.scheme, self.host, self.port, self.root_path, self._urls
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,6 +330,7 @@ class CompiledGateway:
     guarded_handlers: frozenset[Any] = frozenset()
     #: Canonical host pattern of the gateway, captured during compilation.
     host: str | None = None
+    route_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -978,6 +1010,7 @@ async def handle_websocket(
     *,
     global_ws_guards: list[type] | None = None,
     global_ws_interceptors: list[type] | None = None,
+    connection: WsConnectionInfo | None = None,
 ) -> None:
     """ASGI-side WebSocket dispatch entry point.
 
@@ -1032,6 +1065,7 @@ async def handle_websocket(
         path_params=params,
         app_state=app._app_state,
         json_encoder=app._json_encoder,
+        connection=connection,
     )
     if host_params:
         ws.host_params = dict(host_params)
@@ -1202,9 +1236,15 @@ async def handle_websocket(
             path=ws.path,
             path_params=dict(ws.path_params),
             query_string=scope.get("query_string", b"").decode("latin-1"),
-            client=scope.get("client"),
             state=ws.state,
             app_state=ws.app_state,
+            client=ws._client,
+            scheme=ws.scheme,
+            host=ws.host,
+            port=ws.port,
+            root_path=ws.root_path,
+            _urls=ws._urls,
+            _lauren_raw_path=path if ws_router.config.match_raw_path else None,
         ),
         connection=ws,
         handler_class=gateway.controller_cls,

@@ -181,7 +181,7 @@ Links follow RFC 8288 and are built from a copy of the request's path and query 
 
 A link whose offset would exceed `max_offset` is omitted, since following it would answer 422.
 
-Links are path-absolute references (`/users/?limit=20&offset=60`) that include the app's root path (`LaurenFactory.create(root_path=...)` or the server's ASGI `root_path`); clients resolve them against the request URL as RFC 8288 specifies. Set `PaginationConfig(base_url="https://api.example.com")` for absolute URLs — a configured, trusted origin, never the request's `Host` header.
+Links are path-absolute references (`/users/?limit=20&offset=60`) that include `request.root_path` (a configured or ASGI `root_path`, mount prefixes, or a trusted `X-Forwarded-Prefix`); clients resolve them against the request URL as RFC 8288 specifies. `public_base_url="https://api.example.com"` makes them absolute using its trusted origin; `PaginationConfig(base_url="https://cdn.example.com")` overrides that origin. Neither uses the request's client-chosen `Host` header. See [URLs & Proxies](urls-and-proxies.md).
 
 ## Cursor pagination
 

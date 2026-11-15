@@ -161,7 +161,16 @@ from .._pagination import (
     resolve_app as _resolve_pagination,
 )
 from .._pagination._config import BUILTIN_DEFAULTS as _PAGINATION_DEFAULTS
-from .._pagination._links import ROOT_PATH_ATTR as _ROOT_PATH_ATTR
+from .._urls._forwarded import CompiledProxy, Forwarded, ProxyConfig, resolve_forwarded
+from .._urls._module import (
+    build_route_table as _build_route_table,
+    check_signature_guards as _check_signature_guards,
+    install_urls as _install_urls,
+    prepare_urls as _prepare_urls,
+)
+from .._urls._registry import UrlBuilder
+from .._urls._signing import UrlSigningConfig
+from .._urls._url import URL, parse_authority as _parse_authority
 from ._problem import instance_reference as _instance_reference, problem_payload as _problem_payload
 from .._codecs._plan import (
     ContentRuntime,
@@ -294,6 +303,7 @@ class CompiledHandler:
     metadata_key_defs: tuple[Any, ...] = ()
     #: Canonical host pattern of this compiled route (separate from its path).
     host: str | None = None
+    route_name: str | None = None
     #: ``Content-Type`` check (:class:`lauren._codecs._plan.ContentGate`), or
     #: ``None`` when the route does not check it.
     content_gate: Any = None
@@ -1219,6 +1229,11 @@ class LaurenApp:
         #: (route, error class) pairs already reported by the debug-mode
         #: undeclared-``@raises`` check.
         self._undeclared_raise_warned: set[tuple[str, type]] = set()
+        #: The app's URL builder (named routes, ``public_base_url``, signing);
+        #: the factory replaces this unbound one and binds the route table.
+        self._urls: UrlBuilder = UrlBuilder()
+        #: Trusted reverse proxies (``proxy=``); ``None``: forwarding headers ignored.
+        self._proxy: CompiledProxy | None = None
 
     # -- Introspection -----------------------------------------------------
 
@@ -1434,6 +1449,91 @@ class LaurenApp:
     def mounts(self) -> list[tuple[str, Any]]:
         """Read-only snapshot of ``(path_prefix, sub_app)`` pairs."""
         return list(self._mounts)
+
+    # -- URL generation ----------------------------------------------------
+
+    @property
+    def urls(self) -> UrlBuilder:
+        """The app's :class:`~lauren.urls.UrlBuilder` — the instance ``UrlBuilder`` injects."""
+        return self._urls
+
+    def url_path_for(self, target: Any, /, *, route: str | None = None, **params: Any) -> URL:
+        """The app-relative path of a route: ``app.url_path_for("users.show", id=7)`` → ``/users/7``.
+
+        ``target`` is a route name or a handler reference
+        (``UserController.show``); ``route=`` picks one route of a handler
+        that has several. No root path or mount prefix is added — use
+        ``request.url_path_for`` inside a request, or an injected
+        :class:`~lauren.urls.UrlBuilder`. Raises :class:`LookupError` for an
+        unknown target and :class:`ValueError` for missing / unexpected path
+        parameters.
+        """
+        return URL(self._urls._route_path(target, route, params))
+
+    # -- Connection URL model ----------------------------------------------
+
+    def _split_root(self, scope: dict[str, Any]) -> tuple[str, str]:
+        """``(app-relative path, public root path)`` of a scope.
+
+        Strips a configured ``root_path=`` prefix when the upstream server
+        has not already done so. Uvicorn honours ``--root-path`` by setting
+        ``scope["root_path"]`` *and* pre-stripping ``scope["path"]``; a plain
+        nginx proxy typically leaves ``scope["root_path"]`` empty and the full
+        prefixed path in ``scope["path"]``.
+        """
+        own_root = getattr(self, "_root_path", "")
+        raw_path = scope.get("path", "/")
+        scope_root = scope.get("root_path")
+        # A mounted child can have *its own* configured root_path in
+        # addition to the mount's root_path in the ASGI scope. Strip only
+        # when path carries that prefix and scope_root does not already end
+        # with it (a server which stripped it reports it in scope_root).
+        own_root = own_root.rstrip("/")
+        if (
+            own_root
+            and not (scope_root or "").rstrip("/").endswith(own_root)
+            and (raw_path == own_root or raw_path.startswith(own_root + "/"))
+        ):
+            return raw_path[len(own_root) :] or "/", (scope_root or "").rstrip("/") + own_root
+        # A server-stripped prefix (``uvicorn --root-path``, a mount) is part of
+        # the public URL unless the path already carries it.
+        public_root = (
+            scope_root
+            if scope_root
+            and not (raw_path == scope_root or raw_path.startswith(scope_root.rstrip("/") + "/"))
+            else ""
+        )
+        return raw_path, public_root
+
+    def _forwarded_scope(self, scope: dict[str, Any], proxy: CompiledProxy) -> dict[str, Any]:
+        """A mounted sub-app's scope with a trusted proxy's client, scheme, host and prefix applied."""
+        raw_headers = scope.get("headers", [])
+        headers = Headers([(k.decode("latin-1"), v.decode("latin-1")) for k, v in raw_headers])
+        client = scope.get("client") or (None, None)
+        forwarded = (
+            None
+            if scope.get("_lauren_forwarding_resolved")
+            else resolve_forwarded(proxy, client[0], headers, websocket=scope["type"] == "websocket")
+        )
+        if forwarded is None:
+            return scope
+        scope = dict(scope)
+        # A mounted Lauren child must not apply the same headers a second
+        # time (especially when the real client is in a trusted subnet).
+        scope["_lauren_forwarding_resolved"] = True
+        if forwarded.client is not None:
+            scope["client"] = (forwarded.client[0], forwarded.client[1] or 0)
+        if forwarded.scheme is not None:
+            scope["scheme"] = forwarded.scheme
+        authority = _forwarded_authority(forwarded, headers)
+        if authority is not None:
+            value = authority.encode("latin-1")
+            scope["headers"] = [(k, value if k.lower() == b"host" else v) for k, v in raw_headers]
+            if all(k.lower() != b"host" for k, _ in raw_headers):
+                scope["headers"].append((b"host", value))
+        if forwarded.prefix:
+            scope["root_path"] = forwarded.prefix + scope.get("root_path", "")
+        return scope
 
     # -- Operation scopes --------------------------------------------------
 
@@ -2126,7 +2226,7 @@ class LaurenApp:
 
     def _slash_redirect(self, request: Request, path: str) -> Response:
         """``308`` to the canonical spelling of the request path (query and root path kept)."""
-        root: str = getattr(request, _ROOT_PATH_ATTR, "")
+        root: str = request.root_path
         location = path if self._match_raw_path else quote(path, safe=_LOCATION_PATH_SAFE)
         if root:
             location = quote(root.rstrip("/"), safe=_LOCATION_PATH_SAFE) + location
@@ -2295,7 +2395,7 @@ class LaurenApp:
                             entry, params, host_params = self._router.find_host(
                                 req.method,
                                 self._routing_path(req),
-                                req.headers.get("host") or req.headers.get(":authority"),
+                                req.host,
                             )
                             if host_params:
                                 req._host_params = host_params
@@ -2770,13 +2870,20 @@ class LaurenApp:
         # HTTP and WebSocket scopes can match a path prefix; other ASGI types
         # (e.g. custom extensions) are left to fall through to the normal path.
         if scope["type"] in ("http", "websocket") and self._mounts:
-            raw = scope.get("path", "/")
+            # Match mounts against the app-relative path, not an unstripped
+            # ``root_path=``. The public root is inherited by the child.
+            raw, mount_root = self._split_root(scope)
+            original_root = scope.get("root_path") or ""
+            own_prefix = (
+                mount_root[len(original_root) :] if mount_root.startswith(original_root) else mount_root
+            )
             for prefix, sub in self._mounts:
                 if raw == prefix or raw.startswith(prefix + "/"):
                     stripped = raw[len(prefix) :] or "/"
-                    child_scope = dict(scope)
+                    # A trusted proxy's view travels to the sub-app in its scope.
+                    child_scope = dict(self._forwarded_scope(scope, self._proxy) if self._proxy else scope)
                     child_scope["path"] = stripped
-                    child_scope["root_path"] = scope.get("root_path", "") + prefix
+                    child_scope["root_path"] = (child_scope.get("root_path") or "") + own_prefix + prefix
                     await sub(child_scope, receive, send)
                     return
         if scope["type"] == "websocket":
@@ -2787,28 +2894,20 @@ class LaurenApp:
         headers = Headers([(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope.get("headers", [])])
         client = scope.get("client") or (None, None)
         server = scope.get("server") or (None, None)
-        # Resolve the effective request path, stripping a configured
-        # ``root_path`` prefix when the upstream ASGI server hasn't
-        # already done so.  Uvicorn honours ``--root-path`` by setting
-        # ``scope["root_path"]`` *and* pre-stripping ``scope["path"]``;
-        # a plain nginx proxy typically leaves ``scope["root_path"]``
-        # empty and the full prefixed path in ``scope["path"]``.
-        _own_root = getattr(self, "_root_path", "")
-        raw_path = scope["path"]
-        scope_root = scope.get("root_path")
-        if _own_root and not scope_root and raw_path.startswith(_own_root):
-            effective_path = raw_path[len(_own_root) :] or "/"
-            public_root = _own_root
-        else:
-            effective_path = raw_path
-            # A server-stripped prefix (``uvicorn --root-path``, a mount) is
-            # part of the public URL unless the path already carries it.
-            public_root = (
-                scope_root
-                if scope_root
-                and not (raw_path == scope_root or raw_path.startswith(scope_root.rstrip("/") + "/"))
-                else ""
-            )
+        effective_path, public_root = self._split_root(scope)
+        client_info = ClientInfo(client[0] if client else None, client[1] if client else None)
+        scheme: str = scope.get("scheme") or "http"
+        authority: str | None = None
+        if self._proxy is not None and not scope.get("_lauren_forwarding_resolved"):
+            # Trusted proxies: one decision per request, before any middleware.
+            forwarded = resolve_forwarded(self._proxy, client[0], headers)
+            if forwarded is not None:
+                if forwarded.client is not None:
+                    client_info = ClientInfo(*forwarded.client)
+                scheme = forwarded.scheme or scheme
+                authority = _forwarded_authority(forwarded, headers)
+                if forwarded.prefix:
+                    public_root = forwarded.prefix + public_root
         # Acquire a Request through the arena so pooled instances are
         # reused where possible. ``acquire_request`` dispatches to
         # :meth:`Request.reset` for pooled instances and to the
@@ -2820,17 +2919,17 @@ class LaurenApp:
             path=effective_path,
             raw_query_string=scope.get("query_string", b"") or b"",
             headers=headers,
-            client=ClientInfo(client[0] if client else None, client[1] if client else None),
+            client=client_info,
             server=ServerInfo(server[0] if server else None, server[1] if server else None),
             receive=receive,
             app_state=self._app_state,
             max_body_size=self._max_body_size,
             extensions=scope.get("extensions"),
+            scheme=scheme,
+            root_path=public_root,
+            authority=authority,
+            urls=self._urls,
         )
-        if public_root:
-            # The public path prefix (proxy root path / mount prefix), read
-            # by pagination links; ``Request.reset`` clears it.
-            setattr(request, _ROOT_PATH_ATTR, public_root)
         if self._match_raw_path:
             # ``RoutingConfig(match_raw_path=True)``: route on the raw path,
             # percent-decoding each segment (``Request.reset`` clears it).
@@ -2952,14 +3051,38 @@ class LaurenApp:
                 return
             await send({"type": "websocket.close", "code": 1008})
             return
-        from .._ws_runtime import handle_websocket
+        from .._ws_runtime import WsConnectionInfo, handle_websocket
+
+        # Routing and URL accessors must use the same trusted public host.
+        # The marker on the lowered scope prevents double prefix/client updates.
+        if self._proxy is not None and not scope.get("_lauren_forwarding_resolved"):
+            scope = self._forwarded_scope(scope, self._proxy)
 
         # Apply the same root_path stripping as HTTP requests.
-        _own_root = getattr(self, "_root_path", "")
-        if _own_root and not scope.get("root_path"):
-            raw_ws_path = scope.get("path", "/")
-            if raw_ws_path.startswith(_own_root):
-                scope = {**scope, "path": raw_ws_path[len(_own_root) :] or "/"}
+        effective_path, public_root = self._split_root(scope)
+        if effective_path != scope.get("path", "/"):
+            scope = {**scope, "path": effective_path}
+        client = scope.get("client") or (None, None)
+        scheme: str = scope.get("scheme") or "ws"
+        authority: str | None = None
+        if self._proxy is not None and not scope.get("_lauren_forwarding_resolved"):
+            raw_headers = scope.get("headers", [])
+            headers = Headers([(k.decode("latin-1"), v.decode("latin-1")) for k, v in raw_headers])
+            forwarded = resolve_forwarded(self._proxy, client[0], headers, websocket=True)
+            if forwarded is not None:
+                if forwarded.client is not None:
+                    client = forwarded.client
+                scheme = forwarded.scheme or scheme
+                authority = _forwarded_authority(forwarded, headers)
+                if forwarded.prefix:
+                    public_root = forwarded.prefix + public_root
+        connection = WsConnectionInfo(
+            client=(client[0], client[1]) if client[0] is not None else None,
+            scheme=scheme,
+            root_path=public_root,
+            authority=authority,
+            urls=self._urls,
+        )
         task = asyncio.current_task()
         if task is not None:
             self._in_flight.add(task)
@@ -2974,6 +3097,7 @@ class LaurenApp:
                 send,
                 global_ws_guards=self._global_ws_guards or None,
                 global_ws_interceptors=self._global_ws_interceptors or None,
+                connection=connection,
             )
         except asyncio.CancelledError:
             raise  # server shutdown — let Uvicorn handle it
@@ -3026,6 +3150,18 @@ class LaurenApp:
                     )
                     await send({"type": "lifespan.shutdown.failed", "message": str(e)})
                 return
+
+
+def _forwarded_authority(forwarded: Forwarded, headers: Headers) -> str | None:
+    """The ``host[:port]`` a trusted proxy forwarded (its port applied to the request's host)."""
+    authority = forwarded.host
+    if forwarded.port is not None:
+        parsed = _parse_authority(
+            (authority or headers.get("host") or headers.get(":authority") or "").strip()
+        )
+        if parsed is not None:
+            authority = f"{parsed[0]}:{forwarded.port}"
+    return authority
 
 
 def _cancel_background_tasks(request: Request) -> None:
@@ -3570,6 +3706,9 @@ class LaurenFactory:
         json_fallback: str = "warn",
         pagination: PaginationConfig | None = None,
         routing: RoutingConfig | None = None,
+        proxy: ProxyConfig | None = None,
+        public_base_url: str | None = None,
+        url_signing: UrlSigningConfig | None = None,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -3664,6 +3803,19 @@ class LaurenFactory:
         trailing-slash policy, slash merging, raw-path matching and custom
         path converters. Routing misses (404 / 405) reach the global
         exception handlers before the built-in envelope is rendered.
+        ``proxy`` (a :class:`~lauren.urls.ProxyConfig`) names the trusted
+        reverse proxies whose ``Forwarded`` / ``X-Forwarded-*`` headers set
+        ``request.client`` / ``scheme`` / ``host`` / ``root_path``; headers from
+        any other peer are ignored. ``public_base_url`` (``"https://api.example.com"``)
+        is the app's public URL, used by the injectable
+        :class:`~lauren.urls.UrlBuilder` for absolute links outside a request
+        and as the origin of pagination ``Link`` URLs. ``url_signing`` (a
+        :class:`~lauren.urls.UrlSigningConfig`) enables signed URLs; the
+        :class:`~lauren.urls.ValidSignature` guard without it fails here
+        (``reason="url_signing_disabled"``). Every HTTP route and WebSocket
+        gateway is named here; two routes with one explicit ``name=`` raise
+        :class:`~lauren.exceptions.RouterConflictError`
+        (``reason="duplicate_route_name"``).
         """
         _log: Logger = logger or NullLogger()
         if routing is not None and not isinstance(routing, RoutingConfig):
@@ -3706,7 +3858,15 @@ class LaurenFactory:
                 f"validation= expects a ValidationPolicy, got {type(validation).__name__}",
                 detail={"reason": "invalid_validation_policy", "got": type(validation).__name__},
             )
-        pagination_config = _resolve_pagination(pagination)
+        url_setup = _prepare_urls(
+            proxy=proxy,
+            public_base_url=public_base_url,
+            url_signing=url_signing,
+            root_path=root_path,
+            logger=_log,
+            raw_path=routing_config.match_raw_path,
+        )
+        pagination_config = _resolve_pagination(pagination, public_origin=url_setup.builder._origin or None)
         validation_runtime = ValidationRuntime(
             TypeCompiler(policy),
             include_input=policy.include_input
@@ -3884,6 +4044,9 @@ class LaurenFactory:
                 if gp not in {pp.cls for pp in container.all_providers()}:
                     _ensure_injectable(gp)
                     container.register(gp, owning_module=None)
+
+        # The app's UrlBuilder: injectable everywhere; Phase 5 binds the routes.
+        _install_urls(container, url_setup)
 
         # ---- Phase 2b: Typed configuration ----
         # Load and validate every ConfigModule spec in the graph (one
@@ -4312,6 +4475,38 @@ class LaurenFactory:
         for guard_cls in all_guards:
             if guard_cls not in guard_denials:
                 guard_denials[guard_cls] = _compile_guard_denial(guard_cls)
+        # ``ValidSignature`` needs ``url_signing=``.
+        guard_uses: list[tuple[Any, str]] = [
+            (g, "every request (global guard)") for g in effective_global_guards
+        ]
+        guard_uses.extend(
+            (g, "every WebSocket connection (global guard)") for g in effective_global_ws_guards
+        )
+        for (method, path_t), ch in compiled_handlers.items():
+            guard_uses.extend((g, f"route {method} {path_t}") for g in ch.guards)
+        for gw in ws_gateways.values():
+            gateway_guards = [*gw.guards, *gw.on_connect_guards]
+            for ws_message in gw.messages.values():
+                gateway_guards.extend(ws_message.guards)
+            guard_uses.extend((g, f"WebSocket gateway {gw.path_template}") for g in gateway_guards)
+        _check_signature_guards(guard_uses, url_setup)
+        # Route names: every HTTP route and gateway, uniqueness checked here.
+        route_table = _build_route_table(
+            compiled_handlers,
+            ws_gateways,
+            url_setup.builder,
+            logger=_log,
+            http_entries=router.routes(),
+            ws_entries=ws_router.routes(),
+        )
+        http_names = {(r.method, (r.host or "") + r.path_template): r.name for r in route_table.http.routes}
+        ws_names = {(r.host or "") + r.path_template: r.name for r in route_table.ws.routes}
+        for entry in router.routes():
+            entry.name = http_names.get(entry.handler_key)
+            compiled_handlers[entry.handler_key].route_name = entry.name
+        for entry in ws_router.routes():
+            entry.name = ws_names.get(entry.handler_key[1])
+            ws_gateways[entry.handler_key[1]].route_name = entry.name
 
         # State provenance: a parameter injecting a ``StateKey(...,
         # require_provider=True)`` needs a guard / middleware / interceptor in
@@ -4457,6 +4652,8 @@ class LaurenFactory:
         # a process-global encoder or parser cache. Route plans keep references
         # to the same registry for request decoding and response negotiation.
         app._content = content_runtime
+        app._urls = url_setup.builder
+        app._proxy = url_setup.proxy
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via
         # ``lauren.serialization.set_active_encoder``). Pinning the

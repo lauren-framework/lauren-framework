@@ -45,6 +45,9 @@ Core capabilities
 * Response contracts: ``status_code=`` and typed results (``Ok``,
   ``Created``, ``Accepted``, ``NoContent``) declare a route's statuses;
   ``response_validation="filter"`` keeps undeclared fields off the wire.
+* Named routes and URL generation (``request.url_for``, ``url_path_for``,
+  an injectable ``UrlBuilder``), trusted reverse proxies (``ProxyConfig``)
+  and signed, expiring links (``UrlSigningConfig`` + ``ValidSignature``).
 * Strict inheritance: subclasses are controllers / injectables only when
   re-decorated explicitly.
 
@@ -326,6 +329,7 @@ from .pagination import (
     paginate_sequence,
 )
 from .config import ConfigModule, Secret
+from .urls import URL, ProxyConfig, UrlBuilder, UrlSigningConfig, ValidSignature
 from .scheduling import (
     CronExpression,
     JobContext,
@@ -489,6 +493,12 @@ __all__ = [
     "Page",
     "CursorPage",
     "paginate_sequence",
+    # named routes, URL generation, trusted proxies, signed URLs (lauren.urls)
+    "URL",
+    "UrlBuilder",
+    "ProxyConfig",
+    "UrlSigningConfig",
+    "ValidSignature",
     # typed configuration (the rest lives in lauren.config)
     "ConfigModule",
     "Secret",

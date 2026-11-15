@@ -169,7 +169,10 @@ client.post("/ingest", content=(chunk for chunk in chunks))
 
 An explicit `content-type` header always wins (handy for malformed-boundary
 tests). Every request carries a `host` header derived from `base_url`
-(`http://testserver` by default); `root_path=` sets `scope["root_path"]`.
+(`http://testserver` by default); `root_path=` sets `scope["root_path"]`;
+`client=("10.0.0.5", 4000)` sets the peer address (`scope["client"]`, default
+`("127.0.0.1", 12345)`; `None` for a Unix-socket peer) — use it to test
+[trusted proxies](urls-and-proxies.md#trusted-reverse-proxies).
 
 ---
 

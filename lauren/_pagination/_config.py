@@ -235,16 +235,22 @@ def resolve(layers: Sequence[PaginationConfig], *, where: dict[str, Any] | None 
     )
 
 
-def resolve_app(config: Any) -> ResolvedPagination:
-    """Resolve ``LaurenFactory.create(pagination=...)`` (``None`` → built-in defaults)."""
+def resolve_app(config: Any, *, public_origin: str | None = None) -> ResolvedPagination:
+    """Resolve ``LaurenFactory.create(pagination=...)`` (``None`` → built-in defaults).
+
+    ``public_origin`` (the origin of the app's ``public_base_url=``) is the
+    ``base_url`` of every layer that sets none: ``Link`` URLs become absolute
+    on the app's trusted public URL.
+    """
+    base: tuple[PaginationConfig, ...] = (PaginationConfig(base_url=public_origin),) if public_origin else ()
     if config is None:
-        return resolve(())
+        return resolve(base)
     if not isinstance(config, PaginationConfig):
         raise StartupError(
             f"pagination= expects a PaginationConfig, got {type(config).__name__}",
             detail={"reason": "invalid_pagination_config", "got": type(config).__name__},
         )
-    return resolve((config,), where={"layer": "app"})
+    return resolve((*base, config), where={"layer": "app"})
 
 
 def resolve_parameter(

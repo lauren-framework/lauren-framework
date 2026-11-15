@@ -24,9 +24,10 @@ from typing import (
     overload,
     runtime_checkable,
 )
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, quote
 
 from ._metadata import _UNSET, MetadataKey, MetadataSetKey, StateKey, read_metadata
+from ._urls._url import DEFAULT_PORTS, PATH_SAFE, URL, UrlAccess, compose_origin, join_root, parse_authority
 from .exceptions import MissingStateError, RequestBodyTooLarge, StateTypeError
 
 T = TypeVar("T")
@@ -410,12 +411,18 @@ class DebugConfig:
     include_locals: bool = False
 
 
-class Request:
+class Request(UrlAccess):
     """Incoming HTTP request.
 
     The request owns its ASGI scope and the ``receive`` callable required to
     consume the body. State, route metadata, and app state are attached by the
     runtime before the handler executes.
+
+    The URL model — ``scheme``, ``host``, ``port``, ``root_path``,
+    ``base_url``, ``full_url`` and ``client`` — comes from the ASGI scope and
+    the ``Host`` header, or from a trusted proxy when the app is built with
+    ``proxy=ProxyConfig(...)``. ``url_for`` / ``url_path_for`` /
+    ``ws_url_for`` build URLs to the app's named routes.
 
     Instances are **pooled and reused** by :class:`lauren._arena.RequestArena`:
     ``reset()`` clears the instance's entire ``__dict__`` between requests, so
@@ -438,6 +445,10 @@ class Request:
         app_state: AppState | None = None,
         max_body_size: int = 1_048_576,
         extensions: dict[str, Any] | None = None,
+        scheme: str = "http",
+        root_path: str = "",
+        authority: str | None = None,
+        urls: Any = None,
     ) -> None:
         self._method = method.upper()
         self._path = path
@@ -463,6 +474,12 @@ class Request:
         self._route_template: str | None = None
         # Cookies cache
         self._cookies: dict[str, str] | None = None
+        # URL model: ASGI scheme, public root path, a trusted proxy's
+        # ``host[:port]`` (``None``: the Host header) and the app's UrlBuilder.
+        self._scheme = scheme
+        self._root_path = root_path
+        self._authority_value = authority
+        self._urls = urls
         # ASGI ``scope["extensions"]``: stored only when the server sent some,
         # so the common case adds no attribute (see the ``extensions`` property).
         if extensions:
@@ -483,6 +500,10 @@ class Request:
         app_state: AppState,
         max_body_size: int,
         extensions: dict[str, Any] | None = None,
+        scheme: str = "http",
+        root_path: str = "",
+        authority: str | None = None,
+        urls: Any = None,
     ) -> None:
         """Re-initialise this :class:`Request` in place for reuse.
 
@@ -546,6 +567,10 @@ class Request:
         self._handler_func = None
         self._route_template = None
         self._cookies = None
+        self._scheme = scheme
+        self._root_path = root_path
+        self._authority_value = authority
+        self._urls = urls
         if extensions:
             self._extensions = extensions
 
@@ -561,10 +586,72 @@ class Request:
 
     @property
     def url(self) -> str:
+        """The app-relative path and query (``/users/7?x=1``); see ``full_url`` for the absolute URL."""
         qs = self._raw_query_string.decode("latin-1")
         if qs:
             return f"{self._path}?{qs}"
         return self._path
+
+    @property
+    def path_with_query(self) -> str:
+        """``path?query`` — the same value as ``url``, which lauren 2.0 makes absolute."""
+        return self.url
+
+    # -- URL model ----------------------------------------------------------
+
+    @property
+    def scheme(self) -> str:
+        """``"http"`` or ``"https"`` — from the ASGI scope or a trusted proxy."""
+        return self._scheme
+
+    @property
+    def root_path(self) -> str:
+        """The public path prefix in front of ``path`` (``/backend``): mounts, ``root_path=``, a trusted proxy."""
+        return self._root_path
+
+    def _host_port(self) -> tuple[str, int | None]:
+        value = self._authority_value
+        if value is None:
+            value = self._headers.get("host") or self._headers.get(":authority")
+        if value:
+            parsed = parse_authority(value.strip())
+            if parsed is not None:
+                return parsed
+        host = self._server.host
+        if not host:
+            return "", None
+        return (f"[{host}]" if ":" in host else host), self._server.port
+
+    @property
+    def host(self) -> str:
+        """The host the client addressed: a trusted proxy's, the ``Host`` header's, or the server's.
+
+        IPv6 literals keep their brackets. An invalid ``Host`` header is
+        ignored. Without a trusted proxy the ``Host`` header is client-chosen —
+        build links that leave the request (emails, webhooks) with
+        :class:`~lauren.urls.UrlBuilder` and ``public_base_url=`` instead.
+        """
+        return self._host_port()[0]
+
+    @property
+    def port(self) -> int:
+        """The port the client addressed (the scheme's default when the host names none)."""
+        port = self._host_port()[1]
+        return port if port is not None else DEFAULT_PORTS.get(self._scheme, 80)
+
+    def _url_parts(self) -> tuple[str, str, int, str, Any]:
+        host, port = self._host_port()
+        if port is None:
+            port = DEFAULT_PORTS.get(self._scheme, 80)
+        return self._scheme, host, port, self._root_path, self._urls
+
+    @property
+    def full_url(self) -> URL:
+        """The absolute request URL: ``scheme://host[:port]{root_path}{path}[?query]``."""
+        scheme, host, port, root, _ = self._url_parts()
+        url = compose_origin(scheme, host, port) + join_root(root, quote(self._path, safe=PATH_SAFE))
+        qs = self._raw_query_string.decode("latin-1")
+        return URL(f"{url}?{qs}" if qs else url)
 
     @property
     def path_params(self) -> dict[str, str]:

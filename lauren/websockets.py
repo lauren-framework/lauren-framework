@@ -63,7 +63,8 @@ from .exceptions import (
     MetadataInheritanceError,
     StartupError,
 )
-from .types import Headers, State
+from ._urls._url import DEFAULT_PORTS, UrlAccess, parse_authority
+from .types import ClientInfo, Headers, State
 
 from ._validation import is_pydantic_model as _is_pydantic_model  # noqa: F401
 
@@ -191,6 +192,8 @@ class WsControllerMeta:
     description: str | None = None
     #: Host pattern (``"{tenant}.example.com"``); ``None`` serves every host.
     host: str | None = None
+    #: Gateway name for ``ws_url_for`` (``None``: the class name).
+    name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -246,6 +249,7 @@ def ws_controller(
     summary: str | None = None,
     description: str | None = None,
     host: str | None = None,
+    name: str | None = None,
 ) -> Callable[[C], C]:
     """Mark a class as a WebSocket gateway mounted at ``path``.
 
@@ -264,6 +268,9 @@ def ws_controller(
 
     ``host`` routes the gateway by the handshake's ``Host`` header, like
     ``@controller(host=...)``.
+    ``name`` names the gateway for ``request.ws_url_for(...)`` (namespaced
+    by ``@module(name=...)``); without it the gateway is reachable by its
+    class name or by the class itself.
     """
     _reject_bare_usage("ws_controller", path)
     from .decorators import _check_host, _check_path
@@ -273,12 +280,15 @@ def ws_controller(
 
     def decorator(cls: C) -> C:
         _check_path("ws_controller", cls, path)
+        from ._urls._names import check_name
+
         meta = WsControllerMeta(
             path=path,
             tags=tuple(tags or []),
             summary=summary,
             description=description,
             host=host,
+            name=check_name(name, decorator="ws_controller", target=cls),
         )
         # Attach to the class's own __dict__ ONLY — never to a parent.
         setattr(cls, WS_CONTROLLER_META, meta)
@@ -416,7 +426,7 @@ def _is_method_target(fn: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
-class WebSocket:
+class WebSocket(UrlAccess):
     """A live WebSocket connection.
 
     Instances are constructed by the ASGI runtime and passed to
@@ -450,6 +460,7 @@ class WebSocket:
         path_params: dict[str, str],
         app_state: Any = None,
         json_encoder: Any = None,
+        connection: Any = None,
     ) -> None:
         self._scope = scope
         self._receive = receive
@@ -475,6 +486,21 @@ class WebSocket:
         # handling of the ``websocket.disconnect`` message.
         self.close_code: int | None = None
         self.close_reason: str = ""
+        # URL model, resolved once by the app (trusted proxies applied); a
+        # WebSocket built from a bare scope reads it from the scope.
+        if connection is not None:
+            self._client: tuple[str, int | None] | None = connection.client
+            self._scheme: str = connection.scheme
+            self._root_path: str = connection.root_path
+            self._authority: str | None = connection.authority
+            self._urls: Any = connection.urls
+        else:
+            client = scope.get("client")
+            self._client = (client[0], client[1]) if client else None
+            self._scheme = scope.get("scheme") or "ws"
+            self._root_path = scope.get("root_path") or ""
+            self._authority = None
+            self._urls = None
 
     # -- Introspection ----------------------------------------------------
 
@@ -485,6 +511,52 @@ class WebSocket:
     @property
     def path_template(self) -> str:
         return self._path_template
+
+    @property
+    def client(self) -> ClientInfo:
+        """The client's address — a trusted proxy's client when ``ProxyConfig`` applies."""
+        client = self._client
+        return ClientInfo(client[0], client[1]) if client else ClientInfo(None, None)
+
+    @property
+    def scheme(self) -> str:
+        """``"ws"`` or ``"wss"``."""
+        return self._scheme
+
+    @property
+    def root_path(self) -> str:
+        """The public path prefix in front of ``path`` (mounts, ``root_path=``, a trusted proxy)."""
+        return self._root_path
+
+    def _host_port(self) -> tuple[str, int | None]:
+        value = (
+            self._authority
+            if self._authority is not None
+            else self._headers.get("host") or self._headers.get(":authority")
+        )
+        if value:
+            parsed = parse_authority(value.strip())
+            if parsed is not None:
+                return parsed
+        server = self._scope.get("server") or (None, None)
+        host = server[0]
+        if not host:
+            return "", None
+        return (f"[{host}]" if ":" in host else host), server[1]
+
+    @property
+    def host(self) -> str:
+        """The host the client addressed (see :attr:`lauren.types.Request.host`)."""
+        return self._host_port()[0]
+
+    @property
+    def port(self) -> int:
+        """The port the client addressed (the scheme's default when the host names none)."""
+        port = self._host_port()[1]
+        return port if port is not None else DEFAULT_PORTS.get(self._scheme, 80)
+
+    def _url_parts(self) -> tuple[str, str, int, str, Any]:
+        return self._scheme, self.host, self.port, self._root_path, self._urls
 
     @property
     def path_params(self) -> dict[str, str]:

@@ -97,6 +97,9 @@ class RouteEntry:
     _segments: tuple[Segment, ...] = field(default=(), repr=False, compare=False)
     _host_pattern: HostPattern | None = field(default=None, repr=False, compare=False)
 
+    #: Full URL-generation name, assigned at startup (None for internal/ambiguous routes).
+    name: str | None = None
+
     def __post_init__(self) -> None:
         if not self.path_format:
             self.path_format = self.path_template

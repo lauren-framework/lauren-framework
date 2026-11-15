@@ -16,6 +16,8 @@ Core request/response types and state containers.
 
 ::: lauren.ServerInfo
 
+::: lauren.URL
+
 ## Body types
 
 ::: lauren.ByteStream

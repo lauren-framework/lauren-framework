@@ -114,6 +114,7 @@ class ManifestGateway:
     middlewares: tuple[str, ...]
     metadata_keys: tuple[str, ...]
     host: str | None = None
+    name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,7 +347,7 @@ def describe_app(app: Any, *, include_metadata_values: bool = False) -> AppManif
             method=method,
             path=ch.path_template,
             host=ch.host,
-            name=getattr(ch.route_meta, "name", None),
+            name=ch.route_name,
             handler=_name(ch.handler_fn),
             module=_name(ch.owning_module) if ch.owning_module else None,
             binding=ch.binding,
@@ -385,6 +386,7 @@ def describe_app(app: Any, *, include_metadata_values: bool = False) -> AppManif
         ManifestGateway(
             path=gw.path_template,
             host=gw.host,
+            name=gw.route_name,
             cls=_name(gw.controller_cls),
             module=_name(gw.owning_module) if gw.owning_module else None,
             events=tuple(

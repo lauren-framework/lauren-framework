@@ -41,6 +41,10 @@ _EXPECTED_RESET_ATTRS = frozenset(
         "_handler_func",
         "_route_template",
         "_cookies",
+        "_scheme",
+        "_root_path",
+        "_authority_value",
+        "_urls",
     }
 )
 
@@ -121,6 +125,19 @@ class TestResetRepopulatesCanonicalFields:
         assert req.get_route_template() is None
         assert req._body is None
         assert req._body_consumed is False
+
+    def test_reset_replaces_the_url_model(self) -> None:
+        req = Request(
+            method="GET",
+            path="/first",
+            scheme="https",
+            root_path="/api",
+            authority="proxy.example.com:8443",
+            urls=object(),
+        )
+        req.reset(**_reset_kwargs())
+        assert (req.scheme, req.root_path, req.host, req.port) == ("http", "", "example.com", 443)
+        assert req._urls is None
 
     def test_reset_installs_fresh_state_instance(self) -> None:
         req = _make_request()

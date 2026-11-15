@@ -175,6 +175,12 @@ core ideas:
   validated parameters with hard maxima, one envelope per app, RFC 8288 `Link`
   headers, opaque HMAC-signed cursors with key rotation, and named OpenAPI
   components.
+* **Named routes & URL generation** — every route has a name;
+  `request.url_path_for(UserController.show, id=7)` builds links that survive
+  mounts, `root_path` and proxy prefixes. `ProxyConfig(trusted=[...])` makes
+  `request.client` / `scheme` / `host` honour forwarding headers from trusted
+  proxies only, and `UrlSigningConfig` + `ValidSignature` give expiring,
+  tamper-proof links.
 * **Custom responses & file delivery** — Return your own `Response` subclasses,
   stream downloads with `await Response.file(...)`, or emit XML with
   `Response.xml(...)` while keeping the dispatch pipeline untouched.
@@ -476,6 +482,29 @@ Or mount any ASGI sub-app:
 app = LaurenFactory.create(AppModule)
 app.mount("/static", StaticFiles(directory="static"))
 ```
+
+## URL generation
+
+```python
+from lauren import controller, get, post
+from lauren.responses import Created
+from lauren.types import Request
+
+@controller("/users", name="users")
+class UserController:
+    @get("/{id}", name="show")
+    async def show(self, id: int) -> dict:
+        return {"id": id}
+
+    @post("/")
+    async def create(self, request: Request) -> Created[dict]:
+        # "/users/7" — or "/v1/users/7" under a mount, "/api/users/7" behind root_path
+        return Created({"id": 7}, location=request.url_path_for(UserController.show, id=7))
+```
+
+Behind a load balancer, pass `proxy=ProxyConfig(trusted=["10.0.0.0/8"])` to
+`LaurenFactory.create` and `request.client.host`, `request.scheme` and
+`request.url_for(...)` reflect the real client and public URL.
 
 ## Sessions
 

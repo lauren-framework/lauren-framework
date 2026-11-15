@@ -5,7 +5,7 @@ In-process ASGI test clients for unit and integration tests.
 ### `TestClient`
 
 ```python
-class TestClient(app: Any, base_url: str = 'http://testserver', headers: Mapping[str, str] | None = None, cookies: Mapping[str, str] | None = None, follow_redirects: bool = False, timeout: float | None = _UNSET, raise_server_exceptions: bool = False, lifespan: LifespanMode = 'auto', backend: Literal['asyncio'] = 'asyncio', backend_options: Mapping[str, Any] | None = None, root_path: str = '', strict_cookies: bool = False, persist_cookies: bool | None = None)
+class TestClient(app: Any, base_url: str = 'http://testserver', headers: Mapping[str, str] | None = None, cookies: Mapping[str, str] | None = None, follow_redirects: bool = False, timeout: float | None = _UNSET, raise_server_exceptions: bool = False, lifespan: LifespanMode = 'auto', backend: Literal['asyncio'] = 'asyncio', backend_options: Mapping[str, Any] | None = None, root_path: str = '', strict_cookies: bool = False, persist_cookies: bool | None = None, client: tuple[str, int] | None = _DEFAULT_CLIENT)
 ```
 
 Synchronous in-process client for a :class:`~lauren.LaurenApp`, a ``Lauren`` app or any ASGI app.

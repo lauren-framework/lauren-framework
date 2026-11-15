@@ -14,50 +14,51 @@ common mistakes.
 3. [Application Factory & Lifecycle](#application-factory--lifecycle)
 4. [Decorators](#decorators)
 5. [HTTP Routing](#http-routing)
-6. [Types (Request / Response / State / Headers)](#types-request--response--state--headers)
-7. [Extractors](#extractors)
-8. [Validation](#validation)
-9. [Pipes](#pipes)
-10. [Custom Extractors (plugin API)](#custom-extractors-plugin-api)
-11. [Dependency Injection](#dependency-injection)
-12. [Custom Providers](#custom-providers)
-13. [Modules](#modules)
-14. [Guards & Middleware](#guards--middleware)
-15. [Interceptors](#interceptors)
-16. [Exception Handlers](#exception-handlers)
-17. [`@propagate_metadata` — copy Lauren decorator metadata between objects](#propagate_metadata--copy-lauren-decorator-metadata-between-objects)
-18. [Typed Metadata & State Keys](#typed-metadata--state-keys)
-19. [Auto-Serialization](#auto-serialization)
-20. [Response Contracts](#response-contracts)
-21. [Pagination](#pagination)
-22. [Sync vs Async Handlers](#sync-vs-async-handlers)
-23. [Background Tasks](#background-tasks)
-24. [Hosted Services & Scheduling](#hosted-services--scheduling)
-25. [Standalone Context & Commands](#standalone-context--commands)
-26. [Error Catalog](#error-catalog)
-27. [Debug Error Pages](#debug-error-pages)
-28. [Testing](#testing)
-29. [Strict Decorator Inheritance](#strict-decorator-inheritance)
-30. [OpenAPI 3.1 Generation](#openapi-31-generation)
-31. [Logging](#logging)
-32. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
-33. [Health & Readiness](#health--readiness)
-34. [Application Events](#application-events)
-35. [WebSockets](#websockets)
-36. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
-37. [Typed Streaming](#typed-streaming)
-38. [Socket.IO Compatibility](#socketio-compatibility)
-39. [Sessions](#sessions)
-40. [Stores & Caching](#stores--caching)
-41. [Codecs & content negotiation](#codecs--content-negotiation)
-42. [Configuration](#configuration)
-43. [Static Files](#static-files)
-44. [Request Arena](#request-arena)
-45. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
-46. [AI Documentation Access](#ai-documentation-access)
-47. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-48. [Companion Packages](#companion-packages)
-49. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
+6. [URLs, Proxies & Signed Links](#urls-proxies--signed-links)
+7. [Types (Request / Response / State / Headers)](#types-request--response--state--headers)
+8. [Extractors](#extractors)
+9. [Validation](#validation)
+10. [Pipes](#pipes)
+11. [Custom Extractors (plugin API)](#custom-extractors-plugin-api)
+12. [Dependency Injection](#dependency-injection)
+13. [Custom Providers](#custom-providers)
+14. [Modules](#modules)
+15. [Guards & Middleware](#guards--middleware)
+16. [Interceptors](#interceptors)
+17. [Exception Handlers](#exception-handlers)
+18. [`@propagate_metadata` — copy Lauren decorator metadata between objects](#propagate_metadata--copy-lauren-decorator-metadata-between-objects)
+19. [Typed Metadata & State Keys](#typed-metadata--state-keys)
+20. [Auto-Serialization](#auto-serialization)
+21. [Response Contracts](#response-contracts)
+22. [Pagination](#pagination)
+23. [Sync vs Async Handlers](#sync-vs-async-handlers)
+24. [Background Tasks](#background-tasks)
+25. [Hosted Services & Scheduling](#hosted-services--scheduling)
+26. [Standalone Context & Commands](#standalone-context--commands)
+27. [Error Catalog](#error-catalog)
+28. [Debug Error Pages](#debug-error-pages)
+29. [Testing](#testing)
+30. [Strict Decorator Inheritance](#strict-decorator-inheritance)
+31. [OpenAPI 3.1 Generation](#openapi-31-generation)
+32. [Logging](#logging)
+33. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
+34. [Health & Readiness](#health--readiness)
+35. [Application Events](#application-events)
+36. [WebSockets](#websockets)
+37. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
+38. [Typed Streaming](#typed-streaming)
+39. [Socket.IO Compatibility](#socketio-compatibility)
+40. [Sessions](#sessions)
+41. [Stores & Caching](#stores--caching)
+42. [Codecs & content negotiation](#codecs--content-negotiation)
+43. [Configuration](#configuration)
+44. [Static Files](#static-files)
+45. [Request Arena](#request-arena)
+46. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+47. [AI Documentation Access](#ai-documentation-access)
+48. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+49. [Companion Packages](#companion-packages)
+50. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -121,7 +122,7 @@ assert client.post("/users/", json={"name": "Ada", "age": 36}).status_code == 20
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, problem_type_base=None, debug=False, lazy_startup=True, hosted_services=True, scheduler=True, validation=None, strict_request_scope=False, response_validation="off", json_fallback="warn", pagination=None, routing=None)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, problem_type_base=None, debug=False, lazy_startup=True, hosted_services=True, scheduler=True, validation=None, strict_request_scope=False, response_validation="off", json_fallback="warn", pagination=None, routing=None, proxy=None, public_base_url=None, url_signing=None)`
 
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
@@ -129,7 +130,7 @@ Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven ph
 2. **Provider collection** — gather every `@injectable` from the graph; then (Phase 2b) load and validate every `ConfigModule` settings class, raising one `ConfigValidationError` for all problems (see [Configuration](#configuration)).
 3. **Protocol binding** — resolve `provides=[Protocol]` declarations.
 4. **DI graph compilation** — detect circular deps, scope violations, protocol ambiguities.
-5. **Router compilation** — walk controllers, compile handler signatures into extraction plans (every path / query / header / cookie / body / form / stream parameter and WebSocket payload type is compiled into a validator by the app's type compiler — see [Validation](#validation)), insert into the radix tree. Each route's declared responses (`status_code=`, typed results such as `Created[T]`, `Annotated[T, Status(206)]`, `response_model=`) are read here — contradictions raise `DecoratorUsageError` — and routes that enforce a response contract get their projector compiled (see [Response Contracts](#response-contracts)).
+5. **Router compilation** — name every route and WebSocket gateway (explicit names must be unique: `RouterConflictError`, `reason="duplicate_route_name"`; see [URLs, Proxies & Signed Links](#urls-proxies--signed-links)), walk controllers, compile handler signatures into extraction plans (every path / query / header / cookie / body / form / stream parameter and WebSocket payload type is compiled into a validator by the app's type compiler — see [Validation](#validation)), insert into the radix tree. Each route's declared responses (`status_code=`, typed results such as `Created[T]`, `Annotated[T, Status(206)]`, `response_model=`) are read here — contradictions raise `DecoratorUsageError` — and routes that enforce a response contract get their projector compiled (see [Response Contracts](#response-contracts)).
 6. **Lifecycle order computation** — build the topological `@post_construct` / `@pre_destruct` schedule. Just before it (Phase 6a) one discovery pass indexes provider methods and classes carrying feature markers; hosted services and scheduled jobs are validated there (singleton scope, unique names, `ScheduleModule` imported — see [Hosted Services & Scheduling](#hosted-services--scheduling)).
 7. **Readiness** — build the `LaurenApp` object. `startup()` (singleton construction, `@post_construct` hooks, `StartupComplete`) runs on the ASGI lifespan `startup` event. When the driver sends no lifespan events — e.g. `httpx.ASGITransport` — the app starts itself on its first HTTP or WebSocket request (once, behind a single-flight latch, with a logged warning) unless built with `lazy_startup=False`; `lauren.testing.TestClient` starts it explicitly.
 
@@ -177,6 +178,9 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `json_fallback` | `str` | `"warn"` | What encoders do with an object no rule covers: `"dict"` (public attributes), `"warn"` (same, logged once per type) or `"error"` (500) — see [Response Contracts](#response-contracts); `StartupError` with `reason="invalid_json_fallback"` |
 | `pagination` | `PaginationConfig` | `None` | App-wide paging defaults, maxima, parameter names, page envelope and cursor secret (see [Pagination](#pagination); `StartupError` with `reason="invalid_pagination_config"` / `"pagination_secret_missing"`) |
 | `routing` | `RoutingConfig` | `None` | HTTP router policies (defaults: auto HEAD on, auto OPTIONS off, trailing slash ignored, raw path off). See [HTTP Routing](#http-routing); invalid config raises `StartupError` (`reason="invalid_routing_config"`). |
+| `proxy` | `ProxyConfig` | `None` | Trusted reverse proxies: their `Forwarded` / `X-Forwarded-*` headers set `request.client` / `scheme` / `host` / `root_path`; ignored from any other peer (see [URLs, Proxies & Signed Links](#urls-proxies--signed-links); `StartupError` with `reason="invalid_proxy_config"`) |
+| `public_base_url` | `str` | `None` | The app's public URL (`"https://api.example.com/backend"`): absolute links from `UrlBuilder` outside a request, and the origin of pagination `Link` URLs (`StartupError` with `reason="invalid_public_base_url"`) |
+| `url_signing` | `UrlSigningConfig` | `None` | Enables signed URLs (`UrlBuilder.signed_url_for` + the `ValidSignature` guard); `ValidSignature` without it fails with `reason="url_signing_disabled"` |
 
 `LaurenFactory.create_context(root_module, *, hosted_services=False, scheduler=False, drain_timeout=10.0, **create_kwargs)` builds the same app and wraps it in an `ApplicationContext` — the DI graph and lifecycle without HTTP, for scripts, commands and workers (see [Standalone Context & Commands](#standalone-context--commands)).
 
@@ -226,7 +230,9 @@ compiles (first request or `await app.startup()`); afterwards they raise
 served; a failing hook raises `StartupError` (`detail={"handler": name}`).
 `await app.startup()` on a `Lauren` app only compiles it. `app.lifecycle_state` and
 `app.begin_draining()` forward to the compiled `LaurenApp` (`CREATED` / `False`
-before it compiles).
+before it compiles). `app.url_path_for(target, **params)` compiles the app and
+builds a path; `@app.get` routes are named after their function
+(`app.url_path_for("read_item", item_id=1)`) unless they pass `name=`.
 
 ### `LaurenApp`
 
@@ -249,6 +255,9 @@ Attributes & methods:
 - `app.context(*, hosted_services=False, scheduler=False, drain_timeout=10.0)` — wrap the built, not yet started app in an `ApplicationContext` (see [Standalone Context & Commands](#standalone-context--commands)).
 - `app.response_validation: str` — the default response contract (`"off"` / `"filter"` / `"strict"`).
 - `app.json_fallback: str` — the `json_fallback` policy (`"dict"` / `"warn"` / `"error"`).
+- `app.url_path_for(target, /, *, route=None, **params) -> URL` — the app-relative path of a named route or handler reference (`app.url_path_for("users.show", id=7)` → `/users/7`); see [URLs, Proxies & Signed Links](#urls-proxies--signed-links).
+- `app.urls: UrlBuilder` — the app's URL builder (the instance `UrlBuilder` injects).
+- `app.routes()` returns `RouteEntry` values with a `.name` (`str | None`) assigned at startup (`None` for internal or ambiguous routes).
 
 ### Mounting Sub-Applications
 
@@ -308,7 +317,7 @@ class Child(Base):  # explicit opt-in
     pass
 ```
 
-### `@module(*, controllers=None, providers=None, imports=None, exports=None, host=None)`
+### `@module(*, controllers=None, providers=None, imports=None, exports=None, host=None, name=None)`
 
 Declares a module boundary (NestJS-style).
 
@@ -328,14 +337,15 @@ class AppModule:
 - `imports` — other `@module` classes; their `exports` become visible here.
 - `exports` — subset of providers/imports re-exported to modules that import this one.
 - `host` — optional host pattern for the module’s own controllers/gateways, overridden by a controller’s `host=`; see [HTTP Routing](#http-routing).
+- `name` — namespace prefixed to the explicit route names of the module's controllers (`"accounts"` → `accounts.users.show`).
 
 Violations raised at startup:
 - `CircularModuleError` — an import cycle exists.
 - `ModuleExportViolation` — an export is neither declared nor imported.
 
-### `@controller(prefix="", *, tags=None, summary=None, description=None, deprecated=False, security=None, consumes=None, produces=None, max_body_size=None, host=None)`
+### `@controller(prefix="", *, tags=None, summary=None, description=None, deprecated=False, security=None, consumes=None, produces=None, max_body_size=None, host=None, name=None)`
 
-Declares a controller class. Automatically makes the class `@injectable(scope=Scope.SINGLETON)` (NestJS behaviour): one instance for the app, so a controller may depend only on singletons. For per-request construction (request-scoped dependencies, per-request `@post_construct`), add `@injectable(scope=Scope.REQUEST)` *below* `@controller`.
+Declares a controller class. `name` namespaces the explicit route names of its routes (`@controller("/users", name="users")` + `@get("/{id}", name="show")` → `users.show`). Automatically makes the class `@injectable(scope=Scope.SINGLETON)` (NestJS behaviour): one instance for the app, so a controller may depend only on singletons. For per-request construction (request-scoped dependencies, per-request `@post_construct`), add `@injectable(scope=Scope.REQUEST)` *below* `@controller`.
 
 ```python run
 @controller("/api/v1/users", tags=["users"])
@@ -346,7 +356,7 @@ class UserController:
 
 ### Route decorators
 
-- `@get(path="", *, summary=None, description=None, response_model=None, responses=None, deprecated=False, operation_id=None, include_in_schema=True, tags=None, status_code=None, response_validation=None, response_headers=None, consumes=None, produces=None, max_body_size=None)`
+- `@get(path="", *, summary=None, description=None, response_model=None, responses=None, deprecated=False, operation_id=None, include_in_schema=True, tags=None, status_code=None, response_validation=None, response_headers=None, consumes=None, produces=None, max_body_size=None, name=None)`
 - `@post(...)`, `@put(...)`, `@patch(...)`, `@delete(...)`, `@head(...)`, `@options(...)`
 - `@route(path="", *, methods=["GET", "POST"], **options)` — one metadata entry per verb; invalid methods raise `DecoratorUsageError` at decoration time.
 - `@any_method(path="", **options)` — catch any method at a node; explicit verb handlers win. Not an OpenAPI operation.
@@ -361,6 +371,7 @@ Each decorator attaches a `RouteMeta` to the method. Multiple route decorators o
 - `consumes` — accepted request media types (a string or a list; `type/subtype`, wildcards `*/*`, `type/*`, `application/*+json` allowed); always enforced with 415. See [Codecs & content negotiation](#codecs--content-negotiation).
 - `produces` — response media types, negotiated from `Accept` (concrete types only, first = default).
 - `max_body_size` — this route's body limit in bytes (positive `int`; larger or smaller than the app's).
+- `name` — the route name for URL building (dot-separated identifiers); without it a route is named `ControllerClass.method` (see [URLs, Proxies & Signed Links](#urls-proxies--signed-links)).
 
 Invalid option values fail at decoration time with `DecoratorUsageError`
 (`detail = {"decorator", "target", "option", "reason"}`, e.g. `reason="invalid_status_code"`).
@@ -480,7 +491,9 @@ with TestClient(routing_app) as routing_client:
 
 ### `Request`
 
-Properties: `method`, `path`, `url`, `path_params`, `host_params` (matched host labels, read-only mapping), `query_params`, `headers`, `cookies`, `client`, `server`, `state`, `app_state`, `extensions` (the ASGI `scope["extensions"]`, read-only; empty when the server sent none).
+Properties: `method`, `path`, `url` (`path?query`; `path_with_query` is the same value), `path_params`, `host_params` (read-only matched host labels), `query_params`, `headers`, `cookies`, `client`, `server`, `state`, `app_state`, `extensions` (the ASGI `scope["extensions"]`, read-only; empty when the server sent none).
+
+URL model (proxy-aware with `ProxyConfig`): `scheme` (`"http"` / `"https"`), `host` (trusted forwarded host, else the `Host` header, else the server; IPv6 keeps brackets), `port` (the scheme's default when the host names none), `root_path` (mounts, `root_path=`, a trusted `X-Forwarded-Prefix`), `base_url` (`URL("https://api.example.com/backend/")`), `full_url` (`URL("https://api.example.com/backend/users/7?x=1")`). URL building: `request.url_path_for(target, **params)`, `request.url_for(target, **params)` (absolute), `request.ws_url_for(gateway, **params)` — see [URLs, Proxies & Signed Links](#urls-proxies--signed-links).
 
 Body methods (async): `await request.body() -> bytes`, `await request.text()`, `await request.json()`, `await request.form()`, `request.stream()`.
 
@@ -2030,7 +2043,7 @@ closures.
 from dataclasses import dataclass
 
 from lauren import (
-    Created, LaurenFactory, NoContent, NotFoundError, Ok, controller, delete, get, module, post, put, raises,
+    Created, LaurenFactory, NoContent, NotFoundError, Ok, Request, controller, delete, get, module, post, put, raises,
 )
 from lauren.testing import TestClient
 
@@ -2063,10 +2076,10 @@ class AccountController:
         return USERS[1]
 
     @put("/{id}")
-    async def upsert(self, id: int) -> Ok[UserOut] | Created[UserOut]:
+    async def upsert(self, id: int, request: Request) -> Ok[UserOut] | Created[UserOut]:
         if id in USERS:
             return Ok(USERS[id])
-        return Created(UserOut(id, "new"), location=f"/accounts/{id}")
+        return Created(UserOut(id, "new"), location=request.url_path_for(AccountController.show, id=id))
 
     @delete("/{id}")
     async def remove(self, id: int) -> NoContent:
@@ -2283,7 +2296,7 @@ PaginationConfig(...)]`. Precedence: parameter → app → built-in default.
 | `envelope` | `"items"` | `"items"` \| `"data"` \| `"bare"` — app level only |
 | `meta_keys` | `"snake"` | `"camel"` → `hasNext`, `perPage`, `totalPages`, `nextCursor`, `prevCursor` — app level only |
 | `total_header` | on for `"bare"`, else off | `X-Total-Count` when `total` is known |
-| `base_url` | `None` (relative links) | trusted `http(s)://` origin → absolute `Link` URLs |
+| `base_url` | `None` (relative links unless `public_base_url=` supplies an origin) | trusted `http(s)://` origin → absolute `Link` URLs; overrides `public_base_url` |
 | `cursor_secret` | `None` | str / bytes / `Secret` or a sequence (first signs, all verify); required by any `CursorPagination` route |
 | `cursor_max_age` | `None` (never expire) | seconds; older cursors → `reason="expired"` |
 
@@ -2327,9 +2340,10 @@ next_cursor, prev_cursor` (`total` / `total_pages` are `null` when unknown).
 with `has_next`, `last` only with a known `total` (never for cursors). URLs come
 from a copy of the request path and query: only the pagination parameters
 change, others keep their order and encoding; they are path-absolute and
-include the root path (`root_path=` or the ASGI `root_path`), absolute with
-`base_url`. A page built directly (not via the helpers) renders the app
-envelope without links. Items of any backend serialise through the app encoder;
+include `request.root_path` (configured/ASGI root paths, mounts and trusted
+proxy prefixes). They are absolute with `base_url` (or the origin of
+`public_base_url=` when no paging config overrides it). A page built directly
+(not via the helpers) renders the app envelope without links. Items of any backend serialise through the app encoder;
 `(page, 206)` tuples work.
 Under `response_validation="filter"` / `"strict"` a page stays a page: only
 its `items` are projected onto `T` (issues at `["response", "items", n]`), and a
@@ -2348,6 +2362,180 @@ response headers.
   in their own namespace with the shared signer, `lauren._signing`).
 * `total` is optional — for large tables fetch `limit + 1` rows
   (`Page.from_rows`) or use cursors instead of counting.
+
+---
+
+## URLs, Proxies & Signed Links
+
+Every HTTP route and WebSocket gateway has a name, validated at startup, and
+URLs are built from a **name** or a **handler reference** — never an f-string
+that breaks when a controller moves under a mount, `root_path` or a proxy
+prefix. Public names (`lauren.urls`, also importable from `lauren`): `URL`,
+`UrlBuilder`, `ProxyConfig`, `UrlSigningConfig`, `ValidSignature`.
+
+```python run
+from lauren import LaurenFactory, UrlBuilder, controller, get, injectable, module, post
+from lauren.responses import Created
+from lauren.testing import TestClient
+from lauren.types import Request
+
+
+@controller("/users", name="users")
+class UserController:
+    @get("/{id}", name="show")                  # full name: "users.show"
+    async def show(self, id: int, request: Request) -> dict:
+        return {"id": id, "self": request.url_for("users.show", id=id)}
+
+    @post("/")                                  # derived name: "UserController.create"
+    async def create(self, request: Request) -> Created[dict]:
+        return Created({"id": 7}, location=request.url_path_for(UserController.show, id=7))
+
+
+@injectable()
+class Mailer:
+    def __init__(self, urls: UrlBuilder) -> None:
+        self.urls = urls
+
+    def link(self, user_id: int) -> str:
+        return self.urls.url_for(UserController.show, id=user_id)   # needs public_base_url
+
+
+@module(controllers=[UserController], providers=[Mailer])
+class AppModule:
+    pass
+
+
+app = LaurenFactory.create(AppModule, public_base_url="https://api.example.com")
+with TestClient(app, base_url="https://api.example.com", root_path="/backend") as client:
+    assert client.post("/users/").header("location") == "/backend/users/7"
+    assert client.get("/users/3").json()["self"] == "https://api.example.com/backend/users/3"
+    assert client.resolve(Mailer).link(4) == "https://api.example.com/users/4"
+assert app.url_path_for("users.show", id=5) == "/users/5"
+```
+
+### Naming
+
+- `name=` on `@get`/`@post`/… (and `@app.get`), `@controller`, `@module` and
+  `@ws_controller`: dot-separated identifiers (`[A-Za-z_][A-Za-z0-9_-]*`),
+  checked when the decorator runs (`DecoratorUsageError`,
+  `reason="invalid_route_name"`).
+- Full name = `[module name.][controller name.]route name`. A route without
+  `name=` gets the derived name `ControllerClass.method` (never namespaced;
+  `Lauren` app routes: the function name) when its handler has exactly one
+  route on that controller; a multi-route handler's unnamed routes stay
+  unnamed. Gateways: `[module name.]name`, else the class name.
+- Explicit names are unique per namespace (HTTP and WebSocket are separate):
+  a duplicate raises `RouterConflictError` with
+  `detail={"reason": "duplicate_route_name", "name", "kind", "handlers"}`.
+  An explicit name shadows an equal derived name; a derived name shared by
+  several routes is ambiguous (`LookupError` when used), not a startup error.
+- `get_all_routes(app)` / `get_all_ws_gateways(app)` report `.name`.
+
+### Building
+
+| API | Returns | Includes root path / mount prefix | Absolute |
+|---|---|---|---|
+| `app.url_path_for(target, /, *, route=None, **params)` | `URL` path | no (app-relative) | no |
+| `request.url_path_for(target, /, *, route=None, **params)` | `URL` path | yes | no |
+| `request.url_for(target, /, *, route=None, **params)` | `URL` | yes | yes (`request.base_url`) |
+| `request.ws_url_for(gateway, /, **params)` | `URL` `ws://` / `wss://` | yes | yes |
+| `UrlBuilder.path_for(target, /, *, route=None, **params)` | `URL` path | the public root path | no |
+| `UrlBuilder.url_for(target, /, *, route=None, **params)` | `URL` | yes | yes (`public_base_url`; `RuntimeError` when unset) |
+| `UrlBuilder.ws_url_for(gateway, /, **params)` | `URL` `ws://` / `wss://` | yes | yes (`public_base_url`) |
+
+`WebSocket` and `WsUpgradeRequest` have the same `url_for` / `url_path_for` /
+`ws_url_for` / `base_url`. `target` is a route name or a handler reference
+(`UserController.show`, checked by Python at import); `route=` picks one route
+of a handler with several. A gateway target is a name or the gateway class.
+Path parameters are keyword arguments rendered with `str()` (booleans
+`true`/`false`, enums by value) and percent-encoded per segment (`a/b` →
+`a%2Fb`; `.`/`..` escaped); `{*wildcard}` values keep `/`. Unknown target →
+`LookupError` (with close matches); missing / unexpected / `None` / empty
+parameter → `ValueError` naming the route — both surface as a logged 500.
+`UrlBuilder` (injectable, one per app; `app.urls`) uses `public_base_url=`
+(the app's public URL including its path prefix; without a path, `root_path=`
+applies) and never a request's `Host` header. `public_base_url` also becomes
+the origin of pagination `Link` URLs unless `PaginationConfig(base_url=...)`
+is set.
+
+`URL` is an immutable `str` subclass: `scheme`, `netloc`, `host` (IPv6 keeps
+brackets), `port` (`None` unless explicit), `path`, `query`, `fragment`,
+`is_absolute`; `with_query(mapping_or_pairs=None, /, **params)` (sets the keys
+given — a list repeats a key, `None` removes it — values percent-encoded),
+`with_fragment(text)`, `replace(*, scheme=, host=, port=, path=, query=,
+fragment=)` (positional arguments keep `str.replace`).
+
+### Request URL model and trusted proxies
+
+`request.scheme`, `host`, `port`, `root_path`, `base_url`, `full_url` and
+`client` (also on `WebSocket`; `WsUpgradeRequest` has `scheme`, `host`,
+`port`, `root_path`, `base_url`, and its `client` tuple) come from the ASGI
+scope and the `Host` header — or, with
+`ProxyConfig(*, trusted, headers="x-forwarded", max_hops=1, trust_prefix=False, server_applied=False)`,
+from a trusted proxy:
+
+- Forwarding headers are read **only** when the immediate peer is in
+  `trusted` (addresses, CIDR networks, `"unix"` for Unix-socket peers, `"*"`
+  for everyone — logged as a warning).
+- `headers`: `"x-forwarded"` (`X-Forwarded-For` / `-Proto` / `-Host` /
+  `-Port` / `-Prefix`), `"forwarded"` (RFC 7239) or `"both"` (`Forwarded`
+  when present).
+- The forwarded-for list is walked right to left, past trusted addresses, for
+  at most `max_hops` entries; the first untrusted entry is the client
+  (`unknown` / `_obfuscated` are untrusted). Scheme, host, port and prefix
+  come from that hop. `trust_prefix=True` prepends `X-Forwarded-Prefix` to
+  `root_path`. Invalid values are ignored (debug log), never a 500.
+- `server_applied=True`: the server (`uvicorn --proxy-headers`) already
+  rewrote client and scheme; Lauren derives host and prefix only.
+- Resolved once per request before any middleware (HTTP and WebSocket);
+  mounted sub-apps receive the resolved `client`, `scheme`, `root_path` and
+  `Host` in their scope. Bad config: `StartupError`, `reason="invalid_proxy_config"`.
+
+Without a trusted proxy the `Host` header is client-chosen: build links that
+leave the request (emails, webhooks, cached responses) with `UrlBuilder`.
+
+### Signed URLs
+
+```python fragment
+app = LaurenFactory.create(AppModule, url_signing=UrlSigningConfig(secret=["k-2026-10", "k-2026-04"]))
+
+@controller("/downloads", name="downloads")
+class Downloads:
+    @get("/{id}", name="file")
+    @use_guards(ValidSignature)            # 403 on missing / invalid / expired signature
+    async def file(self, id: int) -> Response: ...
+
+link = urls.signed_url_for("downloads.file", id=7, expires_in=600)   # urls: UrlBuilder
+```
+
+- `UrlSigningConfig(*, secret, default_ttl=3600, bind_method=False, bind_host=False, expires_param="exp", signature_param="sig", clock=None)`:
+  `secret` (str / bytes / `Secret` or a list — the first signs, all verify),
+  `bind_method` (sign the HTTP method), `bind_host` (sign scheme + host;
+  needs `public_base_url`), `clock` (unix-time callable for tests).
+- `UrlBuilder.signed_url_for(target, /, *, expires_in=None, query=None, route=None, **params)`
+  / `signed_ws_url_for(gateway, /, *, expires_in=None, query=None, **params)`
+  append `exp` (unix seconds) and `sig` (HMAC-SHA256 hex from the shared
+  signer, namespace `"url"`); `query=` adds signed parameters. Absolute with
+  `public_base_url`, else a root-path-aware path. `RuntimeError` without
+  `url_signing=`.
+- Canonical message: method (with `bind_method`; HEAD shares GET), origin
+  (with `bind_host`), the **app-relative** path (valid under any mount / prefix),
+  query sorted by key without `exp`/`sig`, and `exp`. Duplicate query values
+  keep their order; raw-path routing preserves encoded segment boundaries.
+  Signed `any_method()` links bind GET. Absolute URLs use a routed target's
+  host (including supplied host labels), not another route's request host.
+- URL templates reuse compiled path converters and strict trailing slashes.
+  A converter value that cannot match its route raises `ValueError`. Host
+  and path remain separate in manifests; names are the full compiled names.
+- `ValidSignature` (a singleton guard; HTTP and WebSocket): `ForbiddenError`
+  403 with `detail["reason"]` `"signature_missing"` / `"signature_invalid"` /
+  `"signature_expired"`; a WebSocket connection is closed with code 4403.
+  Used without `url_signing=` → `StartupError`, `reason="url_signing_disabled"`.
+
+Testing: `TestClient(app, client=("10.0.0.5", 4000))` sets the peer address
+(`client=None`: Unix socket), `base_url=` the scheme and host, `root_path=`
+the ASGI root path; `UrlSigningConfig(clock=fake)` expires links without
+sleeping.
 
 ---
 
@@ -3323,8 +3511,11 @@ with TestClient(app) as c:             # startup() on enter, shutdown() on exit
 `TestingModuleBuilder`, `lifespan`, `WsTestClient`, `WebSocketTestSession`,
 `WebSocketSession`; opt-in fixtures in `lauren.testing.pytest_plugin`.
 
-### `TestClient(app, *, base_url="http://testserver", headers=None, cookies=None, follow_redirects=False, timeout=30.0, raise_server_exceptions=False, lifespan="auto", backend="asyncio", backend_options=None, root_path="", strict_cookies=False, persist_cookies=None)`
+### `TestClient(app, *, base_url="http://testserver", headers=None, cookies=None, follow_redirects=False, timeout=30.0, raise_server_exceptions=False, lifespan="auto", backend="asyncio", backend_options=None, root_path="", strict_cookies=False, persist_cookies=None, client=("127.0.0.1", 12345))`
 
+- **Peer address**: `client=` is the `scope["client"]` every request and
+  WebSocket reports (`None`: no client, like a Unix socket) — test
+  `ProxyConfig` trust decisions with it; `client.client_address` reads it.
 - **One persistent event loop per client**: startup, requests, background tasks,
   WebSockets and shutdown share it, so `asyncio.Event`/`Queue`/`Lock`, pools and
   tasks created in `@post_construct` keep working. A call from sync test code
@@ -4232,7 +4423,11 @@ instance.
 Properties: `path`, `path_template`, `path_params`, `headers`,
 `query_string`, `state`, `app_state`, `client_subprotocols`,
 `subprotocol`, `connected`, `connection_state`, `close_code`,
-`close_reason`.
+`close_reason`, and the URL model — `client` (`ClientInfo`), `scheme`
+(`"ws"` / `"wss"`), `host`, `port`, `root_path`, `base_url` — plus
+`url_for` / `url_path_for` / `ws_url_for` (see [URLs, Proxies & Signed Links](#urls-proxies--signed-links)).
+`@ws_controller(path, *, tags=None, summary=None, description=None, name=None)`
+names the gateway for `ws_url_for` (default: the class name).
 
 ### Typed dispatch and discriminated unions
 
@@ -5663,12 +5858,12 @@ free — put connections in `@post_construct`.
 
 | Type | Key fields |
 |---|---|
-| `ReflectedRoute` | `method`, `path`, `full_path`, `summary`, `response_model`, `tags`, `deprecated`, `handler`, `status_code` (effective success status), `responses_typed`, `raises`, `guards`, `interceptors`, `middlewares`, `consumes`, `produces`, `max_body_size` |
+| `ReflectedRoute` | `method`, `path`, `full_path`, `summary`, `response_model`, `tags`, `deprecated`, `handler`, `status_code` (effective success status), `responses_typed`, `raises`, `guards`, `interceptors`, `middlewares`, `consumes`, `produces`, `max_body_size`, `name` (full route name) |
 | `ReflectedResponse` | `status`, `body_type` (`None`: no body), `description`, `source` (`"declared"` / `"raises"` / `"manual"`) — the entries of `ReflectedRoute.responses_typed` |
 | `ReflectedWsMessage` | `event`, `payload_model` (reserved — always `None` today), `summary`, `handler` |
 | `ReflectedController` | `cls`, `meta`, `guards`, `interceptors`, `middlewares`, `exception_handlers`, `routes` |
 | `ReflectedModule` | `cls`, `meta` |
-| `ReflectedWsGateway` | `cls`, `path_template`, `meta`, `guards`, `interceptors`, `middlewares`, `messages`, `owning_module` |
+| `ReflectedWsGateway` | `cls`, `path_template`, `meta`, `guards`, `interceptors`, `middlewares`, `messages`, `owning_module`, `name` |
 | `ReflectedError` | `cls`, `code`, `status_code`, `category`, `problem_type`, `problem_title`, `summary` — from `error_catalog(include_user=True)` (see [Error catalog as data](#error-catalog-as-data)) |
 
 Host-routed manifests and compiled reflection entries expose `host` separately
@@ -5772,9 +5967,9 @@ async def create(self, body: Json[CreateUser]) -> UserOut:
     return await self._repo.create(body)
 
 @post("/with-location")
-async def create_with_location(self, body: Json[CreateUser]) -> Created[UserOut]:
+async def create_with_location(self, body: Json[CreateUser], request: Request) -> Created[UserOut]:
     user = await self._repo.create(body)
-    return Created(user, location=f"/users/{user.id}")
+    return Created(user, location=request.url_path_for(UserController.show, id=user.id))
 ```
 
 The tuple form (`return user, 201, {"location": ...}`) still works but is
@@ -6020,7 +6215,10 @@ request.
 | Extract query param | `q: Query[str] = QueryField(default="", ge=..., le=...)` |
 | Extract JSON body | `body: Json[MyPydanticModel]` |
 | Raise 404 in handler | `raise NotFoundError("...")` (built in); for a domain code, `class UserNotFound(NotFoundError): code = "user_not_found"`; declare it with `@raises(NotFoundError)` for OpenAPI |
-| Declare a success status | `@post("/", status_code=201)` or `-> Created[UserOut]` + `return Created(user, location=...)` |
+| Declare a success status | `@post("/", status_code=201)` or `-> Created[UserOut]` + `return Created(user, location=request.url_path_for(UserController.show, id=user.id))` |
+| Link to another route | `request.url_path_for(UserController.show, id=7)` (path) / `request.url_for("users.show", id=7)` (absolute); outside a request inject `UrlBuilder` + `public_base_url=` |
+| Real client IP / scheme behind a proxy | `LaurenFactory.create(..., proxy=ProxyConfig(trusted=["10.0.0.0/8"]))`, then `request.client.host` / `request.scheme` |
+| Expiring, tamper-proof link | `url_signing=UrlSigningConfig(secret=...)`, `urls.signed_url_for("downloads.file", id=7, expires_in=600)`, `@use_guards(ValidSignature)` on the route |
 | Keep internal fields off the wire | annotate the public type and set `response_validation="filter"` (app or route) |
 | Add a guard to one route | `@use_guards(MyGuard)` on the method |
 | Add a guard to all routes on a controller | `@use_guards(MyGuard)` on the class |
