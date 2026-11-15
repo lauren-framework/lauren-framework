@@ -1,243 +1,186 @@
-# File Uploads
+# Forms and File Uploads
 
-> Lauren handles multipart form uploads through the `UploadFile` extractor. Declare a
-> parameter with `UploadFile` (single file) or `list[UploadFile]` (multiple files),
-> and Lauren parses the `multipart/form-data` body once, lazily, shared across all
-> file parameters on the same handler.
+`Form[T]` binds URL-encoded and multipart fields to scalars, lists, dataclasses,
+`TypedDict`, Pydantic models and msgspec structs. File fields use `UploadFile`.
+All form/file parameters share one parse; annotations and aliases are compiled
+at startup, not inspected on each request.
 
----
+## A typed mixed form
 
-## Single file upload
-
+<!-- docs-contract: run -->
 ```python
-from lauren import UploadFile, controller, module, post
+from dataclasses import dataclass, field
+from typing import Annotated
 
-@controller("/files")
-class FilesController:
-    @post("/avatar")
-    async def upload(self, avatar: UploadFile) -> dict:
-        content = await avatar.read()
+from lauren import (
+    ContentConfig, Form, LaurenFactory, MultipartConfig, UploadField,
+    UploadFile, controller, module, post,
+)
+from lauren.testing import TestClient
+
+@dataclass
+class Profile:
+    name: str
+    tags: list[str] = field(default_factory=list)
+    avatar: Annotated[
+        UploadFile | None,
+        UploadField(max_size=2 * 1024 * 1024, content_types=["image/png"], sniff=True),
+    ] = None
+
+@controller("/profiles")
+class Profiles:
+    @post("/", max_body_size=3 * 1024 * 1024)
+    async def create(self, form: Form[Profile]) -> dict:
         return {
-            "filename": avatar.filename,
-            "content_type": avatar.content_type,
-            "size": len(content),
+            "name": form.name,
+            "tags": form.tags,
+            "size": form.avatar.size if form.avatar else None,
         }
+
+@module(controllers=[Profiles])
+class AppModule:
+    pass
+
+app = LaurenFactory.create(
+    AppModule,
+    content=ContentConfig(multipart=MultipartConfig(spool_threshold=64 * 1024)),
+)
+with TestClient(app) as client:
+    response = client.post(
+        "/profiles",
+        data=[("name", "Ada"), ("tags", "python"), ("tags", "async")],
+        files={"avatar": ("photo.png", b"\x89PNG\r\n\x1a\nexample", "image/png")},
+    )
+    assert response.status_code == 200
+    assert response.json()["tags"] == ["python", "async"]
 ```
 
-`POST /files/avatar` with `multipart/form-data; name="avatar"` receives the file in
-the `avatar` parameter. Missing the field raises `ExtractorFieldError` (422).
+A model containing any file field requires `multipart/form-data`, even when
+that field has a default. Text-only models also accept
+`application/x-www-form-urlencoded`. Typed forms always validate, including
+when `ValidationPolicy.stdlib_models` is `"warn"` or `"legacy"`.
 
----
-
-## `UploadFile` API
-
-| Attribute / Method | Type | Description |
-|---|---|---|
-| `file.filename` | `str \| None` | Original filename from the client's `Content-Disposition` header. `None` when the browser didn't send one. |
-| `file.content_type` | `str \| None` | MIME type from the part's `Content-Type` header, e.g. `"image/jpeg"`. |
-| `await file.read()` | `bytes` | Read all bytes. May be called multiple times — seeks back to the start. |
-| `await file.seek(offset)` | `None` | Seek to byte position. |
-| `file.size` | `int \| None` | Content length if the part declares it; `None` otherwise. |
+## Individual fields, aliases and defaults
 
 ```python
-@post("/upload")
-async def upload(self, doc: UploadFile) -> dict:
-    data = await doc.read()
-    # process data...
-    await doc.seek(0)           # rewind and re-read if needed
-    data_again = await doc.read()
-    return {"filename": doc.filename, "size": len(data)}
-```
+from lauren import Form, FormField, UploadFile
 
----
-
-## Multiple files (same field name)
-
-Declare `list[UploadFile]` to receive all files uploaded under the same form field:
-
-```python
-@post("/gallery")
-async def upload_gallery(self, photos: list[UploadFile]) -> dict:
-    names = []
-    for photo in photos:
-        data = await photo.read()
-        names.append(photo.filename)
-    return {"uploaded": names}
-```
-
-The client sends multiple parts with the same `name="photos"`:
-
-```bash
-curl -F "photos=@img1.jpg" -F "photos=@img2.jpg" localhost:8000/files/gallery
-```
-
----
-
-## Mixed form: files + text fields
-
-!!! warning "`Form[T]` does not read multipart bodies yet"
-    `Form[T]` parses `application/x-www-form-urlencoded` bodies only. In a
-    `multipart/form-data` request it does not see the parts (a model fails
-    validation with 422; a `Form[str]` receives the raw multipart framing).
-
-Read the text fields of a multipart form through `UploadFile` parameters too — a
-text part arrives as an `UploadFile` whose `filename` is `None`:
-
-```python
-from lauren import UploadFile, controller, post
-
-@controller("/documents")
-class DocumentsController:
-    @post("/")
-    async def create(
-        self,
-        title: UploadFile,          # the text field "title"
-        file: UploadFile,           # the file field "file"
-    ) -> dict:
-        content = await file.read()
-        return {
-            "title": (await title.read()).decode(),
-            "filename": file.filename,
-            "size": len(content),
-        }
-```
-
-The multipart body is parsed **once** per request and shared across all
-`UploadFile` parameters, however many the handler declares.
-
----
-
-## Optional file upload
-
-Use `| None` with a default of `None` to make the file optional:
-
-```python
 @post("/profile")
 async def update_profile(
     self,
-    name: UploadFile,                       # text field of the multipart form
+    name: Form[str] = FormField(alias="display-name"),
     avatar: UploadFile | None = None,
 ) -> dict:
-    if avatar is not None:
-        data = await avatar.read()
-        # persist avatar...
-    return {"name": (await name.read()).decode(), "has_avatar": avatar is not None}
+    return {"name": name, "has_avatar": avatar is not None}
 ```
 
----
+Use `list[UploadFile]` for repeated file parts and `Form[list[str]]` for repeated
+text fields. Scalars take the first occurrence. Missing optional fields use
+explicit defaults; `T | None` without a default is still required. A blank
+non-string field is treated as omitted, not as `None`. Checkbox tokens
+`true/false`, `1/0`, `on/off` and `yes/no` are accepted case-insensitively;
+other boolean strings fail validation.
 
-## Unicode filenames
+On model fields, put `FormField(alias=...)` or `UploadField(...)` in
+`Annotated`. Backend aliases and validation still apply; Pydantic form aliases
+must be flat strings, not `AliasPath` or `AliasChoices`. Unknown text fields
+follow the model's extra-field policy. Files inside `Json[Model]`, including
+nested file fields, are rejected at startup: files belong in forms.
 
-Lauren preserves Unicode filenames exactly as sent by the client. Filenames with
-non-ASCII characters (e.g. `résumé.pdf`) survive the round-trip without any
-escaping or transliteration.
+## Upload constraints and resource budgets
 
----
+`UploadField(max_size=..., content_types=[...], sniff=..., max_files=...,
+min_files=..., alias=..., description=...)` supports a parameter default or
+model-field `Annotated` metadata. Count constraints belong on file lists.
+Declared part types are checked before creating a spool; size/count limits
+are enforced while reading. MIME ranges such as `image/*` are allowed.
 
-## Content-type checking
+`sniff=True` checks a bounded prefix for PNG, JPEG, GIF, WebP, PDF, ZIP or GZIP.
+List explicit supported MIME types when using the built-in sniffer. A
+synchronous `sniff(prefix: bytes) -> str | None` callable supports other types.
+The detected type must match the declared type and allow-list. Sniffing is
+not a complete file validator, antivirus scan or archive-bomb defense.
 
-The request itself must be `multipart/form-data`: an `UploadFile` route answers
-any other `Content-Type` (a JSON body, `text/plain`, …) with 415
-`unsupported_media_type` and an `Accept-Post: multipart/form-data` header,
-before the body is read. The type of each **part** is up to you — validate it
-inside the handler or with a pipe:
+`ContentConfig(multipart=MultipartConfig(...))` configures app-owned limits:
 
-```python
-from lauren.exceptions import ExtractorFieldError
+| Option | Default |
+|---|---:|
+| `max_parts` | `1000` |
+| `max_fields` | `1000` |
+| `max_files` | `100` |
+| `max_field_size` | `1 MiB` |
+| `max_part_header_bytes` | `16 KiB` |
+| `spool_threshold` | `1 MiB` per file |
+| `temp_dir` | system temporary directory |
+| `undeclared_parts` | `"ignore"` |
 
-@post("/images")
-async def upload_image(self, image: UploadFile) -> dict:
-    allowed = {"image/jpeg", "image/png", "image/webp"}
-    if image.content_type not in allowed:
-        raise ExtractorFieldError(                      # built-in 422
-            "unsupported image type",
-            detail={"content_type": image.content_type, "allowed": list(allowed)},
-        )
-    data = await image.read()
-    return {"filename": image.filename, "size": len(data)}
-```
+Limits must be positive integers and custom temporary directories must exist
+and be writable. The request's total `max_body_size` remains in force. Raise
+it on the upload route, not every route. Unknown file parts are drained without
+spooling by default; `undeclared_parts="reject"` rejects unknown names.
+`Form[FormData]` explicitly captures all parts instead. URL-encoded extraction
+also bounds text-field count and size.
 
----
+Multipart framing is incremental, including when delimiters cross ASGI chunks.
+Files spill from memory to disk; disk operations use workers. This bounds
+parser memory, not calls such as `await file.read()` that explicitly allocate
+the entire file. Avoid buffering middleware (`await request.body()`) when
+streaming matters. Combining forms with another explicit body extractor
+(`Bytes`, `ByteStream`, etc.) also buffers once for replay. After an unbuffered
+multipart parse, `request.body()` raises rather than rereading an exhausted
+stream. If middleware parses before routing, app budgets apply
+first and matched-route constraints are checked against the cached result.
 
-## Large file handling
+## File API and lifetime
 
-`UploadFile` buffers the part in memory. For uploads that may be several megabytes,
-consider:
+| Member | Behavior |
+|---|---|
+| `filename`, `content_type`, `headers`, `name` | Untrusted client metadata |
+| `size` | Actual size in bytes; remains available after close |
+| `file` | Underlying seekable binary file; direct operations are synchronous |
+| `safe_filename` | NFC basename without path separators, controls or device names |
+| `await read(size=-1)` | Read from the current position |
+| `await seek(offset, whence=0)` | Move the cursor; use `seek(0)` to reread |
+| `await write(data)` | Write and update size |
+| `stream(chunk_size=65536)` | Async iterator from the current position |
+| `await save(path, overwrite=False)` | Copy the entire file, preserve cursor; return bytes written |
+| `await close()` | Idempotent cleanup |
+| `read_sync()` | Legacy full-content snapshot without moving the cursor; can block |
 
-* **Streaming writes** — `await file.read()` returns the full bytes, then write to
-  disk or cloud storage.
-* **Body size limits** — raise the limit on the upload route only, not app-wide:
-  `@post("/avatar", max_body_size=...)` (or `@controller(..., max_body_size=...)`)
-  overrides `LaurenFactory.create(..., max_body_size=N)` for that route, larger or
-  smaller. An oversize upload is answered with 413 `request_body_too_large`, and a
-  `Content-Length` above the limit is rejected before anything is read.
+**Migration:** `read()` now follows a file cursor. Rewind before reading again;
+`read_sync()` keeps its legacy snapshot behavior. `UploadFile(data=bytes, ...)`
+remains available for fixtures and already-buffered values.
 
-```python
-MiB = 1024 * 1024
+Files remain open through response streaming and `BackgroundTasks`, then close
+automatically before the request returns to its pool. Partial files close on
+parse failure or cancellation. Do not retain live uploads for detached tasks;
+save them or copy the necessary values first. Manually constructed uploads
+should be closed explicitly (they support `async with`).
 
-@controller("/media")
-class MediaController:
-    @post("/avatar", max_body_size=2 * MiB)
-    async def avatar(self, file: UploadFile) -> dict: ...
+Never use a client filename as a destination path. Prefer generated storage
+names. `save()` does not create directories or overwrite existing files unless
+explicitly asked. `safe_filename` is a convenience, not an authorization policy.
+RFC 5987/2231 `filename*` values are decoded and preferred over `filename`.
 
-app = LaurenFactory.create(AppModule)   # every other route keeps the 1 MiB default
-```
+## Raw forms and errors
 
-See [Content Negotiation & Body Limits](content-negotiation.md#per-route-body-limits).
+`Form[FormData]` returns an immutable multi-mapping of `str | UploadFile`.
+`get`, indexing and `items()` select the first value; `getall(name)` returns an
+independent list; `multi_items()` preserves every pair in wire order.
+`await request.multipart()` shares this cache. `request.form()` retains its
+URL-encoded `dict[str, list[str]]` contract. Raw `Form[dict]` and bare `Form`
+return the same dictionary shape for URL-encoded or multipart text fields.
+Legacy raw-dict routes retain lenient content-type behavior unless strict
+checking is enabled; typed forms reject unsupported media with 415.
 
-For truly streaming large uploads without full buffering, use the
-[`ByteStream`](../reference/cheat-sheet.md) extractor instead, which gives you the
-raw ASGI receive loop.
+Budgets and per-file byte limits answer 413. Missing/wrong-kind fields,
+invalid values, MIME mismatches and file-count constraints answer 422 with
+structured `detail.issues`. Malformed framing keeps the 1.x default 422;
+`ContentConfig(malformed_body_status=400)` opts into 400. OpenAPI documents
+form object properties, binary files, arrays of files and accepted part types.
 
----
+Cookie-authenticated form routes still need CSRF protection; accepting an HTML
+form media type is not an authentication boundary.
 
-## Testing
-
-Build a `multipart/form-data` body manually or with `httpx`:
-
-```python
-from lauren.testing import TestClient
-
-def test_avatar_upload():
-    client = TestClient(app)
-    r = client.post(
-        "/files/avatar",
-        content=build_multipart([("avatar", b"fake-image", {"filename": "photo.jpg", "content_type": "image/jpeg"})]),
-        headers={"Content-Type": "multipart/form-data; boundary=----Boundary"},
-    )
-    assert r.status_code == 200
-    assert r.json()["filename"] == "photo.jpg"
-```
-
-Or use a helper like `httpx`'s `files` argument directly (Lauren's `TestClient`
-accepts the same API as `httpx`):
-
-```python
-def test_upload_with_httpx_api():
-    client = TestClient(app)
-    r = client.post(
-        "/files/avatar",
-        files={"avatar": ("photo.jpg", b"fake-image", "image/jpeg")},
-    )
-    assert r.status_code == 200
-    assert r.json()["size"] == 10
-```
-
-### Missing file → 422
-
-```python
-def test_missing_file_returns_422():
-    client = TestClient(app)
-    r = client.post("/files/avatar", content=b"", headers={"Content-Type": "multipart/form-data; boundary=x"})
-    assert r.status_code == 422
-    assert r.json()["error"]["code"] == "extractor_error"
-```
-
----
-
-## See also
-
-* [Extractors → Cheat Sheet](../reference/cheat-sheet.md) — one-line `UploadFile` pattern.
-* [Core Concepts → Request & Response](../core-concepts/request-response.md) — `Request.body()` for raw access.
-* [Reference → Error Catalog](../reference/errors.md) — `ExtractorFieldError` (422) for validation failures.
-* [Typed Streaming](typed-streaming.md) — for streaming large request bodies without buffering.
+See [Content Negotiation & Body Limits](content-negotiation.md),
+[Validation](validation.md) and [Typed Streaming](typed-streaming.md).

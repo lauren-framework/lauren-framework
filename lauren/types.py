@@ -13,6 +13,8 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Iterable,
+    Iterator,
     Literal,
     Mapping,
     Protocol,
@@ -26,6 +28,8 @@ from typing import (
 )
 from urllib.parse import parse_qsl, quote
 
+from ._forms._config import MultipartConfig
+from ._forms._upload import _UploadStorage
 from ._metadata import _UNSET, MetadataKey, MetadataSetKey, StateKey, read_metadata
 from ._urls._url import DEFAULT_PORTS, PATH_SAFE, URL, UrlAccess, compose_origin, join_root, parse_authority
 from .exceptions import MissingStateError, RequestBodyTooLarge, StateTypeError
@@ -355,6 +359,7 @@ class ContentConfig:
     codecs: Sequence[Any] = ()
     default_produces: Sequence[str] = ("application/json",)
     strict_accept: bool = False
+    multipart: MultipartConfig | None = None
 
     def __post_init__(self) -> None:
         # Lists are accepted for convenience; retain an immutable snapshot.
@@ -729,7 +734,8 @@ class Request(UrlAccess):
         already buffered (by a global middleware) and exceeds ``limit``.
         """
         self._max_body_size = limit
-        if self._body is not None and len(self._body) > limit:
+        consumed = self.__dict__.get("__lauren_body_bytes_read__", 0)
+        if (self._body is not None and len(self._body) > limit) or consumed > limit:
             raise RequestBodyTooLarge(f"body exceeds {limit} bytes", detail={"max_body_size": limit})
 
     def _reject_declared_oversize(self) -> None:
@@ -759,7 +765,10 @@ class Request(UrlAccess):
     async def body(self) -> bytes:
         if self._body is not None:
             return self._body
+        if self._body_consumed:
+            raise RuntimeError("request body has already been consumed as a stream")
         self._reject_declared_oversize()
+        self._body_consumed = True
         chunks: list[bytes] = []
         total = 0
         while True:
@@ -798,11 +807,24 @@ class Request(UrlAccess):
             parsed.setdefault(k, []).append(v)
         return parsed
 
+    async def multipart(self) -> FormData:
+        """Parse a multipart body once into text/file values with bounded storage.
+
+        Share the form extraction cache. Uploaded files stay open through the
+        response and its background tasks, then the request closes them.
+        """
+        from ._forms._runtime import read_multipart
+
+        return await read_multipart(self)
+
     async def stream(self) -> AsyncIterator[bytes]:
         if self._body is not None:
             yield self._body
             return
+        if self._body_consumed:
+            raise RuntimeError("request body has already been consumed as a stream")
         self._reject_declared_oversize()
+        self._body_consumed = True
         total = 0
         while True:
             msg = await self._receive()
@@ -814,6 +836,7 @@ class Request(UrlAccess):
                         f"body exceeds {self._max_body_size} bytes",
                         detail={"max_body_size": self._max_body_size},
                     )
+                self.__dict__["__lauren_body_bytes_read__"] = total
                 if chunk:
                     yield chunk
                 if not msg.get("more_body", False):
@@ -849,85 +872,61 @@ async def _empty_receive() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-class UploadFile:
-    """A single file uploaded via ``multipart/form-data``.
+class UploadFile(_UploadStorage):
+    """A seekable uploaded file, automatically closed after response/background work.
 
-    Handed to handlers by the :class:`~lauren.extractors.UploadFile`
-    extractor. The instance holds the full file contents in memory
-    plus the metadata the browser attached to the part.
+    Parsed uploads use ``SpooledTemporaryFile``: small files remain in memory;
+    larger files spill to disk and their asynchronous operations are offloaded.
+    ``filename`` and ``content_type`` are untrusted client metadata. Prefer a
+    generated storage name; ``safe_filename`` provides a sanitized basename.
 
-    Intentionally parallel to FastAPI's ``UploadFile`` class so
-    migrating handlers between frameworks requires only an import
-    change. The available operations:
-
-    * :attr:`filename` — the filename the client reported (may be
-      ``None`` for form fields that are not file uploads).
-    * :attr:`content_type` — the MIME type the client declared for
-      the part; defaults to ``"text/plain"`` when omitted (RFC 7578
-      §4.4).
-    * :attr:`size` — length of the buffered body in bytes.
-    * :attr:`headers` — every raw header line on the part.
-    * :meth:`read` — asynchronous accessor returning the full body.
-    * :meth:`read_sync` — synchronous accessor for non-async code
-      paths (tests, fixtures). Prefer ``read()`` in handlers.
-
-    Why it's still async
-    --------------------
-
-    The framework parses the multipart body up front, so ``read()``
-    could be synchronous. It's intentionally async for symmetry
-    with FastAPI and to leave room for a future streaming
-    implementation that reads parts lazily off the ASGI ``receive``
-    callable without buffering.
+    ``read(size=-1)`` follows the cursor; ``seek(0)`` permits another read.
+    ``read_sync()`` retains its legacy full-content, cursor-preserving behavior.
+    ``stream()`` yields bounded chunks; ``save(path, overwrite=False)`` copies
+    the entire file without moving its cursor. The ``data=`` constructor is
+    retained for fixtures and already-buffered values.
     """
 
-    __slots__ = ("_data", "filename", "content_type", "headers", "name")
+    __slots__ = ()
 
-    def __init__(
-        self,
-        *,
-        data: bytes,
-        filename: str | None,
-        content_type: str,
-        headers: list[tuple[str, str]] | None = None,
-        name: str = "",
-    ) -> None:
-        self._data = data
-        #: The field name of the multipart part — the ``name=`` value
-        #: in its ``Content-Disposition`` header. Rarely interesting
-        #: in handler code (the parameter name already encodes the
-        #: binding) but occasionally useful in middleware that wants
-        #: to audit uploads without depending on the handler shape.
-        self.name = name
-        self.filename = filename
-        self.content_type = content_type
-        self.headers = headers or []
 
-    @property
-    def size(self) -> int:
-        """Number of bytes in the buffered body."""
-        return len(self._data)
+class FormData(Mapping[str, str | UploadFile]):
+    """Immutable ordered form multi-mapping with text and file values.
 
-    async def read(self) -> bytes:
-        """Return the file's full contents.
+    ``get`` / item lookup / ``items`` return the first value for each name.
+    ``getall`` returns a fresh list, and ``multi_items`` preserves every pair
+    in wire order. The container is immutable; its uploaded files remain
+    seekable resources owned by the request.
+    """
 
-        Async for FastAPI compatibility and future-proofing; the
-        current implementation returns immediately because the body
-        is already buffered.
-        """
-        return self._data
+    __slots__ = ("_items", "_values")
 
-    def read_sync(self) -> bytes:
-        """Synchronous counterpart to :meth:`read`.
+    def __init__(self, items: Iterable[tuple[str, str | UploadFile]] = ()) -> None:
+        pairs = tuple(items)
+        grouped: dict[str, list[str | UploadFile]] = {}
+        for key, value in pairs:
+            if not isinstance(key, str) or not isinstance(value, (str, UploadFile)):
+                raise TypeError("FormData requires string names and string or UploadFile values")
+            grouped.setdefault(key, []).append(value)
+        self._items = pairs
+        self._values = MappingProxyType({key: tuple(values) for key, values in grouped.items()})
 
-        Prefer :meth:`read` inside async handlers. This method exists
-        so tests and helper utilities can inspect uploaded bodies
-        without awaiting.
-        """
-        return self._data
+    def __getitem__(self, key: str) -> str | UploadFile:
+        return self._values[key][0]
 
-    def __repr__(self) -> str:
-        return f"UploadFile(filename={self.filename!r}, content_type={self.content_type!r}, size={self.size})"
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def getall(self, key: str) -> list[str | UploadFile]:
+        """Return all values of ``key`` as an independent list."""
+        return list(self._values.get(key, ()))
+
+    def multi_items(self) -> Iterator[tuple[str, str | UploadFile]]:
+        """Iterate every pair, including duplicates, in its original order."""
+        return iter(self._items)
 
 
 # ---------------------------------------------------------------------------

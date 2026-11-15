@@ -12,7 +12,8 @@ Typed extractors for decomposing HTTP requests into strongly-typed Python values
 | `Header[T]` | Request header | Coerces header values to `T` |
 | `Cookie[T]` | Cookie header | Coerces cookie values to `T` |
 | `Json[T]` | Request body (JSON) | Parses JSON body into Pydantic model, struct, dataclass, TypedDict, or `Discriminated` union |
-| `Form[T]` | Request body (form) | Parses `application/x-www-form-urlencoded` |
+| `Form[T]` | URL-encoded or multipart body | Scalar/list/optional or dataclass, `TypedDict`, Pydantic, msgspec model; always validated; file fields require multipart |
+| `Form[FormData]` | URL-encoded text or multipart text/files | Immutable ordered multi-mapping; another file binding makes the route multipart-only |
 | `Bytes` | Request body | Buffers entire body as `bytes` |
 | `ByteStream` | Request body | Zero-copy async iterator over body chunks |
 | `UploadFile` | Multipart body | Parses `multipart/form-data` file upload |
@@ -37,6 +38,33 @@ Typed extractors for decomposing HTTP requests into strongly-typed Python values
 ::: lauren.Json
 
 ::: lauren.Form
+
+Typed forms always validate, including under stdlib `"warn"` / `"legacy"`.
+Text-only bindings and `Form[FormData]` accept URL-encoded or multipart input;
+any file binding requires multipart. Raw `Form[dict]` and bare `Form` retain
+`dict[str, list[str]]` text results and legacy content-type leniency.
+`Request.form()` remains URL-encoded-only; `Request.multipart()` itself
+requires multipart and shares the multipart extraction cache.
+
+### Form fields and resource budgets
+
+::: lauren.FormField
+
+::: lauren.UploadField
+
+::: lauren.MultipartConfig
+
+::: lauren.FormData
+
+`FormField` adds aliases, defaults and text constraints; `UploadField` adds
+file-size, MIME, prefix-sniffing and count constraints. Use defaults or
+model-field `Annotated` metadata. `ContentConfig(multipart=MultipartConfig(...))`
+sets app-owned count, field/header-size and temporary-spooling budgets.
+`FormData` preserves ordered repeated pairs with `getall()` and `multi_items()`.
+See [Forms and File Uploads](../guides/file-uploads.md) for the runnable example,
+full APIs, security guidance and limits.
+
+### Raw bytes
 
 ::: lauren.Bytes
 
@@ -63,8 +91,16 @@ The body may only be consumed once — iterating twice raises `ExtractorError`. 
 
 ::: lauren.UploadFile
 
-Multipart file upload extractor with FastAPI-compatible ergonomics. Parses `multipart/form-data` and hands the handler a `UploadFile` instance with file bytes, filename, content type, and headers.
+Multipart file upload extractor backed by a seekable `SpooledTemporaryFile`;
+large files spill to disk and disk operations are offloaded. Client metadata
+(`filename`, `content_type`, headers) is untrusted. `read(size=-1)` advances a
+cursor: call `await file.seek(0)` to reread. `read_sync()` remains a full-content
+snapshot without moving the cursor; `data=` construction remains supported.
+Files close after response streaming and `BackgroundTasks`, including partial
+cleanup on parse failures/cancellation. `save()` persists a file before it
+outlives the request; prefer generated storage names.
 
+<!-- docs-contract: fragment -->
 ```python
 @post("/avatar")
 async def upload(self, file: UploadFile) -> dict:
@@ -75,7 +111,11 @@ async def upload(self, file: UploadFile) -> dict:
     }
 ```
 
-For multiple files: `files: list[UploadFile]` collects every part with the matching field name.
+For multiple files: `files: list[UploadFile]` collects every part with the
+matching field name. Ordinary form/file-only routes parse incrementally;
+combining them with another explicit body-reading extractor (`Bytes`,
+`ByteStream`, etc.) buffers raw bytes once for replay, like buffering middleware,
+and opts out of upload-streaming memory bounds.
 
 ## Dependency injection extractor
 

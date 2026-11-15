@@ -167,8 +167,9 @@ class _Meta:
 
 
 def _is_field_descriptor(obj: Any) -> bool:
-    cls = type(obj)
-    return cls.__name__ == "FieldDescriptor" and cls.__module__ == "lauren.extractors"
+    from ..extractors import FieldDescriptor
+
+    return isinstance(obj, FieldDescriptor)
 
 
 def collect_meta(metadata: tuple[Any, ...] | list[Any]) -> _Meta:
@@ -208,6 +209,8 @@ def collect_meta(metadata: tuple[Any, ...] | list[Any]) -> _Meta:
             meta.explicit = True
             continue
         legacy = _is_field_descriptor(item)
+        if legacy and getattr(item, "alias", None):
+            meta.alias = item.alias
         found = False
         for attr in _CONSTRAINT_ATTRS:
             value = getattr(item, attr, None)
@@ -226,6 +229,18 @@ def split_annotated(tp: Any) -> tuple[Any, tuple[Any, ...]]:
         args = get_args(tp)
         return args[0], tuple(args[1:])
     return tp, ()
+
+
+def _field_alias(annotation: Any) -> str | None:
+    base, metadata = split_annotated(annotation)
+    alias = collect_meta(metadata).alias
+    if alias is not None:
+        return alias
+    if get_origin(base) in _UNION_ORIGINS:
+        members = [arg for arg in get_args(base) if arg is not _NoneType]
+        if len(members) == 1:
+            return _field_alias(members[0])
+    return None
 
 
 def _hashable_key(tp: Any, flavor: int) -> tuple[Any, int] | None:
@@ -557,8 +572,7 @@ class TypeCompiler:
                 raise CompileError(
                     "unsupported_type", f"field {name!r} has no annotation", field=f"{cls.__name__}.{name}"
                 )
-            _, field_meta = split_annotated(ann)
-            alias = collect_meta(field_meta).alias if field_meta else None
+            alias = _field_alias(ann)
             wire = alias or (to_camel(name) if rename == "camel" else name)
             try:
                 node = self.node(ann, field_flavor)

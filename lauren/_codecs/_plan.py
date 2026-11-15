@@ -24,6 +24,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
+from .._forms._config import MultipartConfig, resolve_multipart
 from ..exceptions import NotAcceptableError, StartupError
 from ..types import ContentConfig, Headers, Response
 from ._accept import negotiate
@@ -39,8 +40,8 @@ from ._media import (
 
 #: What a JSON body parameter accepts when no ``consumes=`` is declared.
 JSON_MEDIA_TYPES: tuple[str, ...] = ("application/json", "application/*+json")
-#: What ``Form[...]`` actually decodes today; F04 will add multipart model decoding.
-FORM_MEDIA_TYPES: tuple[str, ...] = ("application/x-www-form-urlencoded",)
+#: The form runtime accepts both URL-encoded fields and multipart text/files.
+FORM_MEDIA_TYPES: tuple[str, ...] = ("application/x-www-form-urlencoded", "multipart/form-data")
 #: What an ``UploadFile`` parameter accepts.
 MULTIPART_MEDIA_TYPES: tuple[str, ...] = ("multipart/form-data",)
 #: ``ContentConfig(malformed_body_status=...)`` values.
@@ -138,6 +139,7 @@ class ContentRuntime:
         "default_produces",
         "strict_accept",
         "json_decoding",
+        "multipart",
     )
 
     def __init__(
@@ -149,6 +151,7 @@ class ContentRuntime:
         registry: CodecRegistry,
         default_produces: tuple[str, ...],
         strict_accept: bool,
+        multipart: MultipartConfig | None = None,
     ) -> None:
         #: Effective ``strict_content_type``: ``True``, ``"warn"`` or ``False``.
         self.strict = strict
@@ -160,6 +163,7 @@ class ContentRuntime:
         self.strict_accept = strict_accept
         #: The decoding shared by every route that consumes JSON alone.
         self.json_decoding = BodyDecoding(registry, malformed_status=malformed_status)
+        self.multipart = resolve_multipart(multipart)
 
 
 def resolve_content(content: Any, *, sessions: bool) -> ContentRuntime:
@@ -222,6 +226,7 @@ def resolve_content(content: Any, *, sessions: bool) -> ContentRuntime:
         registry=registry,
         default_produces=tuple(normalized),
         strict_accept=config.strict_accept,
+        multipart=config.multipart,
     )
 
 
@@ -492,6 +497,7 @@ def compile_route_content(
     extractions: Sequence[Any],
     table: Any,
     streaming: bool,
+    form_plan: Any = None,
 ) -> RouteContent:
     """Compile one route's gate, decoding, negotiation and body limit."""
     registry = runtime.registry
@@ -499,10 +505,21 @@ def compile_route_content(
     route_consumes = getattr(route_meta, "consumes", None)
     ctrl_consumes = getattr(controller_meta, "consumes", None)
     declared = route_consumes or (ctrl_consumes if sources else None)
+    if (
+        form_plan is not None
+        and not form_plan.requires_multipart
+        and not form_plan.legacy_urlencoded
+        and declared
+        and any(media not in FORM_MEDIA_TYPES for media in declared)
+    ):
+        raise StartupError(
+            f"{route} ({handler}) takes a typed form but consumes= names a non-form media type",
+            detail={"reason": "invalid_form_consumes", "route": route, "handler": handler},
+        )
 
     # --- consumes + gate ---
     gate: ContentGate | None = None
-    if "upload_file" in sources:
+    if "upload_file" in sources or (form_plan is not None and form_plan.requires_multipart):
         # The extractor parses multipart/form-data; a declaration that would
         # admit anything else would promise a codec the extractor cannot use.
         if declared and tuple(declared) != MULTIPART_MEDIA_TYPES:
@@ -528,6 +545,14 @@ def compile_route_content(
             label=label,
             method=method,
             registry=registry if "json" in sources else None,
+        )
+    elif form_plan is not None and not form_plan.legacy_urlencoded:
+        consumes = FORM_MEDIA_TYPES
+        gate = ContentGate(
+            consumes,
+            strict=True,
+            label="a URL-encoded or multipart form body",
+            method=method,
         )
     else:
         inferred: list[str] = []

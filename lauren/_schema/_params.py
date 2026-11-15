@@ -189,6 +189,15 @@ def merge_failures(
     ``detail`` keys) with ``issues`` added; several are combined into one
     ``ExtractorError`` whose ``issues`` list every failure.
     """
+    # Shared body parsing / form-rule validation can fail for several bindings
+    # with the same cached error. Report that failure once, retaining its detail.
+    unique: list[tuple[Any, ExtractorError]] = []
+    seen: set[int] = set()
+    for ext, err in failures:
+        if id(err) not in seen:
+            seen.add(id(err))
+            unique.append((ext, err))
+    failures = unique
     limit = runtime.max_issues if runtime is not None else 50
     for ext, err in failures:
         ensure_issues(err, ext, runtime)
@@ -852,6 +861,9 @@ def build_param_plan(
 
     source = ext.source
     where = {"class": owner, "handler": handler, "param": ext.name, "route": route}
+    from .._forms._plan import validate_form_placement
+
+    validate_form_placement(ext, where)
     extra = validation_metadata(annotation)
     inner = ext.inner_type
     fd = ext.field_descriptor
@@ -908,11 +920,10 @@ def build_param_plan(
             **common,
         )
 
-    if source == "form":
-        peeled, _ = _peel_optional(inner)
-        if _model_kind(peeled) is None:
-            return None
-        return _build_model_plan(ext, runtime, peeled, inner, extra, where, common)
+    if source in ("form", "upload_file"):
+        # The route planner receives extractions, not the original annotations.
+        ext.inner_type = _target_with(inner, extra)
+        return None  # The route-level build_form_plan merges and compiles these together.
 
     if source == "stream":
         return build_item_plan(inner, runtime, route=route, where=where)

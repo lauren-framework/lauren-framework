@@ -204,7 +204,8 @@ def test_guards_run_before_the_gate() -> None:
     ("content_type", "expected"),
     [
         ("application/x-www-form-urlencoded", 200),
-        ("multipart/form-data; boundary=x", 415),
+        # Multipart is now supported; URL-encoded bytes are malformed framing.
+        ("multipart/form-data; boundary=x", 422),
         ("application/json", 415),
     ],
 )
@@ -212,6 +213,13 @@ def test_form_bodies_are_gated_in_strict_mode(content_type: str, expected: int) 
     response = _post(_client(True), "/items/form", content_type, body=b"a=1&b=2")
 
     assert response.status_code == expected
+
+
+def test_valid_multipart_form_is_accepted_in_strict_mode() -> None:
+    with _client(True) as client:
+        response = client.post("/items/form", data={"a": "1"}, files={"ignored": ("x", b"x")})
+    assert response.status_code == 200
+    assert response.json() == {"keys": ["a"]}
 
 
 def test_form_bodies_are_not_gated_when_lenient() -> None:

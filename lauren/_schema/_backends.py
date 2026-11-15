@@ -279,6 +279,23 @@ class MsgspecDecodeError(Exception):
     """The body is not valid JSON (raised by the msgspec single-decode path)."""
 
 
+def _upload_dec_hook(tp: type, value: Any) -> Any:
+    """Preserve upload objects; never construct a file from decoded JSON values."""
+    from ..types import UploadFile
+
+    if issubclass(tp, UploadFile) and isinstance(value, tp):
+        return value
+    raise TypeError(f"expected an instance of {tp.__name__}")
+
+
+def _upload_schema_hook(tp: type) -> dict[str, Any]:
+    from ..types import UploadFile
+
+    if isinstance(tp, type) and issubclass(tp, UploadFile):
+        return {"type": "string", "format": "binary"}
+    raise NotImplementedError(f"unsupported schema type {tp!r}")
+
+
 class MsgspecStructNode(Node):
     """A ``msgspec.Struct``: ``msgspec.convert`` (or one ``msgspec.json.decode`` for bodies)."""
 
@@ -299,7 +316,7 @@ class MsgspecStructNode(Node):
             return value
         msgspec = self._msgspec
         try:
-            return msgspec.convert(value, type=self.struct, strict=self.strict)
+            return msgspec.convert(value, type=self.struct, strict=self.strict, dec_hook=_upload_dec_hook)
         except msgspec.ValidationError as exc:
             raise _Invalid(translate_msgspec(str(exc)), str(exc)) from None
 
@@ -332,7 +349,9 @@ class MsgspecStructNode(Node):
     def schema(self, ctx: Any) -> dict[str, Any]:
         def build() -> dict[str, Any]:
             (root,), components = self._msgspec.json.schema_components(
-                [self.struct], ref_template=ctx.ref_template.replace("{model}", "{name}")
+                [self.struct],
+                ref_template=ctx.ref_template.replace("{model}", "{name}"),
+                schema_hook=_upload_schema_hook,
             )
             own = components.pop(self.struct.__name__, None)
             for name, sub in components.items():

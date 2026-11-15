@@ -7,6 +7,36 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- Typed URL-encoded and multipart forms for scalars, lists, optional values,
+  dataclasses, `TypedDict`, Pydantic models and msgspec structs, including mixed
+  text/file models. `FormField` and `UploadField` declare aliases, defaults and
+  upload size, media-type, sniffing and count constraints; typed forms always
+  validate independently of the stdlib-model migration policy.
+- `MultipartConfig`, nested under `ContentConfig.multipart`, bounds incremental
+  parsing, part/field/file counts, text and header sizes, and per-file
+  `SpooledTemporaryFile` storage. Undeclared files drain without spooling by
+  default; disk operations are offloaded and partial uploads close on errors
+  or cancellation.
+- Immutable ordered `FormData` text/file multipairs through `Form[FormData]`
+  and cached `Request.multipart()`. Uploads expose `file`, `safe_filename`,
+  `seek`, `write`, `stream`, `save` and `close`, and remain open through response
+  streams and `BackgroundTasks` before automatic cleanup.
+
+### Changed
+
+- `UploadFile.read(size=-1)` now advances a file cursor. Call `await file.seek(0)`
+  before rereading; `read_sync()` still returns a full-content snapshot without
+  moving the cursor, and `UploadFile(data=...)` remains supported.
+- File fields, including nested files, are rejected in JSON body models at
+  startup; use forms instead. Raw `Form[dict]`, bare `Form`, `Request.form()`
+  and the default 422 status for malformed multipart framing remain compatible.
+- Routes combining forms/uploads with another explicit body-reading extractor
+  buffer raw bytes once for replay; ordinary form/file-only routes stay
+  incremental. A low-level `Request.body()` call after unbuffered multipart
+  parsing raises a clear error instead of waiting on exhausted input.
+
 ## [1.12.0] - 2026-11-15
 
 ### Added

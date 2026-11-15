@@ -83,12 +83,15 @@ assert reserved.json()["error"]["detail"]["issues"][0] == {
 every stdlib model. In 1.x the default is `"warn"` (see
 [Policy and migration](#policy-and-migration)); a type that uses validation
 markers or `@validation_config`, like `CreateUser` above, is enforced in every
-mode because it was written for the engine.
+mode because it was written for the engine. Typed `Form[T]` bindings are also
+always enforced, regardless of `stdlib_models`; see
+[Forms and File Uploads](file-uploads.md).
 
 ## Supported types and coercion
 
-Path, query, header, cookie and urlencoded-form values arrive as strings and
-are always parsed laxly. JSON bodies, WebSocket frames and stream items use the
+Path, query, header, cookie and form text values (URL-encoded or multipart)
+arrive as strings and are always parsed laxly. JSON bodies, WebSocket frames
+and stream items use the
 policy's `json_mode`: `"lax"` (the default, like pydantic) or `"strict"`.
 
 | Target | Strict accepts | Lax also accepts | Issue `type`s |
@@ -107,7 +110,7 @@ policy's `json_mode`: `"lax"` (the default, like pydantic) or `"strict"`.
 | `list` / `tuple` / `set` / `frozenset` | JSON array | query and form: repeated keys (`?tag=a&tag=b`) | `list_type`, `tuple_type`, `set_type`, `too_short`, `too_long` |
 | `dict[K, V]` | JSON object | — | `dict_type` |
 | dataclass / `TypedDict` / `NamedTuple` | JSON object (`NamedTuple` also an array) | query or form: one key per field | `model_type`, `missing`, `extra_forbidden` |
-| `X \| None` | `null` or `X` | an empty query/form value is `None` when `X` is not `str` | as for `X` |
+| `X \| None` | `null` or `X` | an empty query value is `None` when `X` is not `str`; typed forms treat blank non-string fields as omitted (explicit defaults control the result) | as for `X` |
 | `A \| B` | exact type match first, then each member strictly, then laxly | query values: each member laxly, left to right (`int \| str` reads `"5"` as `5`) | every member's issues, under the member name |
 | `Discriminated[A \| B, "key"]` | the tag picks the variant | — | `union_tag_not_found`, `union_tag_invalid`, then the variant's issues under the tag |
 | `Any` / `object` | anything | anything | — |
@@ -192,8 +195,9 @@ assert profile.first_name == "Ada"
 
 The decorator returns the class unchanged. Subclasses do not inherit it
 (re-decorate them), stacking merges the settings, and bare
-`@validation_config` raises `DecoratorUsageError`. Query and form models read
-only their declared keys, so `extra` applies to bodies, frames and items.
+`@validation_config` raises `DecoratorUsageError`. Query models read only
+their declared keys; typed form models apply the model's extra-field policy
+to unknown text fields, as do JSON bodies, frames and items.
 
 ## The error payload
 
@@ -301,14 +305,17 @@ LaurenFactory.create(
 )
 ```
 
-| `stdlib_models` | Dataclass / TypedDict / NamedTuple bodies, query and form models, typed scalars |
+| `stdlib_models` | Dataclass / TypedDict / NamedTuple bodies, query models, typed scalars (typed forms always enforce) |
 |---|---|
 | `"legacy"` | The shallow pre-engine behaviour (escape hatch) |
 | `"warn"` | The native validator runs; a request it would reject logs **one warning per route and issue type** (never the input) and continues with the pre-engine value, so responses do not change |
 | `"enforce"` | Native results are used — nested models are real instances, `?on=maybe` is a 422, an empty `?n=` is `None` for `int \| None`, `Path[UUID]` is a `UUID` — and failures answer 422 |
 
-Pydantic models and `msgspec.Struct` types are validated by their own library
-in every mode; structured `issues`, collect-all and WebSocket/HTTP parity also
+Typed `Form[T]` scalar/list/optional/model bindings always validate under
+`"legacy"`, `"warn"` and `"enforce"`; raw `Form[dict]` / bare `Form` retain
+their compatibility contract. Pydantic models and `msgspec.Struct` types are
+validated by their own library in every mode; structured `issues`, collect-all
+and WebSocket/HTTP parity also
 apply in every mode, because they only change requests that already fail.
 Under `"warn"`, `__post_init__` of a dataclass body may run twice per request
 (once for the shadow check). The plan for 2.0 is to make `"enforce"` the

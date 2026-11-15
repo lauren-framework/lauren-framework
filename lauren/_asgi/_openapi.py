@@ -819,9 +819,28 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
                     seen_param_keys.add(key)
                     params.append(p)
                     continue
+                if ext.source in ("form", "upload_file") and compiled.form_plan is not None:
+                    continue
                 body = _build_request_body(ext, components)
                 if body is not None and request_body is None:
                     request_body = body
+            if compiled.form_plan is not None:
+                form_schema = compiled.form_plan.schema(components["schemas"])
+                encoding = compiled.form_plan.encoding()
+                request_body = {
+                    "required": any(
+                        not ext.has_default
+                        for ext in compiled.extractions
+                        if ext.source in ("form", "upload_file")
+                    ),
+                    "content": {
+                        media: {
+                            "schema": form_schema,
+                            **({"encoding": encoding} if encoding and media == "multipart/form-data" else {}),
+                        }
+                        for media in compiled.consumes
+                    },
+                }
         else:  # pragma: no cover - routes registered outside Phase 5
             for pname in entry.param_names:
                 params.append(

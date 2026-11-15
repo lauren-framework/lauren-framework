@@ -54,6 +54,62 @@ class Json
 class Form
 ```
 
+### `FormField`
+
+```python
+def FormField(kwargs: Unpack[FieldDescriptorKwargs] = {}) -> FieldDescriptor
+```
+
+Describe a text form field's alias, default and validation constraints.
+
+### `UploadField`
+
+```python
+class UploadField(default: object = ..., alias: str | None = None, ge: float | None = None, le: float | None = None, gt: float | None = None, lt: float | None = None, min_length: int | None = None, max_length: int | None = None, pattern: str | None = None, description: str | None = None, example: object | None = None, max_size: int | None = None, content_types: Sequence[str] = (), sniff: bool | Callable[[bytes], str | None] = False, max_files: int | None = None, min_files: int = 0)
+```
+
+Describe one uploaded file or a repeated upload field.
+
+Use as a parameter default or ``Annotated`` metadata. Argument errors fail
+immediately; the form compiler checks placement and snapshots constraints.
+
+### `MultipartConfig`
+
+Bound multipart parsing, in-memory fields and per-file spooling.
+
+Supply this through ``ContentConfig(multipart=...)``. Files exceeding
+``spool_threshold`` move to the system temporary directory or ``temp_dir``.
+The request's total body limit remains in force.
+
+### `FormData`
+
+```python
+class FormData(items: Iterable[tuple[str, str | UploadFile]] = ())
+```
+
+Immutable ordered form multi-mapping with text and file values.
+
+``get`` / item lookup / ``items`` return the first value for each name.
+``getall`` returns a fresh list, and ``multi_items`` preserves every pair
+in wire order. The container is immutable; its uploaded files remain
+seekable resources owned by the request.
+
+#### `FormData.getall`
+
+```python
+def getall(self, key: str) -> list[str | UploadFile]
+```
+
+Return all values of ``key`` as an independent list.
+
+#### `FormData.multi_items`
+
+```python
+def multi_items(self) -> Iterator[tuple[str, str | UploadFile]]
+```
+
+Iterate every pair, including duplicates, in its original order.
+
 ### `Bytes`
 
 ```python
@@ -163,16 +219,9 @@ Example
             "bytes": len(await file.read()),
         }
 
-Limitations
------------
-
-* The full body is buffered before parsing. Very large uploads
-  (hundreds of MiB) should use :class:`ByteStream` and implement
-  chunked processing themselves.
-* Nested ``multipart/mixed`` parts are not parsed.
-* RFC 2231 parameter encoding for exotic filenames is not
-  supported; plain and simple quoted-string names cover the
-  modern browser and HTTP client output universe.
+Uploads are streamed into bounded temporary spools and closed after the
+response and its background tasks finish. Save a file explicitly when it
+must outlive the request. Nested ``multipart/mixed`` is not supported.
 
 ## Dependency injection extractor
 
