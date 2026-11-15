@@ -119,6 +119,7 @@ from .._schema._params import (
     failure_weight as _failure_weight,
     merge_failures as _merge_failures,
 )
+from .._forms._plan import build_form_plan
 from .._discriminated import is_native_discriminated_union as _is_native_discriminated_union
 from ..streaming import (
     FORMAT_TO_MEDIA_TYPE,
@@ -318,6 +319,10 @@ class CompiledHandler:
     produces: tuple[str, ...] = ()
     #: ``consumes`` was declared (``consumes=``) rather than inferred.
     consumes_declared: bool = False
+    #: Shared startup-compiled form bindings and streamed part policies.
+    form_plan: Any = None
+    #: Another body extractor explicitly needs replay of the same bytes.
+    form_buffer_body: bool = False
 
 
 #: The only method of a cross-site "simple" request that carries a body
@@ -2448,6 +2453,10 @@ class LaurenApp:
                     req._handler_class = compiled.controller_cls
                     req._handler_func = compiled.handler_fn
                     req._route_template = entry.path_template
+                    if compiled.form_plan is not None:
+                        req.__dict__["__lauren_form_plan__"] = compiled.form_plan
+                        if compiled.form_buffer_body:
+                            req.__dict__["__lauren_form_buffer_body__"] = True
                     handler_qualname = getattr(compiled.handler_fn, "__qualname__", None)
 
                     # Build effective per-route middleware list: controller → route.
@@ -2527,6 +2536,8 @@ class LaurenApp:
 
                         # ------------ inner invocation (wrapped by interceptors) ---
                         async def _invoke_handler() -> Any:
+                            if compiled.form_buffer_body:
+                                await req2.body()
                             # Instantiate controller + extract args
                             controller = await self._container.resolve(
                                 compiled.controller_cls,
@@ -2931,6 +2942,7 @@ class LaurenApp:
             authority=authority,
             urls=self._urls,
         )
+        request.__dict__["__lauren_content__"] = self._content
         if self._match_raw_path:
             # ``RoutingConfig(match_raw_path=True)``: route on the raw path,
             # percent-decoding each segment (``Request.reset`` clears it).
@@ -3010,6 +3022,9 @@ class LaurenApp:
             # awaitable body finishes first — if the body is a streaming
             # iterable it may still reference the request's ``_receive``
             # callable.
+            owner = request.__dict__.get("__lauren_upload_owner__")
+            if owner is not None:
+                await owner.close()
             self._arena.release_request(request)
 
     async def _start_lazily(self) -> None:
@@ -4263,6 +4278,13 @@ class LaurenFactory:
                             pagination=pagination_config,
                             path_converters=entry.converters,
                         )
+                        form_plan = build_form_plan(
+                            extractions,
+                            validation_runtime,
+                            route=f"{rmeta.method} {entry.path_template}",
+                            owner=ctrl_cls.__name__,
+                            handler=fn.__name__,
+                        )
                         _check_host_params(ctrl_cls, fn, extractions, entry)
                     except StartupError as exc:
                         from .._diagnostics import enrich_startup_error
@@ -4315,6 +4337,7 @@ class LaurenFactory:
                         extractions=extractions,
                         table=response_table,
                         streaming=streaming_item is not None,
+                        form_plan=form_plan,
                     )
                     compiled = CompiledHandler(
                         controller_cls=ctrl_cls,
@@ -4348,6 +4371,12 @@ class LaurenFactory:
                         response_plan=response_plan,
                         raises=tuple(route_raises),
                         content_gate=route_content.gate,
+                        form_plan=form_plan,
+                        form_buffer_body=form_plan is not None
+                        and any(
+                            ext.reads_body and ext.source not in ("form", "upload_file")
+                            for ext in extractions
+                        ),
                         negotiation=route_content.negotiation,
                         body_limit=route_content.body_limit,
                         consumes=route_content.consumes,

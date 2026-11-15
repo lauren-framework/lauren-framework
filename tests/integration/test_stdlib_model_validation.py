@@ -313,7 +313,9 @@ def test_namedtuple_from_the_query_string() -> None:
     assert _client("enforce").get("/s/point?x=3").json() == {"p": [3, 0]}
 
 
-@pytest.mark.parametrize(("mode", "type_name"), [("warn", "dict"), ("enforce", "Filters")])
+@pytest.mark.parametrize(
+    ("mode", "type_name"), [("warn", "Filters"), ("legacy", "Filters"), ("enforce", "Filters")]
+)
 def test_form_models(mode: str, type_name: str) -> None:
     response = _client(mode).post(
         "/s/form", content=b"q=x&tags=a&tags=b", headers={"content-type": "application/x-www-form-urlencoded"}

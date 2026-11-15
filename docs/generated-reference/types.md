@@ -81,6 +81,17 @@ def json(self) -> Any
 def form(self) -> dict[str, list[str]]
 ```
 
+#### `Request.multipart`
+
+```python
+def multipart(self) -> FormData
+```
+
+Parse a multipart body once into text/file values with bounded storage.
+
+Share the form extraction cache. Uploaded files stay open through the
+response and its background tasks, then the request closes them.
+
 #### `Request.stream`
 
 ```python

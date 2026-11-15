@@ -166,7 +166,7 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `root_path` | `str` | `""` | ASGI root path for reverse proxy prefix stripping |
 | `mounts` | `dict[str, Any]` | `None` | Sub-applications mounted at path prefixes |
 | `sessions` | `SessionConfig` | `None` | Enable signed-cookie sessions (see [Sessions](#sessions)) |
-| `content` | `ContentConfig` | `None` | Content policy: `ContentConfig(strict_content_type=None, malformed_body_status=422, codecs=(), default_produces=("application/json",), strict_accept=False)` (see [Codecs & content negotiation](#codecs--content-negotiation)) |
+| `content` | `ContentConfig` | `None` | Content policy: `ContentConfig(strict_content_type=None, malformed_body_status=422, codecs=(), default_produces=("application/json",), strict_accept=False, multipart=None)` (see [Codecs & content negotiation](#codecs--content-negotiation)) |
 | `problem_type_base` | `str` | `None` | Problem-details `type` prefix: `type = base + code` for errors without a `problem_type` (`StartupError` if not a non-empty string) |
 | `debug` | `bool \| DebugConfig` | `False` | Development error pages for unhandled errors (see [Debug Error Pages](#debug-error-pages)); never enabled implicitly |
 | `lazy_startup` | `bool` | `True` | Run `startup()` on the first HTTP / WebSocket request when the ASGI server never sent lifespan events (logs a warning); `False` keeps such an app cold until `await app.startup()` |
@@ -495,7 +495,11 @@ Properties: `method`, `path`, `url` (`path?query`; `path_with_query` is the same
 
 URL model (proxy-aware with `ProxyConfig`): `scheme` (`"http"` / `"https"`), `host` (trusted forwarded host, else the `Host` header, else the server; IPv6 keeps brackets), `port` (the scheme's default when the host names none), `root_path` (mounts, `root_path=`, a trusted `X-Forwarded-Prefix`), `base_url` (`URL("https://api.example.com/backend/")`), `full_url` (`URL("https://api.example.com/backend/users/7?x=1")`). URL building: `request.url_path_for(target, **params)`, `request.url_for(target, **params)` (absolute), `request.ws_url_for(gateway, **params)` — see [URLs, Proxies & Signed Links](#urls-proxies--signed-links).
 
-Body methods (async): `await request.body() -> bytes`, `await request.text()`, `await request.json()`, `await request.form()`, `request.stream()`.
+Body methods (async): `await request.body() -> bytes`, `await request.text()`,
+`await request.json()`, `await request.form() -> dict[str, list[str]]`
+(URL-encoded, unchanged), `await request.multipart() -> FormData` (shared
+multipart text/file cache), `request.stream()`. Parsed uploads remain open
+through response streaming and `BackgroundTasks`, then close automatically.
 
 Introspection: `get_handler_class()`, `get_route_handler_func()`, `get_route_template()`, `get_matched_route()`.
 
@@ -575,16 +579,10 @@ or mutating a `Response`.
 `body: ByteStream` receives an async iterable of raw `bytes` chunks so
 the handler can process the body without buffering it into memory.
 
-`UploadFile` is the multipart file-upload extractor — FastAPI-compatible:
-
-```python
-from lauren import UploadFile
-
-@post("/upload")
-async def upload(self, file: UploadFile) -> dict:
-    content = await file.read()
-    return {"filename": file.filename, "size": len(content)}
-```
+`UploadFile` is the seekable multipart file-upload value and extractor;
+`FormData` is the immutable ordered text/file multi-mapping. See
+[Forms and file uploads](#forms-and-file-uploads) for their complete APIs,
+constraints, temporary-storage budgets and the cursor-based `read()` migration.
 
 `StateExtractor` is the typed extractor for `request.state` fields
 declared by guards or middleware.
@@ -604,7 +602,7 @@ Extractors convert request data into typed Python values. Built-in:
 | `Cookie[T]` | cookie | no |
 | `Json[T]` | JSON body, validated (see [Validation](#validation)) | yes |
 | `Json[Discriminated[A \| B, "key"]]` | discriminated union body | yes |
-| `Form[T]` | form-urlencoded body | yes |
+| `Form[T]` | URL-encoded or multipart fields; typed scalar/list/optional/model, raw `dict` or `FormData` | yes |
 | `Bytes` | raw body bytes (buffered) | yes |
 | `ByteStream` | streaming body chunks (zero-copy) | yes |
 | `UploadFile` | multipart file upload | yes |
@@ -622,7 +620,9 @@ async def show(self, id: int) -> dict:  # `id` is treated as Path[int]
 
 ### Field descriptors
 
-For validation metadata and OpenAPI hints, use `QueryField` / `HeaderField` / `CookieField`:
+For validation metadata and OpenAPI hints, use `PathField` / `QueryField` /
+`HeaderField` / `CookieField` / `FormField`; `UploadField` adds file-specific
+constraints (see [Forms and file uploads](#forms-and-file-uploads)).
 
 ```python run
 from lauren import Query, QueryField
@@ -726,23 +726,188 @@ oversize body raises `RequestBodyTooLarge` (413) — for `ByteStream`, `Json[T]`
 `Bytes`, form and `UploadFile` parameters alike, and before anything is read
 when `Content-Length` already announces too much.
 
-### File uploads
+### Forms and file uploads
 
-`UploadFile` is the FastAPI-compatible multipart file upload extractor:
+`Form[T]` binds scalars (`Form[str]`, `Form[int]`, `Form[bool]`), repeated
+values (`Form[list[str]]`), optional values and dataclass / `TypedDict` /
+Pydantic / `msgspec.Struct` models. Text-only typed forms accept
+`application/x-www-form-urlencoded` and `multipart/form-data`. Any file field
+requires multipart, even if optional or defaulted. Typed forms **always
+validate**, including under `ValidationPolicy(stdlib_models="warn" | "legacy")`.
+Files inside `Json[Model]` (including nested fields) are rejected at startup:
+files belong in forms. All form/file parameters share one parse and compiled
+binding plan; no request-time annotation inspection.
 
-```python
-from lauren import UploadFile
+```python fragment
+from dataclasses import dataclass, field
+from typing import Annotated
 
-@post("/upload")
-async def upload(self, file: UploadFile) -> dict:
-    content = await file.read()
-    return {"filename": file.filename, "size": len(content)}
+from lauren import Form, FormField, UploadField, UploadFile, controller, post
+
+@dataclass
+class ProfileForm:
+    name: Annotated[str, FormField(alias="display-name")]
+    tags: list[str] = field(default_factory=list)
+    avatar: Annotated[
+        UploadFile | None,
+        UploadField(max_size=2 * 1024 * 1024, content_types=["image/png"], sniff=True),
+    ] = None
+
+@controller("/profiles")
+class Profiles:
+    @post("/", max_body_size=3 * 1024 * 1024)
+    async def create(self, form: Form[ProfileForm]) -> dict:
+        return {"name": form.name, "tags": form.tags,
+                "size": form.avatar.size if form.avatar else None}
+
+    @post("/title")
+    async def title(self, text: Form[str] = FormField(alias="title")) -> dict:
+        return {"title": text}
 ```
 
-`UploadFile` holds the part **in memory** (bounded by `max_body_size`) and
-provides `.filename`, `.content_type`, `.headers`, `.name` (the form field),
-`.size`, `async .read()` and `.read_sync()`. There is no `.file` handle and no
-`.write()`; spool to disk yourself if you need to.
+Scalars take the first occurrence; lists collect repeated fields. An explicit
+default controls omission; `T | None` without a default is still required.
+A blank non-string field is treated as omitted, not `None`. Boolean form
+strings accept `true/false`, `1/0`, `on/off`, `yes/no` case-insensitively;
+other tokens fail. Backend aliases and validators apply; Pydantic form aliases
+must be flat strings (not `AliasPath` / `AliasChoices`). Unknown text follows
+the model's extra-field policy. Unknown file names drain without spooling by
+default; set `undeclared_parts="reject"` to reject them. Use `Form[FormData]`
+to capture every part explicitly.
+
+#### `FormField` and `UploadField`
+
+Both are root imports from `lauren` (also `lauren.extractors`). Put them in a
+parameter default or `Annotated` model-field metadata. `FormField(...)`
+returns a `FieldDescriptor` with these options:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `alias` | `None` | Wire field name |
+| `default` | `...` | Value when omitted; `...` means required |
+| `ge`, `le`, `gt`, `lt` | `None` | Numeric bounds |
+| `min_length`, `max_length`, `pattern` | `None` | Text constraints (`pattern` is a full match) |
+| `description`, `example` | `None` | OpenAPI hints |
+
+`UploadField` inherits `default`, `alias` and `description` and adds:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `max_size` | `None` | Maximum bytes per file; 413 on exceed |
+| `content_types` | `()` | Allowed declared part MIME types; ranges such as `image/*` accepted |
+| `sniff` | `False` | `True` for built-in detection, or a synchronous `prefix: bytes -> str \| None` callable |
+| `max_files` | `None` | Maximum count on `list[UploadFile]` |
+| `min_files` | `0` | Minimum count on `list[UploadFile]` |
+
+Invalid constraints fail at declaration/startup. Declared part MIME types are
+checked before a spool is created; byte and count limits apply while reading.
+The built-in sniffer recognizes only PNG, JPEG, GIF, WebP, PDF, ZIP and GZIP
+from a bounded prefix; use explicit supported MIME types with `sniff=True`.
+Detected type must agree with the declared type and allow-list. This is not
+antivirus, complete format validation or archive-bomb protection.
+
+#### `MultipartConfig`
+
+`MultipartConfig(max_parts=1000, max_fields=1000, max_files=100,
+max_field_size=1048576, max_part_header_bytes=16384, spool_threshold=1048576,
+temp_dir=None, undeclared_parts="ignore")` is a frozen root API. Pass it to
+`ContentConfig(multipart=...)`:
+
+```python fragment
+from lauren import ContentConfig, MultipartConfig
+
+content = ContentConfig(multipart=MultipartConfig(
+    max_files=10, max_field_size=64 * 1024, spool_threshold=64 * 1024,
+))
+```
+
+`max_parts` counts all parts; `max_fields` counts text fields; `max_files`
+counts file parts. `max_field_size` limits each text value and
+`max_part_header_bytes` each part's headers. `spool_threshold` is the per-file
+in-memory threshold, after which `SpooledTemporaryFile` spills to `temp_dir`
+(`None`: system temporary directory). Numeric limits must be positive integers;
+`temp_dir` must already exist and be writable; `undeclared_parts` is `"ignore"`
+or `"reject"`. Invalid config raises `StartupError`,
+`reason="invalid_multipart_config"`. URL-encoded fields also obey field count
+and size budgets. The request's effective `max_body_size` still caps the total;
+raise it on the upload route, not app-wide.
+
+Parsing is incremental across ASGI chunks, including split delimiters. Disk
+I/O is offloaded to workers. Bounded parser memory does not bound an explicit
+`await file.read()` allocation. Avoid body-buffering middleware when streaming
+matters. Combining form/file bindings with another explicit body-reading
+extractor (`Bytes`, `ByteStream`, etc.) buffers the raw body once for replay;
+that combination also opts out of upload-streaming memory bounds. Ordinary
+form/file-only routes remain incremental. Middleware parsing before routing
+uses app budgets first; the matched route checks constraints against the
+cached parse. Calling low-level `Request.body()` after an unbuffered multipart
+parse raises `RuntimeError` rather than rereading the exhausted body.
+
+#### `FormData` and raw compatibility
+
+`FormData(items=())` (root import, also `lauren.types`) is an immutable
+`Mapping[str, str | UploadFile]`, with ordered repeated pairs:
+
+- `form[name]`, `get(name, default=None)`, `items()` — first value per name;
+  indexing a missing name raises `KeyError`.
+- `getall(name) -> list[str | UploadFile]` — all values, as an independent list;
+  an absent name returns `[]`.
+- `keys()`, iteration and `len(form)` — distinct names, in first-seen order.
+- `multi_items()` — every `(name, value)` pair in wire order.
+
+`Form[FormData]` also accepts text-only URL-encoded bodies. For multipart,
+it shares the cache with `await request.multipart()`; the low-level
+`Request.multipart()` method itself requires multipart. A coexisting file
+binding makes the whole route multipart-only.
+The container is immutable, not its seekable file resources. Bare `Form` and
+`Form[dict]` return `dict[str, list[str]]` text values from URL-encoded or
+multipart bodies, draining unknown files without spooling by default. They
+retain lenient content-type compatibility unless strict checking is enabled.
+`Request.form()` keeps its URL-encoded-only contract; use
+`Request.multipart()` for multipart text and file parts, not `UploadFile` to
+read text fields.
+
+#### `UploadFile` API and lifetime
+
+Use `file: UploadFile`, `file: UploadFile | None = None`, or
+`files: list[UploadFile]`; model file fields belong inside `Form[Model]`.
+`UploadFile(*, data: bytes, filename: str | None, content_type: str,
+headers=None, name="")` remains available for fixtures/already-buffered values.
+
+| Member | Behavior |
+|---|---|
+| `filename`, `content_type`, `headers`, `name` | Untrusted client metadata; `name` is the form field |
+| `size` | Actual byte size, retained after close |
+| `file` | Underlying seekable binary file; direct calls are synchronous |
+| `safe_filename` | NFC basename with separators, controls and device-name hazards removed; `None` when unusable |
+| `await read(size=-1) -> bytes` | Read from the current cursor |
+| `read_sync() -> bytes` | Legacy full-content snapshot without moving the cursor; can block |
+| `await seek(offset, whence=0) -> int` | Move the cursor |
+| `await write(data) -> int` | Write at the cursor and update `size` |
+| `stream(chunk_size=65536)` | Async iterator from the cursor |
+| `await save(path, *, overwrite=False) -> int` | Copy the whole file, preserve cursor, return bytes written; does not create directories |
+| `await close()` | Idempotently close and remove temporary storage |
+
+**Migration:** `read()` now advances the cursor. Use `await file.seek(0)`
+before rereading. `read_sync()` retains its snapshot behavior.
+
+Files stay open through response streaming and `BackgroundTasks`, then close
+before the request returns to its pool. Partial files close on parse failure
+or cancellation. Save uploads before detached work; never retain live uploads
+beyond the request. Manually constructed uploads should be closed explicitly
+(`async with file:` is supported).
+
+Use application-generated storage names, never client filenames as paths.
+`safe_filename` is a convenience, not authorization. RFC 5987/2231 `filename*`
+is decoded and preferred over `filename`. Cookie-authenticated form routes
+still need CSRF protection; form content types are browser-simple requests.
+
+Budgets and per-file byte limits answer 413; missing/wrong-kind fields,
+invalid values, MIME and file-count violations answer 422 with
+`detail.issues`. Malformed framing remains 422 by default;
+`ContentConfig(malformed_body_status=400)` opts into 400. OpenAPI describes
+form object properties, binary files, arrays of files and part media types.
+The runnable mixed-form example lives in `docs/guides/file-uploads.md`.
 
 ---
 
@@ -824,7 +989,7 @@ assert bad["detail"]["field"] == "page"              # 1.x keys kept until 2.0
 
 ### Coercion
 
-Path / query / header / cookie / urlencoded-form values are strings and are
+Path / query / header / cookie / form text values are strings and are
 always parsed laxly. JSON bodies, WebSocket frames and stream items follow
 `ValidationPolicy(json_mode="lax" | "strict")`; `Strict()` on a field or
 `@validation_config(strict=True)` on a model forces strict.
@@ -840,7 +1005,9 @@ always parsed laxly. JSON bodies, WebSocket frames and stream items follow
 * Collections from JSON arrays; from the query string or a form they read
   **repeated keys** (`?tag=a&tag=b`). `Path[list[int]]` / `Header[list[str]]`
   split one value on commas.
-* `X | None`: an empty query/form value (`?n=`) is `None` when `X` is not `str`.
+* `X | None`: an empty query value (`?n=`) is `None` when `X` is not `str`.
+  Typed forms instead treat a blank non-string field as omitted; an explicit
+  default controls the result (otherwise the field remains required).
 * Unions: JSON values match an exact type first, then members strictly, then
   laxly; query values try members laxly left to right (`int | str` reads
   `"5"` as `5`). Failing members report their issues under the member name.
@@ -908,15 +1075,15 @@ include_input=None, max_issues=50, missing_state="warn")` — a frozen dataclass
 `LaurenFactory.create(validation=...)` / `Lauren(validation=...)`; invalid
 values raise `StartupError(reason="invalid_validation_policy")`.
 
-| `stdlib_models` | Dataclass / TypedDict / NamedTuple bodies, query & form models, typed scalars |
+| `stdlib_models` | Dataclass / TypedDict / NamedTuple bodies, query models, typed scalars (typed forms always enforce) |
 |---|---|
 | `"legacy"` | the shallow 1.x behaviour (escape hatch) |
 | `"warn"` (1.x default) | the native validator runs; a would-be rejection logs one warning per (route, issue type) — never the input — and the request continues with the 1.x value |
 | `"enforce"` (2.0 default) | native results (real nested instances, `UUID` path params, `?on=maybe` → 422, `?n=` → `None` for `int \| None`) and 422s |
 
-Pydantic and msgspec types, and any type using validation markers /
-`@validation_config`, are validated natively in every mode. Under `"warn"` a
-dataclass body's `__post_init__` may run twice per request.
+Pydantic and msgspec types, typed `Form[T]` bindings, and any type using
+validation markers / `@validation_config` are validated in every mode. Under
+`"warn"` a dataclass JSON body's `__post_init__` may run twice per request.
 
 `missing_state` covers the legacy name-based `State` extractor
 (`StateExtractor`): `"warn"` (1.x default) answers a missing value with a 422
@@ -5292,7 +5459,7 @@ assert shown.headers["content-type"] == "application/problem+json" and shown.hea
 
 ### `ContentConfig`
 
-`ContentConfig(strict_content_type=None, malformed_body_status=422, codecs=(), default_produces=("application/json",), strict_accept=False)`
+`ContentConfig(strict_content_type=None, malformed_body_status=422, codecs=(), default_produces=("application/json",), strict_accept=False, multipart=None)`
 is a frozen dataclass (importable from `lauren`, `lauren.types` and
 `lauren.codecs`; lists are stored as tuples), passed as
 `LaurenFactory.create(..., content=...)` or `Lauren(content=...)`. Invalid
@@ -5300,18 +5467,24 @@ values raise `StartupError` (`detail["reason"] == "invalid_content_config"`).
 
 | Field | Meaning |
 |---|---|
-| `strict_content_type` | `Content-Type` policy of JSON (`Json[T]`, implicit model, `Discriminated[...]`) and `Form[...]` bodies — table below. |
-| `malformed_body_status` | `422` (default): an undecodable body is an `ExtractorError` (`code="extractor_error"`) with `detail["reason"] == "malformed_body"` and a `json_invalid` (JSON) / `body_invalid` (other codecs) issue. `400`: a `BadRequestError` (`code="bad_request"`, `detail={"field", "reason": "malformed_body", "line", "col", "issues"}`; `line`/`col` when the parser reports them). Schema errors stay 422. 2.0 flips the default to 400. |
+| `strict_content_type` | `Content-Type` policy of JSON (`Json[T]`, implicit model, `Discriminated[...]`) and legacy raw-dict forms. Typed forms and file bindings are always checked. |
+| `malformed_body_status` | `422` (default): an undecodable body is an `ExtractorError` (`code="extractor_error"`) with `detail["reason"] == "malformed_body"` and a structured issue. `400`: a `BadRequestError` (`code="bad_request"`; `line`/`col` when the parser reports them). Applies to malformed JSON, codecs and multipart framing; schema errors stay 422. |
 | `codecs` | Extra `Codec` instances (`[MsgpackCodec()]`). The JSON codec is always registered; a `JsonCodec(...)` entry configures it. Two codecs claiming one media type → `StartupError(reason="codec_conflict")`. |
 | `default_produces` | Response media types of routes without `produces=` (`("application/json",)` = 1.x behaviour). Each needs a codec (`reason="codec_not_registered"`). |
 | `strict_accept` | `True`: a request whose `Accept` excludes every `produces` entry gets 406 `NotAcceptableError` (`detail={"available": [...]}`). `False` (default): the first `produces` entry is served. |
+| `multipart` | `MultipartConfig \| None` (default `None` resolves to `MultipartConfig()`): app-owned part/field/file counts, text/header sizes, spool threshold, temporary directory and unknown-part policy. See [Forms and file uploads](#forms-and-file-uploads). |
+
+The following migration policy applies to JSON and legacy `Form[dict]` / bare
+`Form`, not typed forms or uploads (those always enforce their media types):
 
 | `strict_content_type` | Behaviour |
 |---|---|
-| `True` | JSON bodies accept only `application/json` and `application/*+json` (case-insensitive; `charset` absent or UTF-8); form bodies `application/x-www-form-urlencoded` (typed multipart forms arrive with F04). Anything else, and a body announced by `Content-Length` > 0 or `Transfer-Encoding` without a `Content-Type`, raises `UnsupportedMediaTypeError` → 415 `{"error": {"code": "unsupported_media_type", "detail": {"content_type": <received or null>, "supported": ["application/json", "application/*+json"]}}}`. |
-| `"warn"` | Same check, but mismatches are accepted; the first occurrence of each media type per route is logged at WARN (app logger, context `"ContentPolicy"`, and the stdlib `"lauren"` logger; at most 16 media types remembered per route). |
-| `False` | No check of inferred types. |
-| `None` (default) | `"warn"` when `sessions=` is configured, else `False`. Any explicit value silences the session startup warning. 2.0 makes `True` the default. |
+| `True` | JSON bodies accept `application/json` and `application/*+json` (case-insensitive; `charset` absent or UTF-8); raw-dict forms accept `application/x-www-form-urlencoded` and `multipart/form-data`. Unsupported types, and non-empty bodies without `Content-Type`, raise 415 `UnsupportedMediaTypeError` with `detail.content_type` and `detail.supported`. |
+| `"warn"` | Same check, but mismatches are accepted; the first occurrence of each media type per route is logged at WARN (app logger, context `"ContentPolicy"`, and the stdlib `"lauren"` logger; a bounded number of media types remembered per route). |
+| `False` | No check of inferred types for these compatibility bindings. |
+| `None` (default) | `"warn"` when `sessions=` is configured, else `False`. Any explicit value silences the session startup warning. |
+
+These defaults are unchanged; strict checking and malformed-body 400 are opt-ins.
 
 The check runs right **after guards** (401/403 still win), **before
 interceptors** and **before any body byte is read**. An empty body without
@@ -5325,8 +5498,10 @@ the supported types. `Request.json()` called inside a handler is not gated.
 | Body parameter | Accepted without `consumes=` | Checked |
 |---|---|---|
 | `Json[T]`, implicit model, `Discriminated[...]` | `application/json`, `application/*+json` | under `strict_content_type` |
-| `Form[T]` | `application/x-www-form-urlencoded` | under `strict_content_type` (F04 adds typed multipart form decoding) |
-| `UploadFile` / `list[UploadFile]` | `multipart/form-data` | always (a JSON body is 415) |
+| `Form[T]` without file fields (scalar/list/optional/model) | `application/x-www-form-urlencoded`, `multipart/form-data` | always |
+| `Form[Model]` with any file field; `UploadFile` / `list[UploadFile]` (also optional) | `multipart/form-data` | always, even for defaulted file fields |
+| `Form[FormData]` without another file binding | `application/x-www-form-urlencoded` (text), `multipart/form-data` (text/files) | always |
+| `Form[dict]`, bare `Form` | `application/x-www-form-urlencoded`, `multipart/form-data` (text fields) | under `strict_content_type` (legacy leniency retained) |
 | `Bytes`, `ByteStream`, `Stream[T]` | anything | only with `consumes=` |
 
 A declared `consumes=` (route, else controller) replaces the inferred list
@@ -5338,7 +5513,12 @@ with the codec of its `Content-Type`: every concrete entry needs one
 (`+json` types use the JSON codec), else `LaurenFactory.create` raises
 `StartupError(detail={"reason": "codec_not_registered", "media_type", "route",
 "handler"})`. Raw parameters (`Bytes`, …) need no codec. Invalid entries fail
-at decoration (`DecoratorUsageError`, `reason="invalid_consumes"`).
+at decoration (`DecoratorUsageError`, `reason="invalid_consumes"`). Typed
+forms may declare only their supported form media types; any file field
+requires a multipart-only declaration. `Form[FormData]` alone supports both
+form media types, including text-only URL-encoded input. Incompatible form
+`consumes=` fails startup (`invalid_form_consumes` / `invalid_upload_consumes`).
+Form parsing does not require a body codec.
 
 ### `max_body_size=` — per-route limits
 

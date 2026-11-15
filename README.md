@@ -132,6 +132,15 @@ core ideas:
   stdlib. Works with `@dataclass`, `TypedDict`, `msgspec.Struct`, and
   `pydantic.BaseModel`. OpenAPI emits `oneOf` + `discriminator.mapping`
   automatically.
+* **Typed forms & bounded uploads** — `Form[T]` binds scalars, repeated fields,
+  dataclasses, `TypedDict`, Pydantic models and msgspec structs from URL-encoded
+  or multipart bodies, including mixed text and `UploadFile` fields.
+  `FormField` / `UploadField` declare aliases and constraints;
+  `ContentConfig(multipart=MultipartConfig(...))` bounds incremental parsing
+  and temporary-file spooling. `FormData` preserves repeated text/file pairs.
+  Uploads stay open through response streams and background tasks, then close
+  automatically. See [Forms and File Uploads](docs/guides/file-uploads.md),
+  including the cursor-based `read()` migration (`await file.seek(0)` to reread).
 * **Three-scope DI** — `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes with
   Protocol bindings, multi-bindings (`list[T]`), and NestJS-style custom
   providers (`use_value` / `use_class` / `use_factory` / `use_existing`).

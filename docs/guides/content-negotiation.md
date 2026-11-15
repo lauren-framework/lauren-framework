@@ -92,14 +92,18 @@ body **without** a `Content-Type` is a 415 too. The check runs after guards
 lauren-guards' `csrf()` remains the complete defence for
 form-encoded routes.
 
-| `strict_content_type` | JSON / form bodies |
+The following compatibility policy applies to JSON and legacy `Form[dict]` /
+bare `Form`. Typed forms and uploads always enforce their accepted media types.
+
+| `strict_content_type` | JSON / legacy raw-dict forms |
 |---|---|
-| `True` | 415 `UnsupportedMediaTypeError` for anything else (including multipart bodies on a `Form[T]` route until F04) |
+| `True` | 415 `UnsupportedMediaTypeError` for unsupported content types or non-empty bodies without `Content-Type` |
 | `"warn"` | accepted; each new media type is logged once per route (context `ContentPolicy`) |
 | `False` | not checked |
-| `None` (default) | `"warn"` with `sessions=`, else `False` — 2.0 makes `True` the default |
+| `None` (default) | `"warn"` with `sessions=`, else `False` |
 
-Use `"warn"` to measure which clients would break before switching to `True`.
+Use `"warn"` to measure which legacy clients would break before switching to
+`True`. These defaults are unchanged.
 
 ---
 
@@ -110,8 +114,10 @@ Without a declaration, a route accepts what its body parameters understand:
 | Body parameter | Accepted | Checked |
 |---|---|---|
 | `Json[T]`, an implicit model, `Discriminated[...]` | `application/json`, `application/*+json` | under `strict_content_type` |
-| `Form[T]` | `application/x-www-form-urlencoded` | under `strict_content_type` (F04 adds typed multipart form decoding) |
-| `UploadFile` | `multipart/form-data` | always |
+| `Form[T]` without file fields (scalar/list/optional/model) | `application/x-www-form-urlencoded`, `multipart/form-data` | always |
+| `Form[Model]` with any file field; `UploadFile` / `list[UploadFile]` (also optional) | `multipart/form-data` | always, even for defaulted files |
+| `Form[FormData]` without another file binding | `application/x-www-form-urlencoded` (text), `multipart/form-data` (text/files) | always |
+| `Form[dict]`, bare `Form` | `application/x-www-form-urlencoded`, `multipart/form-data` (text fields) | under `strict_content_type` (legacy leniency retained) |
 | `Bytes`, `ByteStream`, `Stream[T]` | anything | only with `consumes=` |
 
 `consumes=` (a media type or a list; ranges such as `text/*` and
@@ -126,6 +132,16 @@ the JSON codec) and `consumes=["application/msgpack"]` needs the MessagePack
 codec. A media type no codec serves fails at startup
 (`StartupError`, `reason="codec_not_registered"`) — raw `Bytes` routes can
 name any type.
+
+Typed form `consumes=` declarations may only name the supported form media
+types; a route containing a file binding must declare only
+`multipart/form-data`. `Form[FormData]` alone supports both media types,
+including text-only URL-encoded input; only the low-level `Request.multipart()`
+method itself requires multipart. Incompatible declarations fail at startup,
+not after reading an upload. Form parsing is independent of the codec registry. Raw
+`Form[dict]` and bare `Form` return text values as `dict[str, list[str]]` for
+both form media types; unknown file parts drain without spooling by default.
+`Request.form()` is still URL-encoded-only. See [Forms and File Uploads](file-uploads.md).
 
 ---
 
@@ -159,14 +175,59 @@ class MediaController:
 
 ---
 
+## Multipart budgets and spooling
+
+Use `ContentConfig(multipart=MultipartConfig(...))` for app-owned parser
+budgets, in addition to the effective total `max_body_size`:
+
+<!-- docs-contract: fragment -->
+```python
+from lauren import ContentConfig, MultipartConfig
+
+content = ContentConfig(multipart=MultipartConfig(
+    max_parts=1000,
+    max_fields=1000,
+    max_files=100,
+    max_field_size=1024 * 1024,
+    max_part_header_bytes=16 * 1024,
+    spool_threshold=64 * 1024,
+    temp_dir=None,
+    undeclared_parts="ignore",
+))
+```
+
+The defaults are shown except `spool_threshold` (default 1 MiB per file).
+Multipart framing is incremental across ASGI chunks; files use
+`SpooledTemporaryFile` and disk operations run in workers. Positive integer
+budgets and an existing writable `temp_dir` are validated at startup.
+Undeclared files drain without spooling unless `undeclared_parts="reject"`;
+`Form[FormData]` explicitly captures all parts. URL-encoded extraction also
+bounds field count and size. Parser memory is bounded, but `await file.read()`
+still allocates the requested content. Middleware that buffers `request.body()`
+prevents streaming; combining form/file bindings with another explicit
+body-reading extractor (`Bytes`, `ByteStream`, etc.) also buffers the raw body
+once for replay and opts out of upload-streaming memory bounds. Ordinary
+form/file-only routes remain incremental. Middleware that parses before
+routing first uses app budgets, and matched-route constraints are checked
+against the cache. `Request.body()` after an unbuffered multipart parse raises
+`RuntimeError` instead of rereading an exhausted body.
+
+Budget/per-file byte violations are 413; invalid values, wrong part kinds,
+MIME and file-count constraints are 422. Files stay open through response
+streaming and `BackgroundTasks`, then close automatically. Partial files close
+on errors or cancellation. See the [upload guide](file-uploads.md) for
+`UploadField` constraints, file APIs and safe storage.
+
+---
+
 ## Malformed bodies
 
 A body that cannot be decoded (`{"name": ` — a syntax error, not a schema
 error) is a 422 `extractor_error` with `detail.reason == "malformed_body"` and
-a `json_invalid` issue. RFC 9110 reserves 422 for well-formed content, so
-`ContentConfig(malformed_body_status=400)` answers 400 `bad_request` instead,
-with `detail.line` / `detail.col` when the parser reports them. Schema errors
-stay 422. 2.0 makes 400 the default.
+a structured issue (`json_invalid` for JSON). Malformed multipart framing
+follows the same policy. `ContentConfig(malformed_body_status=400)` opts into
+400 `bad_request`, with `detail.line` / `detail.col` when the parser reports
+them. Schema errors stay 422; the default remains 422.
 
 ---
 
@@ -279,9 +340,10 @@ success responses' content types in the generated document.
 `get_all_routes(app)` reports the effective `consumes`, `produces` and
 `max_body_size` of every route (`reflect_routes(cls)` the declared ones).
 
-## Migrating to the 2.0 defaults
+## Opting into stricter compatibility policies
 
-2.0 turns on `strict_content_type=True` and `malformed_body_status=400`. Set
-`strict_content_type="warn"` today, watch the `ContentPolicy` warnings, fix the
-clients (or declare `consumes=` for the types you mean to accept), then switch
-to `True`.
+The defaults remain unchanged. For JSON and legacy raw-dict forms, set
+`strict_content_type="warn"`, watch the `ContentPolicy` warnings, fix clients
+(or declare compatible `consumes=`), then switch to `True`.
+`malformed_body_status=400` is a separate opt-in. Typed forms already validate
+and enforce form media types, regardless of these compatibility settings.

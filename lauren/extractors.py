@@ -41,7 +41,7 @@ import json as jsonlib
 import types as _types
 import warnings
 from dataclasses import dataclass
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import (
     Annotated,
     Any,
@@ -332,7 +332,7 @@ class Bytes(ExtractionMarker):
     reads_body = True
 
 
-class UploadFile(ExtractionMarker):
+class UploadFile(UploadedFile, ExtractionMarker):
     """Multipart file upload extractor — FastAPI-compatible ergonomics.
 
     Declare a handler parameter as ``file: UploadFile`` and the
@@ -362,16 +362,9 @@ class UploadFile(ExtractionMarker):
                 "bytes": len(await file.read()),
             }
 
-    Limitations
-    -----------
-
-    * The full body is buffered before parsing. Very large uploads
-      (hundreds of MiB) should use :class:`ByteStream` and implement
-      chunked processing themselves.
-    * Nested ``multipart/mixed`` parts are not parsed.
-    * RFC 2231 parameter encoding for exotic filenames is not
-      supported; plain and simple quoted-string names cover the
-      modern browser and HTTP client output universe.
+    Uploads are streamed into bounded temporary spools and closed after the
+    response and its background tasks finish. Save a file explicitly when it
+    must outlive the request. Nested ``multipart/mixed`` is not supported.
     """
 
     source = "upload_file"
@@ -506,6 +499,12 @@ class FieldDescriptor:
         return value
 
 
+class _OptionalFieldDescriptor(FieldDescriptor):
+    """An implicit None default, not a second user-supplied descriptor."""
+
+    __slots__ = ()
+
+
 class FieldDescriptorKwargs(TypedDict, total=False):
     default: object
     alias: str | None
@@ -526,6 +525,70 @@ def PathField(**kwargs: Unpack[FieldDescriptorKwargs]) -> FieldDescriptor:
 
 def QueryField(**kwargs: Unpack[FieldDescriptorKwargs]) -> FieldDescriptor:
     return FieldDescriptor(**kwargs)
+
+
+def FormField(**kwargs: Unpack[FieldDescriptorKwargs]) -> FieldDescriptor:
+    """Describe a text form field's alias, default and validation constraints."""
+    return FieldDescriptor(**kwargs)
+
+
+@dataclass(slots=True)
+class UploadField(FieldDescriptor):
+    """Describe one uploaded file or a repeated upload field.
+
+    Use as a parameter default or ``Annotated`` metadata. Argument errors fail
+    immediately; the form compiler checks placement and snapshots constraints.
+    """
+
+    max_size: int | None = None
+    content_types: Sequence[str] = ()
+    sniff: bool | Callable[[bytes], str | None] = False
+    max_files: int | None = None
+    min_files: int = 0
+
+    def __post_init__(self) -> None:
+        from .exceptions import DecoratorUsageError
+
+        def invalid(option: str, reason: str) -> None:
+            raise DecoratorUsageError(
+                f"UploadField.{option} {reason}",
+                detail={"option": option, "reason": "invalid_upload_constraint"},
+            )
+
+        for name in ("max_size", "max_files"):
+            value = getattr(self, name)
+            if value is not None and (type(value) is not int or value <= 0):
+                invalid(name, "must be a positive integer or None")
+        if type(self.min_files) is not int or self.min_files < 0:
+            invalid("min_files", "must be a non-negative integer")
+        if self.max_files is not None and self.min_files > self.max_files:
+            invalid("min_files", "must not exceed max_files")
+        if isinstance(self.content_types, (str, bytes)):
+            invalid("content_types", "must be a sequence of media types")
+        try:
+            allowed = tuple(self.content_types)
+        except TypeError:
+            invalid("content_types", "must be a sequence of media types")
+            return  # pragma: no cover
+        import re
+
+        if any(
+            not isinstance(value, str) or re.fullmatch(r"[\w!#$&^.+-]+/(?:[\w!#$&^.+-]+|\*)", value) is None
+            for value in allowed
+        ):
+            invalid("content_types", "must contain media types such as 'image/png' or 'image/*'")
+        self.content_types = tuple(value.lower() for value in allowed)
+        if not isinstance(self.sniff, bool) and not callable(self.sniff):
+            invalid("sniff", "must be a bool or synchronous callable")
+        if callable(self.sniff) and (
+            _inspect.iscoroutinefunction(self.sniff)
+            or _inspect.iscoroutinefunction(getattr(self.sniff, "__call__", None))
+        ):
+            invalid("sniff", "must be synchronous")
+        if self.alias is not None and (not isinstance(self.alias, str) or not self.alias):
+            invalid("alias", "must be a non-empty string or None")
+        if self.description is not None and not isinstance(self.description, str):
+            invalid("description", "must be a string or None")
 
 
 def HeaderField(**kwargs: Unpack[FieldDescriptorKwargs]) -> FieldDescriptor:
@@ -837,6 +900,16 @@ def _peel_optional(annotation: object) -> tuple[object, bool]:
     return Union[tuple(args)], True  # type: ignore[valid-type]
 
 
+def _merge_field_descriptor(existing: FieldDescriptor | None, incoming: FieldDescriptor) -> FieldDescriptor:
+    if existing is None:
+        return incoming
+    if not isinstance(existing, _OptionalFieldDescriptor):
+        raise ExtractorError(
+            "multiple FieldDescriptor entries in Annotated[...]; keep at most one per parameter",
+        )
+    return _dc_replace_default(incoming, existing.default) if incoming.default is ... else incoming
+
+
 def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
     """Inspect an annotation and return its extractor metadata.
 
@@ -858,9 +931,10 @@ def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
 
     * ``Optional[Path[int]]`` / ``Path[int] | None`` — the outer union
       is stripped and the parser recurses into ``Path[int]``. A
-      :class:`FieldDescriptor` with ``default=None`` is synthesised so
-      a missing value produces ``None`` instead of raising
-      :class:`ExtractorFieldError`.
+      :class:`FieldDescriptor` with ``default=None`` is synthesised for
+      legacy scalar sources so missing values produce ``None``. Form/upload
+      sources retain their nullable inner type but require an explicit default
+      to make absence optional.
     * ``Path[Optional[int]]`` — the inner type becomes ``Optional[int]``
       and scalar coercion threads the ``None`` value through
       automatically. The parameter is also treated as nullable (a
@@ -870,9 +944,8 @@ def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
     peacefully.
     """
     # ``Optional[Extractor[T]]`` / ``Extractor[T] | None`` — unwrap the
-    # outer union and recurse. We synthesise an optional FieldDescriptor
-    # (default=None) so the rest of the pipeline treats missing values
-    # as ``None`` rather than raising.
+    # outer union and recurse. Legacy scalar sources synthesize a None
+    # default; nullable form/upload values require an explicit default.
     peeled, outer_optional = _peel_optional(annotation)
     if outer_optional and peeled is not annotation:
         (
@@ -884,10 +957,13 @@ def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
             inner_pipes,
         ) = parse_extractor_hint(peeled)
         if inner_src is not None:
-            # Merge a None-default into the descriptor so the
-            # extraction step returns None on missing values.
-            if inner_fd is None:
-                inner_fd = FieldDescriptor(default=None)
+            if inner_src in ("form", "upload_file"):
+                # Nullable form values are still required without an explicit
+                # function / descriptor default. Keep None in their validator
+                # type and schema instead of synthesizing optionality.
+                inner_inner = Union[inner_inner, None]  # type: ignore[valid-type]
+            elif inner_fd is None:
+                inner_fd = _OptionalFieldDescriptor(default=None)
             elif inner_fd.default is ...:
                 inner_fd = _dc_replace_default(inner_fd, None)
             return (
@@ -965,11 +1041,7 @@ def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
                     "a parameter reads either a state key or one extractor source",
                 )
             if isinstance(extra, FieldDescriptor):
-                if fd is not None:
-                    raise ExtractorError(
-                        "multiple FieldDescriptor entries in Annotated[...]; keep at most one per parameter",
-                    )
-                fd = extra
+                fd = _merge_field_descriptor(fd, extra)
                 continue
             if is_pipe(extra):
                 pipes.append(extra)
@@ -978,11 +1050,7 @@ def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
                 # Someone passed a ``PathField(...) & pipe(...)`` chain
                 # directly into Annotated. Expand it.
                 if extra.field_descriptor is not None:
-                    if fd is not None:
-                        raise ExtractorError(
-                            "multiple FieldDescriptor entries in Annotated[...]",
-                        )
-                    fd = extra.field_descriptor
+                    fd = _merge_field_descriptor(fd, extra.field_descriptor)
                 pipes.extend(extra.pipes)
                 continue
             # Pydantic ``FieldInfo`` with a ``discriminator`` — keep so
@@ -1009,7 +1077,7 @@ def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
     if isinstance(annotation, type) and issubclass(annotation, ExtractionMarker):
         return (
             annotation.source,
-            annotation,
+            dict if annotation is Form else annotation,
             annotation.reads_body,
             annotation,
             None,
@@ -1022,16 +1090,10 @@ def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
     # matching part rather than returning just the first one.
     if get_origin(annotation) in (list, tuple):
         args = get_args(annotation)
-        if args and isinstance(args[0], type) and issubclass(args[0], ExtractionMarker):
-            marker = args[0]
-            return (
-                marker.source,
-                annotation,
-                marker.reads_body,
-                marker,
-                None,
-                (),
-            )
+        if args:
+            src, _, reads, marker, _, _ = parse_extractor_hint(args[0])
+            if src is not None and marker is not None:
+                return src, annotation, reads, marker, None, ()
     return None, annotation, False, None, None, ()
 
 
@@ -1191,7 +1253,7 @@ def _convert_struct(
 
 #: Sources whose ``Extraction.compiled`` plan performs the whole extraction.
 _PLAN_SOURCES: frozenset[str] = frozenset(
-    {"path", "query", "header", "cookie", "json", "form", "pagination", "host_param"}
+    {"path", "query", "header", "cookie", "json", "form", "upload_file", "pagination", "host_param"}
 )
 
 #: Primitive Python types that can be meaningfully coerced from a query-string
@@ -1651,7 +1713,17 @@ async def _extract_raw(
             return _validate_json(data, inner, extraction.name)
 
         if source == "form":
-            form_data = await request.form()
+            from ._forms._runtime import read_form_data
+
+            # Hand-built legacy extractions historically accepted an absent
+            # Content-Type. Compiled routes always use the shared plan above.
+            form_data: dict[str, list[str]] = {}
+            if not request.headers.get("content-type"):
+                form_data = await request.form()
+            else:
+                for key, value in (await read_form_data(request)).multi_items():
+                    if isinstance(value, str):
+                        form_data.setdefault(key, []).append(value)
             if isinstance(inner, type) and _is_pydantic_model(inner):
                 flat = {k: v[0] if len(v) == 1 else v for k, v in form_data.items()}
                 return _validate_as(inner, flat, field=extraction.name)
@@ -1846,26 +1918,13 @@ async def _parse_multipart_once(request: Request) -> dict[str, list[UploadedFile
     :class:`Request` instances automatically start fresh on the
     next lease (``Request.reset`` wipes per-request attrs).
     """
-    from ._multipart import iter_parts, parse_boundary
+    from ._forms._runtime import read_form_data
 
-    cached = getattr(request, _UPLOAD_CACHE_ATTR, None)
-    if cached is not None:
-        return cast(dict[str, list[UploadedFile]], cached)
-
-    content_type = request.headers.get("content-type") or ""
-    boundary = parse_boundary(content_type)
-    body = await request.body()
+    form = await read_form_data(request)
     grouped: dict[str, list[UploadedFile]] = {}
-    for part in iter_parts(body, boundary):
-        upload = UploadedFile(
-            data=part.data,
-            filename=part.filename,
-            content_type=part.content_type,
-            headers=part.headers,
-            name=part.name,
-        )
-        grouped.setdefault(part.name, []).append(upload)
-    setattr(request, _UPLOAD_CACHE_ATTR, grouped)
+    for name, value in form.multi_items():
+        if isinstance(value, UploadedFile):
+            grouped.setdefault(name, []).append(value)
     return grouped
 
 
@@ -1968,6 +2027,8 @@ __all__ = [
     "FieldDescriptor",
     "PathField",
     "QueryField",
+    "FormField",
+    "UploadField",
     "HeaderField",
     "CookieField",
     "pipe",

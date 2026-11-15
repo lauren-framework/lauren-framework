@@ -43,7 +43,7 @@ to the same rules as JSON responses (pydantic models, dataclasses, …).
 ### `ContentConfig`
 
 ```python
-class ContentConfig(strict_content_type: bool | Literal['warn'] | None = None, malformed_body_status: int = 422, codecs: Sequence[Any] = (), default_produces: Sequence[str] = ('application/json',), strict_accept: bool = False)
+class ContentConfig(strict_content_type: bool | Literal['warn'] | None = None, malformed_body_status: int = 422, codecs: Sequence[Any] = (), default_produces: Sequence[str] = ('application/json',), strict_accept: bool = False, multipart: MultipartConfig | None = None)
 ```
 
 Application-wide request-body content policy.

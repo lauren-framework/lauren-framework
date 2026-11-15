@@ -1,6 +1,6 @@
 ---
 name: building-lauren-controllers
-description: Writes Lauren controllers with route handlers, typed extractors, and auto-serialization. Covers @controller, @get/@post/@put/@patch/@delete, Path/Query/Header/Cookie/Json/Form/Bytes extractors, field descriptors, pipes, all return-type patterns, propagate_metadata, and reflect_routes/get_all_routes. Use when adding routes, extractors, or HTTP handlers to a Lauren app.
+description: Writes Lauren controllers with route handlers, typed extractors, and auto-serialization. Covers @controller, HTTP routes, Path/Query/Header/Cookie/Json/Form/Bytes, typed mixed forms, FormField/UploadField constraints, bounded uploads, pipes, return patterns, propagate_metadata, and route reflection. Use when adding routes, extractors, forms, uploads, or HTTP handlers to a Lauren app.
 ---
 
 > Use `codemap find "SymbolName"` to locate any symbol before reading — it gives
@@ -43,7 +43,8 @@ class UsersController:
         # return None → 204 No Content (documented as 204)
 ```
 
-- `@controller` makes the class `REQUEST`-scoped automatically — DI injects services per request.
+- `@controller` defaults to `Scope.SINGLETON`. For request-scoped dependencies, put
+  `@injectable(scope=Scope.REQUEST)` below `@controller` (it runs first).
 - `@use_guards`, `@use_interceptors`, `@use_middlewares` can decorate either the class or individual methods.
 
 ## Extractors at a glance
@@ -56,10 +57,11 @@ class UsersController:
 | `Header[T]` | request header | case-insensitive |
 | `Cookie[T]` | cookie jar | |
 | `Json[T]` | JSON body | Supports Pydantic models, `msgspec.Struct`, Python dataclasses, `TypedDict`, and `Discriminated[A\|B,"key"]`; 422 on validation error |
-| `Form[T]` | form-urlencoded or multipart | |
+| `Form[T]` | URL-encoded or multipart | Scalar/list/optional or dataclass, `TypedDict`, Pydantic, msgspec model; file fields require multipart; always validates |
+| `Form[FormData]` | URL-encoded text or multipart text/files | Immutable ordered multipairs; another file binding requires multipart; `Request.multipart()` shares the multipart cache |
 | `Bytes` | raw body `bytes` | Buffers entire body |
 | `ByteStream` | streaming body chunks | Zero-copy async iterator — no intermediate `bytes` join |
-| `UploadFile` | multipart file upload | `.filename`, `.content_type`, `.content` (bytes); `list[UploadFile]` for multiple files |
+| `UploadFile` | multipart file upload | `.filename`, `.content_type`, `.size`, `.file`; cursor-based `read()`, `seek`, `write`, `stream`, `save`, `close`; lists for repeated files |
 | `Depends[T]` | DI container | resolves `T` from the container |
 | `State` | `request.state` | reads per-request mutable state |
 
@@ -69,6 +71,31 @@ class UsersController:
 - Annotation is `int/str/float/bool` → `Query[T]`
 
 Path matching prefers static → typed converters (`re`, custom, `uuid`, `int`/`sint`, `float`, `slug`) → untyped `{name}` → wildcard. `RoutingConfig` controls automatic HEAD, optional OPTIONS, trailing slashes, slash merging, and opt-in raw-path matching. See [HTTP Routing](../../docs/guides/routing.md) and [extractors.md](extractors.md) for field descriptors, pipes, and upload files.
+
+## Forms and upload lifetime
+
+`FormField` declares aliases/defaults/text constraints; `UploadField` adds
+`max_size`, `content_types`, `sniff`, `min_files` / `max_files` (file lists),
+`alias` and `description`. Put them in defaults or model-field `Annotated`
+metadata. Typed forms always validate under stdlib `"warn"` / `"legacy"`;
+`T | None` still needs a default to allow omission. Files inside JSON body
+models (including nested fields) fail startup. Raw `Form[dict]` / bare `Form`
+keep `dict[str, list[str]]` text values and legacy content-type leniency for
+URL-encoded or multipart bodies; `Request.form()` stays URL-encoded-only.
+
+`ContentConfig(multipart=MultipartConfig(...))` bounds incremental parsing,
+field/header sizes, counts and temporary spooling. Unknown files drain without
+spooling by default; disk operations use workers. Mixing forms/uploads with
+another explicit body extractor (`Bytes`, `ByteStream`, etc.), like buffering
+middleware, buffers the raw body for replay and opts out of streaming memory
+bounds. Form/file-only routes remain incremental. Uploads remain open through
+response streams and `BackgroundTasks`, then close (including partial-error
+cleanup). Save them before detached work. **`read()` advances a cursor**;
+`await file.seek(0)` rewinds. `read_sync()` remains a cursor-preserving snapshot;
+`data=` construction remains supported. Use generated storage names, not client
+filenames; prefix sniffing is limited, not antivirus. Forms still need CSRF
+protection. See [extractors.md](extractors.md#file-uploads) and the runnable
+[upload guide](../../docs/guides/file-uploads.md).
 
 ## Validation and the 422 payload
 
@@ -94,8 +121,9 @@ Every validation 422 lists **all** failing parameters in
 "msg": "...", "ctx"?: {...}}, ...]` — `loc` starts with `path` / `query` /
 `header` / `cookie` / `body` / `form`. Clients should read `issues`, not the
 1.x `detail.errors` strings. In 1.x the default `stdlib_models="warn"` only
-logs dataclass/TypedDict failures; a model that uses markers or
-`@validation_config` is always enforced. Full guide: `docs/guides/validation.md`.
+logs dataclass/TypedDict JSON/query failures; typed forms, a model that uses
+markers, and `@validation_config` are always enforced. Full guide:
+`docs/guides/validation.md`.
 
 ## Auto-serialization return types
 
