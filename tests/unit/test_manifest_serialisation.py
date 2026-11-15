@@ -47,3 +47,14 @@ def test_metadata_key_prefers_name_over_object_repr() -> None:
 
     assert _metadata_key("public") == "public"
     assert _metadata_key(Key()) == "roles"
+
+
+def test_forward_refs_literals_and_unknown_metadata_are_stable() -> None:
+    from typing import Any, ForwardRef, Literal
+
+    assert _name(ForwardRef("User")) == "User"
+    assert _name(Literal[1, 2]) == "Literal[1, 2]"
+    assert _name(None) == "None"
+    assert _name(Any) == "Any"
+    assert _safe_value(object()) == "object"
+    assert _metadata_key(object()) == "object"
