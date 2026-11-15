@@ -76,8 +76,8 @@ snapshot comparisons.
 
 A route entry includes compiled parameters, the **effective** policy chains
 (including global guards), owning module, binding, encoder, status, tags and
-metadata **keys**. Metadata values are omitted by default because they may
-contain credentials. `describe_app(app, include_metadata_values=True)` copies
+metadata **keys**. Values are omitted by default because they may contain
+credentials, except typed metadata keys explicitly marked `public=True`. `describe_app(app, include_metadata_values=True)` copies
 JSON-safe values, but still redacts nested `Secret[...]` values. Avoid putting
 raw credentials in unwrapped metadata or module names.
 

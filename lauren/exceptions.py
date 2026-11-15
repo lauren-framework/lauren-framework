@@ -677,7 +677,7 @@ class ForbiddenError(HTTPError):
 
 
 class MissingStateError(HTTPError):
-    """``request.state.require(key, T)`` found no value for ``key``."""
+    """A required ``request.state`` value is missing (``require(key, T)``, ``state[key]``, a ``StateKey`` parameter)."""
 
     status_code = 500
     code = "missing_state"

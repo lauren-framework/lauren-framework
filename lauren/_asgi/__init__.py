@@ -91,6 +91,15 @@ from ..extractors import (
     extract_parameter,
     is_pipe,
     parse_extractor_hint,
+    prepare_state_extraction,
+    read_state_key,
+)
+from .._metadata import (
+    METADATA_KEYS,
+    check_state_provenance,
+    merge_metadata_levels,
+    own_metadata,
+    stack_metadata_dicts,
 )
 from .._validation import is_json_body_type as _is_json_body_type
 from .._schema._compiler import TypeCompiler
@@ -196,7 +205,10 @@ class CompiledHandler:
     extractions: tuple[Extraction, ...]
     middleware_chain: tuple[type, ...]
     guards: tuple[type, ...]
-    metadata: dict[str, Any]
+    #: Route metadata merged across levels at startup (typed keys apply their
+    #: merge policy) — a read-only mapping shared by every request's
+    #: ``ExecutionContext``.
+    metadata: Mapping[str, Any]
     #: Effective exception-handler chain for this route, ordered route
     #: → controller (globals are appended at dispatch time so that the
     #: same compiled handler can be reused under different global
@@ -257,6 +269,8 @@ class CompiledHandler:
     response_plan: Any = None
     #: ``@raises`` declarations (method first, then the controller's own).
     raises: tuple[Any, ...] = ()
+    #: Typed metadata declarations captured at compile time for manifest visibility.
+    metadata_key_defs: tuple[Any, ...] = ()
 
 
 #: Media types a JSON body parameter accepts under ``strict_content_type``.
@@ -643,19 +657,22 @@ def _compile_handler_signature(
                     "param": name,
                 },
             )
-        extractions.append(
-            Extraction(
-                name=name,
-                source=source,
-                inner_type=inner,
-                field_descriptor=fd,
-                default=default,
-                has_default=has_default,
-                reads_body=reads_body,
-                marker_cls=marker_cls,
-                pipes=pipes,
-            )
+        marked = Extraction(
+            name=name,
+            source=source,
+            inner_type=inner,
+            field_descriptor=fd,
+            default=default,
+            has_default=has_default,
+            reads_body=reads_body,
+            marker_cls=marker_cls,
+            pipes=pipes,
         )
+        if source in ("state_key", "state"):
+            prepare_state_extraction(
+                marked, ann, policy=validation.policy if validation is not None else None
+            )
+        extractions.append(marked)
         # No startup restriction on instance-method extractors: both
         # @injectable (DI-resolved) and plain (no-arg cache) forms are valid.
         param_names.append(name)
@@ -801,6 +818,7 @@ def _unwrap_handler_descriptor(
         "__lauren_pre_destruct__",
         "__lauren_cache_response__",
         "__lauren_idempotent__",
+        "__lauren_composed__",
     )
 
     def _merge_markers(descriptor: Any, func: Any) -> None:
@@ -809,7 +827,27 @@ def _unwrap_handler_descriptor(
         # rather than keep one side. Entries applied below the wrapper ran
         # first and stay first; ``@set_metadata`` keys applied above win.
         # Idempotent — this runs every time the class is inspected.
+        outer_meta = getattr(descriptor, SET_METADATA, None)
+        outer_keys = getattr(descriptor, METADATA_KEYS, None)
+        if outer_meta is not None or outer_keys is not None:
+            # Typed keys stack by their own rule (collection keys union,
+            # scalar keys refuse conflicting values).
+            values, keys = stack_metadata_dicts(
+                getattr(func, SET_METADATA, None) or {},
+                getattr(func, METADATA_KEYS, None) or {},
+                outer_meta or {},
+                outer_keys or {},
+                getattr(func, "__qualname__", repr(func)),
+            )
+            try:
+                setattr(func, SET_METADATA, values)
+                if keys:
+                    setattr(func, METADATA_KEYS, keys)
+            except (AttributeError, TypeError):
+                pass
         for marker in _MARKER_ATTRS:
+            if marker == SET_METADATA:
+                continue
             outer = getattr(descriptor, marker, None)
             if outer is None:
                 continue
@@ -2116,7 +2154,7 @@ class LaurenApp:
                             handler_class=compiled.controller_cls,
                             handler_func=compiled.handler_fn,
                             route_template=compiled.path_template,
-                            metadata=dict(compiled.metadata),
+                            metadata=compiled.metadata,
                         )
                         for guard_cls in effective_guards:
                             # Global guards have no controller-module
@@ -2184,6 +2222,10 @@ class LaurenApp:
                                     # routing; startup validation guarantees it is
                                     # present whenever a handler injects Session.
                                     kwargs_dict[ext.name] = req2.state.session
+                                elif ext.source == "state_key" and not ext.pipes:
+                                    # ``Annotated[T, Key]``: a dict read; a missing
+                                    # value raises the key's error (500 by default).
+                                    kwargs_dict[ext.name] = read_state_key(req2, ext)
                                 else:
                                     try:
                                         kwargs_dict[ext.name] = await extract_parameter(
@@ -3618,7 +3660,7 @@ class LaurenFactory:
             ctrl_guards = list(ctrl_cls.__dict__.get(USE_GUARDS, []))
             ctrl_interceptors = list(ctrl_cls.__dict__.get(USE_INTERCEPTORS, []))
             ctrl_exc_handlers = list(ctrl_cls.__dict__.get(USE_EXCEPTION_HANDLERS, []))
-            ctrl_extra_meta: dict[str, Any] = dict(ctrl_cls.__dict__.get(SET_METADATA, {}))
+            ctrl_meta_values, ctrl_meta_keys = own_metadata(ctrl_cls)
 
             # Register controller's guards/middleware/interceptors as providers
             for cls in ctrl_mw + ctrl_guards + ctrl_interceptors:
@@ -3677,7 +3719,15 @@ class LaurenFactory:
                 fn_guards = list(getattr(fn, USE_GUARDS, []))
                 fn_interceptors = list(getattr(fn, USE_INTERCEPTORS, []))
                 fn_exc_handlers = list(getattr(fn, USE_EXCEPTION_HANDLERS, []))
-                fn_meta: dict[str, Any] = dict(getattr(fn, SET_METADATA, {}))
+                fn_meta_values, fn_meta_keys = own_metadata(fn)
+                # Merged once per handler: controller (outer) ⟵ route; typed
+                # keys apply their merge policy, string keys most-specific-wins.
+                route_metadata = merge_metadata_levels(
+                    [
+                        (f"controller {ctrl_cls.__qualname__}", ctrl_meta_values, ctrl_meta_keys),
+                        (f"route {ctrl_cls.__qualname__}.{fn.__name__}", fn_meta_values, fn_meta_keys),
+                    ]
+                )
                 # Per-route encoder: method-level wins over controller-level.
                 fn_encoder = getattr(fn, USE_ENCODER, None)
                 ctrl_encoder = ctrl_cls.__dict__.get(USE_ENCODER)
@@ -3705,7 +3755,7 @@ class LaurenFactory:
                             metadata={
                                 "controller_meta": ctrl_meta,
                                 "route_meta": rmeta,
-                                "extra": {**ctrl_extra_meta, **fn_meta},
+                                "extra": route_metadata,
                                 "binding": binding,
                             },
                         )
@@ -3792,7 +3842,8 @@ class LaurenFactory:
                         # handlers fall through next; globals are
                         # appended at dispatch time.
                         exception_handlers=tuple(fn_exc_handlers + ctrl_exc_handlers),
-                        metadata={**ctrl_extra_meta, **fn_meta},
+                        metadata=route_metadata,
+                        metadata_key_defs=tuple({**ctrl_meta_keys, **fn_meta_keys}.values()),
                         owning_module=ctrl_owning_module,
                         streaming_item_type=streaming_item,
                         streaming_adapter=streaming_adapter,
@@ -3926,6 +3977,20 @@ class LaurenFactory:
         for guard_cls in all_guards:
             if guard_cls not in guard_denials:
                 guard_denials[guard_cls] = _compile_guard_denial(guard_cls)
+
+        # State provenance: a parameter injecting a ``StateKey(...,
+        # require_provider=True)`` needs a guard / middleware / interceptor in
+        # its chain that declares ``@provides_state(key)``.
+        _check_route_state_provenance(
+            compiled_handlers,
+            ws_gateways,
+            container,
+            global_middlewares=effective_global_middlewares,
+            global_guards=effective_global_guards,
+            global_interceptors=effective_global_interceptors,
+            global_ws_guards=effective_global_ws_guards,
+            global_ws_interceptors=effective_global_ws_interceptors,
+        )
 
         # Re-compile after late registrations.
         container._compiled = False
@@ -4117,6 +4182,90 @@ class LaurenFactory:
             root_module, hosted_services=hosted_services, scheduler=scheduler, **create_kwargs
         )
         return app.context(hosted_services=hosted_services, scheduler=scheduler, drain_timeout=drain_timeout)
+
+
+def _check_route_state_provenance(
+    compiled_handlers: Mapping[tuple[str, str], CompiledHandler],
+    ws_gateways: Mapping[str, Any],
+    container: DIContainer,
+    *,
+    global_middlewares: list[type],
+    global_guards: list[type],
+    global_interceptors: list[type],
+    global_ws_guards: list[type],
+    global_ws_interceptors: list[type],
+) -> None:
+    """Fail startup when a ``require_provider=True`` ``StateKey`` parameter has no provider.
+
+    The chain of an HTTP route is every global middleware (the session engine
+    included), guard and interceptor plus the route's own; a WebSocket hook's
+    chain is the global and gateway-level WebSocket guards / interceptors
+    (connection state persists across frames) plus the handler's own.
+    """
+    needs = any(
+        ext.source == "state_key" and ext.state_key is not None and ext.state_key.require_provider
+        for ch in compiled_handlers.values()
+        for ext in ch.extractions
+    ) or any(
+        ext.source == "state_key" and ext.state_key is not None and ext.state_key.require_provider
+        for gw in ws_gateways.values()
+        for exts in (
+            gw.on_connect_extractions,
+            gw.on_disconnect_extractions,
+            gw.on_error_extractions,
+            *(m.extractions for m in gw.messages.values()),
+        )
+        for ext in exts
+    )
+    if not needs:
+        return
+    candidates: dict[Any, None] = dict.fromkeys(p.cls for p in container.all_providers())
+    candidates.update(dict.fromkeys([*global_middlewares, *global_guards, *global_interceptors]))
+    for (method, path_t), ch in compiled_handlers.items():
+        check_state_provenance(
+            ch.extractions,
+            (
+                *global_middlewares,
+                *ch.middleware_chain,
+                *global_guards,
+                *ch.guards,
+                *global_interceptors,
+                *ch.interceptors,
+            ),
+            owner=ch.controller_cls.__name__,
+            handler=getattr(ch.handler_fn, "__name__", "?"),
+            route=f"{method} {path_t}",
+            candidates=candidates,
+        )
+    for gw in ws_gateways.values():
+        connect_chain = (
+            *global_ws_guards,
+            *gw.guards,
+            *gw.on_connect_guards,
+            *global_ws_interceptors,
+            *gw.interceptors,
+            *gw.on_connect_interceptors,
+        )
+        hooks = [
+            (gw.on_connect, gw.on_connect_extractions, connect_chain),
+            (gw.on_disconnect, gw.on_disconnect_extractions, connect_chain),
+            (gw.on_error, gw.on_error_extractions, connect_chain),
+        ]
+        hooks.extend(
+            (m.handler_fn, m.extractions, (*connect_chain, *m.guards, *m.interceptors))
+            for m in gw.messages.values()
+        )
+        for fn, extractions, chain in hooks:
+            if fn is None:
+                continue
+            check_state_provenance(
+                extractions,
+                chain,
+                owner=gw.controller_cls.__name__,
+                handler=getattr(fn, "__name__", "?"),
+                route=f"WEBSOCKET {gw.path_template}",
+                candidates=candidates,
+            )
 
 
 def _compile_guard_denial(guard_cls: type) -> Any:

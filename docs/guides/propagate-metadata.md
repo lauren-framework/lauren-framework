@@ -111,8 +111,12 @@ class Target:
 
 ## User metadata: target keys win
 
-`@set_metadata` key/value pairs are merged; if the same key exists in both
-source and target, the target's value takes precedence:
+`@set_metadata` key/value pairs (and typed metadata keys) are merged; if the
+same key exists in both source and target, the target's value takes
+precedence — except [`MetadataSetKey`](typed-metadata-and-state.md) items,
+which are unioned, source items first. Because `@set_metadata` never inherits
+through subclassing, `@propagate_metadata(Parent)` is also how a subclass
+deliberately takes its parent's metadata:
 
 ```python
 @set_metadata("cache_ttl", 60)

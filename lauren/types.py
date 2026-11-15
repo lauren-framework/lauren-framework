@@ -20,10 +20,12 @@ from typing import (
     Union,
     get_args,
     get_origin,
+    overload,
     runtime_checkable,
 )
 from urllib.parse import parse_qsl
 
+from ._metadata import _UNSET, MetadataKey, MetadataSetKey, StateKey, read_metadata
 from .exceptions import MissingStateError, RequestBodyTooLarge, StateTypeError
 
 T = TypeVar("T")
@@ -163,7 +165,11 @@ class State:
 
     Attributes can be set either via attribute-style (``state.user = u``) or
     with :meth:`set`. Typed retrieval helps middleware/handlers avoid silent
-    type errors.
+    type errors. A :class:`~lauren.StateKey` gives a slot a name *and* a type:
+    ``state[CurrentUser] = user`` stores under the key's name and
+    ``state[CurrentUser]`` reads it back (raising the key's ``on_missing`` —
+    :class:`MissingStateError` by default — when absent). Item access, ``in``,
+    :meth:`get`, :meth:`set` and :meth:`has` accept a key or a plain string.
     """
 
     def __init__(self, initial: Mapping[str, Any] | None = None) -> None:
@@ -178,14 +184,50 @@ class State:
     def __setattr__(self, key: str, value: Any) -> None:
         object.__getattribute__(self, "_data")[key] = value
 
-    def set(self, key: str, value: Any) -> None:
-        self._data[key] = value  # type: ignore[attr-defined]
+    @overload
+    def __getitem__(self, key: StateKey[T]) -> T: ...
+    @overload
+    def __getitem__(self, key: str) -> Any: ...
+    def __getitem__(self, key: Any) -> Any:
+        data: dict[str, Any] = self._data  # type: ignore[attr-defined]
+        if isinstance(key, StateKey):
+            try:
+                return data[key.name]
+            except KeyError:
+                raise key.missing_error() from None
+        try:
+            return data[key]
+        except KeyError:
+            raise MissingStateError(f"required state key {key!r} is missing", detail={"key": key}) from None
 
-    def get(self, key: str, default: Any = None) -> Any:
-        return self._data.get(key, default)  # type: ignore[attr-defined]
+    @overload
+    def __setitem__(self, key: StateKey[T], value: T) -> None: ...
+    @overload
+    def __setitem__(self, key: str, value: Any) -> None: ...
+    def __setitem__(self, key: StateKey[Any] | str, value: Any) -> None:
+        self._data[key.name if isinstance(key, StateKey) else key] = value  # type: ignore[attr-defined]
 
-    def has(self, key: str) -> bool:
-        return key in self._data  # type: ignore[attr-defined]
+    def __contains__(self, key: object) -> bool:
+        return (key.name if isinstance(key, StateKey) else key) in self._data  # type: ignore[attr-defined]
+
+    @overload
+    def set(self, key: StateKey[T], value: T) -> None: ...
+    @overload
+    def set(self, key: str, value: Any) -> None: ...
+    def set(self, key: StateKey[Any] | str, value: Any) -> None:
+        self._data[key.name if isinstance(key, StateKey) else key] = value  # type: ignore[attr-defined]
+
+    @overload
+    def get(self, key: StateKey[T]) -> T | None: ...
+    @overload
+    def get(self, key: StateKey[T], default: T) -> T: ...
+    @overload
+    def get(self, key: str, default: Any = None) -> Any: ...
+    def get(self, key: Any, default: Any = None) -> Any:
+        return self._data.get(key.name if isinstance(key, StateKey) else key, default)  # type: ignore[attr-defined]
+
+    def has(self, key: StateKey[Any] | str) -> bool:
+        return (key.name if isinstance(key, StateKey) else key) in self._data  # type: ignore[attr-defined]
 
     def get_typed(self, key: str, expected: type[T]) -> T | None:
         val = self._data.get(key)  # type: ignore[attr-defined]
@@ -212,7 +254,8 @@ class State:
 class AppState(State):
     """Read-only application-level state.
 
-    Writes raise :class:`RuntimeError` after the app has been sealed.
+    Writes raise :class:`RuntimeError` after the app has been sealed (once
+    startup completed). ``StateKey`` item access works as on :class:`State`.
     """
 
     def __init__(self, initial: Mapping[str, Any] | None = None) -> None:
@@ -227,7 +270,20 @@ class AppState(State):
             raise RuntimeError("AppState is sealed and read-only after startup")
         super().__setattr__(key, value)
 
-    def set(self, key: str, value: Any) -> None:
+    @overload
+    def __setitem__(self, key: StateKey[T], value: T) -> None: ...
+    @overload
+    def __setitem__(self, key: str, value: Any) -> None: ...
+    def __setitem__(self, key: StateKey[Any] | str, value: Any) -> None:
+        if getattr(self, "_sealed", False):
+            raise RuntimeError("AppState is sealed and read-only after startup")
+        super().__setitem__(key, value)
+
+    @overload
+    def set(self, key: StateKey[T], value: T) -> None: ...
+    @overload
+    def set(self, key: str, value: Any) -> None: ...
+    def set(self, key: StateKey[Any] | str, value: Any) -> None:
         if getattr(self, "_sealed", False):
             raise RuntimeError("AppState is sealed and read-only after startup")
         super().set(key, value)
@@ -1301,16 +1357,27 @@ class MiddlewareProtocol(Protocol):
 
 @dataclass
 class ExecutionContext:
-    """Contextual info passed to guards."""
+    """Contextual info passed to guards, interceptors and extractors.
+
+    ``metadata`` is the route's merged ``@set_metadata`` / typed-key mapping,
+    compiled once at startup and shared read-only by every request.
+    """
 
     request: Request
     handler_class: type | None = None
     handler_func: Callable[..., Any] | None = None
     route_template: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
-    def get_metadata(self, key: str, default: Any = None) -> Any:
-        return self.metadata.get(key, default)
+    @overload
+    def get_metadata(self, key: MetadataSetKey[T]) -> tuple[T, ...]: ...
+    @overload
+    def get_metadata(self, key: MetadataKey[T]) -> T: ...
+    @overload
+    def get_metadata(self, key: str, default: Any = None) -> Any: ...
+    def get_metadata(self, key: Any, default: Any = _UNSET) -> Any:
+        """Read route metadata: a typed key returns its typed value (or its default); a string reads raw."""
+        return read_metadata(self.metadata, key, default)
 
 
 @runtime_checkable
@@ -1514,6 +1581,7 @@ __all__ = [
     "MutableHeaders",
     "State",
     "AppState",
+    "StateKey",
     "Request",
     "Response",
     "ClientInfo",

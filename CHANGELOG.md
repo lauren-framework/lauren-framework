@@ -9,6 +9,14 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- Typed `MetadataKey`, `MetadataSetKey` and `StateKey` declarations, additive
+  decorator composition (`compose`) and composition reflection. Metadata merge
+  policies compile into read-only per-route mappings; state keys work for HTTP,
+  WebSocket and app state, with optional startup provenance checks.
+- `provides_state` and public `reject_bare_usage` helpers for extension authors.
+  Typed keys marked `public=True` expose their values in app manifests while
+  retaining nested `Secret` redaction.
+
 - `describe_app(app)` / `app.describe()` return an `AppManifest` immediately after
   compilation, without lifecycle startup. Deterministic snapshots include
   resolved module imports, provider dependencies and scopes, effective HTTP/WS
@@ -26,6 +34,11 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Preserve an orjson fallback callback's original policy rejection instead of
   replacing it with an error about the outer dictionary.
 
+
+### Deprecated
+
+- Missing name-based `StateExtractor` values warn before their default 422
+  becomes 500; `ValidationPolicy(missing_state="error")` opts into that behavior.
 
 ## [1.11.0] - 2026-11-05
 

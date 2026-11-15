@@ -129,7 +129,8 @@ nox -s ver_dec -- --patch
 | `lauren/reflect/_reader.py`       | Static readers: `reflect_controller`, `reflect_routes`, `reflect_exception_handlers`, … |
 | `lauren/reflect/_app_reader.py`   | App readers: `get_all_routes`, `get_all_ws_gateways`, `get_route_metadata` |
 | `lauren/reflect/_types.py`        | Frozen result types: `ReflectedRoute`, `ReflectedController`, `ReflectedWsGateway`, … |
-| `lauren/decorators.py`            | User-facing decorators only; route-option validation table (`_ROUTE_OPTION_VALIDATORS`); `@raises` |
+| `lauren/decorators.py`            | User-facing decorators only; route-option validation table (`_ROUTE_OPTION_VALIDATORS`); `@raises`, typed key exports, `compose` |
+| `lauren/_metadata.py`             | Typed metadata / state keys, compile-time merge, `compose`, `@provides_state` provenance checks |
 | `lauren/responses.py`             | Typed results: `Ok`, `Created`, `Accepted`, `NoContent`, `Status` (no framework imports) |
 | `lauren/_asgi/_contracts.py`      | Response contracts: `describe_responses` (status table, startup checks), `ResponsePlan` (runtime coercion + projection), `ResponseContractViolation` |
 | `lauren/_schema/_contract.py`     | Filter / strict response projectors built over compiled validator nodes |
@@ -302,6 +303,8 @@ Welcome aboard.
 | Shape a response (status, typed results, output filtering, declared errors) | `lauren/responses.py`, `lauren/_asgi/_contracts.py` | `docs/guides/response-contracts.md` |
 | Wire DI / providers / lifecycle | `lauren/_di/__init__.py` | `skills/building-lauren-services/` |
 | Add a guard, middleware, or interceptor | `lauren/decorators.py` | `skills/building-lauren-guards/` |
+| Define a custom route decorator | `compose`, `reject_bare_usage`, `MetadataKey` in `lauren/decorators.py` | `docs/guides/typed-metadata-and-state.md` |
+| Pass typed guard state to a handler | `StateKey`, `@provides_state`, `Annotated[T, Key]` | `docs/guides/typed-metadata-and-state.md` |
 | Add exception handlers | `lauren/decorators.py` | `skills/building-lauren-guards/` §Exception handlers |
 | Add WebSocket / SSE / streaming | `lauren/websockets.py`, `lauren/sse.py` | `skills/building-lauren-streaming/` |
 | Serve static files | `lauren/_staticfiles.py` | `skills/building-lauren-apps/` §Static files |

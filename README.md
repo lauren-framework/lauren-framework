@@ -318,6 +318,45 @@ uvicorn main:app --reload
 # → http://127.0.0.1:8000/docs  (Swagger UI)
 ```
 
+### Typed guard metadata and request state
+
+Use one key on both sides of a guard/route boundary; collection metadata
+accumulates across controller and route, and a state key types the value the
+guard hands to the handler:
+
+```python
+from dataclasses import dataclass
+from typing import Annotated
+from lauren import MetadataSetKey, StateKey, provides_state, use_guards
+
+Roles = MetadataSetKey[str]("app.roles")
+
+@dataclass
+class Principal:
+    id: str
+
+CurrentUser = StateKey[Principal]("app.user", require_provider=True)
+
+@provides_state(CurrentUser)
+class AuthGuard:
+    async def can_activate(self, ctx):
+        ctx.request.state[CurrentUser] = Principal(id="alice")
+        return "admin" in ctx.get_metadata(Roles)
+
+@Roles("admin")
+@use_guards(AuthGuard)
+@controller("/private")
+class PrivateController:
+    @get("/")
+    async def index(self, user: Annotated[Principal, CurrentUser]) -> dict:
+        return {"id": user.id}
+```
+
+`compose(use_guards(AuthGuard), Roles("admin"), name="admin")` bundles those
+decorators without wrapping the handler. [Typed metadata, state keys and
+composition](docs/guides/typed-metadata-and-state.md) covers merging,
+provenance checks and WebSocket use.
+
 ## Dependency injection
 
 ```python

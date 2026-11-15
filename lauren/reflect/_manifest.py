@@ -367,14 +367,12 @@ def describe_app(app: Any, *, include_metadata_values: bool = False) -> AppManif
             deprecated=ch.route_meta.deprecated,
             tags=tuple(ch.route_meta.tags),
             operation_id=ch.route_meta.operation_id,
-            metadata_values=(
-                {
-                    _metadata_key(k): _safe_value(v)
-                    for k, v in sorted(ch.metadata.items(), key=lambda kv: _metadata_key(kv[0]))
-                }
+            metadata_values={
+                _metadata_key(k): _safe_value(v)
+                for k, v in sorted(ch.metadata.items(), key=lambda kv: _metadata_key(kv[0]))
                 if include_metadata_values
-                else {}
-            ),
+                or any(key.name == k and key.public for key in ch.metadata_key_defs)
+            },
         )
         for (method, path), ch in sorted(app._handlers.items(), key=lambda item: (item[0][1], item[0][0]))
     )

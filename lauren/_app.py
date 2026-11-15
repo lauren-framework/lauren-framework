@@ -686,6 +686,8 @@ def _wrap_function_as_method(fn: Callable[..., Any]) -> Callable[..., Any]:
         "__lauren_use_exception_handlers__",
         "__lauren_use_encoder__",
         "__lauren_metadata__",
+        "__lauren_metadata_keys__",
+        "__lauren_composed__",
         "__lauren_raises__",
     ):
         if hasattr(fn, marker):

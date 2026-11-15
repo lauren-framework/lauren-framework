@@ -105,29 +105,49 @@ class ExecutionContext:
     handler_class: type | None    # the controller class
     handler_func: Callable | None # the handler method
     route_template: str | None    # e.g. "/users/{id}"
-    metadata: dict[str, Any]      # set_metadata values
+    metadata: Mapping[str, Any]   # read-only, merged at startup
 
     def get_metadata(self, key: str, default=None) -> Any: ...
 ```
 
-### Metadata — mark routes from a guard
+### Typed metadata and state keys
 
 ```python
-from lauren import set_metadata
+from typing import Annotated
+from lauren import MetadataKey, MetadataSetKey, StateKey, compose, provides_state, reject_bare_usage
 
-IS_PUBLIC = "app.is_public"
+IS_PUBLIC = MetadataKey[bool]("app.is_public", default=False)
+ROLES = MetadataSetKey[str]("app.roles")
+CURRENT_USER = StateKey[AuthUser]("app.user", on_missing=UnauthorizedError, require_provider=True)
 
-@set_metadata(IS_PUBLIC, True)
+@IS_PUBLIC(True)
 @get("/health")
 async def health(self) -> dict:
     return {"ok": True}
 
-# In the guard:
-async def can_activate(self, ctx: ExecutionContext) -> bool:
-    if ctx.get_metadata(IS_PUBLIC):
+@provides_state(CURRENT_USER)
+class TokenGuard:
+    async def can_activate(self, ctx: ExecutionContext) -> bool:
+        if ctx.get_metadata(IS_PUBLIC):
+            return True
+        ctx.request.state[CURRENT_USER] = await verify_token(ctx.request.headers)
         return True
-    ...
+
+# Handler injection: user: Annotated[AuthUser, CURRENT_USER]
+# Reusable policy bundle; the target must never be wrapped or replaced.
+def auth(*roles: str):
+    reject_bare_usage("auth", roles[0] if roles else None)
+    return compose(use_guards(TokenGuard, RolesGuard), ROLES(*roles), name="auth")
 ```
+
+Collection keys union controller and route values (outer first), scalar keys
+use `merge="override" | "outer" | "error"`. A missing required `StateKey`
+raises `MissingStateError` (500) by default; `on_missing=UnauthorizedError`
+answers 401. `require_provider=True` fails startup unless a guard, middleware
+or interceptor on the route declares `@provides_state(CURRENT_USER)`.
+Legacy `@set_metadata("app.is_public", True)` and string reads still work;
+`@set_metadata` now reads a subclass's own metadata only. See
+[Typed Metadata, State Keys & Composition](../../docs/guides/typed-metadata-and-state.md).
 
 ## Exception handlers — typed error mapping
 

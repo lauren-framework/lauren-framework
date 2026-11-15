@@ -26,6 +26,15 @@ async def me(self, user: CurrentUser) -> dict:
 
 Authorization, repo lookup, error handling — all handled by the extractor, declared once and reused everywhere.
 
+!!! tip "Value handed over by a guard? Use a `StateKey`"
+    When a guard or middleware already produced the value (the authenticated
+    user, the tenant), you do not need an extractor class: declare
+    `CurrentUser = StateKey[AuthUser]("app.user", on_missing=UnauthorizedError)`,
+    let the guard write `ctx.request.state[CurrentUser] = user`, and annotate
+    the parameter `user: Annotated[AuthUser, CurrentUser]`. See
+    [Typed Metadata, State Keys & Composition](typed-metadata-and-state.md#state-keys).
+    Write a custom extractor when the value must be *computed* from the request.
+
 ## Anatomy of a custom extractor
 
 Every custom extractor subclasses `ExtractionMarker` and overrides `extract`:
