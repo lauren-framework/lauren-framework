@@ -15,7 +15,7 @@ pip install "lauren[full]"          # pydantic + msgspec
 
 ## Core pillars
 
-- **Radix-tree router** with O(depth) lookup, static > param > wildcard priority, per-method dispatch with `Allow` header on 405.
+- **Radix-tree router** with O(depth) lookup, typed path converters/constraints, explicit trailing-slash/raw-path policies, host/subdomain routing (`HostParam`), automatic HEAD (headers only), optional OPTIONS, and global 404/405 fallbacks (`RoutingConfig`).
 - **Dependency Injection** with `SINGLETON`, `REQUEST`, and `TRANSIENT` scopes, Protocol binding, multi-bindings (`list[T]` injection), circular detection, scope-violation checks, the four NestJS-style custom-provider recipes (`use_value`, `use_class`, `use_factory`, `use_existing`) plus `Token` and `Inject`, and **generator function providers** (FastAPI-style lifecycle: code before `yield` = setup, yielded value = dependency, code after `yield` = teardown — scoped to `SINGLETON` or `REQUEST`). **Operation scopes** (`async with app.scope("job") as scope: await scope.resolve(DbSession)`) give scripts and background work the request scope without a request, torn down on exit.
 - **Extractor system** for typed request decomposition (`Path[int]`, `Query[str]`, `Header[str]`, `Cookie[str]`, `Json[Model]`, `Form[Model]`, `Bytes`, `ByteStream`, `UploadFile`, `State`, `Depends[T]`), model extraction for Pydantic / `msgspec.Struct` / Python `dataclass` / `TypedDict` types, **pydantic-free discriminated unions** via `Discriminated[A | B, "key"]`, plus user-defined extractors via an `ExtractionMarker.extract` instance method (legacy classmethod form still supported).
 - **Module system** with explicit imports/exports and circular-import detection (NestJS-style).

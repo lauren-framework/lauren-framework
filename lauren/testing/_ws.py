@@ -12,6 +12,8 @@ import asyncio
 import json as jsonlib
 from typing import Any, Iterable, Mapping
 
+from ._transport import asgi_paths
+
 
 # ---------------------------------------------------------------------------
 # WebSocket test client
@@ -88,8 +90,8 @@ class WebSocketTestSession:
             "asgi": {"version": "3.0"},
             "http_version": "1.1",
             "scheme": getattr(self, "_scheme", "ws"),
-            "path": self._path,
-            "raw_path": self._path.encode("utf-8"),
+            "path": asgi_paths(self._path)[0],
+            "raw_path": asgi_paths(self._path)[1],
             "query_string": self._query_string.encode("latin-1"),
             "headers": self._headers,
             "client": ("127.0.0.1", 12345),

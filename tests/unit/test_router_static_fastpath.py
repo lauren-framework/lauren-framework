@@ -148,8 +148,8 @@ def test_static_lookup_method_not_allowed_when_no_dynamic_routes() -> None:
     with pytest.raises(MethodNotAllowedError) as exc_info:
         router.find("POST", "/health")
     # The ``allow`` list must be populated so the dispatcher can emit
-    # a correct ``Allow:`` header.
-    assert exc_info.value.allow == ["GET"]
+    # a correct ``Allow:`` header (``HEAD`` comes with ``GET``).
+    assert exc_info.value.allow == ["GET", "HEAD"]
 
 
 def test_static_lookup_falls_through_when_dynamic_sibling_exists() -> None:
@@ -294,7 +294,7 @@ def test_allowed_methods_falls_back_to_radix_for_dynamic() -> None:
     router.add_route("GET", "/users/{id}", _handler)
     router.freeze()
 
-    assert router.allowed_methods("/users/42") == ["GET"]
+    assert router.allowed_methods("/users/42") == ["GET", "HEAD"]
 
 
 def test_allowed_methods_returns_empty_for_unknown_path() -> None:

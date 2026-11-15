@@ -11,6 +11,8 @@ The per-row strategy attaches a `tenant_id` column to every tenant-aware table a
 
 ## Tenant resolution
 
+If tenants live on subdomains, route with `@controller(host="{tenant:slug}.example.com")` and inject `tenant: HostParam[str]` instead of parsing a header in middleware; see [HTTP Routing](../../docs/guides/routing.md). Host routing selects a tenant route; it does **not** authorize the caller or guarantee isolation. Verify the tenant against authentication, constrain accepted hosts with `lauren-middlewares.trusted_hosts`, and keep the ORM tenant filter below. Only accept forwarded hosts from trusted proxies.
+
 ```python
 from contextvars import ContextVar
 

@@ -170,6 +170,8 @@ nav:
     - Validation: guides/validation.md
     - Pagination: guides/pagination.md
     - Inspecting Apps & CI Tooling: guides/tooling.md
+
+    - HTTP Routing: guides/routing.md
     - Sync vs Async Handlers: guides/sync-handlers.md
     - Custom Extractors: guides/custom-extractors.md
     - Pipes: guides/pipes.md

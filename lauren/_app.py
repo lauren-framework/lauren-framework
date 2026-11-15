@@ -100,6 +100,7 @@ class Lauren:
         response_validation: str = "off",
         json_fallback: str = "warn",
         pagination: Any | None = None,
+        routing: Any | None = None,
     ) -> None:
         self._title = title
         self._version = version
@@ -143,6 +144,7 @@ class Lauren:
         self._response_validation = response_validation
         self._json_fallback = json_fallback
         self._pagination = pagination
+        self._routing = routing
         self._startup_handlers: list[Callable[[], Any]] = []
         self._shutdown_handlers: list[Callable[[], Any]] = []
 
@@ -194,10 +196,13 @@ class Lauren:
 
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             self._assert_not_compiled("register a route")
-            # Route options fail here, at decoration time, like ``@get(...)``.
-            from .decorators import _validate_route_options
+            # Route options and the path template fail here, at decoration
+            # time, like ``@get(...)``.
+            from .decorators import _check_path, _validate_route_options
 
-            _validate_route_options(f"app.{method.lower()}", fn, kwargs)
+            label = "app.any_method" if method == "*" else f"app.{method.lower()}"
+            _check_path(label, fn, path)
+            _validate_route_options(label, fn, kwargs)
             self._route_buffer.append(_PendingRoute(method=method, path=path, fn=fn, kwargs=kwargs))
             return fn
 
@@ -224,6 +229,29 @@ class Lauren:
 
     def options(self, path: str = "/", **kw: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         return self._make_route("OPTIONS", path, **kw)
+
+    def route(
+        self, path: str = "/", *, methods: Any, **kw: Any
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register one handler for several methods, like :func:`lauren.route`."""
+        from collections.abc import Iterable
+
+        from .decorators import route as _route
+
+        names = list(methods) if isinstance(methods, Iterable) and not isinstance(methods, str) else methods
+        _route(path, methods=names, **kw)  # validates the method names now
+        verbs = [self._make_route(m, path, **kw) for m in dict.fromkeys(str(m).upper() for m in names)]
+
+        def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+            for verb in verbs:
+                verb(fn)
+            return fn
+
+        return decorator
+
+    def any_method(self, path: str = "/", **kw: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a handler for every method at ``path``, like :func:`lauren.any_method`."""
+        return self._make_route("*", path, **kw)
 
     # ------------------------------------------------------------------
     # Structured registration \u2014 modules & middleware
@@ -487,6 +515,7 @@ class Lauren:
             response_validation=self._response_validation,
             json_fallback=self._json_fallback,
             pagination=self._pagination,
+            routing=self._routing,
         )
         # --- Startup hooks run inside LaurenApp.startup(), after every
         # @post_construct hook (not here, before singletons exist) ---------

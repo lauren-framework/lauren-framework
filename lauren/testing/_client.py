@@ -15,7 +15,16 @@ from urllib.parse import urljoin
 from ._cookies import CookieJar
 from ._portal import Portal, stop_portal
 from ._response import ResponseHeaders, SentRequest, StreamingTestResponse, TestResponse
-from ._transport import EXTENSION_KEY, BaseURL, Body, Exchange, ForeignLifespan, Target, encode_body
+from ._transport import (
+    EXTENSION_KEY,
+    BaseURL,
+    Body,
+    Exchange,
+    ForeignLifespan,
+    Target,
+    asgi_paths,
+    encode_body,
+)
 from ._ws import WebSocketTestSession
 
 T = TypeVar("T")
@@ -363,14 +372,15 @@ class _ClientBase:
             query = target.query.encode("latin-1")
         except UnicodeEncodeError:
             query = target.query.encode("utf-8")
+        path, raw_path = asgi_paths(target.path)
         scope: dict[str, Any] = {
             "type": "http",
             "asgi": {"version": "3.0"},
             "http_version": "1.1",
             "method": method,
             "scheme": target.scheme,
-            "path": target.path,
-            "raw_path": target.path.encode("utf-8"),
+            "path": path,
+            "raw_path": raw_path,
             "query_string": query,
             "root_path": self.root_path,
             "headers": [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in sent],

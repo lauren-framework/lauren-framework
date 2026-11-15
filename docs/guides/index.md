@@ -35,6 +35,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     `describe_app` snapshots the compiled route, provider and module graphs
     before lifecycle startup; `python -m lauren check` annotates CI failures.
 
+-   :material-routes: [__HTTP Routing__](routing.md)
+
+    ---
+    Automatic HEAD, optional OPTIONS, typed path converters, trailing slashes, raw-path matching, host routing and global 404/405 handlers.
+
 -   :material-magnify-plus: [__Custom Extractors__](custom-extractors.md)
 
     ---

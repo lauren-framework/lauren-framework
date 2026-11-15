@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Callable, ForwardRef, TypeVar
 
@@ -148,6 +148,7 @@ class ModuleMeta:
         providers: list[type] | None = None,
         imports: list[type | ForwardRef | str] | None = None,
         exports: list[type] | None = None,
+        host: str | None = None,
     ) -> None:
         self.controllers = tuple(controllers or [])
         self.providers = tuple(providers or [])
@@ -155,6 +156,8 @@ class ModuleMeta:
         # during ModuleGraph.compile() once all modules are loaded.
         self.imports: tuple[type | ForwardRef | str, ...] = tuple(imports or [])
         self.exports = tuple(exports or [])
+        #: Host pattern for the module's own controllers / gateways that set none.
+        self.host = host
 
 
 def module(
@@ -163,15 +166,23 @@ def module(
     providers: list[type] | None = None,
     imports: list[type | ForwardRef | str] | None = None,
     exports: list[type] | None = None,
+    host: str | None = None,
 ) -> Callable[[C], C]:
     """Declare a module boundary.
 
     Must be invoked with parentheses: ``@module()`` at minimum. The bare
     form ``@module`` is rejected because it is ambiguous (Python would
     pass the decorated class where configuration is expected).
+
+    ``host`` (e.g. ``"{tenant}.example.com"``) routes the module's own
+    controllers and WebSocket gateways by the request's ``Host`` header,
+    unless a controller declares its own ``host=``; it does not apply to
+    imported modules.
     """
     if args:
         _reject_bare_usage("module", args[0])
+    if host is not None:
+        _check_host("module", host)
 
     def decorator(cls: C) -> C:
         setattr(
@@ -182,6 +193,7 @@ def module(
                 providers=providers,
                 imports=imports,
                 exports=exports,
+                host=host,
             ),
         )
         return cls
@@ -207,6 +219,7 @@ class ControllerMeta:
         consumes: tuple[str, ...] | None = None,
         produces: tuple[str, ...] | None = None,
         max_body_size: int | None = None,
+        host: str | None = None,
     ) -> None:
         self.prefix = prefix
         self.tags = tuple(tags or [])
@@ -218,6 +231,9 @@ class ControllerMeta:
         self.consumes = consumes
         self.produces = produces
         self.max_body_size = max_body_size
+
+        #: Host pattern (``"{tenant}.example.com"``); ``None`` serves every host.
+        self.host = host
 
 
 def controller(
@@ -231,6 +247,7 @@ def controller(
     consumes: Sequence[str] | str | None = None,
     produces: Sequence[str] | str | None = None,
     max_body_size: int | None = None,
+    host: str | None = None,
 ) -> Callable[[C], C]:
     """Declare a controller class.
 
@@ -257,11 +274,17 @@ def controller(
     ``consumes`` / ``produces`` / ``max_body_size`` are defaults for the
     controller's routes (a route's own value wins); ``consumes`` applies to the
     routes that read a body. They are validated like the route options.
+
+    ``host`` (``"admin.example.com"``, ``"{tenant}.example.com"``) restricts
+    the controller's routes to requests whose ``Host`` matches; ``{name}``
+    labels are read with :class:`~lauren.extractors.HostParam`.
     """
     # ``prefix`` defaults to an empty string, so bare ``@controller`` would
     # pass the decorated class as ``prefix``. Detect and reject.
     if isinstance(prefix, type) or (callable(prefix) and not isinstance(prefix, str)):
         _reject_bare_usage("controller", prefix)
+    if host is not None:
+        _check_host("controller", host)
 
     def decorator(cls: C) -> C:
         content_options = _validate_route_options(
@@ -269,6 +292,8 @@ def controller(
             cls,
             {"consumes": consumes, "produces": produces, "max_body_size": max_body_size},
         )
+
+        _check_path("controller", cls, prefix)
         setattr(
             cls,
             CONTROLLER_META,
@@ -280,6 +305,7 @@ def controller(
                 deprecated=deprecated,
                 security=security,
                 **content_options,
+                host=host,
             ),
         )
         # Mark this class as injectable in its OWN __dict__ — never by
@@ -432,16 +458,41 @@ def _check_max_body_size(value: Any) -> int:
     return value
 
 
+#: Methods ``@route(methods=[...])`` accepts (no custom HTTP verbs).
+ROUTE_METHODS: frozenset[str] = frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"})
+
+
+def _check_route_methods(value: Any) -> tuple[str, ...]:
+    """Validate and de-duplicate ``@route(methods=...)`` method names at decoration time."""
+    if isinstance(value, str) or not isinstance(value, Iterable):
+        raise _RouteOptionError("invalid_method", f"methods must be a list of HTTP methods, got {value!r}")
+    names: list[str] = []
+    for method in value:
+        name = method.upper() if isinstance(method, str) else method
+        if not isinstance(name, str) or name not in ROUTE_METHODS:
+            raise _RouteOptionError(
+                "invalid_method",
+                f"method {method!r} is not one of {', '.join(sorted(ROUTE_METHODS))} "
+                "(use @any_method to accept every method)",
+            )
+        if name not in names:
+            names.append(name)
+    if not names:
+        raise _RouteOptionError("invalid_method", "methods needs at least one HTTP method")
+    return tuple(names)
+
+
 #: Route-decorator option validators: keyword name → ``validate(value)``.
 #:
 #: Every verb decorator (``@get`` … ``@options``, and ``Lauren``'s ``@app.get``
 #: …) runs its options through :func:`_validate_route_options`, so a bad value
 #: fails at decoration time with a :class:`DecoratorUsageError` whose ``detail``
 #: is ``{"decorator", "target", "option", "reason"}``. A validator returns the
-#: normalised value or raises :class:`_RouteOptionError`; ``None`` always means
-#: "not set" and skips it. To add an option: add the keyword to
-#: ``_route_decorator``'s factory and to :class:`RouteMeta`, and register its
-#: validator here.
+#: normalised value or raises :class:`_RouteOptionError`; ``None`` means
+#: "not set" except for ``@route(methods=...)``, which is required. To add a
+#: per-route option: add the keyword to ``_route_decorator``'s factory and to
+#: :class:`RouteMeta`, and register its validator here. ``methods`` is a
+#: method-list-only option — it is not stored on :class:`RouteMeta`.
 _ROUTE_OPTION_VALIDATORS: dict[str, Callable[[Any], Any]] = {
     "status_code": _check_status_code,
     "response_validation": _check_response_validation,
@@ -449,6 +500,7 @@ _ROUTE_OPTION_VALIDATORS: dict[str, Callable[[Any], Any]] = {
     "consumes": _check_consumes,
     "produces": _check_produces,
     "max_body_size": _check_max_body_size,
+    "methods": _check_route_methods,
 }
 
 
@@ -457,7 +509,7 @@ def _validate_route_options(decorator: str, target: Any, options: Mapping[str, A
     out: dict[str, Any] = {}
     for name, value in options.items():
         validate = _ROUTE_OPTION_VALIDATORS.get(name)
-        if value is None or validate is None:
+        if validate is None or (value is None and name != "methods"):
             out[name] = value
             continue
         try:
@@ -471,7 +523,46 @@ def _validate_route_options(decorator: str, target: Any, options: Mapping[str, A
     return out
 
 
+def _check_path(decorator: str, target: Any, path: Any) -> None:
+    """Parse a route template now so syntax / converter-argument mistakes fail on import."""
+    from ._routing._converters import TemplateError, check_template
+
+    target_name = getattr(target, "__qualname__", None) or _describe(target)
+    if not isinstance(path, str):
+        raise DecoratorUsageError(
+            f"@{decorator}(...) on {target_name}: the path must be a string, got {type(path).__name__}",
+            detail={
+                "decorator": decorator,
+                "target": target_name,
+                "option": "path",
+                "reason": "invalid_path",
+            },
+        )
+    try:
+        check_template(path)
+    except TemplateError as exc:
+        raise DecoratorUsageError(
+            f"@{decorator}({path!r}) on {target_name}: {exc}",
+            detail={"decorator": decorator, "target": target_name, "option": "path", "reason": exc.reason},
+        ) from None
+
+
+def _check_host(decorator: str, host: Any) -> None:
+    """Parse a ``host=`` pattern at decoration time (custom converter names resolve at startup)."""
+    from ._routing._converters import TemplateError, parse_host
+
+    try:
+        parse_host(host, None, strict_names=False)
+    except TemplateError as exc:
+        raise DecoratorUsageError(
+            f"@{decorator}(host={host!r}): {exc}",
+            detail={"decorator": decorator, "option": "host", "host": repr(host), "reason": exc.reason},
+        ) from None
+
+
 def _route_decorator(method: str) -> Callable[..., Callable[[F], F]]:
+    label = "any_method" if method == "*" else method.lower()
+
     def factory(
         path: str = "",
         *,
@@ -494,11 +585,12 @@ def _route_decorator(method: str) -> Callable[..., Callable[[F], F]]:
         # ``path``. Reject loudly: the undetected case would silently
         # never register the route.
         if callable(path) and not isinstance(path, str):
-            _reject_bare_usage(method.lower(), path)
+            _reject_bare_usage(label, path)
 
         def decorator(fn: F) -> F:
+            _check_path(label, fn, path)
             options = _validate_route_options(
-                method.lower(),
+                label,
                 fn,
                 {
                     "status_code": status_code,
@@ -540,6 +632,41 @@ delete = _route_decorator("DELETE")
 patch = _route_decorator("PATCH")
 head = _route_decorator("HEAD")
 options = _route_decorator("OPTIONS")
+
+
+def route(path: str = "", *, methods: Iterable[str], **kwargs: Any) -> Callable[[F], F]:
+    """Register one handler for several HTTP methods.
+
+    Sugar for stacking verb decorators: ``@route("/x", methods=["POST",
+    "PUT"])`` appends one route per method (stacking accumulates), and every
+    other keyword is a verb-decorator option (``summary=``,
+    ``status_code=``, …). Method names are validated here
+    (:class:`DecoratorUsageError`, ``reason="invalid_method"``).
+    """
+    if callable(path) and not isinstance(path, str):
+        _reject_bare_usage("route", path)
+    names = _validate_route_options("route", route, {"methods": methods})["methods"]
+    verbs = [_route_decorator(name)(path, **kwargs) for name in names]
+
+    def decorator(fn: F) -> F:
+        for verb in verbs:
+            verb(fn)
+        return fn
+
+    return decorator
+
+
+def any_method(path: str = "", **kwargs: Any) -> Callable[[F], F]:
+    """Register a handler for every HTTP method at ``path`` (proxies, webhook sinks, fallbacks).
+
+    An explicit verb handler at the same path wins over it, and a path with
+    an any-method handler never answers 405. Takes the verb decorators'
+    options. Method-agnostic routes are left out of the OpenAPI document;
+    use :func:`route` to document a fixed method list.
+    """
+    if callable(path) and not isinstance(path, str):
+        _reject_bare_usage("any_method", path)
+    return _route_decorator("*")(path, **kwargs)
 
 
 # ---------------------------------------------------------------------------

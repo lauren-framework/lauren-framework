@@ -37,6 +37,7 @@ The top-level entry points for creating and running a Lauren application.
 | `mounts` | `dict[str, Any]` | `None` | Pre-built sub-app mounts (`{path: app}`) |
 | `sessions` | `SessionConfig` | `None` | Enable signed-cookie sessions |
 | `content` | `ContentConfig` | `None` | Content policy: `strict_content_type`, `malformed_body_status`, `codecs`, `default_produces`, `strict_accept` — see [Content Negotiation & Body Limits](../guides/content-negotiation.md) |
+| `routing` | `RoutingConfig` | `None` | [HTTP routing](../guides/routing.md): HEAD/OPTIONS, trailing-slash policy, converters, raw-path matching and host routing |
 | `lazy_startup` | `bool` | `True` | Start on the first HTTP / WebSocket request when the server sent no lifespan events (logs a warning); `False` keeps the app cold until `await app.startup()` |
 | `hosted_services` | `bool` | `True` | `False` discovers and validates `@hosted_service` classes but does not start them |
 | `scheduler` | `bool` | `True` | `False` keeps scheduled jobs validated (and `SchedulerRegistry.trigger` working) but fires nothing |
@@ -49,6 +50,12 @@ builds the app with `create()` and returns an
 [`ApplicationContext`](commands.md#applicationcontext): `async with` starts it
 (without serving HTTP) and shuts it down. Hosted services and the scheduler
 are off unless enabled. See [Commands & Scripts](../guides/commands-and-scripts.md).
+
+## RoutingConfig and PathConverter
+
+::: lauren.RoutingConfig
+
+::: lauren.PathConverter
 
 ## Lauren
 

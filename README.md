@@ -109,6 +109,9 @@ core ideas:
   inside `LaurenFactory.create(...)`, not on the first request.
 * **No reflection on the request path.** The whole graph is compiled into
   immutable structures at startup; serving a request is pure traversal.
+* **HTTP-correct routing.** GET routes serve HEAD automatically (headers only);
+  typed path converters, host routing, trailing-slash policies and optional
+  OPTIONS are configured once with `RoutingConfig`.
 * **AI-ready by default.** Public surface is mirrored in
   [`llms.txt` / `llms-full.txt`](https://lauren-py.dev/llms.txt) and exported
   in `__all__` — a CI hook keeps the two in lock-step.

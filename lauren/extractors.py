@@ -265,6 +265,17 @@ class Path(ExtractionMarker):
     source = "path"
 
 
+class HostParam(ExtractionMarker):
+    """A ``{name}`` label of the route's ``host=`` pattern: ``tenant: HostParam[str]``.
+
+    The value comes from the matched host (lower-cased, port dropped) and is
+    validated like a path parameter. The parameter name must be a label of
+    the controller's / module's ``host=`` pattern, else startup fails.
+    """
+
+    source = "host_param"
+
+
 class Query(ExtractionMarker):
     source = "query"
 
@@ -776,6 +787,11 @@ class Extraction:
     #: value then raises the key's error instead of the deprecated 422.
     state_key: Any = None
 
+    #: For an unannotated path parameter using a custom converter, call
+    #: ``to_python`` after routing rather than relying on scalar coercion.
+    #: ``None`` preserves the normal annotation-driven extraction path.
+    converter: Any = None
+
 
 def _peel_optional(annotation: object) -> tuple[object, bool]:
     """Strip a ``None`` branch off a ``Union`` / PEP 604 union.
@@ -1174,7 +1190,9 @@ def _convert_struct(
 
 
 #: Sources whose ``Extraction.compiled`` plan performs the whole extraction.
-_PLAN_SOURCES: frozenset[str] = frozenset({"path", "query", "header", "cookie", "json", "form", "pagination"})
+_PLAN_SOURCES: frozenset[str] = frozenset(
+    {"path", "query", "header", "cookie", "json", "form", "pagination", "host_param"}
+)
 
 #: Primitive Python types that can be meaningfully coerced from a query-string
 #: segment without any DI or body-parsing machinery.
@@ -1492,6 +1510,22 @@ async def _extract_raw(
                     return fd.default
                 raise ExtractorFieldError(
                     f"missing path parameter {extraction.name!r}",
+                    detail={"field": extraction.name},
+                )
+            value = (
+                extraction.converter.to_python(raw)
+                if extraction.converter is not None
+                else _coerce_scalar(raw, inner)
+            )
+            return fd.validate(extraction.name, value) if fd else value
+
+        if source == "host_param":
+            raw = request.host_params.get(extraction.name)
+            if raw is None:
+                if extraction.has_default:
+                    return extraction.default
+                raise ExtractorFieldError(
+                    f"missing host parameter {extraction.name!r}",
                     detail={"field": extraction.name},
                 )
             value = _coerce_scalar(raw, inner)
@@ -1920,6 +1954,7 @@ def _invoke_adapter(adapter: object, data: object, field_name: str) -> object:
 __all__ = [
     "ExtractionMarker",
     "Path",
+    "HostParam",
     "Query",
     "Header",
     "Cookie",

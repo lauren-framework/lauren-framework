@@ -35,6 +35,12 @@ defaults of its routes.
 
 ::: lauren.options
 
+::: lauren.route
+
+::: lauren.any_method
+
+Method-list routes use `@route("/x", methods=["GET", "POST"])`; `@any_method("/x")` accepts every method (explicit verb handlers win). Typed path syntax and `host=` are covered in [HTTP Routing](../guides/routing.md).
+
 ## Middleware & Guards
 
 ::: lauren.middleware

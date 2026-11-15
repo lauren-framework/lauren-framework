@@ -198,8 +198,9 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
    is itself owned by a `LaurenApp`. Multiple apps must be able to
    coexist in one process (tests rely on this). *Known exceptions,
    scheduled for removal:* the pipe / extractor instance caches in
-   `extractors.py` and `_add_ws_route` temporarily widening
-   `Router.HTTP_METHODS`. Do not add more. (Validators are compiled by the
+   `extractors.py`. Router method sets are instance-owned (the WebSocket
+   router accepts its own pseudo-method); never mutate `Router.HTTP_METHODS`.
+   Do not add more global caches. (Validators are compiled by the
    app-owned `TypeCompiler` — `app.type_compiler`; there is no global cache.) The import-time declaration registries (`lauren._discovery`
    markers, `lauren._di._scope.register_framework_value`) are not
    exceptions: they record which framework decorators and context types
@@ -293,6 +294,9 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Replace a provider / guard / middleware in a test | `Test.create_testing_module(AppModule).override_provider(X).use_value(fake).compile()` |
 | Query the compiled route table of a running app | `get_all_routes(app)`, `get_route_metadata(app, method, path)` |
 | Read any `@use_*` metadata from a class without `__dict__` access | `reflect_guards`, `reflect_interceptors`, `reflect_exception_handlers`, … |
+| Customize a routing 404/405 | A **global** `@exception_handler(RouteNotFoundError)` / `@exception_handler(MethodNotAllowedError)` (no matched route exists) |
+| Require a numeric URL segment to route as 404 (not extractor 422) | `@get("/{id:int}")` (or opt in to `RoutingConfig(infer_converters=True)`) |
+| Route by subdomain | `@controller(host="{tenant:slug}.example.com")`, `HostParam[str]`; validate the Host header separately |
 | Answer with a standard HTTP error (400/404/409/429/503/…) | Raise the built-in (`NotFoundError`, `ConflictError`, `TooManyRequestsError(retry_after=…)`, …); subclass it for a domain `code` |
 | Send `WWW-Authenticate` / `Retry-After` / `Allow` / any header with an error | `UnauthorizedError(challenge=…)`, `retry_after=`, `MethodNotAllowedError(allow=…)`, `headers=` on any error |
 | Make a guard's `False` answer 401 instead of 403 | `deny_error = UnauthorizedError` class attribute on the guard |
@@ -471,6 +475,18 @@ exit).
   required values raise `MissingStateError` (500) by default; a legacy
   name-based `StateExtractor` still answers 422 with a deprecation warning
   unless `ValidationPolicy(missing_state="error")` is enabled.
+
+- ❌ Registering `@head` just to satisfy monitors — every GET route
+  already serves HEAD by default with the GET headers and no body. Use an
+  explicit HEAD handler only for specialised response generation; set
+  `RoutingConfig(auto_head=False)` if you need the old 405 behaviour.
+- ❌ Expecting `/items/abc` to 404 with a plain `{id}` + `id: int`. The
+  untyped segment matches and the extractor raises 422; declare `{id:int}`
+  or opt in to `RoutingConfig(infer_converters=True)` to constrain matching.
+- ❌ Treating `@controller(host=...)` as an authorization boundary: a client
+  controls the Host header. Use `lauren-middlewares.trusted_hosts` and
+  validate the tenant against authentication; never trust forwarded host
+  headers without a trusted proxy policy.
 - ❌ Persisting state on the `Request` object. `Request` instances are pooled
   and reused; `Request.reset()` clears the instance's entire `__dict__`
   between requests, so any attribute set on `request` (or read from a previous
@@ -889,7 +905,7 @@ exit).
   (`_params.py`), the signed cursor codec (`_cursor.py`), request snapshots and
   `Link` URLs (`_links.py`), `Page` / `CursorPage` rendering — reached from
   `_coerce_to_response` through one `isinstance(value, PageResponse)` check
-  until F01's response protocol lands (`_page.py`) — and the single OpenAPI
+  with F01's item-projecting response contracts (`_page.py`) — and the single OpenAPI
   contribution function (`_openapi.py`).
 - `lauren/decorators.py` — every public decorator. The `_reject_bare_usage`
   pattern is the model for any new decorator.
