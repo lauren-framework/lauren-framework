@@ -370,6 +370,17 @@ A compiled, ready-to-serve ASGI application.
 
 Instances of this class are produced exclusively by :meth:`LaurenFactory.create`.
 
+#### `LaurenApp.describe`
+
+```python
+def describe(self, include_metadata_values: bool = False) -> Any
+```
+
+Return the versioned manifest of this compiled app, without starting it.
+
+Include user metadata values only when explicitly requested. Secret
+wrappers stay redacted in either mode.
+
 #### `LaurenApp.begin_draining`
 
 ```python

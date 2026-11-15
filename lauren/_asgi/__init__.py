@@ -78,6 +78,7 @@ from ..exceptions import (
     LifecycleViolationError,
     MethodNotAllowedError,
     RouteNotFoundError,
+    RouterConflictError,
     StartupError,
     UnsupportedMediaTypeError,
 )
@@ -1057,6 +1058,16 @@ class LaurenApp:
         self._undeclared_raise_warned: set[tuple[str, type]] = set()
 
     # -- Introspection -----------------------------------------------------
+
+    def describe(self, *, include_metadata_values: bool = False) -> Any:
+        """Return the versioned manifest of this compiled app, without starting it.
+
+        Include user metadata values only when explicitly requested. Secret
+        wrappers stay redacted in either mode.
+        """
+        from ..reflect import describe_app
+
+        return describe_app(self, include_metadata_values=include_metadata_values)
 
     @property
     def router(self) -> Router:
@@ -3381,7 +3392,14 @@ class LaurenFactory:
         # ---- Phase 1: Module graph construction ----
         t0 = time.perf_counter()
         graph = ModuleGraph()
-        graph.compile(root_module, substitutions=override_plan.modules if override_plan is not None else None)
+        try:
+            graph.compile(
+                root_module, substitutions=override_plan.modules if override_plan is not None else None
+            )
+        except StartupError as exc:
+            from .._diagnostics import enrich_startup_error
+
+            raise enrich_startup_error(exc, graph=graph, controller=root_module)
         _log.verbose(
             f"Phase 1/7 module graph built: {len(graph.modules)} module(s), "
             f"{len(graph.all_controllers)} controller(s), "
@@ -3566,7 +3584,12 @@ class LaurenFactory:
 
         # ---- Phase 4: DI graph compilation ----
         t0 = time.perf_counter()
-        container.compile()
+        try:
+            container.compile()
+        except StartupError as exc:
+            from .._diagnostics import enrich_startup_error
+
+            raise enrich_startup_error(exc, graph=graph, container=container)
         _log.verbose(
             f"Phase 4/7 DI graph compiled ({format_duration_ms(time.perf_counter() - t0)})",
             context="DIContainer",
@@ -3673,31 +3696,53 @@ class LaurenFactory:
                 ctrl_owning_module = graph.module_for_controller(ctrl_cls)
                 for rmeta in route_metas:
                     full_path = _normalize_path(ctrl_meta.prefix, rmeta.path)
-                    entry = router.add_route(
-                        rmeta.method,
-                        full_path,
-                        fn,
-                        handler_class=ctrl_cls,
-                        metadata={
-                            "controller_meta": ctrl_meta,
-                            "route_meta": rmeta,
-                            "extra": {**ctrl_extra_meta, **fn_meta},
-                            "binding": binding,
-                        },
-                    )
+                    try:
+                        entry = router.add_route(
+                            rmeta.method,
+                            full_path,
+                            fn,
+                            handler_class=ctrl_cls,
+                            metadata={
+                                "controller_meta": ctrl_meta,
+                                "route_meta": rmeta,
+                                "extra": {**ctrl_extra_meta, **fn_meta},
+                                "binding": binding,
+                            },
+                        )
+                    except RouterConflictError as exc:
+                        from .._diagnostics import enrich_startup_error
+
+                        previous = next(
+                            (
+                                r.handler
+                                for r in router.routes()
+                                if r.method == rmeta.method and r.path_template == full_path
+                            ),
+                            None,
+                        )
+                        raise enrich_startup_error(
+                            exc, graph=graph, container=container, handler=fn, conflicting_handler=previous
+                        ) from None
                     # Compile handler extractions now that we know the path.
                     # The controller's owning module bounds which DI
                     # providers an endpoint parameter may resolve to.
-                    extractions, _ = _compile_handler_signature(
-                        ctrl_cls,
-                        fn,
-                        container,
-                        path_param_names=set(entry.param_names),
-                        owning_module=ctrl_owning_module,
-                        validation=validation_runtime,
-                        route=f"{rmeta.method} {entry.path_template}",
-                        pagination=pagination_config,
-                    )
+                    try:
+                        extractions, _ = _compile_handler_signature(
+                            ctrl_cls,
+                            fn,
+                            container,
+                            path_param_names=set(entry.param_names),
+                            owning_module=ctrl_owning_module,
+                            validation=validation_runtime,
+                            route=f"{rmeta.method} {entry.path_template}",
+                            pagination=pagination_config,
+                        )
+                    except StartupError as exc:
+                        from .._diagnostics import enrich_startup_error
+
+                        raise enrich_startup_error(
+                            exc, graph=graph, container=container, handler=fn, controller=ctrl_cls
+                        ) from None
                     # Resolve the handler's return annotation once at
                     # startup so the request path stays reflection-free.
                     return_hint = _safe_type_hints(fn).get("return", inspect.Parameter.empty)
@@ -3884,7 +3929,12 @@ class LaurenFactory:
 
         # Re-compile after late registrations.
         container._compiled = False
-        container.compile()
+        try:
+            container.compile()
+        except StartupError as exc:
+            from .._diagnostics import enrich_startup_error
+
+            raise enrich_startup_error(exc, graph=graph, container=container)
         router.freeze()
         _log.verbose(
             f"Phase 5/7 router compiled: {len(compiled_handlers)} route(s), "

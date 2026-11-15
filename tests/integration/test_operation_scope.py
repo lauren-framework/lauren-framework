@@ -199,7 +199,8 @@ def test_undeclared_framework_value_still_fails_startup(monkeypatch: pytest.Monk
     with pytest.raises(MissingProviderError) as info:
         _build([])
 
-    assert info.value.detail == {"token": "JobContext"}
+    assert info.value.detail["token"] == "JobContext"
+    assert info.value.detail["docs_url"].endswith("#missing-provider")
 
 
 def test_declared_framework_value_missing_at_run_time_raises() -> None:

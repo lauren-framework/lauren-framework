@@ -1441,7 +1441,7 @@ async def _extract_raw(
                 if _is_msgspec_struct_type(peeled_inner):
                     import msgspec as _msgspec
 
-                    for sf in _msgspec.structs.fields(peeled_inner):
+                    for sf in _msgspec.structs.fields(cast(type[_msgspec.Struct], peeled_inner)):
                         # Check both the Python attr name and the encoded name
                         # (may differ when the struct uses rename=).
                         for key_candidate in (sf.encode_name, sf.name):
@@ -1452,10 +1452,10 @@ async def _extract_raw(
                 else:
                     import dataclasses
 
-                    for sf in dataclasses.fields(cast(type[Any], peeled_inner)):
-                        raw = request.query_params.get(sf.name, [])  # type: ignore[assignment]
+                    for dc_field in dataclasses.fields(cast(type[Any], peeled_inner)):
+                        raw = request.query_params.get(dc_field.name, [])  # type: ignore[assignment]
                         if raw:
-                            struct_fields_dict[sf.name] = raw[0] if len(raw) == 1 else raw
+                            struct_fields_dict[dc_field.name] = raw[0] if len(raw) == 1 else raw
                 if not struct_fields_dict and _inner_opt:
                     if extraction.has_default:
                         return extraction.default

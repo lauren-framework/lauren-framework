@@ -440,7 +440,7 @@ def test_bad_marker_on_a_body_model_fails_startup() -> None:
     with pytest.raises(UnresolvableParameterError) as info:
         LaurenFactory.create(Mod)
 
-    assert info.value.detail == {
+    expected = {
         "class": "Ctl",
         "handler": "create",
         "param": "body",
@@ -448,6 +448,9 @@ def test_bad_marker_on_a_body_model_fails_startup() -> None:
         "reason": "bad_constraint",
         "field": "Bad.name",
     }
+    assert {key: info.value.detail[key] for key in expected} == expected
+    assert "hints" not in info.value.detail
+    assert info.value.detail["docs_url"].endswith("#unresolvable-parameter")
 
 
 def test_bad_pattern_on_a_parameter_fails_startup() -> None:

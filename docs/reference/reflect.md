@@ -5,7 +5,8 @@ decorator-attached metadata in a Lauren application, plus the context types and
 composing utilities that power native `@use_guards` / `@use_interceptors` support
 on `@ws_controller` classes.
 
-All symbols are re-exported from the top-level `lauren` namespace:
+The main readers and result types are re-exported from the top-level `lauren`
+namespace. Nested manifest records live in `lauren.reflect`:
 
 ```python
 from lauren import reflect_routes, get_all_routes, ReflectedRoute, propagate_metadata
@@ -93,6 +94,37 @@ Require a started `LaurenApp` (return empty / `None` before startup).
 ::: lauren.get_all_ws_gateways
 
 ::: lauren.get_route_metadata
+
+---
+
+## Compiled app manifest (before startup)
+
+`describe_app(app)` reads the compiled graph immediately after
+`LaurenFactory.create()` — **no** lifecycle hooks or external connections.
+Unlike `get_all_routes(app)`, it works before `app.startup()`:
+
+```python fragment
+from lauren.reflect import describe_app
+
+app = LaurenFactory.create(AppModule)
+manifest = describe_app(app)
+print(manifest.routes[0].guards)
+print(manifest.to_json())
+```
+
+`app.describe()` is equivalent. `AppManifest` is a frozen result tree with
+`app`, `globals`, `modules`, `providers`, `routes`, `websocket_gateways`,
+`mounts`, `openapi` and `sections`. Route entries include compiled extractor
+parameters and effective middleware / guard / interceptor chains (including
+globals). The default renders only metadata keys; optional
+`include_metadata_values=True` copies values and redacts nested `Secret`
+wrappers. `to_dict()` and `to_json(indent=2)` produce deterministic snapshots.
+
+::: lauren.describe_app
+
+::: lauren.AppManifest
+
+For CI and command-line use, see the [tooling guide](../guides/tooling.md).
 
 ---
 

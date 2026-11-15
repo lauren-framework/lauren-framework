@@ -169,6 +169,7 @@ nav:
     - Implicit Parameter Extraction: guides/implicit-params.md
     - Validation: guides/validation.md
     - Pagination: guides/pagination.md
+    - Inspecting Apps & CI Tooling: guides/tooling.md
     - Sync vs Async Handlers: guides/sync-handlers.md
     - Custom Extractors: guides/custom-extractors.md
     - Pipes: guides/pipes.md

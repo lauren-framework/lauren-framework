@@ -82,6 +82,15 @@ class ReflectedRoute:
     raises: tuple[type, ...] = ()
     """The ``@raises`` error classes (the method's, then the controller's own)."""
 
+    guards: tuple[type, ...] = ()
+    """The compiled route and controller guards (not global guards)."""
+
+    interceptors: tuple[type, ...] = ()
+    """The compiled route and controller interceptors (not globals)."""
+
+    middlewares: tuple[type, ...] = ()
+    """The compiled route and controller middleware chain (not globals)."""
+
 
 @dataclass(frozen=True, slots=True)
 class ReflectedWsMessage:

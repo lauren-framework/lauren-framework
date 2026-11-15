@@ -285,6 +285,8 @@ from .reflect import (
     reflect_user_metadata,
     reflect_encoder,
     # app-level readers
+    AppManifest,
+    describe_app,
     get_all_routes,
     get_all_ws_gateways,
     get_route_metadata,
@@ -595,6 +597,8 @@ __all__ = [
     "reflect_user_metadata",
     "reflect_encoder",
     # reflect — app-level readers
+    "AppManifest",
+    "describe_app",
     "get_all_routes",
     "get_all_ws_gateways",
     "get_route_metadata",

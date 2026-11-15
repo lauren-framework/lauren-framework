@@ -777,7 +777,8 @@ exit).
   simulates a client abort; `receive()` otherwise blocks after the body until
   the response is complete, like a real server.
 - **Startup-failure tests** — build the module, `LaurenFactory.create`
-  inside `pytest.raises(SomeError)`, assert on `detail` keys too.
+  inside `pytest.raises(SomeError)`, assert on `detail` keys and actionable
+  `detail["hints"]` when a graph-aware diagnostic is available.
 - **Regression shape:** every bug fix gets a test in the same file as
   its nearest existing neighbour.
 - **Optional-dep tests** — tests that block pydantic/msgspec via
@@ -797,6 +798,10 @@ exit).
 
 ## 11. Where to Look First
 
+- `lauren/reflect/_manifest.py` — `describe_app(app)` / `app.describe()`:
+  deterministic routes, modules, providers, chains and OpenAPI before startup.
+  Use `python -m lauren check TARGET` in CI, or `routes TARGET` to list routes;
+  `lauren/_diagnostics.py` enriches common startup errors with hints.
 - `lauren/_asgi/__init__.py` — the request lifecycle, top to bottom.
 - `lauren/_di/__init__.py` — provider graph & cycle detection.
 - `lauren/_di/custom.py` — `use_value` / `use_class` / `use_factory`

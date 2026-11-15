@@ -519,10 +519,10 @@ class ModelPlan(ParamPlan):
             import dataclasses
 
             data = {}
-            for sf in dataclasses.fields(model):
-                raw = md.get(sf.name, [])
+            for dc_field in dataclasses.fields(model):
+                raw = md.get(dc_field.name, [])
                 if raw:
-                    data[sf.name] = raw[0] if len(raw) == 1 else raw
+                    data[dc_field.name] = raw[0] if len(raw) == 1 else raw
             return _convert_struct(data, model, ext.name, hints=self.hints)
         # TypedDict / NamedTuple: the pre-engine code read one scalar key.
         from ..extractors import _coerce_scalar

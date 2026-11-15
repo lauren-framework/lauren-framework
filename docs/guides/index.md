@@ -29,6 +29,12 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     `OffsetPagination` / `PageNumberPagination` / `CursorPagination[C]` parameters, `Page[T]` / `CursorPage[T]` responses, one envelope per app, RFC 8288 `Link` headers and signed, rotatable cursors.
 
+-   :material-graph-outline: [__Inspecting Apps & CI Tooling__](tooling.md)
+
+    ---
+    `describe_app` snapshots the compiled route, provider and module graphs
+    before lifecycle startup; `python -m lauren check` annotates CI failures.
+
 -   :material-magnify-plus: [__Custom Extractors__](custom-extractors.md)
 
     ---

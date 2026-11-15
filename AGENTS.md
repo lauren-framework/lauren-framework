@@ -317,6 +317,7 @@ Welcome aboard.
 | Paginate a list endpoint (offset, page number, cursor) | `lauren/pagination.py` | `skills/rest-crud-endpoints/` §Pagination |
 | Read typed configuration / secrets | `lauren/config.py` | `skills/building-lauren-config/` |
 | Add field constraints / validate payloads | `lauren/validation.py`, `lauren/_schema/` | `skills/building-lauren-controllers/` §Validation |
+| List routes, audit guards, validate an app without starting it | `lauren/reflect/_manifest.py`, `lauren/_diagnostics.py` | `skills/inspecting-lauren-apps/` |
 | Debug a startup error | `lauren/exceptions.py` | **Common Errors** section below |
 | Port from FastAPI | `llms-full.txt` §Guards | `skills/migrating-from-fastapi/` |
 | Add CORS / auth guards / logging | `AGENTS.md` §Companion Packages | `skills/using-companion-packages/` |
