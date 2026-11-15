@@ -20,7 +20,7 @@ nox -s tests_unit                   # unit only  (tests/unit/)
 nox -s tests_integration            # integration only  (tests/integration/)
 nox -s tests_e2e                    # end-to-end only  (tests/e2e/)
 nox -s tests_property               # Hypothesis property tests (tests/property/)
-nox -s coverage                     # tests + branch coverage; fails below 90 %
+nox -s coverage                     # tests + optional backends; branch coverage fails below 90 %
 
 # Run a single test file / specific test without nox overhead
 pip install -e ".[dev]"             # one-time local install
@@ -97,6 +97,7 @@ lauren/                      — framework package
 ├── _health/                 — health probes: @health_check marker, HealthRuntime (timeouts, single-flight, cache), indicators, HealthModule
 ├── _lifecycle/              — post_construct / pre_destruct machinery
 ├── _modules/                — module graph & visibility
+├── _metadata.py             — typed metadata / state keys, merge policy, decorator composition, provenance checks (private)
 ├── _pagination/             — pagination: PaginationConfig resolution, paging plans ("pagination" source), cursor codec, Link URLs, Page rendering, OpenAPI contribution
 ├── _routing/                — radix-tree HTTP router
 ├── _scheduling/             — hosted-service supervisor, scheduler, cron parser, clocks, ScheduleModule (private)
@@ -109,6 +110,9 @@ lauren/                      — framework package
 ├── _socketio.py             — Engine.IO/Socket.IO adapter (private)
 ├── _stores/                 — Store protocol, bounded MemoryStore/TTLMap, Lock, StoresModule (private)
 ├── _cache/                  — Cache service, @cache_response / @idempotent runtime, CacheModule (private)
+├── _codecs/                 — body codecs, Accept parser, per-route content gate / decoding / negotiation (private)
+
+├── _urls/                   — route-name registry, URL templates, URL type, forwarded-header resolver, URL signer (private)
 ├── _schema/                 — native validation engine (F02); `_contract.py` = response projectors
 ├── responses.py             — typed results: Ok / Created / Accepted / NoContent / Status
 ├── reflect/                 — public sub-package: full metadata introspection API
@@ -139,6 +143,9 @@ lauren/                      — framework package
 ├── sse.py                   — EventStream, ServerSentEvent, last_event_id
 ├── stores.py                — public Store / MemoryStore / StoresModule / Lock / session adapters
 ├── cache.py                 — public Cache / CacheModule / cache_response / idempotent
+├── codecs.py                — public Codec / JsonCodec / MsgpackCodec (+ ContentConfig)
+
+├── urls.py                  — URL, UrlBuilder, ProxyConfig, UrlSigningConfig, ValidSignature (named routes, proxies, signed URLs)
 ├── socketio.py              — public Socket.IO controller surface
 ├── testing/                 — TestClient / AsyncTestClient, Test.create_testing_module, pytest_plugin
 ├── types.py                 — Request, Response, State, Headers, Scope, Discriminated, …
@@ -195,8 +202,9 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
    is itself owned by a `LaurenApp`. Multiple apps must be able to
    coexist in one process (tests rely on this). *Known exceptions,
    scheduled for removal:* the pipe / extractor instance caches in
-   `extractors.py` and `_add_ws_route` temporarily widening
-   `Router.HTTP_METHODS`. Do not add more. (Validators are compiled by the
+   `extractors.py`. Router method sets are instance-owned (the WebSocket
+   router accepts its own pseudo-method); never mutate `Router.HTTP_METHODS`.
+   Do not add more global caches. (Validators are compiled by the
    app-owned `TypeCompiler` — `app.type_compiler`; there is no global cache.) The import-time declaration registries (`lauren._discovery`
    markers, `lauren._di._scope.register_framework_value`) are not
    exceptions: they record which framework decorators and context types
@@ -256,6 +264,8 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Wrap handler execution (timing, caching, transforms) | `@injectable` interceptor + `@use_interceptors` |
 | Inject a typed value into a handler parameter | Custom `Extractor` (`extractors.py`) |
 | Share state across a single request | `Scope.REQUEST` injectable |
+| Pass typed data from a guard to a handler | `StateKey[T]("app.user")` + `Annotated[T, Key]`; opt into startup provenance with `require_provider=True` and `@provides_state(Key)` |
+| Attach typed policy to a route / controller | `MetadataKey[T]` (scalar) or `MetadataSetKey[T]` (ordered union); read with `ctx.get_metadata(Key)` |
 | Share state for the app lifetime | `Scope.SINGLETON` injectable |
 | Decouple modules with domain events | `EventBus` / `EventPublisher` + `@on_event` (`lauren.events`) |
 | Expose liveness / readiness / startup probes | `HealthModule.for_root()` + `@health_check("name")` on a singleton method (`lauren.health`) |
@@ -273,8 +283,14 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Share state across workers (sessions, cache, locks) | One `Store` via `StoresModule.for_root(default=...)` |
 | Paginate a list endpoint | `paging: OffsetPagination` / `PageNumberPagination` / `CursorPagination[C]` + return `Page[T]` / `CursorPage[T]` (`Page.of`, `Page.from_rows`, `CursorPage.from_rows`); `PaginationConfig` app-wide or in `Annotated[...]` |
 | Sign a value the client must not forge | `lauren._signing.Signer(secrets, namespace="<feature>")` (first key signs, all verify) — never hand-rolled `hmac` |
+| Link to another route (`Location`, redirects, HATEOAS) | `request.url_path_for(UserController.show, id=7)` (handler reference) / `request.url_for("users.show", id=7)`; name routes with `@get(..., name=)` |
+| Build a link without a request (email, webhook, job) | Inject `UrlBuilder` + `LaurenFactory.create(..., public_base_url=...)`; `urls.url_for(...)` |
+| Get the real client IP / scheme / host behind a proxy | `LaurenFactory.create(..., proxy=ProxyConfig(trusted=[...]))`, then `request.client` / `request.scheme` / `request.host`; test with `TestClient(app, client=(ip, port))` |
+| Expiring, tamper-proof link (download, unsubscribe) | `url_signing=UrlSigningConfig(secret=...)` + `urls.signed_url_for(...)` + `@use_guards(ValidSignature)` |
 | Read typed configuration | `ConfigModule.for_root(Settings)` (or `for_feature`) + inject `Settings`; `load_settings` for factory kwargs |
 | Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
+| Accept a non-JSON body / serve MessagePack | `consumes=` / `produces=` on the route or controller + `ContentConfig(codecs=[MsgpackCodec()])` |
+| Allow a large body on one route only | `@post(..., max_body_size=...)` (or `@controller(..., max_body_size=...)`) — keep the app `max_body_size` small |
 | Declare a route's success status | `@post("/", status_code=201)` or a typed result `-> Created[T]` (`Ok` / `Accepted` / `NoContent` / `Annotated[T, Status(206)]`) |
 | Keep internal fields off the wire (declare the output shape) | Annotate the public type and set `response_validation="filter"` (app or route; `"strict"` also validates) |
 | Document the errors a route raises | `@raises(NotFoundError, ...)` on the method or controller |
@@ -286,6 +302,9 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Replace a provider / guard / middleware in a test | `Test.create_testing_module(AppModule).override_provider(X).use_value(fake).compile()` |
 | Query the compiled route table of a running app | `get_all_routes(app)`, `get_route_metadata(app, method, path)` |
 | Read any `@use_*` metadata from a class without `__dict__` access | `reflect_guards`, `reflect_interceptors`, `reflect_exception_handlers`, … |
+| Customize a routing 404/405 | A **global** `@exception_handler(RouteNotFoundError)` / `@exception_handler(MethodNotAllowedError)` (no matched route exists) |
+| Require a numeric URL segment to route as 404 (not extractor 422) | `@get("/{id:int}")` (or opt in to `RoutingConfig(infer_converters=True)`) |
+| Route by subdomain | `@controller(host="{tenant:slug}.example.com")`, `HostParam[str]`; validate the Host header separately |
 | Answer with a standard HTTP error (400/404/409/429/503/…) | Raise the built-in (`NotFoundError`, `ConflictError`, `TooManyRequestsError(retry_after=…)`, …); subclass it for a domain `code` |
 | Send `WWW-Authenticate` / `Retry-After` / `Allow` / any header with an error | `UnauthorizedError(challenge=…)`, `retry_after=`, `MethodNotAllowedError(allow=…)`, `headers=` on any error |
 | Make a guard's `False` answer 401 instead of 403 | `deny_error = UnauthorizedError` class attribute on the guard |
@@ -328,10 +347,15 @@ See `docs/concepts/extractors-vs-dependencies-vs-guards-vs-middlewares.md` for d
 - Reject **bare usage** (`@my_decorator` without parentheses) when the
   decorator takes optional configuration — silent passing of the
   decorated function as the first arg is the leading source of
-  silent-broken patches in the codebase. Use `_reject_bare_usage` from
-  `decorators.py` as a model.
+  silent-broken patches in the codebase. Use public `reject_bare_usage` from
+  `decorators.py` in configurable application / companion decorators.
 - Never combine decoration with execution — the decorated object must
   be the same object after decoration.
+- Build reusable bundles with `compose(a, b, name=...)` instead of a
+  wrapping decorator. `compose` applies like manual stacking, rejects any
+  decorator that replaces its target, and records `reflect_composed` provenance.
+  Metadata decorators built on `MetadataKey` / `MetadataSetKey` inherit the
+  key's explicit merge policy; scalar conflicts on one target fail immediately.
 - **Route-decorator options go through one table.** `@get` … `@options`
   (and `Lauren`'s `@app.get` …) validate their keyword options with
   `_validate_route_options` against `_ROUTE_OPTION_VALIDATORS` in
@@ -453,6 +477,24 @@ exit).
 
 ## 8. Common Pitfalls
 
+- ❌ Reading `request.state.<name>` or repeating string literals in guards and
+  handlers for shared typed values — use one `StateKey[T]`, write
+  `request.state[Key] = value`, and inject `Annotated[T, Key]`. Missing
+  required values raise `MissingStateError` (500) by default; a legacy
+  name-based `StateExtractor` still answers 422 with a deprecation warning
+  unless `ValidationPolicy(missing_state="error")` is enabled.
+
+- ❌ Registering `@head` just to satisfy monitors — every GET route
+  already serves HEAD by default with the GET headers and no body. Use an
+  explicit HEAD handler only for specialised response generation; set
+  `RoutingConfig(auto_head=False)` if you need the old 405 behaviour.
+- ❌ Expecting `/items/abc` to 404 with a plain `{id}` + `id: int`. The
+  untyped segment matches and the extractor raises 422; declare `{id:int}`
+  or opt in to `RoutingConfig(infer_converters=True)` to constrain matching.
+- ❌ Treating `@controller(host=...)` as an authorization boundary: a client
+  controls the Host header. Use `lauren-middlewares.trusted_hosts` and
+  validate the tenant against authentication; never trust forwarded host
+  headers without a trusted proxy policy.
 - ❌ Persisting state on the `Request` object. `Request` instances are pooled
   and reused; `Request.reset()` clears the instance's entire `__dict__`
   between requests, so any attribute set on `request` (or read from a previous
@@ -509,6 +551,21 @@ exit).
 - ❌ Silent fallbacks that change semantics. The lenient ForwardRef
   resolver is an exception; it returns a `ForwardRef` so the caller
   can detect the fallback explicitly.
+- ❌ Building internal URLs with f-strings (`location=f"/users/{user.id}"`) — the
+  link breaks under a mount, `root_path`, a proxy prefix or a renamed route,
+  and nothing checks it. Use `request.url_path_for(UserController.show, id=...)`
+  (or a route name); outside a request inject `UrlBuilder`.
+- ❌ Parsing `X-Forwarded-For` / `-Proto` / `-Host` in your own middleware or
+  guard — every package ends up with its own trust rules, and headers from an
+  untrusted peer are client-controlled. Configure `ProxyConfig(trusted=[...])`
+  once and read `request.client` / `request.scheme` / `request.host`.
+- ❌ Absolute links that leave the request (password-reset emails, webhooks,
+  cached responses) built with `request.url_for` — without a trusted proxy the
+  `Host` header is client-chosen. Use `UrlBuilder.url_for` with
+  `public_base_url=`.
+- ❌ Hand-rolled signed links (`hmac` over an ad-hoc string) — use
+  `UrlSigningConfig` + `UrlBuilder.signed_url_for` + `ValidSignature` (rotation,
+  constant-time verify, startup check); signed is not encrypted.
 - ❌ Using bare `@decorator` instead of `@decorator()` when the
   decorator takes options — see rule 7 above. The framework rejects
   this loudly via `DecoratorUsageError`; mirror that pattern in any
@@ -616,6 +673,19 @@ exit).
   once per route and media type) and get one startup WARN until a policy is
   set explicitly; strict mode answers 415 `UnsupportedMediaTypeError` before
   the body is read (guards still run first).
+- ❌ Relying on CORS to stop cross-site JSON POSTs. CORS only hides the
+  response; the "simple" request still runs. Enable
+  `ContentConfig(strict_content_type=True)` (or declare `consumes=`, which is
+  always enforced).
+- ❌ Raising the app-wide `max_body_size` for one upload route — every JSON
+  route then accepts documents that large. Set `max_body_size=` on that route
+  (or its controller); the app limit stays the ceiling for global middleware
+  that reads the body before routing.
+- ❌ Expecting `produces=` to re-encode a returned `Response`, `str` or
+  `bytes` — only values the framework serializes are negotiated. A media type
+  in `consumes=` / `produces=` that no codec serves fails startup
+  (`reason="codec_not_registered"`); `Bytes` routes may name any type in
+  `consumes=`.
 - ❌ Registering a store (or any object with `@post_construct` / `startup()`)
   through `use_value` and expecting its hooks to run — `use_value` never runs
   lifecycle hooks. Use `StoresModule.for_root(default=...)`, pass it to
@@ -777,7 +847,8 @@ exit).
   simulates a client abort; `receive()` otherwise blocks after the body until
   the response is complete, like a real server.
 - **Startup-failure tests** — build the module, `LaurenFactory.create`
-  inside `pytest.raises(SomeError)`, assert on `detail` keys too.
+  inside `pytest.raises(SomeError)`, assert on `detail` keys and actionable
+  `detail["hints"]` when a graph-aware diagnostic is available.
 - **Regression shape:** every bug fix gets a test in the same file as
   its nearest existing neighbour.
 - **Optional-dep tests** — tests that block pydantic/msgspec via
@@ -797,6 +868,10 @@ exit).
 
 ## 11. Where to Look First
 
+- `lauren/reflect/_manifest.py` — `describe_app(app)` / `app.describe()`:
+  deterministic routes, modules, providers, chains and OpenAPI before startup.
+  Use `python -m lauren check TARGET` in CI, or `routes TARGET` to list routes;
+  `lauren/_diagnostics.py` enriches common startup errors with hints.
 - `lauren/_asgi/__init__.py` — the request lifecycle, top to bottom.
 - `lauren/_di/__init__.py` — provider graph & cycle detection.
 - `lauren/_di/custom.py` — `use_value` / `use_class` / `use_factory`
@@ -823,7 +898,9 @@ exit).
 - `lauren/_ws_runtime.py` — `WsConnectionContext`, `WsUpgradeRequest`, `CompiledGateway`, `handle_websocket`.
 - `lauren/websockets.py` — gateway runtime + `BroadcastGroup`.
 - `lauren/reflect/` — full metadata introspection API: `reflect_routes`, `reflect_controller`, `get_all_routes`, `get_controller_metadata`, `propagate_metadata` targets this module's readers.
-- `lauren/decorators.py` — `propagate_metadata` (copies `@use_*` metadata between objects).
+- `lauren/decorators.py` — `propagate_metadata`, `compose`, typed key exports;
+  `lauren/_metadata.py` owns the merge engine, `StateKey` and the Phase-5
+  `@provides_state` provenance checker.
 - `lauren/sse.py` — `EventStream`, `ServerSentEvent`, framing.
 - `lauren/streaming.py` — `StreamingResponse[T]`, `Stream`,
   `StreamReader`, content-negotiation logic.
@@ -851,13 +928,19 @@ exit).
   (`_params.py`), the signed cursor codec (`_cursor.py`), request snapshots and
   `Link` URLs (`_links.py`), `Page` / `CursorPage` rendering — reached from
   `_coerce_to_response` through one `isinstance(value, PageResponse)` check
-  until F01's response protocol lands (`_page.py`) — and the single OpenAPI
+  with F01's item-projecting response contracts (`_page.py`) — and the single OpenAPI
   contribution function (`_openapi.py`).
 - `lauren/decorators.py` — every public decorator. The `_reject_bare_usage`
   pattern is the model for any new decorator.
 - `lauren/exceptions.py` — the full error hierarchy (generated table:
    `docs/reference/errors.md`). Pick the closest existing class before adding a new one.
 - `lauren/signals.py` — `SignalBus`, lifecycle events, POSIX signal handlers.
+- `lauren/codecs.py` / `lauren/_codecs/` — `Codec`, `JsonCodec`, `MsgpackCodec`;
+  the RFC 9110 `Accept` parser shared with stream negotiation (`_accept.py`),
+  media-type matching (`_media.py`) and the per-route content rules the factory
+  compiles in Phase 5 (`_plan.py`: `ContentGate`, `BodyDecoding`, `Negotiation`,
+  `resolve_content`). Body decoding itself lives in `JsonPlan`
+  (`lauren/_schema/_params.py`).
 - `lauren/stores.py` / `lauren/_stores/` — `Store` protocol, `MemoryStore` and
   its `TTLMap` engine, `PrefixedStore`, `Lock`, `StoresModule` (Phase 2 hook
   `install_stores`); session adapters in `lauren/_sessions/_adapters.py`;
@@ -867,6 +950,15 @@ exit).
   `@cache_response` / `@idempotent` policies and their interceptors, compiled
   in Phase 5 by `compile_cache_routes`. Response-cache keying and header rules
   live together in `_cache/_response.py`.
+- `lauren/urls.py` / `lauren/_urls/` — `UrlBuilder` and the per-app route-name
+  `RouteTable` (`_registry.py`, built at the end of Phase 5 by
+  `_module.build_route_table`), compiled `UrlTemplate`s and the path-parameter
+  `formatter_for` hook (`_template.py`, the seam typed converters' `to_url`
+  plug into), `URL` + the `url_for` accessors shared by `Request` /
+  `WebSocket` / `WsUpgradeRequest` (`_url.py`), `ProxyConfig` and the pure
+  `resolve_forwarded` (`_forwarded.py`, applied once per request in
+  `LaurenApp.__call__` / `_websocket` and to mounted sub-apps' scopes), and the
+  URL signer + `ValidSignature` (`_signing.py`, `urls.py`).
 - `lauren/testing/` — `TestClient` (one persistent loop per client, lifespan
   via `with`), `AsyncTestClient`, `Test.create_testing_module` overrides,
   cookie jar, `WsTestClient`, opt-in `pytest_plugin`.

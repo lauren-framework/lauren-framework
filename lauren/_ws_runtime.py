@@ -31,14 +31,17 @@ from __future__ import annotations
 import inspect as _inspect
 import json as _jsonlib
 import logging as _stdlib_logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Awaitable, Callable, Iterable, get_args, get_origin
+from types import MappingProxyType
+from typing import Annotated, Any, Awaitable, Callable, Iterable, TypeVar, get_args, get_origin, overload
 
 from ._di import DIContainer, INJECTABLE_META, InjectableMeta
 from ._di._scope import finalize_scope
-from ._routing import Router, RouteEntry
+from ._metadata import _UNSET, MetadataKey, MetadataSetKey, merge_metadata_levels, own_metadata, read_metadata
+from ._routing import RouteEntry, Router, raw_routing_path
+from ._routing._converters import is_builtin_converter
 from .decorators import (
-    SET_METADATA,
     USE_ENCODER,
     USE_EXCEPTION_HANDLERS,
     USE_GUARDS,
@@ -63,8 +66,10 @@ from .extractors import (
     FieldDescriptor,
     extract_parameter,
     parse_extractor_hint,
+    prepare_state_extraction,
 )
 from .streaming import _build_adapter
+from ._urls._url import UrlAccess
 from .types import Headers, Scope as DScope
 from .websockets import (
     WebSocket,
@@ -94,8 +99,27 @@ from ._validation import is_pydantic_model as _is_pydantic_model  # noqa: F401
 # ---------------------------------------------------------------------------
 
 
+_V = TypeVar("_V")
+
+
 @dataclass(frozen=True, slots=True)
-class WsUpgradeRequest:
+class WsConnectionInfo:
+    """The URL model of one WebSocket connection, resolved once by ``LaurenApp``.
+
+    ``client`` / ``scheme`` / ``authority`` / ``root_path`` already reflect a
+    trusted proxy (``ProxyConfig``); ``authority`` is ``None`` when the
+    ``Host`` header applies.
+    """
+
+    client: tuple[str, int | None] | None
+    scheme: str = "ws"
+    root_path: str = ""
+    authority: str | None = None
+    urls: Any = None
+
+
+@dataclass(frozen=True, slots=True)
+class WsUpgradeRequest(UrlAccess):
     """Read-only view of the HTTP upgrade request that opened a WS connection.
 
     Mirrors the fields that guards most commonly access so that the same
@@ -106,15 +130,34 @@ class WsUpgradeRequest:
             return ctx.request.headers.get("x-api-key") == "valid"
 
     WS upgrades have no body, so ``body()``, ``text()``, ``json()``, and
-    ``stream()`` are intentionally absent.
+    ``stream()`` are intentionally absent. ``state`` is the connection's
+    :class:`~lauren.types.State` (``ws.state``), so a guard writing
+    ``ctx.request.state[CurrentUser] = user`` works on both transports.
+    ``stream()`` are intentionally absent. ``client`` is the ``(host,
+    port)`` pair (a trusted proxy's client when ``ProxyConfig`` applies);
+    ``scheme`` (``"ws"`` / ``"wss"``), ``host``, ``port``, ``root_path``,
+    ``base_url`` and ``url_for`` / ``url_path_for`` / ``ws_url_for`` match the
+    HTTP :class:`~lauren.types.Request`.
     """
 
     headers: Any  # lauren.types.Headers — case-insensitive
     path: str
     path_params: dict[str, str]
     query_string: str = ""
-    client: Any | None = None  # lauren.types.ClientInfo | None
+    client: Any | None = None  # (host, port) tuple or None
     method: str = "GET"  # WS upgrades are always GET requests
+    state: Any = None  # lauren.types.State — the connection's ``ws.state``
+    app_state: Any = None  # lauren.types.AppState — the application state
+    scheme: str = "ws"
+    host: str = ""
+    port: int = 80
+    root_path: str = ""
+    _urls: Any = field(default=None, repr=False, compare=False)
+    _lauren_raw_path: str | None = field(default=None, repr=False, compare=False)
+    host_params: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+
+    def _url_parts(self) -> tuple[str, str, int, str, Any]:
+        return self.scheme, self.host, self.port, self.root_path, self._urls
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,11 +193,18 @@ class WsConnectionContext:
     route_template: str | None = None
     """Matched path template, e.g. ``"/chat/{room_id}"``."""
 
-    metadata: dict[str, Any] = field(default_factory=dict)
-    """Key→value pairs from ``@set_metadata`` decorators on the gateway."""
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    """The gateway's ``@set_metadata`` / typed-key values (read-only, compiled at startup)."""
 
-    def get_metadata(self, key: str, default: Any = None) -> Any:
-        return self.metadata.get(key, default)
+    @overload
+    def get_metadata(self, key: MetadataSetKey[_V]) -> tuple[_V, ...]: ...
+    @overload
+    def get_metadata(self, key: MetadataKey[_V]) -> _V: ...
+    @overload
+    def get_metadata(self, key: str, default: Any = None) -> Any: ...
+    def get_metadata(self, key: Any, default: Any = _UNSET) -> Any:
+        """Read metadata: a typed key returns its typed value (or its default); a string reads raw."""
+        return read_metadata(self.metadata, key, default)
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,9 +273,10 @@ class CompiledMessage:
     #: Interceptor classes from ``@use_interceptors`` on the handler
     #: method, outermost first. They wrap only this handler's invocation.
     interceptors: tuple[type, ...] = ()
-    #: Gateway ``@set_metadata`` merged with the method's own (method
-    #: wins) — what ``WsMessageContext.get_metadata`` reads.
-    metadata: dict[str, Any] = field(default_factory=dict)
+    #: Gateway metadata merged with the method's own at startup (typed keys
+    #: apply their merge policy; string keys: the method wins) — what
+    #: ``WsMessageContext.get_metadata`` reads.
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -267,8 +318,8 @@ class CompiledGateway:
     middlewares: tuple[type, ...] = ()
     #: Free-form metadata from ``@set_metadata`` on the gateway class.
     #: Passed to :class:`WsConnectionContext` so guards can read it via
-    #: ``ctx.get_metadata(key, default)``.
-    metadata: dict[str, Any] = field(default_factory=dict)
+    #: ``ctx.get_metadata(key, default)``. Read-only, compiled at startup.
+    metadata: Mapping[str, Any] = field(default_factory=dict)
     #: Guard classes from ``@use_guards`` on the ``@on_connect`` method.
     #: Run after the global and gateway-level guards, before accepting.
     on_connect_guards: tuple[type, ...] = ()
@@ -279,6 +330,9 @@ class CompiledGateway:
     #: interceptors. Invoking one without its frame context is refused
     #: rather than silently skipping the policy.
     guarded_handlers: frozenset[Any] = frozenset()
+    #: Canonical host pattern of the gateway, captured during compilation.
+    host: str | None = None
+    route_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +371,6 @@ def compile_gateways(
         reflect_guards,
         reflect_interceptors,
         reflect_middlewares,
-        reflect_user_metadata,
     )
 
     gateways: dict[str, CompiledGateway] = {}
@@ -328,7 +381,9 @@ def compile_gateways(
         _reject_unsupported_hook_policies(cls, hooks)
         class_guards = reflect_guards(cls)
         class_interceptors = reflect_interceptors(cls)
-        class_metadata = reflect_user_metadata(cls)
+        class_values, class_keys = own_metadata(cls)
+        class_level = (f"gateway {cls.__qualname__}", class_values, class_keys)
+        class_metadata = merge_metadata_levels([class_level])
         connect_fn = hooks["on_connect"]
         connect_guards = tuple(getattr(connect_fn, USE_GUARDS, ()))
         connect_interceptors = tuple(getattr(connect_fn, USE_INTERCEPTORS, ()))
@@ -342,12 +397,16 @@ def compile_gateways(
 
         # Reserve the path in the WebSocket router. We reuse the same
         # radix router as HTTP for param/wildcard semantics. The method
-        # slot is the synthetic ``"WEBSOCKET"`` pseudo-verb so we can
-        # register a route even though the router's HTTP_METHODS set
-        # doesn't list it.
+        # slot is the synthetic ``"WEBSOCKET"`` pseudo-verb, which the
+        # factory's WebSocket router accepts (``Router(methods=...)``).
         path = ctrl_meta.path or ""
-        entry = _add_ws_route(ws_router, path, cls)
+        module_meta = (
+            getattr(owning_module, "__dict__", {}).get("__lauren_module__") if owning_module else None
+        )
+        host = getattr(ctrl_meta, "host", None) or getattr(module_meta, "host", None)
+        entry = _add_ws_route(ws_router, path, cls, host=host)
         param_names = tuple(entry.param_names)
+        path_converters = entry.converters
 
         # Compile @on_connect / @on_disconnect signatures. They share
         # the same extractor plan as HTTP handlers with one addition:
@@ -359,6 +418,7 @@ def compile_gateways(
                 hooks["on_connect"],
                 container,
                 path_param_names=set(param_names),
+                path_converters=path_converters,
                 owning_module=owning_module,
                 is_message_handler=False,
                 validation=validation,
@@ -371,6 +431,7 @@ def compile_gateways(
                 hooks["on_disconnect"],
                 container,
                 path_param_names=set(param_names),
+                path_converters=path_converters,
                 owning_module=owning_module,
                 is_message_handler=False,
                 validation=validation,
@@ -387,6 +448,7 @@ def compile_gateways(
                 hooks["on_error"],
                 container,
                 path_param_names=set(param_names),
+                path_converters=path_converters,
                 owning_module=owning_module,
                 is_message_handler=False,
                 is_error_handler=True,
@@ -408,6 +470,7 @@ def compile_gateways(
                 fn,
                 container,
                 path_param_names=set(param_names),
+                path_converters=path_converters,
                 owning_module=owning_module,
                 is_message_handler=True,
                 is_binary_handler=(event == BINARY_EVENT),
@@ -429,7 +492,9 @@ def compile_gateways(
                 payload_param=payload_param,
                 guards=tuple(getattr(fn, USE_GUARDS, ())),
                 interceptors=tuple(getattr(fn, USE_INTERCEPTORS, ())),
-                metadata={**class_metadata, **dict(getattr(fn, SET_METADATA, {}))},
+                metadata=merge_metadata_levels(
+                    [class_level, (f"handler {cls.__qualname__}.{fn.__name__}", *own_metadata(fn))]
+                ),
             )
             all_metas.append(meta)
             logger.log(
@@ -462,6 +527,7 @@ def compile_gateways(
         compiled = CompiledGateway(
             controller_cls=cls,
             path_template=entry.path_template,
+            host=entry.host,
             param_names=param_names,
             controller_meta=ctrl_meta,
             owning_module=owning_module,
@@ -486,7 +552,8 @@ def compile_gateways(
             guarded_handlers=frozenset(m.handler_fn for m in messages.values() if m.guards or m.interceptors)
             - {hooks["on_connect"], hooks["on_disconnect"], hooks["on_error"]},
         )
-        gateways[entry.path_template] = compiled
+        # Host-routed gateways are keyed ``host + path`` (``entry.handler_key``).
+        gateways[entry.handler_key[1]] = compiled
     return gateways
 
 
@@ -612,30 +679,32 @@ def _iter_ws_controllers(module_graph: Any) -> Iterable[type]:
                 break
 
 
-def _add_ws_route(router: Router, path: str, cls: type) -> RouteEntry:
-    """Register a placeholder HTTP entry so we reuse the radix tree.
+def _add_ws_route(router: Router, path: str, cls: type, *, host: str | None = None) -> RouteEntry:
+    """Register a placeholder entry under the ``"WEBSOCKET"`` pseudo-verb.
 
-    We register under the synthetic ``"WEBSOCKET"`` method. Because
-    :class:`lauren._routing.Router` restricts ``add_route``'s method
-    set, we bypass it by temporarily widening the allowed set for the
-    registration only — cleanly contained here so the HTTP side never
-    sees the pseudo-verb.
+    The WebSocket router is built with ``Router(methods={"WEBSOCKET"})``, so
+    the accepted method set is a property of that router instance — nothing
+    process-wide is touched (two apps may compile concurrently).
     """
-    method = "WEBSOCKET"
-    # Widen + restore the allowed-method frozenset around the add.
-    original = Router.HTTP_METHODS
-    Router.HTTP_METHODS = frozenset(original | {method})
-    try:
-        entry = router.add_route(
-            method,
-            path or "/",
-            handler=lambda: None,  # placeholder; never invoked
-            handler_class=cls,
-            metadata={"ws_controller_cls": cls},
-        )
-    finally:
-        Router.HTTP_METHODS = original
-    return entry
+    return router.add_route(
+        "WEBSOCKET",
+        path or "/",
+        handler=lambda: None,  # placeholder; never invoked
+        handler_class=cls,
+        metadata={"ws_controller_cls": cls},
+        host=host,
+    )
+
+
+def _scope_host(scope: dict[str, Any]) -> str | None:
+    """The ``Host`` or ``:authority`` of an ASGI WebSocket scope, when present."""
+    authority: str | None = None
+    for key, value in scope.get("headers") or ():
+        if key.lower() == b"host":
+            return value.decode("latin-1")
+        if key.lower() == b":authority":
+            authority = value.decode("latin-1")
+    return authority
 
 
 def _ensure_injectable(cls: type) -> None:
@@ -665,6 +734,7 @@ def _compile_ws_signature(
     container: DIContainer,
     *,
     path_param_names: set[str],
+    path_converters: Any = None,
     owning_module: type | None,
     is_message_handler: bool,
     is_error_handler: bool = False,
@@ -785,7 +855,10 @@ def _compile_ws_signature(
         # parameter — mirrors HTTP semantics so controller authors don't
         # need to remember the marker just to read a path var.
         if source is None and name in path_param_names:
-            inner_type = ann if ann is not _inspect.Parameter.empty else str
+            # An unannotated parameter takes its converter's type ({id:int} → int).
+            converter = (path_converters or {}).get(name)
+            fallback = getattr(converter, "python_type", str) if converter is not None else str
+            inner_type = ann if ann is not _inspect.Parameter.empty else fallback
             path_ext = Extraction(
                 name=name,
                 source="path",
@@ -793,6 +866,13 @@ def _compile_ws_signature(
                 field_descriptor=fd,
                 default=default,
                 has_default=has_default,
+                converter=(
+                    converter
+                    if ann is _inspect.Parameter.empty
+                    and converter is not None
+                    and not is_builtin_converter(converter)
+                    else None
+                ),
             )
             _attach_ws_plan(path_ext, ann, validation, controller_cls, fn, route)
             extractions.append(path_ext)
@@ -811,8 +891,10 @@ def _compile_ws_signature(
                 marker_cls=marker_cls,
                 pipes=tuple(pipes),
             )
-            if source in ("path", "query", "header", "cookie"):
+            if source in ("path", "query", "header", "cookie", "host_param"):
                 _attach_ws_plan(marker_ext, ann, validation, controller_cls, fn, route)
+            elif source in ("state_key", "state"):
+                prepare_state_extraction(marker_ext, ann, policy=getattr(validation, "policy", None))
             extractions.append(marker_ext)
             continue
 
@@ -855,7 +937,7 @@ def _attach_ws_plan(
     route: str,
 ) -> None:
     """Compile a handshake parameter (path / query / header / cookie) with the app compiler."""
-    if validation is None:
+    if validation is None or ext.converter is not None:
         return
     from ._schema._params import build_param_plan  # noqa: PLC0415
 
@@ -930,6 +1012,7 @@ async def handle_websocket(
     *,
     global_ws_guards: list[type] | None = None,
     global_ws_interceptors: list[type] | None = None,
+    connection: WsConnectionInfo | None = None,
 ) -> None:
     """ASGI-side WebSocket dispatch entry point.
 
@@ -957,15 +1040,21 @@ async def handle_websocket(
         return
 
     path = scope.get("path", "/")
+    if ws_router.config.match_raw_path:
+        path = raw_routing_path(scope.get("raw_path"), path)
+    host_params: dict[str, str] = {}
     try:
-        entry, params = ws_router.find("WEBSOCKET", path)
+        if ws_router.has_hosts:
+            entry, params, host_params = ws_router.find_host("WEBSOCKET", path, _scope_host(scope))
+        else:
+            entry, params = ws_router.find("WEBSOCKET", path)
     except Exception:
         # Route miss: reject the handshake. 1008 = policy violation;
         # clients that care about the exact reason get the structured
         # code in the close frame.
         await send({"type": "websocket.close", "code": 1008})
         return
-    gateway = gateways.get(entry.path_template)
+    gateway = gateways.get(entry.handler_key[1])
     if gateway is None:
         await send({"type": "websocket.close", "code": 1008})
         return
@@ -978,7 +1067,10 @@ async def handle_websocket(
         path_params=params,
         app_state=app._app_state,
         json_encoder=app._json_encoder,
+        connection=connection,
     )
+    if host_params:
+        ws.host_params = dict(host_params)
 
     request_cache: dict[type, Any] = {}
     # EventPublisher (lauren.events) joins this connection's DI scope through it.
@@ -1076,7 +1168,7 @@ async def handle_websocket(
             handler_class=gateway.controller_cls,
             handler_func=compiled.handler_fn,
             route_template=gateway.path_template,
-            metadata=dict(compiled.metadata),
+            metadata=compiled.metadata,
             event=event,
             payload=payload,
         )
@@ -1145,13 +1237,22 @@ async def handle_websocket(
             headers=ws.headers,
             path=ws.path,
             path_params=dict(ws.path_params),
+            host_params=MappingProxyType(dict(ws.host_params)),
             query_string=scope.get("query_string", b"").decode("latin-1"),
-            client=scope.get("client"),
+            state=ws.state,
+            app_state=ws.app_state,
+            client=ws._client,
+            scheme=ws.scheme,
+            host=ws.host,
+            port=ws.port,
+            root_path=ws.root_path,
+            _urls=ws._urls,
+            _lauren_raw_path=path if ws_router.config.match_raw_path else None,
         ),
         connection=ws,
         handler_class=gateway.controller_cls,
         route_template=gateway.path_template,
-        metadata=dict(gateway.metadata),
+        metadata=gateway.metadata,
     )
 
     # Resolve the framework_values map for DI lookups within guards/interceptors.
@@ -1519,6 +1620,10 @@ class _WsRequestAdapter:
     @property
     def path_params(self) -> dict[str, str]:
         return self._ws.path_params
+
+    @property
+    def host_params(self) -> dict[str, str]:
+        return self._ws.host_params
 
     @property
     def query_params(self) -> dict[str, list[str]]:

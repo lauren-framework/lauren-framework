@@ -5,7 +5,7 @@ In-process ASGI test clients for unit and integration tests.
 ### `TestClient`
 
 ```python
-class TestClient(app: Any, base_url: str = 'http://testserver', headers: Mapping[str, str] | None = None, cookies: Mapping[str, str] | None = None, follow_redirects: bool = False, timeout: float | None = _UNSET, raise_server_exceptions: bool = False, lifespan: LifespanMode = 'auto', backend: Literal['asyncio'] = 'asyncio', backend_options: Mapping[str, Any] | None = None, root_path: str = '', strict_cookies: bool = False, persist_cookies: bool | None = None)
+class TestClient(app: Any, base_url: str = 'http://testserver', headers: Mapping[str, str] | None = None, cookies: Mapping[str, str] | None = None, follow_redirects: bool = False, timeout: float | None = _UNSET, raise_server_exceptions: bool = False, lifespan: LifespanMode = 'auto', backend: Literal['asyncio'] = 'asyncio', backend_options: Mapping[str, Any] | None = None, root_path: str = '', strict_cookies: bool = False, persist_cookies: bool | None = None, client: tuple[str, int] | None = _DEFAULT_CLIENT)
 ```
 
 Synchronous in-process client for a :class:`~lauren.LaurenApp`, a ``Lauren`` app or any ASGI app.
@@ -58,7 +58,7 @@ ownership of startup and shutdown.
 #### `TestClient.request`
 
 ```python
-def request(self, method: str, url: str, params: Any = None, headers: Any = None, cookies: Mapping[str, str] | None = None, json: Any = None, data: Any = None, files: Any = None, content: Any = None, follow_redirects: bool | None = None, timeout: float | None = _UNSET, disconnect_after: float | None = None) -> TestResponse
+def request(self, method: str, url: str, params: Any = None, headers: Any = None, cookies: Mapping[str, str] | None = None, json: Any = None, msgpack: Any = None, data: Any = None, files: Any = None, content: Any = None, follow_redirects: bool | None = None, timeout: float | None = _UNSET, disconnect_after: float | None = None) -> TestResponse
 ```
 
 Send one request and return the buffered :class:`TestResponse`.
@@ -116,7 +116,7 @@ def options(self, url: str, kw: Any = {}) -> TestResponse
 #### `TestClient.stream`
 
 ```python
-def stream(self, method: str, url: str, params: Any = None, headers: Any = None, cookies: Mapping[str, str] | None = None, json: Any = None, data: Any = None, files: Any = None, content: Any = None, timeout: float | None = _UNSET, disconnect_after: float | None = None) -> Iterator[StreamingTestResponse]
+def stream(self, method: str, url: str, params: Any = None, headers: Any = None, cookies: Mapping[str, str] | None = None, json: Any = None, msgpack: Any = None, data: Any = None, files: Any = None, content: Any = None, timeout: float | None = _UNSET, disconnect_after: float | None = None) -> Iterator[StreamingTestResponse]
 ```
 
 Send a request and read the response incrementally.

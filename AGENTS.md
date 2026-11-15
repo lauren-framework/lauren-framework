@@ -117,7 +117,7 @@ nox -s ver_dec -- --patch
 | `lauren/_health/`                 | Health internals: `@health_check` marker (`_meta`), values + aggregation (`_types`), built-in indicators (`_indicators`), check validation + per-app `HealthRuntime` (`_runtime`), `HealthModule.for_root` + factory hooks (`_module`) |
 | `lauren/_discriminated.py`        | `Discriminated[A\|B,"key"]` — detection, validation, OpenAPI schema |
 | `lauren/_encoders/`               | Optional encoder backends (e.g. `pydantic.py`) |
-| `lauren/_routing/__init__.py`     | Radix-tree router                            |
+| `lauren/_routing/__init__.py`     | Radix-tree router, typed converters, host routing, HEAD/OPTIONS and slash policies |
 | `lauren/_modules/__init__.py`     | Module graph, imports/exports validation     |
 | `lauren/_lifecycle/__init__.py`   | post_construct / pre_destruct scheduler; sync hooks run in thread pool via asyncio.to_thread (timeout-protected, event-loop-safe); second pass runs generator provider teardown (code after yield) for SINGLETON scope |
 | `lauren/_typing/`                 | ForwardRef / PEP 563 resolver                |
@@ -129,7 +129,8 @@ nox -s ver_dec -- --patch
 | `lauren/reflect/_reader.py`       | Static readers: `reflect_controller`, `reflect_routes`, `reflect_exception_handlers`, … |
 | `lauren/reflect/_app_reader.py`   | App readers: `get_all_routes`, `get_all_ws_gateways`, `get_route_metadata` |
 | `lauren/reflect/_types.py`        | Frozen result types: `ReflectedRoute`, `ReflectedController`, `ReflectedWsGateway`, … |
-| `lauren/decorators.py`            | User-facing decorators only; route-option validation table (`_ROUTE_OPTION_VALIDATORS`); `@raises` |
+| `lauren/decorators.py`            | User-facing decorators only; route-option validation table (`_ROUTE_OPTION_VALIDATORS`); `@raises`, typed key exports, `compose` |
+| `lauren/_metadata.py`             | Typed metadata / state keys, compile-time merge, `compose`, `@provides_state` provenance checks |
 | `lauren/responses.py`             | Typed results: `Ok`, `Created`, `Accepted`, `NoContent`, `Status` (no framework imports) |
 | `lauren/_asgi/_contracts.py`      | Response contracts: `describe_responses` (status table, startup checks), `ResponsePlan` (runtime coercion + projection), `ResponseContractViolation` |
 | `lauren/_schema/_contract.py`     | Filter / strict response projectors built over compiled validator nodes |
@@ -142,9 +143,13 @@ nox -s ver_dec -- --patch
 | `lauren/stores.py`                | Public store surface (`Store`, `MemoryStore`, `PrefixedStore`, `StoresModule`, `StoreToken`, `StoreRegistry`, `Lock`, `StoreSessionStore`, `StoreRevocationStore`) |
 | `lauren/_stores/`                 | Store protocol + checks (`_protocol`), bounded `TTLMap` / `MemoryStore` (`_memory`), `PrefixedStore`, `Lock`, `StoresModule` + Phase 2 `install_stores` (`_module`), lifecycle adoption (`_lifecycle`) |
 | `lauren/cache.py`                 | Public caching surface (`Cache`, `TypedCache`, `CacheModule`, `CacheCodec`, `JsonCacheCodec`, `cache_response`, `idempotent`, policies) |
+| `lauren/codecs.py`                | Public codec surface (`Codec`, `JsonCodec`, `MsgpackCodec`, `ContentConfig`) |
+| `lauren/_codecs/`                 | Media types (`_media`), RFC 9110 `Accept` parser + negotiation shared with streams (`_accept`), codecs (`_codec`), `ContentConfig` resolution and per-route `ContentGate` / `BodyDecoding` / `Negotiation` compiled in Phase 5 (`_plan`) |
 | `lauren/_cache/`                  | `Cache` service (`_service`), entry layout (`_entry`), codecs + typed decode (`_codec`), decorators (`_policy`), response-cache keying / store rules / interceptor (`_response`), idempotency interceptor (`_idempotency`), `CacheModule` + factory hooks (`_module`) |
 | `lauren/testing/store_contract.py` | Shared `Store` contract suite (`run_store_contract`, `STORE_CONTRACT_CHECKS`) for core and companion backends |
 | `lauren/_signing.py`              | The shared HMAC signer: key rotation, constant-time verify, per-feature `namespace` (sessions, pagination cursors, signed URLs) |
+| `lauren/urls.py`                  | Public URL surface (`URL`, `UrlBuilder`, `ProxyConfig`, `UrlSigningConfig`, `ValidSignature`) |
+| `lauren/_urls/`                   | Route names + `RouteTable` + `UrlBuilder` (`_registry`), URL templates and the path-parameter formatting hook (`_template`), `URL` + request `url_for` accessors (`_url`), name syntax (`_names`), `ProxyConfig` + `resolve_forwarded` (`_forwarded`), URL signer (`_signing`), factory hooks (`_module`) |
 | `lauren/pagination.py`            | Public pagination surface (`OffsetPagination`, `PageNumberPagination`, `CursorPagination`, `PaginationConfig`, `Page`, `CursorPage`, `paginate_sequence`) |
 | `lauren/_pagination/`             | Pagination internals: config resolution (`_config`), paging values + `PaginationPlan` (`_params`, the `"pagination"` extraction source), cursor codec (`_cursor`), `Link` URLs (`_links`), page rendering (`_page`), OpenAPI contribution (`_openapi`) |
 | `lauren/streaming.py`             | StreamingResponse[T], Stream, StreamReader   |
@@ -302,6 +307,8 @@ Welcome aboard.
 | Shape a response (status, typed results, output filtering, declared errors) | `lauren/responses.py`, `lauren/_asgi/_contracts.py` | `docs/guides/response-contracts.md` |
 | Wire DI / providers / lifecycle | `lauren/_di/__init__.py` | `skills/building-lauren-services/` |
 | Add a guard, middleware, or interceptor | `lauren/decorators.py` | `skills/building-lauren-guards/` |
+| Define a custom route decorator | `compose`, `reject_bare_usage`, `MetadataKey` in `lauren/decorators.py` | `docs/guides/typed-metadata-and-state.md` |
+| Pass typed guard state to a handler | `StateKey`, `@provides_state`, `Annotated[T, Key]` | `docs/guides/typed-metadata-and-state.md` |
 | Add exception handlers | `lauren/decorators.py` | `skills/building-lauren-guards/` §Exception handlers |
 | Add WebSocket / SSE / streaming | `lauren/websockets.py`, `lauren/sse.py` | `skills/building-lauren-streaming/` |
 | Serve static files | `lauren/_staticfiles.py` | `skills/building-lauren-apps/` §Static files |
@@ -315,8 +322,10 @@ Welcome aboard.
 | Add session state | `lauren/sessions.py` | `skills/building-lauren-sessions/` |
 | Cache data or responses, idempotency keys, shared stores | `lauren/cache.py`, `lauren/stores.py` | `skills/building-lauren-caching/` |
 | Paginate a list endpoint (offset, page number, cursor) | `lauren/pagination.py` | `skills/rest-crud-endpoints/` §Pagination |
+| Build URLs to routes, run behind a proxy, sign links | `lauren/urls.py` | `docs/guides/urls-and-proxies.md` |
 | Read typed configuration / secrets | `lauren/config.py` | `skills/building-lauren-config/` |
 | Add field constraints / validate payloads | `lauren/validation.py`, `lauren/_schema/` | `skills/building-lauren-controllers/` §Validation |
+| List routes, audit guards, validate an app without starting it | `lauren/reflect/_manifest.py`, `lauren/_diagnostics.py` | `skills/inspecting-lauren-apps/` |
 | Debug a startup error | `lauren/exceptions.py` | **Common Errors** section below |
 | Port from FastAPI | `llms-full.txt` §Guards | `skills/migrating-from-fastapi/` |
 | Add CORS / auth guards / logging | `AGENTS.md` §Companion Packages | `skills/using-companion-packages/` |
@@ -366,6 +375,7 @@ Full index: [`skills/README.md`](skills/README.md)
 | Session management | `docs/guides/sessions.md` |
 | Stores, caching, response caching, idempotency keys | `docs/guides/caching.md` |
 | Pagination, envelopes, `Link` headers, signed cursors | `docs/guides/pagination.md` |
+| Named routes, `url_for`, trusted proxies, signed URLs | `docs/guides/urls-and-proxies.md` |
 | Domain events between modules | `docs/guides/events.md` |
 | Health probes, lifecycle state, draining | `docs/guides/health-checks.md` |
 | Typed configuration | `docs/guides/configuration.md` |
@@ -396,10 +406,15 @@ Full index: [`skills/README.md`](skills/README.md)
 | `StartupError` (`reason="debug_in_production"`) | `debug=` enabled while the configuration profile is production | Enable debug pages only in development |
 | `StartupError` (`reason="invalid_debug_config"` / `"invalid_problem_type_base"`) | `debug=` is not a bool / valid `DebugConfig`, or `problem_type_base` is not a non-empty string | Fix the value passed to `LaurenFactory.create` |
 | `UnresolvableParameterError` (`reason="bad_constraint"` / `"bad_pattern"` / `"unsupported_type"`) | A validation marker that cannot apply (`Ge` on a `str`, `MinLen > MaxLen`), an invalid `Pattern` regex, or (under `stdlib_models="enforce"`) a model field type the engine does not know | Fix the annotation named by `detail["class"]` / `["handler"]` / `["param"]` / `["field"]` |
+| `RouterConflictError` (`reason="duplicate_route_name"`) | Two routes share an explicit `name=` | Rename one (names are namespaced by `@controller(name=)` / `@module(name=)`) |
+| `StartupError` (`reason="url_signing_disabled"` / `"invalid_proxy_config"`) | `ValidSignature` without `url_signing=`, or a bad `ProxyConfig(trusted=...)` entry | Pass `url_signing=UrlSigningConfig(secret=...)`; list addresses / CIDRs / `"unix"` |
 | `StartupError` (`reason="cache_module_missing"`) | A route uses `@cache_response` / `@idempotent` but no `Cache` is provided | Import `CacheModule.for_root()` into the app |
 | `StartupError` (`reason="duplicate_store_name"` / `"invalid_store"`) | Two default stores / one store name registered twice, or a store factory that returned a non-`Store` | Configure each store once in `StoresModule.for_root(...)` |
 | `StartupError` (`reason="pagination_secret_missing"`) | A route takes `CursorPagination` but no cursor secret is configured | `LaurenFactory.create(..., pagination=PaginationConfig(cursor_secret=...))` with a dedicated key (never the session secret) |
 | `StartupError` (`reason="invalid_pagination_config"`) | A `PaginationConfig` value is invalid (`default_limit > max_limit` at one level, duplicate parameter names, `envelope` set per parameter, …) — `detail["field"]` names it | Fix the field; `envelope` / `meta_keys` belong on the app-level config |
+| `StartupError` (`reason="codec_not_registered"`) | A route's `consumes=` (on a `Json[T]` body) or `produces=`, or `ContentConfig.default_produces`, names a media type no codec serves — `detail["media_type"]` / `["route"]` | Add the codec to `ContentConfig(codecs=[...])`, or read the body as `Bytes` |
+| `StartupError` (`reason="codec_conflict"` / `"invalid_content_config"`) | Two codecs claim one media type, or a `ContentConfig` field is invalid | Register each media type once; fix the field named in `detail` |
+| `DecoratorUsageError` (`reason="invalid_max_body_size"` / `"invalid_consumes"` / `"invalid_produces"`) | `max_body_size=` not a positive int (`"10MB"`, `0`), a media type with parameters, or a wildcard in `produces=` | `max_body_size=10 * 1024 * 1024`; bare `type/subtype` entries |
 | `StartupError` (generic) | Missing required parameter in constructor injection | Add the type as a `@module` provider or import its module |
 
 ## Interceptor `CallHandler.handle()` contract (v1.4.2+)

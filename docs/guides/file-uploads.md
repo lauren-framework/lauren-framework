@@ -136,8 +136,11 @@ escaping or transliteration.
 
 ## Content-type checking
 
-`UploadFile` doesn't enforce content type. Apply your own validation inside the
-handler or with a pipe:
+The request itself must be `multipart/form-data`: an `UploadFile` route answers
+any other `Content-Type` (a JSON body, `text/plain`, …) with 415
+`unsupported_media_type` and an `Accept-Post: multipart/form-data` header,
+before the body is read. The type of each **part** is up to you — validate it
+inside the handler or with a pipe:
 
 ```python
 from lauren.exceptions import ExtractorFieldError
@@ -163,17 +166,24 @@ consider:
 
 * **Streaming writes** — `await file.read()` returns the full bytes, then write to
   disk or cloud storage.
-* **Body size limits** — configure `LaurenFactory.create(..., max_body_size=N)` to
-  reject oversized requests before the handler runs. Today an oversize upload is
-  answered with a 422 `extractor_error` (only a `ByteStream` body answers 413
-  `request_body_too_large`).
+* **Body size limits** — raise the limit on the upload route only, not app-wide:
+  `@post("/avatar", max_body_size=...)` (or `@controller(..., max_body_size=...)`)
+  overrides `LaurenFactory.create(..., max_body_size=N)` for that route, larger or
+  smaller. An oversize upload is answered with 413 `request_body_too_large`, and a
+  `Content-Length` above the limit is rejected before anything is read.
 
 ```python
-app = LaurenFactory.create(
-    AppModule,
-    max_body_size=50 * 1024 * 1024,   # 50 MB hard cap
-)
+MiB = 1024 * 1024
+
+@controller("/media")
+class MediaController:
+    @post("/avatar", max_body_size=2 * MiB)
+    async def avatar(self, file: UploadFile) -> dict: ...
+
+app = LaurenFactory.create(AppModule)   # every other route keeps the 1 MiB default
 ```
+
+See [Content Negotiation & Body Limits](content-negotiation.md#per-route-body-limits).
 
 For truly streaming large uploads without full buffering, use the
 [`ByteStream`](../reference/cheat-sheet.md) extractor instead, which gives you the

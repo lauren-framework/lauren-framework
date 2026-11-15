@@ -30,6 +30,8 @@ class UserController:
         return UserOut(**user), 201
 ```
 
+For numeric identifiers that should **404 on a non-numeric URL**, declare `@get("/{id:int}")` instead of `@get("/{id}")`: the latter still matches any segment and a failing `id: int` extractor yields 422. Static routes win before typed segments. A controller can restrict its routes to a host with `@controller("/", host="{tenant:slug}.example.com")`; inject `tenant: HostParam[str]` to read it. See [HTTP Routing](../guides/routing.md) for converters, host routing, slash policies, and HEAD/OPTIONS.
+
 Explicit extractor markers (`Path[int]`, `Json[CreateUser]`) are always accepted too — Lauren auto-detects sources only when no explicit marker is present. See [Implicit Parameter Extraction](../guides/implicit-params.md) for the full rules.
 
 What `@controller` does:

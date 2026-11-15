@@ -12,6 +12,8 @@ import asyncio
 import json as jsonlib
 from typing import Any, Iterable, Mapping
 
+from ._transport import asgi_paths
+
 
 # ---------------------------------------------------------------------------
 # WebSocket test client
@@ -52,6 +54,7 @@ class WebSocketTestSession:
         server_timeout: float = 2.0,
         scheme: str = "ws",
         server: tuple[str, int] = ("testserver", 80),
+        client: tuple[str, int] | None = ("127.0.0.1", 12345),
     ) -> None:
         self._app = app
         self._path = path
@@ -60,6 +63,7 @@ class WebSocketTestSession:
         self._server_timeout = server_timeout
         self._scheme = scheme
         self._server = server
+        self._client = client
         if headers is None:
             items: list[tuple[bytes, bytes]] = []
         elif isinstance(headers, Mapping):
@@ -88,11 +92,11 @@ class WebSocketTestSession:
             "asgi": {"version": "3.0"},
             "http_version": "1.1",
             "scheme": getattr(self, "_scheme", "ws"),
-            "path": self._path,
-            "raw_path": self._path.encode("utf-8"),
+            "path": asgi_paths(self._path)[0],
+            "raw_path": asgi_paths(self._path)[1],
             "query_string": self._query_string.encode("latin-1"),
             "headers": self._headers,
-            "client": ("127.0.0.1", 12345),
+            "client": getattr(self, "_client", ("127.0.0.1", 12345)),
             "server": getattr(self, "_server", ("testserver", 80)),
             "subprotocols": list(self._subprotocols),
         }

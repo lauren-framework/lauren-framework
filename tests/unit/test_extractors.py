@@ -1536,7 +1536,7 @@ class TestExtractionStateMissing:
             default=...,
             has_default=False,
         )
-        with pytest.raises(ExtractorFieldError, match="missing state"):
+        with pytest.raises(ExtractorFieldError, match="missing state"), pytest.warns(DeprecationWarning):
             await extract_parameter(req, ext)
 
     @pytest.mark.asyncio

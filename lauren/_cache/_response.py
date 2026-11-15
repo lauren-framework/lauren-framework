@@ -65,13 +65,16 @@ def response_cache_key(
     vary: tuple[str, ...],
     custom: Any = None,
     query_names: frozenset[str] | None = None,
+    media_type: str | None = None,
 ) -> str:
     """Return the store key of a response: ``resp:<route>:<sha256>``.
 
     ``HEAD`` shares the ``GET`` entry. The query is order-insensitive across
     parameter names while repeated values keep their order (``query_names``
     keeps only those parameters); every ``vary`` header contributes its
-    values (absent and empty differ).
+    values (absent and empty differ). ``media_type`` is the representation
+    negotiated from ``Accept`` on a route with several ``produces`` entries:
+    one entry per representation, however the client spells its ``Accept``.
     """
     canonical_method = "GET" if method == "HEAD" else method
     query = sorted(
@@ -91,12 +94,18 @@ def response_cache_key(
         [[name, headers.getall(name)] for name in vary],
         custom,
     ]
+    if media_type is not None:
+        material.append(media_type)
     encoded = json.dumps(material, separators=(",", ":"), ensure_ascii=False, default=repr).encode("utf-8")
     return f"resp:{route_template}:{hashlib.sha256(encoded).hexdigest()}"
 
 
-def is_storable(response: Response, policy: CachePolicy) -> bool:
-    """Apply the correct-by-default store-time rules to a handler's response."""
+def is_storable(response: Response, policy: CachePolicy, *, negotiated: bool = False) -> bool:
+    """Apply the correct-by-default store-time rules to a handler's response.
+
+    ``negotiated``: the key covers the negotiated media type, so ``Vary: Accept``
+    does not prevent storing.
+    """
     if response.status not in policy.statuses or response.stream_body is not None:
         return False
     headers = response.headers
@@ -107,7 +116,7 @@ def is_storable(response: Response, policy: CachePolicy) -> bool:
     for name in _vary_names(headers):
         # ``Vary: *`` or a header the key does not cover: the stored response
         # could be replayed to a request it does not match.
-        if name not in policy.vary:
+        if name not in policy.vary and not (negotiated and name == "accept"):
             return False
     return True
 
@@ -174,6 +183,7 @@ class ResponseCacheInterceptor:
             vary=policy.vary,
             custom=custom,
             query_names=policy.query,
+            media_type=getattr(request, "_negotiated_media_type", None),
         )
         if not (policy.respect_client_no_cache and client_requests_no_cache(request.headers)):
             entry = await self._cache.read_entry(key)
@@ -216,7 +226,8 @@ class ResponseCacheInterceptor:
         gens = await self._cache.snapshot_generations(tags)
         response = await call_handler.handle()
         entry: Entry | None = None
-        if is_storable(response, policy):
+        negotiated = getattr(context.request, "_negotiated_media_type", None) is not None
+        if is_storable(response, policy, negotiated=negotiated):
             entry = await self._cache.write_entry(key, encode_response(response), ttl=policy.ttl, gens=gens)
         if policy.debug_header:
             response = response.with_header("x-cache", "MISS")

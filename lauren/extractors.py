@@ -39,6 +39,7 @@ from __future__ import annotations
 import inspect as _inspect
 import json as jsonlib
 import types as _types
+import warnings
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable, Mapping
 from typing import (
@@ -59,6 +60,7 @@ from typing import (
     overload,
 )
 
+from ._metadata import StateKey
 from .exceptions import ExtractorError, ExtractorFieldError, MissingProviderError
 from .types import ByteStream as RequestByteStream
 from .types import ExecutionContext, Request
@@ -263,6 +265,17 @@ class Path(ExtractionMarker):
     source = "path"
 
 
+class HostParam(ExtractionMarker):
+    """A ``{name}`` label of the route's ``host=`` pattern: ``tenant: HostParam[str]``.
+
+    The value comes from the matched host (lower-cased, port dropped) and is
+    validated like a path parameter. The parameter name must be a label of
+    the controller's / module's ``host=`` pattern, else startup fails.
+    """
+
+    source = "host_param"
+
+
 class Query(ExtractionMarker):
     source = "query"
 
@@ -286,6 +299,16 @@ class Form(ExtractionMarker):
 
 
 class State(ExtractionMarker):
+    """Legacy name-based state extractor (``lauren.StateExtractor``).
+
+    Reads ``request.state`` (then ``app_state``) under the *parameter name*.
+    Prefer a :class:`~lauren.StateKey` — ``user: Annotated[AuthUser,
+    CurrentUser]`` — whose missing value is a server error. A missing value
+    here answers 422 with a ``DeprecationWarning`` unless
+    ``ValidationPolicy(missing_state="error")`` is set (the 2.0 default),
+    which raises :class:`~lauren.MissingStateError` (500) instead.
+    """
+
     source = "state"
 
 
@@ -758,6 +781,16 @@ class Extraction:
     #: stream parameters. ``None`` for hand-built extractions, which keep the
     #: pre-engine behaviour.
     compiled: Any = None
+    #: The :class:`~lauren.StateKey` of a ``"state_key"`` parameter
+    #: (``Annotated[T, Key]``). On a legacy ``"state"`` parameter it is set
+    #: only under ``ValidationPolicy(missing_state="error")``, and a missing
+    #: value then raises the key's error instead of the deprecated 422.
+    state_key: Any = None
+
+    #: For an unannotated path parameter using a custom converter, call
+    #: ``to_python`` after routing rather than relying on scalar coercion.
+    #: ``None`` preserves the normal annotation-driven extraction path.
+    converter: Any = None
 
 
 def _peel_optional(annotation: object) -> tuple[object, bool]:
@@ -818,6 +851,8 @@ def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
     * Anything carrying ``__lauren_pipe__`` — appended to the pipe chain
       in declaration order (produced by :func:`pipe` or ``@pipe()``).
     * A :class:`_ParamSpec` (produced by a ``|`` chain) — expanded inline.
+    * A :class:`~lauren.StateKey` — the ``"state_key"`` source (typed
+      request state); it cannot be combined with an extractor marker.
 
     **Optional wrapping.** Two shapes are recognised:
 
@@ -900,6 +935,19 @@ def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
                 fd = inner_fd
             pipes.extend(inner_pipes)
         for extra in args[1:]:
+            # Typed request state: ``Annotated[T, CurrentUser]``.
+            if isinstance(extra, StateKey):
+                if source == "state_key":
+                    raise ExtractorError(
+                        "multiple StateKey entries in Annotated[...]; keep one key per parameter",
+                    )
+                if source is not None:
+                    raise ExtractorError(
+                        f"Annotated[...] combines {extra!r} with the {source!r} extractor; "
+                        "a parameter reads either a state key or one extractor source",
+                    )
+                source, reads_body, marker_cls = "state_key", False, None
+                continue
             # Extractor marker (class or instance).
             candidate = extra if isinstance(extra, type) else type(extra)
             if isinstance(candidate, type) and issubclass(candidate, ExtractionMarker) and source is None:
@@ -907,6 +955,15 @@ def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
                 reads_body = candidate.reads_body
                 marker_cls = candidate
                 continue
+            if (
+                isinstance(candidate, type)
+                and issubclass(candidate, ExtractionMarker)
+                and source == "state_key"
+            ):
+                raise ExtractorError(
+                    f"Annotated[...] combines a StateKey with the {candidate.__name__} extractor; "
+                    "a parameter reads either a state key or one extractor source",
+                )
             if isinstance(extra, FieldDescriptor):
                 if fd is not None:
                     raise ExtractorError(
@@ -976,6 +1033,58 @@ def parse_extractor_hint(annotation: object) -> ParsedExtractorHint:
                 (),
             )
     return None, annotation, False, None, None, ()
+
+
+def state_key_of(annotation: object) -> StateKey[Any] | None:
+    """Return the :class:`~lauren.StateKey` inside ``Annotated[T, Key]`` (or ``... | None``)."""
+    peeled, _ = _peel_optional(annotation)
+    if get_origin(peeled) is not Annotated:
+        return None
+    for extra in get_args(peeled)[1:]:
+        if isinstance(extra, StateKey):
+            return extra
+    return None
+
+
+def prepare_state_extraction(ext: Extraction, annotation: object, *, policy: Any = None) -> None:
+    """Finish a state parameter at startup (``"state_key"`` or the legacy ``"state"`` source).
+
+    A ``"state_key"`` parameter records its key; ``T | None`` (inside or
+    outside the ``Annotated``) or a parameter default makes a missing value
+    resolve to ``None`` / the default. A legacy ``"state"`` parameter gets an
+    anonymous key named after the parameter under
+    ``ValidationPolicy(missing_state="error")``, so its missing value raises
+    :class:`~lauren.MissingStateError` (500) instead of the deprecated 422.
+    """
+    if ext.source == "state_key":
+        ext.state_key = state_key_of(annotation)
+        fd = ext.field_descriptor
+        if not ext.has_default:
+            if fd is not None and fd.default is not ...:  # ``Annotated[T, Key] | None``
+                ext.default, ext.has_default = fd.default, True
+            elif _peel_optional(ext.inner_type)[1]:  # ``Annotated[T | None, Key]``
+                ext.default, ext.has_default = None, True
+        ext.field_descriptor = None
+    elif ext.source == "state" and getattr(policy, "missing_state", "warn") == "error":
+        ext.state_key = StateKey(ext.name)
+
+
+_STATE_MISSING: Any = object()
+
+
+def read_state_key(request: Any, extraction: Extraction) -> object:
+    """Dispatch a ``"state_key"`` parameter: ``request.state``, then ``app_state``, else the key's error."""
+    key = extraction.state_key
+    value = request.state.get(key, _STATE_MISSING)
+    if value is _STATE_MISSING:
+        app_state = request.app_state
+        if app_state is not None:
+            value = app_state.get(key, _STATE_MISSING)
+        if value is _STATE_MISSING:
+            if extraction.has_default:
+                return extraction.default
+            raise key.missing_error(param=extraction.name)
+    return value
 
 
 def _is_pydantic_model_type(annotation: object) -> bool:
@@ -1081,7 +1190,9 @@ def _convert_struct(
 
 
 #: Sources whose ``Extraction.compiled`` plan performs the whole extraction.
-_PLAN_SOURCES: frozenset[str] = frozenset({"path", "query", "header", "cookie", "json", "form", "pagination"})
+_PLAN_SOURCES: frozenset[str] = frozenset(
+    {"path", "query", "header", "cookie", "json", "form", "pagination", "host_param"}
+)
 
 #: Primitive Python types that can be meaningfully coerced from a query-string
 #: segment without any DI or body-parsing machinery.
@@ -1380,6 +1491,8 @@ async def _extract_raw(
     plan = extraction.compiled
     if plan is not None and source in _PLAN_SOURCES:
         return await plan.extract(request, extraction)
+    if source == "state_key":
+        return read_state_key(request, extraction)
     inner = extraction.inner_type
     fd = extraction.field_descriptor
 
@@ -1397,6 +1510,22 @@ async def _extract_raw(
                     return fd.default
                 raise ExtractorFieldError(
                     f"missing path parameter {extraction.name!r}",
+                    detail={"field": extraction.name},
+                )
+            value = (
+                extraction.converter.to_python(raw)
+                if extraction.converter is not None
+                else _coerce_scalar(raw, inner)
+            )
+            return fd.validate(extraction.name, value) if fd else value
+
+        if source == "host_param":
+            raw = request.host_params.get(extraction.name)
+            if raw is None:
+                if extraction.has_default:
+                    return extraction.default
+                raise ExtractorFieldError(
+                    f"missing host parameter {extraction.name!r}",
                     detail={"field": extraction.name},
                 )
             value = _coerce_scalar(raw, inner)
@@ -1441,7 +1570,7 @@ async def _extract_raw(
                 if _is_msgspec_struct_type(peeled_inner):
                     import msgspec as _msgspec
 
-                    for sf in _msgspec.structs.fields(peeled_inner):
+                    for sf in _msgspec.structs.fields(cast(type[_msgspec.Struct], peeled_inner)):
                         # Check both the Python attr name and the encoded name
                         # (may differ when the struct uses rename=).
                         for key_candidate in (sf.encode_name, sf.name):
@@ -1452,10 +1581,10 @@ async def _extract_raw(
                 else:
                     import dataclasses
 
-                    for sf in dataclasses.fields(cast(type[Any], peeled_inner)):
-                        raw = request.query_params.get(sf.name, [])  # type: ignore[assignment]
+                    for dc_field in dataclasses.fields(cast(type[Any], peeled_inner)):
+                        raw = request.query_params.get(dc_field.name, [])  # type: ignore[assignment]
                         if raw:
-                            struct_fields_dict[sf.name] = raw[0] if len(raw) == 1 else raw
+                            struct_fields_dict[dc_field.name] = raw[0] if len(raw) == 1 else raw
                 if not struct_fields_dict and _inner_opt:
                     if extraction.has_default:
                         return extraction.default
@@ -1516,7 +1645,9 @@ async def _extract_raw(
             try:
                 data = jsonlib.loads(body)
             except jsonlib.JSONDecodeError as e:
-                raise ExtractorError(f"invalid JSON: {e}", detail={"field": extraction.name}) from e
+                raise ExtractorError(
+                    f"invalid JSON: {e}", detail={"field": extraction.name, "reason": "malformed_body"}
+                ) from e
             return _validate_json(data, inner, extraction.name)
 
         if source == "form":
@@ -1551,6 +1682,15 @@ async def _extract_raw(
             if val is None:
                 if extraction.has_default:
                     return extraction.default
+                if extraction.state_key is not None:  # ValidationPolicy(missing_state="error")
+                    raise extraction.state_key.missing_error(param=extraction.name)
+                warnings.warn(
+                    f"a missing name-based State parameter {extraction.name!r} answers 422; it becomes "
+                    "MissingStateError (500) in 2.0 — declare a StateKey (Annotated[T, Key]) or opt in now "
+                    'with ValidationPolicy(missing_state="error")',
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
                 raise ExtractorFieldError(
                     f"missing state {extraction.name!r}",
                     detail={"field": extraction.name},
@@ -1814,6 +1954,7 @@ def _invoke_adapter(adapter: object, data: object, field_name: str) -> object:
 __all__ = [
     "ExtractionMarker",
     "Path",
+    "HostParam",
     "Query",
     "Header",
     "Cookie",
@@ -1836,6 +1977,9 @@ __all__ = [
     "PIPE_META",
     "is_pipe",
     "parse_extractor_hint",
+    "prepare_state_extraction",
+    "read_state_key",
+    "state_key_of",
     "extract_parameter",
     "Extraction",
 ]

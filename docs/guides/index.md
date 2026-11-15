@@ -29,6 +29,17 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
     ---
     `OffsetPagination` / `PageNumberPagination` / `CursorPagination[C]` parameters, `Page[T]` / `CursorPage[T]` responses, one envelope per app, RFC 8288 `Link` headers and signed, rotatable cursors.
 
+-   :material-graph-outline: [__Inspecting Apps & CI Tooling__](tooling.md)
+
+    ---
+    `describe_app` snapshots the compiled route, provider and module graphs
+    before lifecycle startup; `python -m lauren check` annotates CI failures.
+
+-   :material-routes: [__HTTP Routing__](routing.md)
+
+    ---
+    Automatic HEAD, optional OPTIONS, typed path converters, trailing slashes, raw-path matching, host routing and global 404/405 handlers.
+
 -   :material-magnify-plus: [__Custom Extractors__](custom-extractors.md)
 
     ---
@@ -63,6 +74,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
 
     ---
     Authentication and authorization classes, route metadata, composition with class-level guards.
+
+-   :material-key: [__Typed Metadata, State Keys & Composition__](typed-metadata-and-state.md)
+
+    ---
+    Type-safe route policy and request-state handoff, startup provenance checks and reusable decorator bundles.
 
 -   :material-layers-triple: [__Custom Middleware__](custom-middleware.md)
 
@@ -133,6 +149,11 @@ Step-by-step recipes for the things you'll do most often as you build a real Lau
 
     ---
     Run behind a reverse proxy with `root_path`, and serve static assets with `StaticFilesModule.for_root("/static", directory="./public")` — ETag caching, path traversal protection, multiple mounts.
+
+-   :material-link-variant: [__URLs, Proxies & Signed Links__](urls-and-proxies.md)
+
+    ---
+    Named routes, `request.url_for` / `url_path_for` from a name or a handler reference, the injectable `UrlBuilder`, the request URL model behind trusted proxies (`ProxyConfig`), and expiring signed links (`ValidSignature`).
 
 -   :material-lightning-bolt: [__Background Tasks__](background-tasks.md)
 

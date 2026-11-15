@@ -17,7 +17,7 @@ The top-level entry points for creating and running a Lauren application.
 | `global_interceptors` | `Iterable[type]` | `None` | Interceptor classes wrapping handler execution |
 | `global_exception_handlers` | `Iterable[Any]` | `None` | Exception handlers (`@exception_handler` decorated) |
 | `global_providers` | `Iterable[Any]` | `None` | DI providers visible to every module |
-| `max_body_size` | `int` | `1_048_576` | Max request body size in bytes |
+| `max_body_size` | `int` | `1_048_576` | App-wide request body limit in bytes (routes override it with `max_body_size=`) |
 | `app_state` | `AppState` | `None` | Application-level state container |
 | `logger` | `Logger` | `None` | Logger instance (defaults to `NullLogger`) |
 | `openapi_info` | `dict[str, Any]` | `None` | OpenAPI info block (`title`, `version`, etc.) |
@@ -36,10 +36,14 @@ The top-level entry points for creating and running a Lauren application.
 | `root_path` | `str` | `""` | ASGI root path prefix stripped from requests |
 | `mounts` | `dict[str, Any]` | `None` | Pre-built sub-app mounts (`{path: app}`) |
 | `sessions` | `SessionConfig` | `None` | Enable signed-cookie sessions |
-| `content` | `ContentConfig` | `None` | Request-body content policy (`strict_content_type`) |
+| `content` | `ContentConfig` | `None` | Content policy: `strict_content_type`, `malformed_body_status`, `codecs`, `default_produces`, `strict_accept` — see [Content Negotiation & Body Limits](../guides/content-negotiation.md) |
+| `routing` | `RoutingConfig` | `None` | [HTTP routing](../guides/routing.md): HEAD/OPTIONS, trailing-slash policy, converters, raw-path matching and host routing |
 | `lazy_startup` | `bool` | `True` | Start on the first HTTP / WebSocket request when the server sent no lifespan events (logs a warning); `False` keeps the app cold until `await app.startup()` |
 | `hosted_services` | `bool` | `True` | `False` discovers and validates `@hosted_service` classes but does not start them |
 | `scheduler` | `bool` | `True` | `False` keeps scheduled jobs validated (and `SchedulerRegistry.trigger` working) but fires nothing |
+| `proxy` | `ProxyConfig` | `None` | Trusted reverse proxies whose `Forwarded` / `X-Forwarded-*` headers set `request.client` / `scheme` / `host` / `root_path` — see [URLs, Proxies & Signed Links](../guides/urls-and-proxies.md#trusted-reverse-proxies) |
+| `public_base_url` | `str` | `None` | The app's public URL: absolute links from `UrlBuilder` and the origin of pagination `Link` URLs |
+| `url_signing` | `UrlSigningConfig` | `None` | Enables signed URLs (`UrlBuilder.signed_url_for`, the `ValidSignature` guard) |
 | `strict_request_scope` | `bool` | `False` | `True` raises `DIScopeViolationError` (`reason="no_active_scope"`) when a `Scope.REQUEST` provider is resolved outside a request, WebSocket connection or `app.scope()`; the default falls back to an untracked transient and warns once per provider — see [Dependency Injection](../guides/dependency-injection.md#request-scoped-providers-resolved-outside-any-scope) |
 
 ### `LaurenFactory.create_context()`
@@ -49,6 +53,12 @@ builds the app with `create()` and returns an
 [`ApplicationContext`](commands.md#applicationcontext): `async with` starts it
 (without serving HTTP) and shuts it down. Hosted services and the scheduler
 are off unless enabled. See [Commands & Scripts](../guides/commands-and-scripts.md).
+
+## RoutingConfig and PathConverter
+
+::: lauren.RoutingConfig
+
+::: lauren.PathConverter
 
 ## Lauren
 
@@ -87,12 +97,14 @@ app.include_module(UserModule)
 | `error_format` | `str` | `"default"`, `"rfc9457"` or `"rfc7807"` |
 | `logger` | `Logger` | Application logger |
 | `lifecycle_state` | `AppLifecycleState` | `CREATED`, `STARTING`, `READY`, `DRAINING`, `STOPPED` or `FAILED` — see [Health & Readiness Probes](../guides/health-checks.md#the-lifecycle-state) |
+| `urls` | `UrlBuilder` | The app's URL builder (the instance `UrlBuilder` injects) — see [URLs, Proxies & Signed Links](../guides/urls-and-proxies.md) |
 
 ### Key methods
 
 | Method | Description |
 |---|---|
 | `mount(path, app)` | Mount an ASGI sub-application at `path` |
+| `url_path_for(target, /, *, route=None, **params)` | App-relative path of a named route or handler reference (`/users/7`) |
 | `startup()` | Run `@post_construct` hooks (then `Lauren.on_startup` hooks), start hosted services and emit lifecycle events |
 | `shutdown(drain_timeout)` | Gracefully stop: drain requests, run `@pre_destruct` |
 | `begin_draining(reason="")` | `READY → DRAINING`: readiness fails while requests are still served (idempotent) |

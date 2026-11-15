@@ -82,52 +82,52 @@ best-effort, so they are collected rather than aborting shutdown.
 <!-- lauren:facts:error-catalog -->
 | Class | Base | HTTP status | `code` | Meaning |
 |---|---|---|---|---|
-| `LaurenError` | `Exception` | — | `lauren_error` | Base class for all lauren framework errors. |
-| `StartupError` | `LaurenError` | — | `startup_error` | Base class for configuration errors raised by `LaurenFactory.create` (never HTTP-mapped). |
-| `RouterConflictError` | `StartupError` | — | `router_conflict` | Two routes share the same (method, path) signature. |
-| `CircularDependencyError` | `StartupError` | — | `circular_dependency` | A cycle was detected in the DI graph. |
-| `CircularModuleError` | `StartupError` | — | `circular_module` | A cycle was detected in the module import graph. |
-| `MissingProviderError` | `StartupError` | — | `missing_provider` | No provider is registered for a requested token. |
-| `ProtocolAmbiguityError` | `StartupError` | — | `protocol_ambiguity` | A protocol has multiple providers but `multi=False` was requested. |
-| `ModuleExportViolation` | `StartupError` | — | `module_export_violation` | A module exports a provider it neither declares nor imports. |
-| `LifecycleConfigError` | `StartupError` | — | `lifecycle_config` | A lifecycle-bound declaration is misused (a hook on a non-method, a hosted service or job on a non-singleton, …). |
-| `MetadataInheritanceError` | `StartupError` | — | `metadata_inheritance` | Injectable metadata was inherited from a base class (forbidden). |
-| `DuplicateBindingError` | `StartupError` | — | `duplicate_binding` | The same class or token is registered twice in one container. |
-| `UnresolvableParameterError` | `StartupError` | — | `unresolvable_parameter` | A handler or provider parameter cannot be resolved to an extractor or dep. |
-| `DIScopeViolationError` | `StartupError` | — | `di_scope_violation` | A singleton depends on a request-scoped provider (or similar). |
-| `MiddlewareConfigError` | `StartupError` | — | `middleware_config` | A middleware lacks `dispatch(request, call_next)`, or `@use_middlewares` cannot run where placed. |
-| `GuardConfigError` | `StartupError` | — | `guard_config` | A guard lacks `can_activate(context)`, or `@use_guards` cannot run where placed. |
-| `InterceptorConfigError` | `StartupError` | — | `interceptor_config` | An interceptor lacks `intercept(ctx, call_handler)`, or `@use_interceptors` cannot run where placed. |
-| `ExceptionHandlerConfigError` | `StartupError` | — | `exception_handler_config` | An `@exception_handler` / `@use_exception_handlers` was misused. |
-| `SessionConfigError` | `StartupError` | — | `session_config` | A `SessionConfig` was invalid, or a `Session` was injected into a handler in an app that did not enable sessions. |
-| `ConfigValidationError` | `StartupError` | — | `config_validation` | One or more settings classes failed to load or validate. |
-| `OpenAPISchemaError` | `StartupError` | — | `openapi_schema` | Reserved for strict OpenAPI generation — not raised yet. |
-| `DecoratorUsageError` | `StartupError` | — | `decorator_usage` | A decorator or provider helper was used incorrectly — most often without parentheses. |
-| `HTTPError` | `LaurenError` | 500 | `http_error` | Base class for errors mapped to HTTP responses. |
-| `ExtractorError` | `HTTPError` | 422 | `extractor_error` | A request value could not be extracted or validated. |
-| `ExtractorFieldError` | `ExtractorError` | 422 | `extractor_field_error` | One parameter is missing or violates a field constraint. |
-| `BadRequestError` | `HTTPError` | 400 | `bad_request` | The request is malformed in a way that is not schema validation. |
-| `NotFoundError` | `HTTPError` | 404 | `not_found` | The requested resource does not exist — the domain 404. |
-| `RouteNotFoundError` | `NotFoundError` | 404 | `route_not_found` | No route matches the request path. |
-| `MethodNotAllowedError` | `HTTPError` | 405 | `method_not_allowed` | The path matches, but not for this HTTP method; `allow=` sets the `Allow` header. |
-| `NotAcceptableError` | `HTTPError` | 406 | `not_acceptable` | No available representation matches the request's `Accept` headers. |
-| `ConflictError` | `HTTPError` | 409 | `conflict` | The request conflicts with the current state of the resource. |
-| `GoneError` | `HTTPError` | 410 | `gone` | The resource existed but has been removed permanently. |
-| `PreconditionFailedError` | `HTTPError` | 412 | `precondition_failed` | A conditional request header (`If-Match`, `If-Unmodified-Since`) evaluated to false. |
-| `RequestBodyTooLarge` | `HTTPError` | 413 | `request_body_too_large` | The request body exceeds `max_body_size`. |
-| `UnsupportedMediaTypeError` | `HTTPError` | 415 | `unsupported_media_type` | The request body's `Content-Type` is not one the route accepts. |
-| `TooManyRequestsError` | `HTTPError` | 429 | `too_many_requests` | The client sent too many requests; `retry_after=` sets `Retry-After`. |
-| `ServiceUnavailableError` | `HTTPError` | 503 | `service_unavailable` | The server cannot handle the request right now; `retry_after=` sets `Retry-After`. |
-| `RequestTimeoutError` | `HTTPError` | 504 | `request_timeout` | A server-side deadline was exceeded while handling the request (504). |
-| `UnauthorizedError` | `HTTPError` | 401 | `unauthorized` | Authentication is missing or invalid; `challenge=` sets `WWW-Authenticate`. |
-| `ForbiddenError` | `HTTPError` | 403 | `forbidden` | The caller is not allowed — also what a guard returning `False` raises by default. |
-| `MissingStateError` | `HTTPError` | 500 | `missing_state` | `request.state.require(key, T)` found no value for `key`. |
-| `StateTypeError` | `HTTPError` | 500 | `state_type_error` | A `request.state` value has the wrong type for `get_typed` / `require`. |
-| `LifecycleError` | `LaurenError` | — | `lifecycle_error` | Base class for errors around startup, shutdown and lifecycle hooks. |
-| `LifecycleViolationError` | `LifecycleError` | — | `lifecycle_violation` | A lifecycle operation was used in the wrong state (`startup()` twice, a mutator after compile). |
-| `DestructError` | `LifecycleError` | — | `destruct_error` | A `@pre_destruct` hook raised during shutdown (collected; shutdown continues). |
-| `DestructTimeoutError` | `LifecycleError` | — | `destruct_timeout` | A `@pre_destruct` hook exceeded its timeout (collected; shutdown continues). |
-| `DrainTimeoutError` | `LifecycleError` | — | `drain_timeout` | Reserved: not raised — a drain timeout at shutdown is logged as a warning. |
+| `LaurenError` | `Exception` | — | `lauren_error` | <span id="lauren-error"></span>Base class for all lauren framework errors. |
+| `StartupError` | `LaurenError` | — | `startup_error` | <span id="startup-error"></span>Base class for configuration errors raised by `LaurenFactory.create` (never HTTP-mapped). |
+| `RouterConflictError` | `StartupError` | — | `router_conflict` | <span id="router-conflict"></span>Two routes share the same (method, path) signature. |
+| `CircularDependencyError` | `StartupError` | — | `circular_dependency` | <span id="circular-dependency"></span>A cycle was detected in the DI graph. |
+| `CircularModuleError` | `StartupError` | — | `circular_module` | <span id="circular-module"></span>A cycle was detected in the module import graph. |
+| `MissingProviderError` | `StartupError` | — | `missing_provider` | <span id="missing-provider"></span>No provider is registered for a requested token. |
+| `ProtocolAmbiguityError` | `StartupError` | — | `protocol_ambiguity` | <span id="protocol-ambiguity"></span>A protocol has multiple providers but `multi=False` was requested. |
+| `ModuleExportViolation` | `StartupError` | — | `module_export_violation` | <span id="module-export-violation"></span>A module exports a provider it neither declares nor imports. |
+| `LifecycleConfigError` | `StartupError` | — | `lifecycle_config` | <span id="lifecycle-config"></span>A lifecycle-bound declaration is misused (a hook on a non-method, a hosted service or job on a non-singleton, …). |
+| `MetadataInheritanceError` | `StartupError` | — | `metadata_inheritance` | <span id="metadata-inheritance"></span>Injectable metadata was inherited from a base class (forbidden). |
+| `DuplicateBindingError` | `StartupError` | — | `duplicate_binding` | <span id="duplicate-binding"></span>The same class or token is registered twice in one container. |
+| `UnresolvableParameterError` | `StartupError` | — | `unresolvable_parameter` | <span id="unresolvable-parameter"></span>A handler or provider parameter cannot be resolved to an extractor or dep. |
+| `DIScopeViolationError` | `StartupError` | — | `di_scope_violation` | <span id="di-scope-violation"></span>A singleton depends on a request-scoped provider (or similar). |
+| `MiddlewareConfigError` | `StartupError` | — | `middleware_config` | <span id="middleware-config"></span>A middleware lacks `dispatch(request, call_next)`, or `@use_middlewares` cannot run where placed. |
+| `GuardConfigError` | `StartupError` | — | `guard_config` | <span id="guard-config"></span>A guard lacks `can_activate(context)`, or `@use_guards` cannot run where placed. |
+| `InterceptorConfigError` | `StartupError` | — | `interceptor_config` | <span id="interceptor-config"></span>An interceptor lacks `intercept(ctx, call_handler)`, or `@use_interceptors` cannot run where placed. |
+| `ExceptionHandlerConfigError` | `StartupError` | — | `exception_handler_config` | <span id="exception-handler-config"></span>An `@exception_handler` / `@use_exception_handlers` was misused. |
+| `SessionConfigError` | `StartupError` | — | `session_config` | <span id="session-config"></span>A `SessionConfig` was invalid, or a `Session` was injected into a handler in an app that did not enable sessions. |
+| `ConfigValidationError` | `StartupError` | — | `config_validation` | <span id="config-validation"></span>One or more settings classes failed to load or validate. |
+| `OpenAPISchemaError` | `StartupError` | — | `openapi_schema` | <span id="openapi-schema"></span>Reserved for strict OpenAPI generation — not raised yet. |
+| `DecoratorUsageError` | `StartupError` | — | `decorator_usage` | <span id="decorator-usage"></span>A decorator or provider helper was used incorrectly — most often without parentheses. |
+| `HTTPError` | `LaurenError` | 500 | `http_error` | <span id="http-error"></span>Base class for errors mapped to HTTP responses. |
+| `ExtractorError` | `HTTPError` | 422 | `extractor_error` | <span id="extractor-error"></span>A request value could not be extracted or validated. |
+| `ExtractorFieldError` | `ExtractorError` | 422 | `extractor_field_error` | <span id="extractor-field-error"></span>One parameter is missing or violates a field constraint. |
+| `BadRequestError` | `HTTPError` | 400 | `bad_request` | <span id="bad-request"></span>The request is malformed in a way that is not schema validation. |
+| `NotFoundError` | `HTTPError` | 404 | `not_found` | <span id="not-found"></span>The requested resource does not exist — the domain 404. |
+| `RouteNotFoundError` | `NotFoundError` | 404 | `route_not_found` | <span id="route-not-found"></span>No route matches the request path. |
+| `MethodNotAllowedError` | `HTTPError` | 405 | `method_not_allowed` | <span id="method-not-allowed"></span>The path matches, but not for this HTTP method; `allow=` sets the `Allow` header. |
+| `NotAcceptableError` | `HTTPError` | 406 | `not_acceptable` | <span id="not-acceptable"></span>No available representation matches the request's `Accept` headers. |
+| `ConflictError` | `HTTPError` | 409 | `conflict` | <span id="conflict"></span>The request conflicts with the current state of the resource. |
+| `GoneError` | `HTTPError` | 410 | `gone` | <span id="gone"></span>The resource existed but has been removed permanently. |
+| `PreconditionFailedError` | `HTTPError` | 412 | `precondition_failed` | <span id="precondition-failed"></span>A conditional request header (`If-Match`, `If-Unmodified-Since`) evaluated to false. |
+| `RequestBodyTooLarge` | `HTTPError` | 413 | `request_body_too_large` | <span id="request-body-too-large"></span>The request body exceeds `max_body_size`. |
+| `UnsupportedMediaTypeError` | `HTTPError` | 415 | `unsupported_media_type` | <span id="unsupported-media-type"></span>The request body's `Content-Type` is not one the route accepts. |
+| `TooManyRequestsError` | `HTTPError` | 429 | `too_many_requests` | <span id="too-many-requests"></span>The client sent too many requests; `retry_after=` sets `Retry-After`. |
+| `ServiceUnavailableError` | `HTTPError` | 503 | `service_unavailable` | <span id="service-unavailable"></span>The server cannot handle the request right now; `retry_after=` sets `Retry-After`. |
+| `RequestTimeoutError` | `HTTPError` | 504 | `request_timeout` | <span id="request-timeout"></span>A server-side deadline was exceeded while handling the request (504). |
+| `UnauthorizedError` | `HTTPError` | 401 | `unauthorized` | <span id="unauthorized"></span>Authentication is missing or invalid; `challenge=` sets `WWW-Authenticate`. |
+| `ForbiddenError` | `HTTPError` | 403 | `forbidden` | <span id="forbidden"></span>The caller is not allowed — also what a guard returning `False` raises by default. |
+| `MissingStateError` | `HTTPError` | 500 | `missing_state` | <span id="missing-state"></span>A required `request.state` value is missing (`require(key, T)`, `state[key]`, a `StateKey` parameter). |
+| `StateTypeError` | `HTTPError` | 500 | `state_type_error` | <span id="state-type-error"></span>A `request.state` value has the wrong type for `get_typed` / `require`. |
+| `LifecycleError` | `LaurenError` | — | `lifecycle_error` | <span id="lifecycle-error"></span>Base class for errors around startup, shutdown and lifecycle hooks. |
+| `LifecycleViolationError` | `LifecycleError` | — | `lifecycle_violation` | <span id="lifecycle-violation"></span>A lifecycle operation was used in the wrong state (`startup()` twice, a mutator after compile). |
+| `DestructError` | `LifecycleError` | — | `destruct_error` | <span id="destruct-error"></span>A `@pre_destruct` hook raised during shutdown (collected; shutdown continues). |
+| `DestructTimeoutError` | `LifecycleError` | — | `destruct_timeout` | <span id="destruct-timeout"></span>A `@pre_destruct` hook exceeded its timeout (collected; shutdown continues). |
+| `DrainTimeoutError` | `LifecycleError` | — | `drain_timeout` | <span id="drain-timeout"></span>Reserved: not raised — a drain timeout at shutdown is logged as a warning. |
 <!-- /lauren:facts -->
 
 ## Raising the built-in HTTP errors

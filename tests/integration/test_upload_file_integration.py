@@ -290,15 +290,16 @@ def test_missing_required_upload_returns_422() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_missing_boundary_parameter_returns_422() -> None:
+def test_missing_boundary_parameter_returns_415() -> None:
     app = LaurenFactory.create(_UploadModule)
-    # Claim multipart content type but omit the boundary.
+    # The media type is multipart but cannot frame any file without a boundary.
     r = TestClient(app).post(
         "/upload/single",
         content=b"garbage",
         headers={"content-type": "multipart/form-data"},
     )
-    assert r.status_code == 422
+    assert r.status_code == 415
+    assert r.json()["error"]["detail"]["supported"] == ["multipart/form-data"]
 
 
 def test_corrupt_multipart_body_returns_422() -> None:

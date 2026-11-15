@@ -82,3 +82,28 @@ def test_query_structs_read_repeated_keys(client: TestClient) -> None:
     assert client.get("/m/query?name=a&qty=4&tags=x").json() == {"qty": 4, "tags": ["x"]}
     issues = client.get("/m/query?name=a&qty=-4").json()["error"]["detail"]["issues"]
     assert issues[0]["loc"] == ["query", "qty"]
+
+
+def test_single_decode_falls_back_when_json_is_valid_but_msgspec_cannot_parse_it() -> None:
+    client = TestClient(LaurenFactory.create(StructModule))
+
+    response = client.post(
+        "/m/body", content=b'\xef\xbb\xbf{"name":"a","qty":2}', headers={"content-type": "application/json"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"name": "a", "qty": 2}
+
+
+def test_malformed_msgspec_json_with_400_includes_line_and_column() -> None:
+    from lauren import ContentConfig
+
+    client = TestClient(LaurenFactory.create(StructModule, content=ContentConfig(malformed_body_status=400)))
+
+    response = client.post(
+        "/m/body", content=b'{"name": "a",\n "qty": }', headers={"content-type": "application/json"}
+    )
+
+    detail = response.json()["error"]["detail"]
+    assert response.status_code == 400
+    assert (detail["reason"], detail["line"], detail["col"]) == ("malformed_body", 2, 9)

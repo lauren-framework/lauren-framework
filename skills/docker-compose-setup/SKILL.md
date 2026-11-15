@@ -46,10 +46,16 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--lifespan",
 ## main.py
 
 ```python
-from lauren import LaurenFactory
+from lauren import LaurenFactory, ProxyConfig
 from app.module import AppModule
 
-app = LaurenFactory.create(AppModule)
+# Only the network between Compose's reverse proxy and the app may supply
+# forwarding headers; replace the CIDR with your actual proxy subnet.
+app = LaurenFactory.create(
+    AppModule,
+    proxy=ProxyConfig(trusted=["172.16.0.0/12"], trust_prefix=True),
+    public_base_url="https://api.example.com",
+)
 ```
 
 ## docker-compose.yml
@@ -154,6 +160,16 @@ api:
     retries: 3
     start_period: 15s
 ```
+
+## Trusted proxy and URL generation
+
+Do **not** enable `uvicorn --proxy-headers` together with Lauren's default
+`ProxyConfig` client/scheme rewriting. When uvicorn has already applied proxy
+headers, use `server_applied=True` (host/prefix only) or configure one layer
+only; see [URLs, Proxies & Signed Links](../../docs/guides/urls-and-proxies.md).
+Forwarding headers from direct peers outside `trusted` are ignored. Ensure the
+app port is not exposed to untrusted clients when a proxy is intended, and
+set `public_base_url` to the externally accessible URL for emails/webhooks.
 
 ## Tips
 

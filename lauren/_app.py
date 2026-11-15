@@ -42,6 +42,7 @@ from . import context as _context
 from .decorators import controller, module
 from .exceptions import LifecycleViolationError
 from .signals import AppLifecycleState
+from ._urls._module import APP_ROUTES_FLAG
 from .types import AppState, DebugConfig
 
 
@@ -100,6 +101,10 @@ class Lauren:
         response_validation: str = "off",
         json_fallback: str = "warn",
         pagination: Any | None = None,
+        routing: Any | None = None,
+        proxy: Any | None = None,
+        public_base_url: str | None = None,
+        url_signing: Any | None = None,
     ) -> None:
         self._title = title
         self._version = version
@@ -143,6 +148,10 @@ class Lauren:
         self._response_validation = response_validation
         self._json_fallback = json_fallback
         self._pagination = pagination
+        self._routing = routing
+        self._proxy = proxy
+        self._public_base_url = public_base_url
+        self._url_signing = url_signing
         self._startup_handlers: list[Callable[[], Any]] = []
         self._shutdown_handlers: list[Callable[[], Any]] = []
 
@@ -194,10 +203,13 @@ class Lauren:
 
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             self._assert_not_compiled("register a route")
-            # Route options fail here, at decoration time, like ``@get(...)``.
-            from .decorators import _validate_route_options
+            # Route options and the path template fail here, at decoration
+            # time, like ``@get(...)``.
+            from .decorators import _check_path, _validate_route_options
 
-            _validate_route_options(f"app.{method.lower()}", fn, kwargs)
+            label = "app.any_method" if method == "*" else f"app.{method.lower()}"
+            _check_path(label, fn, path)
+            _validate_route_options(label, fn, kwargs)
             self._route_buffer.append(_PendingRoute(method=method, path=path, fn=fn, kwargs=kwargs))
             return fn
 
@@ -224,6 +236,29 @@ class Lauren:
 
     def options(self, path: str = "/", **kw: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         return self._make_route("OPTIONS", path, **kw)
+
+    def route(
+        self, path: str = "/", *, methods: Any, **kw: Any
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register one handler for several methods, like :func:`lauren.route`."""
+        from collections.abc import Iterable
+
+        from .decorators import route as _route
+
+        names = list(methods) if isinstance(methods, Iterable) and not isinstance(methods, str) else methods
+        _route(path, methods=names, **kw)  # validates the method names now
+        verbs = [self._make_route(m, path, **kw) for m in dict.fromkeys(str(m).upper() for m in names)]
+
+        def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+            for verb in verbs:
+                verb(fn)
+            return fn
+
+        return decorator
+
+    def any_method(self, path: str = "/", **kw: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a handler for every method at ``path``, like :func:`lauren.any_method`."""
+        return self._make_route("*", path, **kw)
 
     # ------------------------------------------------------------------
     # Structured registration \u2014 modules & middleware
@@ -346,6 +381,15 @@ class Lauren:
         if not path:
             raise ValueError("mount path must not be empty")
         self._mounts[path] = app
+
+    def url_path_for(self, target: Any, /, *, route: str | None = None, **params: Any) -> Any:
+        """The app-relative path of a route (see :meth:`LaurenApp.url_path_for`); compiles the app.
+
+        Routes registered with ``@app.get`` are named after their function
+        (``app.url_path_for("read_item", item_id=1)``) unless they pass
+        ``name=``; the function itself works as a handler reference too.
+        """
+        return self._compile_now().url_path_for(target, route=route, **params)
 
     # ------------------------------------------------------------------
     # Lifecycle hooks
@@ -487,6 +531,10 @@ class Lauren:
             response_validation=self._response_validation,
             json_fallback=self._json_fallback,
             pagination=self._pagination,
+            routing=self._routing,
+            proxy=self._proxy,
+            public_base_url=self._public_base_url,
+            url_signing=self._url_signing,
         )
         # --- Startup hooks run inside LaurenApp.startup(), after every
         # @post_construct hook (not here, before singletons exist) ---------
@@ -633,6 +681,8 @@ def _build_app_controller(routes: list[_PendingRoute]) -> type:
         attrs[name] = decorated
 
     cls = type("_LaurenAppController", (), attrs)
+    # Route names derive from the function names (``@app.get`` style).
+    setattr(cls, APP_ROUTES_FLAG, True)
     # Decorate as a controller at the app root; empty prefix keeps paths
     # exactly as the user wrote them.
     controller("")(cls)
@@ -686,6 +736,8 @@ def _wrap_function_as_method(fn: Callable[..., Any]) -> Callable[..., Any]:
         "__lauren_use_exception_handlers__",
         "__lauren_use_encoder__",
         "__lauren_metadata__",
+        "__lauren_metadata_keys__",
+        "__lauren_composed__",
         "__lauren_raises__",
     ):
         if hasattr(fn, marker):

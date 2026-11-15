@@ -17,6 +17,7 @@ __all__ = [
     "ReflectedModule",
     "ReflectedWsGateway",
     "ReflectedError",
+    "ReflectedComposition",
 ]
 
 
@@ -81,6 +82,35 @@ class ReflectedRoute:
 
     raises: tuple[type, ...] = ()
     """The ``@raises`` error classes (the method's, then the controller's own)."""
+
+    guards: tuple[type, ...] = ()
+    """The compiled route and controller guards (not global guards)."""
+
+    interceptors: tuple[type, ...] = ()
+    """The compiled route and controller interceptors (not globals)."""
+
+    middlewares: tuple[type, ...] = ()
+    """The compiled route and controller middleware chain (not globals)."""
+    consumes: tuple[str, ...] = ()
+    """Accepted request media types: ``consumes=`` (route, else controller). From
+    :func:`~lauren.reflect.get_all_routes`, the effective list — including the types
+    inferred from body parameters (``Json[T]`` → ``application/json``, …)."""
+
+    produces: tuple[str, ...] = ()
+    """Response media types: ``produces=`` (route, else controller). From
+    :func:`~lauren.reflect.get_all_routes`, the effective list (``ContentConfig.default_produces``
+    when undeclared)."""
+
+    host: str | None = None
+    """Canonical host pattern, or ``None`` for a host-independent route."""
+
+    max_body_size: int | None = None
+    """The route's body limit in bytes (route, else controller); ``None`` means the app's
+    ``max_body_size``."""
+    name: str | None = None
+    """The route's full name for URL building (``"users.show"``, or the derived
+    ``"UserController.show"``); ``None`` from :func:`~lauren.reflect.reflect_routes`
+    (names are assigned at startup) and for unnamed routes."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +180,9 @@ class ReflectedWsGateway:
     middlewares: tuple[type, ...]
     messages: tuple[ReflectedWsMessage, ...]
     owning_module: type | None
+    host: str | None = None
+    name: str | None = None
+    """The gateway's full name for ``ws_url_for`` (``None`` when ambiguous)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,3 +212,18 @@ class ReflectedError:
 
     summary: str
     """The first paragraph of the class's own docstring, on one line (``""`` without one)."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReflectedComposition:
+    """One ``compose(...)`` application recorded on a class or function.
+
+    Returned by :func:`~lauren.reflect.reflect_composed`, in application order.
+    """
+
+    name: str | None
+    """The ``name=`` given to :func:`~lauren.compose` (``None`` when unnamed)."""
+
+    decorators: tuple[str, ...]
+    """A label per composed decorator, in written order (e.g. ``"use_guards"``,
+    ``"app.roles('admin')"``, or a nested composition's name)."""

@@ -84,7 +84,11 @@ def error_catalog() -> str:
     lines = ["| Class | Base | HTTP status | `code` | Meaning |", "|---|---|---|---|---|"]
     for cls in _catalog():
         base = cls.__bases__[0].__name__
-        lines.append(f"| `{cls.__name__}` | `{base}` | {_status(cls)} | `{cls.code}` | {_meaning(cls)} |")
+        anchor = cls.code.replace("_", "-")
+        lines.append(
+            f"| `{cls.__name__}` | `{base}` | {_status(cls)} | `{cls.code}` | "
+            f'<span id="{anchor}"></span>{_meaning(cls)} |'
+        )
     return "\n".join(lines) + "\n"
 
 

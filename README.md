@@ -109,6 +109,9 @@ core ideas:
   inside `LaurenFactory.create(...)`, not on the first request.
 * **No reflection on the request path.** The whole graph is compiled into
   immutable structures at startup; serving a request is pure traversal.
+* **HTTP-correct routing.** GET routes serve HEAD automatically (headers only);
+  typed path converters, host routing, trailing-slash policies and optional
+  OPTIONS are configured once with `RoutingConfig`.
 * **AI-ready by default.** Public surface is mirrored in
   [`llms.txt` / `llms-full.txt`](https://lauren-py.dev/llms.txt) and exported
   in `__all__` — a CI hook keeps the two in lock-step.
@@ -144,6 +147,10 @@ core ideas:
   `@use_middlewares`, `@use_encoder`, and `@set_metadata` annotations from a
   source class or function to a target — the `functools.wraps` equivalent for
   Lauren's decorator metadata.
+* **Compiled-app inspection** — `describe_app(app)` snapshots routes, module and
+  provider graphs, effective guards, WebSocket gateways and OpenAPI without
+  starting lifecycle hooks. `python -m lauren check`, `routes` and `openapi`
+  validate and inspect an app from CI, with source-linked startup hints.
 * **`lauren.reflect`** — Full metadata introspection API: static readers
   (`reflect_controller`, `reflect_routes`, `reflect_guards`, …), app-level
   readers (`get_all_routes`, `get_all_ws_gateways`, `get_route_metadata`), and
@@ -168,6 +175,12 @@ core ideas:
   validated parameters with hard maxima, one envelope per app, RFC 8288 `Link`
   headers, opaque HMAC-signed cursors with key rotation, and named OpenAPI
   components.
+* **Named routes & URL generation** — every route has a name;
+  `request.url_path_for(UserController.show, id=7)` builds links that survive
+  mounts, `root_path` and proxy prefixes. `ProxyConfig(trusted=[...])` makes
+  `request.client` / `scheme` / `host` honour forwarding headers from trusted
+  proxies only, and `UrlSigningConfig` + `ValidSignature` give expiring,
+  tamper-proof links.
 * **Custom responses & file delivery** — Return your own `Response` subclasses,
   stream downloads with `await Response.file(...)`, or emit XML with
   `Response.xml(...)` while keeping the dispatch pipeline untouched.
@@ -201,6 +214,13 @@ core ideas:
   Unsafe configuration is rejected at startup. Pair with
   `content=ContentConfig(strict_content_type=True)` so cross-site `text/plain`
   posts to JSON routes are rejected (415).
+* **Body codecs & content negotiation** — routes declare `consumes=`,
+  `produces=` and `max_body_size=` (also per controller): a 50 MiB upload
+  route no longer raises the limit of every JSON route, `Content-Length` is
+  checked before anything is read and every oversize body is a 413. JSON is
+  decoded with msgspec when installed (pydantic bodies in one pass);
+  `ContentConfig(codecs=[MsgpackCodec()])` adds MessagePack, negotiated from
+  `Accept` with `Vary: Accept` (406 with `strict_accept=True`).
 * **Stores & caching** — one async key-value `Store` protocol (bounded
   `MemoryStore` in core; Redis and friends plug in) behind sessions, session
   revocation, the `Cache` service (`get_or_set` with single-flight, tag
@@ -314,6 +334,45 @@ uvicorn main:app --reload
 # → http://127.0.0.1:8000/docs  (Swagger UI)
 ```
 
+### Typed guard metadata and request state
+
+Use one key on both sides of a guard/route boundary; collection metadata
+accumulates across controller and route, and a state key types the value the
+guard hands to the handler:
+
+```python
+from dataclasses import dataclass
+from typing import Annotated
+from lauren import MetadataSetKey, StateKey, provides_state, use_guards
+
+Roles = MetadataSetKey[str]("app.roles")
+
+@dataclass
+class Principal:
+    id: str
+
+CurrentUser = StateKey[Principal]("app.user", require_provider=True)
+
+@provides_state(CurrentUser)
+class AuthGuard:
+    async def can_activate(self, ctx):
+        ctx.request.state[CurrentUser] = Principal(id="alice")
+        return "admin" in ctx.get_metadata(Roles)
+
+@Roles("admin")
+@use_guards(AuthGuard)
+@controller("/private")
+class PrivateController:
+    @get("/")
+    async def index(self, user: Annotated[Principal, CurrentUser]) -> dict:
+        return {"id": user.id}
+```
+
+`compose(use_guards(AuthGuard), Roles("admin"), name="admin")` bundles those
+decorators without wrapping the handler. [Typed metadata, state keys and
+composition](docs/guides/typed-metadata-and-state.md) covers merging,
+provenance checks and WebSocket use.
+
 ## Dependency injection
 
 ```python
@@ -423,6 +482,29 @@ Or mount any ASGI sub-app:
 app = LaurenFactory.create(AppModule)
 app.mount("/static", StaticFiles(directory="static"))
 ```
+
+## URL generation
+
+```python
+from lauren import controller, get, post
+from lauren.responses import Created
+from lauren.types import Request
+
+@controller("/users", name="users")
+class UserController:
+    @get("/{id}", name="show")
+    async def show(self, id: int) -> dict:
+        return {"id": id}
+
+    @post("/")
+    async def create(self, request: Request) -> Created[dict]:
+        # "/users/7" — or "/v1/users/7" under a mount, "/api/users/7" behind root_path
+        return Created({"id": 7}, location=request.url_path_for(UserController.show, id=7))
+```
+
+Behind a load balancer, pass `proxy=ProxyConfig(trusted=["10.0.0.0/8"])` to
+`LaurenFactory.create` and `request.client.host`, `request.scheme` and
+`request.url_for(...)` reflect the real client and public URL.
 
 ## Sessions
 

@@ -176,6 +176,9 @@ def coverage(session: nox.Session) -> None:
     branch coverage (``--cov-fail-under=90``), locally and in the CI ``coverage``
     job that runs it.
 
+    Install optional msgspec and orjson backends for this measurement; the
+    separate extras matrix continues to test bare-runtime installations.
+
     Arguments passed after ``--`` *replace* that default list instead of
     extending it, so leaving a path unnamed makes pytest fall back to its
     ``testpaths`` (``tests``) — which is what the ``coverage`` job in
@@ -185,7 +188,19 @@ def coverage(session: nox.Session) -> None:
         nox -s coverage -- tests/unit --cov-report=xml
     """
     session.run("uv", "sync", "--extra", "dev", "--active", external=True)
-    session.run("uv", "pip", "install", "coverage[toml]", "pytest-cov", external=True)
+    # Measure the optional validator/codec paths too. Bare-runtime behavior is
+    # tested separately by the extras matrix; skipped backends must not leave
+    # the canonical coverage report blind to their implementation.
+    session.run(
+        "uv",
+        "pip",
+        "install",
+        "coverage[toml]",
+        "pytest-cov",
+        "msgspec>=0.18",
+        "orjson>=3.10",
+        external=True,
+    )
     args = session.posargs or [
         "tests/unit",
         "tests/integration",
@@ -364,13 +379,14 @@ def bench_plots(session: nox.Session) -> None:
 # ---------------------------------------------------------------------------
 @nox.session(python=PRIMARY_PYTHON, reuse_venv=True)
 def lint(session: nox.Session) -> None:
-    """Run ruff against the package and tests.
+    """Check package, tests and scripts without changing files.
 
-    Use ``nox -s lint -- --fix`` to auto-fix.
+    Use ``nox -s lint -- --fix`` to opt into auto-fixes.
     """
-    session.install("ruff>=0.6")
-    extra = session.posargs or ["--fix"]
-    session.run("ruff", "check", *extra, "lauren")
+    # Match the pre-commit hook; newer defaults must not rewrite a green tree.
+    session.install("ruff==0.15.12")
+    extra = session.posargs
+    session.run("ruff", "check", *extra, "lauren", "tests", "scripts")
 
 
 @nox.session(python=PRIMARY_PYTHON, reuse_venv=True)
@@ -379,7 +395,7 @@ def format(session: nox.Session) -> None:  # noqa: A001 - intentional name
 
     This *writes* changes. Run ``nox -s lint`` afterwards to verify.
     """
-    session.install("ruff>=0.6")
+    session.install("ruff==0.15.12")
     session.run("ruff", "format", "lauren", "tests")
     session.run("ruff", "check", "--fix", "lauren", "tests")
 

@@ -50,7 +50,8 @@ class UsersController:
 
 | Annotation | Source | Notes |
 |---|---|---|
-| `Path[T]` | URL segment `{name}` | Auto-applied when param name matches segment |
+| `Path[T]` | URL segment `{name}` | Auto-applied when param name matches segment; `{id:int}` constrains matching (bad id → 404 rather than 422) |
+| `HostParam[T]` | `{name}` in `@controller(host="{name}.example.com")` | DNS-case-insensitive; port ignored; host is not an auth boundary |
 | `Query[T]` | `?key=value` | `list[str]` collects multi-value |
 | `Header[T]` | request header | case-insensitive |
 | `Cookie[T]` | cookie jar | |
@@ -67,7 +68,7 @@ class UsersController:
 - Annotation is a Pydantic model, `msgspec.Struct`, dataclass, `TypedDict`, or `Discriminated[A|B,"key"]` → `Json[T]`
 - Annotation is `int/str/float/bool` → `Query[T]`
 
-See [extractors.md](extractors.md) for field descriptors, pipes, and upload files.
+Path matching prefers static → typed converters (`re`, custom, `uuid`, `int`/`sint`, `float`, `slug`) → untyped `{name}` → wildcard. `RoutingConfig` controls automatic HEAD, optional OPTIONS, trailing slashes, slash merging, and opt-in raw-path matching. See [HTTP Routing](../../docs/guides/routing.md) and [extractors.md](extractors.md) for field descriptors, pipes, and upload files.
 
 ## Validation and the 422 payload
 
@@ -102,7 +103,7 @@ logs dataclass/TypedDict failures; a model that uses markers or
 return {"ok": True}             # → JSON 200
 return "plain text"             # → text/plain 200
 return None                     # → 204 No Content
-return Created(user, location=f"/users/{user.id}")   # → JSON 201 + Location (typed result)
+return Created(user, location=request.url_path_for(UserController.show, id=user.id))   # → JSON 201 + Location
 return body, 201                # → JSON 201 (tuple shorthand — not documented in OpenAPI)
 return Response.json(data, status=202)          # explicit Response
 return Response.redirect("/new-url", status=301)
@@ -158,6 +159,37 @@ async def events(self, paging: CursorPagination[EventKey]) -> CursorPage[EventOu
 - `CursorPagination` needs `PaginationConfig(cursor_secret=...)` (startup error otherwise);
   a tampered cursor is a 400 `invalid_cursor`. `PageNumberPagination` reads `?page=&per_page=`.
 - `paginate_sequence(items, paging)` paginates an in-memory list.
+
+## Content types, codecs and body limits
+
+```python fragment
+from lauren import Bytes, ContentConfig, Json, LaurenFactory, MsgpackCodec, controller, get, patch, post
+
+@controller("/items", max_body_size=256 * 1024)          # default for the controller's routes
+class ItemController:
+    @patch("/{id}", consumes=["application/merge-patch+json"])
+    async def merge(self, id: int, body: Json[ItemPatch]) -> ItemOut: ...
+
+    @post("/import", consumes="text/csv", max_body_size=20 * 1024 * 1024)
+    async def import_csv(self, body: Bytes) -> dict: ...
+
+    @get("/{id}", produces=["application/json", "application/msgpack"])
+    async def show(self, id: int) -> ItemOut: ...
+
+app = LaurenFactory.create(
+    AppModule,
+    content=ContentConfig(strict_content_type=True, codecs=[MsgpackCodec()]),
+)
+```
+
+- `consumes=` is always enforced (415 with `Accept-Post` / `Accept-Patch`); without it a
+  `Json[T]` route accepts `application/json` / `+json` and is checked only under
+  `strict_content_type`. `Bytes` / `ByteStream` accept anything unless `consumes=` is set.
+- `produces=` negotiates `Accept` (adds `Vary: Accept`); `strict_accept=True` answers 406.
+  Returned `Response` / `str` / `bytes` values are never re-encoded.
+- `max_body_size=` (route → controller → app) raises or lowers the limit per route; every
+  oversize body is 413. Never raise the app-wide limit for one upload route.
+- A media type no codec serves fails startup (`reason="codec_not_registered"`).
 
 ## Choosing the JSON encoder
 

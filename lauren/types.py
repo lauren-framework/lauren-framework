@@ -16,14 +16,18 @@ from typing import (
     Literal,
     Mapping,
     Protocol,
+    Sequence,
     TypeVar,
     Union,
     get_args,
     get_origin,
+    overload,
     runtime_checkable,
 )
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, quote
 
+from ._metadata import _UNSET, MetadataKey, MetadataSetKey, StateKey, read_metadata
+from ._urls._url import DEFAULT_PORTS, PATH_SAFE, URL, UrlAccess, compose_origin, join_root, parse_authority
 from .exceptions import MissingStateError, RequestBodyTooLarge, StateTypeError
 
 T = TypeVar("T")
@@ -163,7 +167,11 @@ class State:
 
     Attributes can be set either via attribute-style (``state.user = u``) or
     with :meth:`set`. Typed retrieval helps middleware/handlers avoid silent
-    type errors.
+    type errors. A :class:`~lauren.StateKey` gives a slot a name *and* a type:
+    ``state[CurrentUser] = user`` stores under the key's name and
+    ``state[CurrentUser]`` reads it back (raising the key's ``on_missing`` —
+    :class:`MissingStateError` by default — when absent). Item access, ``in``,
+    :meth:`get`, :meth:`set` and :meth:`has` accept a key or a plain string.
     """
 
     def __init__(self, initial: Mapping[str, Any] | None = None) -> None:
@@ -178,14 +186,50 @@ class State:
     def __setattr__(self, key: str, value: Any) -> None:
         object.__getattribute__(self, "_data")[key] = value
 
-    def set(self, key: str, value: Any) -> None:
-        self._data[key] = value  # type: ignore[attr-defined]
+    @overload
+    def __getitem__(self, key: StateKey[T]) -> T: ...
+    @overload
+    def __getitem__(self, key: str) -> Any: ...
+    def __getitem__(self, key: Any) -> Any:
+        data: dict[str, Any] = self._data  # type: ignore[attr-defined]
+        if isinstance(key, StateKey):
+            try:
+                return data[key.name]
+            except KeyError:
+                raise key.missing_error() from None
+        try:
+            return data[key]
+        except KeyError:
+            raise MissingStateError(f"required state key {key!r} is missing", detail={"key": key}) from None
 
-    def get(self, key: str, default: Any = None) -> Any:
-        return self._data.get(key, default)  # type: ignore[attr-defined]
+    @overload
+    def __setitem__(self, key: StateKey[T], value: T) -> None: ...
+    @overload
+    def __setitem__(self, key: str, value: Any) -> None: ...
+    def __setitem__(self, key: StateKey[Any] | str, value: Any) -> None:
+        self._data[key.name if isinstance(key, StateKey) else key] = value  # type: ignore[attr-defined]
 
-    def has(self, key: str) -> bool:
-        return key in self._data  # type: ignore[attr-defined]
+    def __contains__(self, key: object) -> bool:
+        return (key.name if isinstance(key, StateKey) else key) in self._data  # type: ignore[attr-defined]
+
+    @overload
+    def set(self, key: StateKey[T], value: T) -> None: ...
+    @overload
+    def set(self, key: str, value: Any) -> None: ...
+    def set(self, key: StateKey[Any] | str, value: Any) -> None:
+        self._data[key.name if isinstance(key, StateKey) else key] = value  # type: ignore[attr-defined]
+
+    @overload
+    def get(self, key: StateKey[T]) -> T | None: ...
+    @overload
+    def get(self, key: StateKey[T], default: T) -> T: ...
+    @overload
+    def get(self, key: str, default: Any = None) -> Any: ...
+    def get(self, key: Any, default: Any = None) -> Any:
+        return self._data.get(key.name if isinstance(key, StateKey) else key, default)  # type: ignore[attr-defined]
+
+    def has(self, key: StateKey[Any] | str) -> bool:
+        return (key.name if isinstance(key, StateKey) else key) in self._data  # type: ignore[attr-defined]
 
     def get_typed(self, key: str, expected: type[T]) -> T | None:
         val = self._data.get(key)  # type: ignore[attr-defined]
@@ -212,7 +256,8 @@ class State:
 class AppState(State):
     """Read-only application-level state.
 
-    Writes raise :class:`RuntimeError` after the app has been sealed.
+    Writes raise :class:`RuntimeError` after the app has been sealed (once
+    startup completed). ``StateKey`` item access works as on :class:`State`.
     """
 
     def __init__(self, initial: Mapping[str, Any] | None = None) -> None:
@@ -227,7 +272,20 @@ class AppState(State):
             raise RuntimeError("AppState is sealed and read-only after startup")
         super().__setattr__(key, value)
 
-    def set(self, key: str, value: Any) -> None:
+    @overload
+    def __setitem__(self, key: StateKey[T], value: T) -> None: ...
+    @overload
+    def __setitem__(self, key: str, value: Any) -> None: ...
+    def __setitem__(self, key: StateKey[Any] | str, value: Any) -> None:
+        if getattr(self, "_sealed", False):
+            raise RuntimeError("AppState is sealed and read-only after startup")
+        super().__setitem__(key, value)
+
+    @overload
+    def set(self, key: StateKey[T], value: T) -> None: ...
+    @overload
+    def set(self, key: str, value: Any) -> None: ...
+    def set(self, key: StateKey[Any] | str, value: Any) -> None:
         if getattr(self, "_sealed", False):
             raise RuntimeError("AppState is sealed and read-only after startup")
         super().set(key, value)
@@ -273,9 +331,37 @@ class ContentConfig:
     * ``None`` (default) — ``"warn"`` when ``sessions=`` is configured,
       otherwise ``False``. Setting any explicit value also silences the
       startup warning session-enabled apps get.
+
+    The same policy applies to ``Form[...]`` bodies. Routes that declare
+    ``consumes=[...]`` and ``UploadFile`` parameters (``multipart/form-data``)
+    are always checked.
+
+    * ``malformed_body_status`` — the status of a body that cannot be decoded
+      (malformed JSON): ``422`` (default; ``detail.reason`` is
+      ``"malformed_body"``) or ``400`` (:class:`~lauren.exceptions.BadRequestError`
+      with ``line`` / ``col`` when known).
+    * ``codecs`` — extra :class:`~lauren.codecs.Codec` instances, e.g.
+      ``[MsgpackCodec()]``. The JSON codec is always present; pass a
+      ``JsonCodec(backend="stdlib")`` to configure it.
+    * ``default_produces`` — the response media types of routes without
+      ``produces=``, in preference order (``("application/json",)``).
+    * ``strict_accept`` — answer 406 :class:`~lauren.exceptions.NotAcceptableError`
+      when ``Accept`` excludes every ``produces`` entry, instead of serving
+      the first one.
     """
 
     strict_content_type: bool | Literal["warn"] | None = None
+    malformed_body_status: int = 422
+    codecs: Sequence[Any] = ()
+    default_produces: Sequence[str] = ("application/json",)
+    strict_accept: bool = False
+
+    def __post_init__(self) -> None:
+        # Lists are accepted for convenience; retain an immutable snapshot.
+        for name in ("codecs", "default_produces"):
+            value = getattr(self, name)
+            if isinstance(value, list):
+                object.__setattr__(self, name, tuple(value))
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,12 +411,18 @@ class DebugConfig:
     include_locals: bool = False
 
 
-class Request:
+class Request(UrlAccess):
     """Incoming HTTP request.
 
     The request owns its ASGI scope and the ``receive`` callable required to
     consume the body. State, route metadata, and app state are attached by the
     runtime before the handler executes.
+
+    The URL model — ``scheme``, ``host``, ``port``, ``root_path``,
+    ``base_url``, ``full_url`` and ``client`` — comes from the ASGI scope and
+    the ``Host`` header, or from a trusted proxy when the app is built with
+    ``proxy=ProxyConfig(...)``. ``url_for`` / ``url_path_for`` /
+    ``ws_url_for`` build URLs to the app's named routes.
 
     Instances are **pooled and reused** by :class:`lauren._arena.RequestArena`:
     ``reset()`` clears the instance's entire ``__dict__`` between requests, so
@@ -353,12 +445,19 @@ class Request:
         app_state: AppState | None = None,
         max_body_size: int = 1_048_576,
         extensions: dict[str, Any] | None = None,
+        scheme: str = "http",
+        root_path: str = "",
+        authority: str | None = None,
+        urls: Any = None,
     ) -> None:
         self._method = method.upper()
         self._path = path
         self._raw_query_string = raw_query_string
         self._headers = headers or Headers()
         self._path_params: dict[str, str] = dict(path_params or {})
+        # ``{name}`` labels of a host-routed request (``HostParam``); set by
+        # the router, shared empty mapping otherwise.
+        self._host_params: Mapping[str, str] = _EMPTY_HOST_PARAMS
         self._query_params: dict[str, list[str]] | None = None
         self._client = client or ClientInfo(None, None)
         self._server = server or ServerInfo(None, None)
@@ -375,6 +474,12 @@ class Request:
         self._route_template: str | None = None
         # Cookies cache
         self._cookies: dict[str, str] | None = None
+        # URL model: ASGI scheme, public root path, a trusted proxy's
+        # ``host[:port]`` (``None``: the Host header) and the app's UrlBuilder.
+        self._scheme = scheme
+        self._root_path = root_path
+        self._authority_value = authority
+        self._urls = urls
         # ASGI ``scope["extensions"]``: stored only when the server sent some,
         # so the common case adds no attribute (see the ``extensions`` property).
         if extensions:
@@ -395,6 +500,10 @@ class Request:
         app_state: AppState,
         max_body_size: int,
         extensions: dict[str, Any] | None = None,
+        scheme: str = "http",
+        root_path: str = "",
+        authority: str | None = None,
+        urls: Any = None,
     ) -> None:
         """Re-initialise this :class:`Request` in place for reuse.
 
@@ -440,6 +549,7 @@ class Request:
         # what that code sees. (Same reasoning as the fresh ``State()``
         # below.)
         self._path_params = {}
+        self._host_params = _EMPTY_HOST_PARAMS
         self._query_params = None
         self._client = client
         self._server = server
@@ -457,6 +567,10 @@ class Request:
         self._handler_func = None
         self._route_template = None
         self._cookies = None
+        self._scheme = scheme
+        self._root_path = root_path
+        self._authority_value = authority
+        self._urls = urls
         if extensions:
             self._extensions = extensions
 
@@ -472,14 +586,81 @@ class Request:
 
     @property
     def url(self) -> str:
+        """The app-relative path and query (``/users/7?x=1``); see ``full_url`` for the absolute URL."""
         qs = self._raw_query_string.decode("latin-1")
         if qs:
             return f"{self._path}?{qs}"
         return self._path
 
     @property
+    def path_with_query(self) -> str:
+        """``path?query`` — the same value as ``url``, which lauren 2.0 makes absolute."""
+        return self.url
+
+    # -- URL model ----------------------------------------------------------
+
+    @property
+    def scheme(self) -> str:
+        """``"http"`` or ``"https"`` — from the ASGI scope or a trusted proxy."""
+        return self._scheme
+
+    @property
+    def root_path(self) -> str:
+        """The public path prefix in front of ``path`` (``/backend``): mounts, ``root_path=``, a trusted proxy."""
+        return self._root_path
+
+    def _host_port(self) -> tuple[str, int | None]:
+        value = self._authority_value
+        if value is None:
+            value = self._headers.get("host") or self._headers.get(":authority")
+        if value:
+            parsed = parse_authority(value.strip())
+            if parsed is not None:
+                return parsed
+        host = self._server.host
+        if not host:
+            return "", None
+        return (f"[{host}]" if ":" in host else host), self._server.port
+
+    @property
+    def host(self) -> str:
+        """The host the client addressed: a trusted proxy's, the ``Host`` header's, or the server's.
+
+        IPv6 literals keep their brackets. An invalid ``Host`` header is
+        ignored. Without a trusted proxy the ``Host`` header is client-chosen —
+        build links that leave the request (emails, webhooks) with
+        :class:`~lauren.urls.UrlBuilder` and ``public_base_url=`` instead.
+        """
+        return self._host_port()[0]
+
+    @property
+    def port(self) -> int:
+        """The port the client addressed (the scheme's default when the host names none)."""
+        port = self._host_port()[1]
+        return port if port is not None else DEFAULT_PORTS.get(self._scheme, 80)
+
+    def _url_parts(self) -> tuple[str, str, int, str, Any]:
+        host, port = self._host_port()
+        if port is None:
+            port = DEFAULT_PORTS.get(self._scheme, 80)
+        return self._scheme, host, port, self._root_path, self._urls
+
+    @property
+    def full_url(self) -> URL:
+        """The absolute request URL: ``scheme://host[:port]{root_path}{path}[?query]``."""
+        scheme, host, port, root, _ = self._url_parts()
+        url = compose_origin(scheme, host, port) + join_root(root, quote(self._path, safe=PATH_SAFE))
+        qs = self._raw_query_string.decode("latin-1")
+        return URL(f"{url}?{qs}" if qs else url)
+
+    @property
     def path_params(self) -> dict[str, str]:
         return self._path_params
+
+    @property
+    def host_params(self) -> Mapping[str, str]:
+        """``{name}`` labels of the matched ``host=`` pattern (lower-cased; empty otherwise)."""
+        return self._host_params
 
     @property
     def query_params(self) -> dict[str, list[str]]:
@@ -541,9 +722,44 @@ class Request:
 
     # -- Body consumption --------------------------------------------------
 
+    def _set_body_limit(self, limit: int) -> None:
+        """Apply a route's ``max_body_size`` (called by the dispatcher right after routing).
+
+        Raises :class:`~lauren.exceptions.RequestBodyTooLarge` when the body was
+        already buffered (by a global middleware) and exceeds ``limit``.
+        """
+        self._max_body_size = limit
+        if self._body is not None and len(self._body) > limit:
+            raise RequestBodyTooLarge(f"body exceeds {limit} bytes", detail={"max_body_size": limit})
+
+    def _reject_declared_oversize(self) -> None:
+        """Raise ``RequestBodyTooLarge`` when ``Content-Length`` already exceeds the limit.
+
+        Runs before the first ``receive()``; an absent or invalid header leaves
+        the decision to the streaming byte count.
+        """
+        declared = self._headers.get("content-length")
+        if declared is None:
+            return
+        declared = declared.strip()
+        if not (declared.isascii() and declared.isdigit()):
+            return
+        # Compare decimal strings instead of int(declared): Python limits the
+        # number of digits it will convert, and an attacker can supply a much
+        # longer but syntactically valid Content-Length. Still answer 413 before
+        # awaiting receive, without a ValueError turning into a 500.
+        digits = declared.lstrip("0") or "0"
+        maximum = str(self._max_body_size)
+        if len(digits) > len(maximum) or (len(digits) == len(maximum) and digits > maximum):
+            raise RequestBodyTooLarge(
+                f"body exceeds {self._max_body_size} bytes",
+                detail={"max_body_size": self._max_body_size},
+            )
+
     async def body(self) -> bytes:
         if self._body is not None:
             return self._body
+        self._reject_declared_oversize()
         chunks: list[bytes] = []
         total = 0
         while True:
@@ -586,6 +802,7 @@ class Request:
         if self._body is not None:
             yield self._body
             return
+        self._reject_declared_oversize()
         total = 0
         while True:
             msg = await self._receive()
@@ -620,6 +837,7 @@ class Request:
 
 
 _EMPTY_EXTENSIONS: Mapping[str, Any] = MappingProxyType({})
+_EMPTY_HOST_PARAMS: Mapping[str, str] = MappingProxyType({})
 
 
 async def _empty_receive() -> dict[str, Any]:
@@ -730,8 +948,10 @@ class ByteStream:
     "silent second iteration yields nothing" bug that would
     otherwise occur.
 
-    The app-wide ``max_body_size`` is enforced across the stream: if
-    the cumulative chunk total exceeds the limit, iteration raises
+    The effective ``max_body_size`` (the route's, else the app's) is
+    enforced across the stream: a ``Content-Length`` above it is rejected
+    before anything is read, and if the cumulative chunk total exceeds the
+    limit, iteration raises
     :class:`~lauren.exceptions.RequestBodyTooLarge` with the same
     semantics as :meth:`Request.body`. This means a misbehaving
     client cannot defeat the body-size cap by switching from
@@ -780,6 +1000,12 @@ class ByteStream:
             if req._body:
                 return req._body
             raise StopAsyncIteration
+        if self._total == 0:
+            try:
+                req._reject_declared_oversize()
+            except RequestBodyTooLarge:
+                self._consumed = True
+                raise
         while True:
             msg = await req._receive()
             mtype = msg.get("type")
@@ -919,7 +1145,9 @@ class Response:
 
             encoder = get_active_encoder()
         body = encoder.encode_compact(data)
-        return cls(body, status=status, headers=headers, media_type="application/json")
+        # A negotiated response codec (``produces=``) labels its own bytes.
+        media_type = getattr(encoder, "lauren_media_type", None) or "application/json"
+        return cls(body, status=status, headers=headers, media_type=media_type)
 
     @classmethod
     def text(cls, data: str, *, status: int = 200, headers: Headers | None = None) -> "Response":
@@ -1301,16 +1529,27 @@ class MiddlewareProtocol(Protocol):
 
 @dataclass
 class ExecutionContext:
-    """Contextual info passed to guards."""
+    """Contextual info passed to guards, interceptors and extractors.
+
+    ``metadata`` is the route's merged ``@set_metadata`` / typed-key mapping,
+    compiled once at startup and shared read-only by every request.
+    """
 
     request: Request
     handler_class: type | None = None
     handler_func: Callable[..., Any] | None = None
     route_template: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
-    def get_metadata(self, key: str, default: Any = None) -> Any:
-        return self.metadata.get(key, default)
+    @overload
+    def get_metadata(self, key: MetadataSetKey[T]) -> tuple[T, ...]: ...
+    @overload
+    def get_metadata(self, key: MetadataKey[T]) -> T: ...
+    @overload
+    def get_metadata(self, key: str, default: Any = None) -> Any: ...
+    def get_metadata(self, key: Any, default: Any = _UNSET) -> Any:
+        """Read route metadata: a typed key returns its typed value (or its default); a string reads raw."""
+        return read_metadata(self.metadata, key, default)
 
 
 @runtime_checkable
@@ -1514,6 +1753,7 @@ __all__ = [
     "MutableHeaders",
     "State",
     "AppState",
+    "StateKey",
     "Request",
     "Response",
     "ClientInfo",

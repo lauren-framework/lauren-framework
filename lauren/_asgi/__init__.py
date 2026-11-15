@@ -7,9 +7,12 @@ import functools
 import inspect
 import logging
 import time
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Iterable
+from urllib.parse import quote
 
 import anyio.to_thread
 
@@ -51,10 +54,13 @@ from ..background import BackgroundTasks as _BackgroundTasks, _BG_TASKS_ATTR
 from ..context import ApplicationContext, OperationScope
 from .._lifecycle import LifecycleScheduler
 from .._modules import ModuleGraph
-from .._routing import RouteEntry, Router
+from .._routing import RouteEntry, RouteRedirect, Router, raw_routing_path
+from .._routing._config import RoutingConfig
+from .._routing._converters import is_builtin_converter
 from ..decorators import (
     CONTROLLER_META,
     EXCEPTION_HANDLER_META,
+    MODULE_META,
     RAISES_META,
     RESPONSE_VALIDATION_MODES,
     ROUTE_META,
@@ -69,6 +75,7 @@ from ..decorators import (
     RouteMeta,
 )
 from ..exceptions import (
+    BadRequestError,
     ExceptionHandlerConfigError,
     ExtractorError,
     ForbiddenError,
@@ -78,6 +85,7 @@ from ..exceptions import (
     LifecycleViolationError,
     MethodNotAllowedError,
     RouteNotFoundError,
+    RouterConflictError,
     StartupError,
     UnsupportedMediaTypeError,
 )
@@ -90,11 +98,22 @@ from ..extractors import (
     extract_parameter,
     is_pipe,
     parse_extractor_hint,
+    prepare_state_extraction,
+    read_state_key,
+)
+from .._metadata import (
+    METADATA_KEYS,
+    check_state_provenance,
+    merge_metadata_levels,
+    own_metadata,
+    stack_metadata_dicts,
 )
 from .._validation import is_json_body_type as _is_json_body_type
 from .._schema._compiler import TypeCompiler
 from .._schema._markers import ValidationPolicy
 from .._schema._params import (
+    NATIVE as _NATIVE,
+    WARN as _WARN,
     ValidationRuntime,
     build_param_plan,
     failure_weight as _failure_weight,
@@ -143,8 +162,24 @@ from .._pagination import (
     resolve_app as _resolve_pagination,
 )
 from .._pagination._config import BUILTIN_DEFAULTS as _PAGINATION_DEFAULTS
-from .._pagination._links import ROOT_PATH_ATTR as _ROOT_PATH_ATTR
+from .._urls._forwarded import CompiledProxy, Forwarded, ProxyConfig, resolve_forwarded
+from .._urls._module import (
+    build_route_table as _build_route_table,
+    check_signature_guards as _check_signature_guards,
+    install_urls as _install_urls,
+    prepare_urls as _prepare_urls,
+)
+from .._urls._registry import UrlBuilder
+from .._urls._signing import UrlSigningConfig
+from .._urls._url import URL, parse_authority as _parse_authority
 from ._problem import instance_reference as _instance_reference, problem_payload as _problem_payload
+from .._codecs._plan import (
+    ContentRuntime,
+    add_vary_accept as _add_vary_accept,
+    compile_route_content,
+    produces_structured as _produces_structured,
+    resolve_content,
+)
 from ._contracts import (
     ResponseContractViolation,
     _coerce_result,
@@ -154,6 +189,12 @@ from ._contracts import (
 from ..responses import RESULT_TYPES as _RESULT_TYPES
 
 logger = logging.getLogger("lauren")
+
+#: Request attribute holding the raw routing path under
+#: ``RoutingConfig(match_raw_path=True)``; ``Request.reset`` clears it.
+_RAW_PATH_ATTR = "_lauren_raw_path"
+#: Characters kept verbatim in a redirect ``Location`` path.
+_LOCATION_PATH_SAFE = "/:@!$&'()*+,;="
 
 #: Last-resort 500 body when no encoder can render the error envelope.
 _STATIC_INTERNAL_ERROR_BODY = (
@@ -195,7 +236,10 @@ class CompiledHandler:
     extractions: tuple[Extraction, ...]
     middleware_chain: tuple[type, ...]
     guards: tuple[type, ...]
-    metadata: dict[str, Any]
+    #: Route metadata merged across levels at startup (typed keys apply their
+    #: merge policy) — a read-only mapping shared by every request's
+    #: ``ExecutionContext``.
+    metadata: Mapping[str, Any]
     #: Effective exception-handler chain for this route, ordered route
     #: → controller (globals are appended at dispatch time so that the
     #: same compiled handler can be reused under different global
@@ -256,10 +300,25 @@ class CompiledHandler:
     response_plan: Any = None
     #: ``@raises`` declarations (method first, then the controller's own).
     raises: tuple[Any, ...] = ()
+    #: Typed metadata declarations captured at compile time for manifest visibility.
+    metadata_key_defs: tuple[Any, ...] = ()
+    #: Canonical host pattern of this compiled route (separate from its path).
+    host: str | None = None
+    route_name: str | None = None
+    #: ``Content-Type`` check (:class:`lauren._codecs._plan.ContentGate`), or
+    #: ``None`` when the route does not check it.
+    content_gate: Any = None
+    #: Response negotiation (:class:`lauren._codecs._plan.Negotiation`), or
+    #: ``None`` for plain JSON responses.
+    negotiation: Any = None
+    #: The route's ``max_body_size`` (route → controller), ``None``: the app's.
+    body_limit: int | None = None
+    #: Effective accepted / produced media types (docs and reflection).
+    consumes: tuple[str, ...] = ()
+    produces: tuple[str, ...] = ()
+    #: ``consumes`` was declared (``consumes=``) rather than inferred.
+    consumes_declared: bool = False
 
-
-#: Media types a JSON body parameter accepts under ``strict_content_type``.
-_JSON_MEDIA_TYPES: tuple[str, ...] = ("application/json", "application/*+json")
 
 #: The only method of a cross-site "simple" request that carries a body
 #: (forms and ``no-cors`` fetches; PUT/PATCH/DELETE need a CORS preflight).
@@ -269,37 +328,6 @@ _SIMPLE_REQUEST_BODY_METHODS: frozenset[str] = frozenset({"POST"})
 #: mode — the media type is client-chosen, so memory must stay bounded, and a
 #: flood on one route must not silence the others.
 _CONTENT_TYPE_WARN_LIMIT = 16
-
-
-def _json_content_type_problem(headers: Headers) -> str | None:
-    """Return why a JSON body parameter may not accept this request, or ``None``.
-
-    ``application/json`` and ``application/*+json`` with no charset or UTF-8
-    pass. A missing ``Content-Type`` is only a problem when the request
-    announces a body (``Content-Length`` above zero, or ``Transfer-Encoding``);
-    an empty body falls through to the usual "missing JSON body" handling.
-    """
-    raw = headers.get("content-type")
-    if raw is None or not raw.strip():
-        if headers.get("transfer-encoding") is not None:
-            return "no Content-Type"
-        length = headers.get("content-length")
-        if length is None:
-            return None
-        try:
-            return "no Content-Type" if int(length) > 0 else None
-        except ValueError:
-            return "no Content-Type"
-    media, _, params = raw.partition(";")
-    media = media.strip().lower()
-    if media != "application/json" and not (media.startswith("application/") and media.endswith("+json")):
-        return media
-    for param in params.split(";"):
-        name, _, value = param.partition("=")
-        charset = value.strip().strip('"').lower()
-        if name.strip().lower() == "charset" and charset not in ("utf-8", "utf8"):
-            return f"{media}; charset={charset}"
-    return None
 
 
 def _compile_handler_signature(
@@ -312,6 +340,7 @@ def _compile_handler_signature(
     validation: ValidationRuntime | None = None,
     route: str = "",
     pagination: ResolvedPagination | None = None,
+    path_converters: Mapping[str, Any] | None = None,
 ) -> tuple[tuple[Extraction, ...], list[str]]:
     """Introspect a handler and produce its extraction plan.
 
@@ -335,10 +364,18 @@ def _compile_handler_signature(
     ``CursorPagination[C]``) become the ``"pagination"`` source; their plan —
     the effective ``PaginationConfig`` (``pagination`` is the app's), integer
     validators and the cursor codec — is compiled here.
+
+    ``path_converters`` maps the route's path parameters to their converters
+    (``{id:int}``): an unannotated path parameter takes the converter's
+    ``python_type``, and an annotation that can never agree with the
+    converter (``{id:uuid}`` with ``id: int``) raises
+    :class:`~lauren.exceptions.UnresolvableParameterError`.
     """
     sig = inspect.signature(fn)
     hints = _safe_type_hints(fn)
     path_param_names = path_param_names or set()
+    # Unannotated path parameters typed by a converter ({id:int} → int).
+    converter_typed: set[str] = set()
     extractions: list[Extraction] = []
     param_names: list[str] = []
     annotations: dict[str, Any] = {}
@@ -406,7 +443,14 @@ def _compile_handler_signature(
 
         # Auto-promote bare parameters whose name matches a path variable.
         if source is None and name in path_param_names:
-            inner_type = _strip_param_annotated(ann) if ann is not inspect.Parameter.empty else str
+            converter = path_converters.get(name) if path_converters else None
+            if ann is not inspect.Parameter.empty:
+                inner_type = _strip_param_annotated(ann)
+            else:
+                # An unannotated parameter takes its converter's type ({id:int} → int).
+                inner_type = getattr(converter, "python_type", str) if converter is not None else str
+                if inner_type is not str:
+                    converter_typed.add(name)
             extractions.append(
                 Extraction(
                     name=name,
@@ -416,6 +460,13 @@ def _compile_handler_signature(
                     default=default,
                     has_default=has_default,
                     pipes=pipes,
+                    converter=(
+                        converter
+                        if ann is inspect.Parameter.empty
+                        and converter is not None
+                        and not is_builtin_converter(converter)
+                        else None
+                    ),
                 )
             )
             param_names.append(name)
@@ -642,26 +693,33 @@ def _compile_handler_signature(
                     "param": name,
                 },
             )
-        extractions.append(
-            Extraction(
-                name=name,
-                source=source,
-                inner_type=inner,
-                field_descriptor=fd,
-                default=default,
-                has_default=has_default,
-                reads_body=reads_body,
-                marker_cls=marker_cls,
-                pipes=pipes,
-            )
+        marked = Extraction(
+            name=name,
+            source=source,
+            inner_type=inner,
+            field_descriptor=fd,
+            default=default,
+            has_default=has_default,
+            reads_body=reads_body,
+            marker_cls=marker_cls,
+            pipes=pipes,
         )
+        if source in ("state_key", "state"):
+            prepare_state_extraction(
+                marked, ann, policy=validation.policy if validation is not None else None
+            )
+        extractions.append(marked)
         # No startup restriction on instance-method extractors: both
         # @injectable (DI-resolved) and plain (no-arg cache) forms are valid.
         param_names.append(name)
+    if path_converters:
+        for ext in extractions:
+            if ext.source == "path" and ext.name in path_converters:
+                _check_converter_annotation(controller_cls, fn, ext, path_converters[ext.name])
     if validation is not None:
         for ext in extractions:
-            if ext.source == "pagination":
-                continue  # compiled above
+            if ext.source == "pagination" or ext.converter is not None:
+                continue  # pagination compiled above; custom converter owns conversion
             ext.compiled = build_param_plan(
                 ext,
                 annotations.get(ext.name),
@@ -670,7 +728,96 @@ def _compile_handler_signature(
                 owner=controller_cls.__name__,
                 handler=getattr(fn, "__name__", "?"),
             )
+            if ext.name in converter_typed and ext.compiled is not None and ext.compiled.strategy == _WARN:
+                # The converter already guaranteed the segment's format, so
+                # the native validator is exact: ``{key:uuid}`` gives a UUID
+                # even under the 1.x ``stdlib_models="warn"`` default.
+                ext.compiled.strategy = _NATIVE
     return tuple(extractions), param_names
+
+
+#: Types a converter and an annotation can disagree on for every value.
+_CONVERTER_SCALARS: tuple[type, ...] = (int, float, uuid.UUID)
+
+
+def _check_converter_annotation(
+    controller_cls: type, fn: Callable[..., Any], ext: Extraction, converter: Any
+) -> None:
+    """Fail startup when a converter and its parameter's annotation can never agree.
+
+    Only clear contradictions fail: a ``uuid`` segment for an ``int`` /
+    ``float`` parameter, or an ``int`` / ``float`` segment for a ``UUID`` one.
+    ``str`` and unknown types are accepted (the annotation still coerces).
+    """
+    from ..exceptions import UnresolvableParameterError
+
+    converter_type = getattr(converter, "python_type", str)
+    annotation, _ = _peel_optional(_strip_param_annotated(ext.inner_type))
+    if converter_type not in _CONVERTER_SCALARS or annotation not in _CONVERTER_SCALARS:
+        return
+    if (converter_type is uuid.UUID) == (annotation is uuid.UUID):
+        return
+    handler = f"{controller_cls.__name__}.{getattr(fn, '__name__', '?')}"
+    raise UnresolvableParameterError(
+        f"path parameter {ext.name!r} of {handler} is annotated {annotation.__name__} but its converter "
+        f"{getattr(converter, 'spec', type(converter).__name__)!r} yields {converter_type.__name__} values; "
+        "change the annotation or the converter",
+        detail={
+            "class": controller_cls.__name__,
+            "handler": getattr(fn, "__name__", "?"),
+            "param": ext.name,
+            "converter": str(getattr(converter, "spec", type(converter).__name__)),
+            "annotation": annotation.__name__,
+            "reason": "converter_mismatch",
+        },
+    )
+
+
+def _route_path(prefix: str, path: str) -> str:
+    """Join a controller prefix and a route path, keeping a declared trailing slash.
+
+    A route path of ``"/"`` (or ``""``) names the prefix itself, so the
+    trailing slash then comes from the prefix. The router drops it again
+    under ``trailing_slash="ignore"`` (the default).
+    """
+    full = _normalize_path(prefix, path)
+    declared = path if path.strip("/") else prefix
+    if full != "/" and declared.endswith("/") and declared.strip("/"):
+        full += "/"
+    return full
+
+
+def _infer_converters(path: str, fn: Callable[..., Any]) -> str:
+    """``RoutingConfig(infer_converters=True)``: type untyped ``{name}`` segments from annotations.
+
+    ``int`` parameters route as ``{name:sint}`` and ``uuid.UUID`` ones as
+    ``{name:uuid}``; every other segment is kept as written.
+    """
+    if "{" not in path:
+        return path
+    hints = _safe_type_hints(fn)
+    out: list[str] = []
+    for segment in path.split("/"):
+        if segment.startswith("{") and segment.endswith("}") and ":" not in segment and "*" not in segment:
+            spec = _inferred_spec(hints.get(segment[1:-1], inspect.Parameter.empty))
+            if spec is not None:
+                segment = "{" + segment[1:-1] + ":" + spec + "}"
+        out.append(segment)
+    return "/".join(out)
+
+
+def _inferred_spec(ann: Any) -> str | None:
+    if ann is inspect.Parameter.empty:
+        return None
+    source, inner, *_ = parse_extractor_hint(ann)
+    if source not in (None, "path"):
+        return None
+    tp, _ = _peel_optional(_strip_param_annotated(inner if source else ann))
+    if tp is int:
+        return "sint"
+    if tp is uuid.UUID:
+        return "uuid"
+    return None
 
 
 def _strip_param_annotated(tp: Any) -> Any:
@@ -800,6 +947,7 @@ def _unwrap_handler_descriptor(
         "__lauren_pre_destruct__",
         "__lauren_cache_response__",
         "__lauren_idempotent__",
+        "__lauren_composed__",
     )
 
     def _merge_markers(descriptor: Any, func: Any) -> None:
@@ -808,7 +956,27 @@ def _unwrap_handler_descriptor(
         # rather than keep one side. Entries applied below the wrapper ran
         # first and stay first; ``@set_metadata`` keys applied above win.
         # Idempotent — this runs every time the class is inspected.
+        outer_meta = getattr(descriptor, SET_METADATA, None)
+        outer_keys = getattr(descriptor, METADATA_KEYS, None)
+        if outer_meta is not None or outer_keys is not None:
+            # Typed keys stack by their own rule (collection keys union,
+            # scalar keys refuse conflicting values).
+            values, keys = stack_metadata_dicts(
+                getattr(func, SET_METADATA, None) or {},
+                getattr(func, METADATA_KEYS, None) or {},
+                outer_meta or {},
+                outer_keys or {},
+                getattr(func, "__qualname__", repr(func)),
+            )
+            try:
+                setattr(func, SET_METADATA, values)
+                if keys:
+                    setattr(func, METADATA_KEYS, keys)
+            except (AttributeError, TypeError):
+                pass
         for marker in _MARKER_ATTRS:
+            if marker == SET_METADATA:
+                continue
             outer = getattr(descriptor, marker, None)
             if outer is None:
                 continue
@@ -926,8 +1094,14 @@ class LaurenApp:
         validation: ValidationRuntime | None = None,
         response_validation: str = "off",
         json_fallback: str = "warn",
+        routing: RoutingConfig | None = None,
     ) -> None:
         self._router = router
+        #: Router HTTP semantics (``routing=``); the router holds the same object.
+        self._routing: RoutingConfig = routing if routing is not None else router.config
+        self._auto_options = self._routing.auto_options
+        self._match_raw_path = self._routing.match_raw_path
+        self._host_routing = router.has_hosts
         self._container = container
         self._module_graph = module_graph
         self._lifecycle = lifecycle
@@ -943,6 +1117,7 @@ class LaurenApp:
         # resolved by the factory) and the warn-once memory for "warn" mode,
         # keyed by (method, route template) → media types already reported.
         self._strict_content_type: bool | str = strict_content_type
+        self._content: ContentRuntime | None = None  # factory binds this app's codec registry
         self._content_type_warned: dict[tuple[str, str], set[str]] = {}
         self._app_state = app_state
         self._strict_lifecycle = strict_lifecycle
@@ -1055,8 +1230,23 @@ class LaurenApp:
         #: (route, error class) pairs already reported by the debug-mode
         #: undeclared-``@raises`` check.
         self._undeclared_raise_warned: set[tuple[str, type]] = set()
+        #: The app's URL builder (named routes, ``public_base_url``, signing);
+        #: the factory replaces this unbound one and binds the route table.
+        self._urls: UrlBuilder = UrlBuilder()
+        #: Trusted reverse proxies (``proxy=``); ``None``: forwarding headers ignored.
+        self._proxy: CompiledProxy | None = None
 
     # -- Introspection -----------------------------------------------------
+
+    def describe(self, *, include_metadata_values: bool = False) -> Any:
+        """Return the versioned manifest of this compiled app, without starting it.
+
+        Include user metadata values only when explicitly requested. Secret
+        wrappers stay redacted in either mode.
+        """
+        from ..reflect import describe_app
+
+        return describe_app(self, include_metadata_values=include_metadata_values)
 
     @property
     def router(self) -> Router:
@@ -1260,6 +1450,91 @@ class LaurenApp:
     def mounts(self) -> list[tuple[str, Any]]:
         """Read-only snapshot of ``(path_prefix, sub_app)`` pairs."""
         return list(self._mounts)
+
+    # -- URL generation ----------------------------------------------------
+
+    @property
+    def urls(self) -> UrlBuilder:
+        """The app's :class:`~lauren.urls.UrlBuilder` — the instance ``UrlBuilder`` injects."""
+        return self._urls
+
+    def url_path_for(self, target: Any, /, *, route: str | None = None, **params: Any) -> URL:
+        """The app-relative path of a route: ``app.url_path_for("users.show", id=7)`` → ``/users/7``.
+
+        ``target`` is a route name or a handler reference
+        (``UserController.show``); ``route=`` picks one route of a handler
+        that has several. No root path or mount prefix is added — use
+        ``request.url_path_for`` inside a request, or an injected
+        :class:`~lauren.urls.UrlBuilder`. Raises :class:`LookupError` for an
+        unknown target and :class:`ValueError` for missing / unexpected path
+        parameters.
+        """
+        return URL(self._urls._route_path(target, route, params))
+
+    # -- Connection URL model ----------------------------------------------
+
+    def _split_root(self, scope: dict[str, Any]) -> tuple[str, str]:
+        """``(app-relative path, public root path)`` of a scope.
+
+        Strips a configured ``root_path=`` prefix when the upstream server
+        has not already done so. Uvicorn honours ``--root-path`` by setting
+        ``scope["root_path"]`` *and* pre-stripping ``scope["path"]``; a plain
+        nginx proxy typically leaves ``scope["root_path"]`` empty and the full
+        prefixed path in ``scope["path"]``.
+        """
+        own_root = getattr(self, "_root_path", "")
+        raw_path = scope.get("path", "/")
+        scope_root = scope.get("root_path")
+        # A mounted child can have *its own* configured root_path in
+        # addition to the mount's root_path in the ASGI scope. Strip only
+        # when path carries that prefix and scope_root does not already end
+        # with it (a server which stripped it reports it in scope_root).
+        own_root = own_root.rstrip("/")
+        if (
+            own_root
+            and not (scope_root or "").rstrip("/").endswith(own_root)
+            and (raw_path == own_root or raw_path.startswith(own_root + "/"))
+        ):
+            return raw_path[len(own_root) :] or "/", (scope_root or "").rstrip("/") + own_root
+        # A server-stripped prefix (``uvicorn --root-path``, a mount) is part of
+        # the public URL unless the path already carries it.
+        public_root = (
+            scope_root
+            if scope_root
+            and not (raw_path == scope_root or raw_path.startswith(scope_root.rstrip("/") + "/"))
+            else ""
+        )
+        return raw_path, public_root
+
+    def _forwarded_scope(self, scope: dict[str, Any], proxy: CompiledProxy) -> dict[str, Any]:
+        """A mounted sub-app's scope with a trusted proxy's client, scheme, host and prefix applied."""
+        raw_headers = scope.get("headers", [])
+        headers = Headers([(k.decode("latin-1"), v.decode("latin-1")) for k, v in raw_headers])
+        client = scope.get("client") or (None, None)
+        forwarded = (
+            None
+            if scope.get("_lauren_forwarding_resolved")
+            else resolve_forwarded(proxy, client[0], headers, websocket=scope["type"] == "websocket")
+        )
+        if forwarded is None:
+            return scope
+        scope = dict(scope)
+        # A mounted Lauren child must not apply the same headers a second
+        # time (especially when the real client is in a trusted subnet).
+        scope["_lauren_forwarding_resolved"] = True
+        if forwarded.client is not None:
+            scope["client"] = (forwarded.client[0], forwarded.client[1] or 0)
+        if forwarded.scheme is not None:
+            scope["scheme"] = forwarded.scheme
+        authority = _forwarded_authority(forwarded, headers)
+        if authority is not None:
+            value = authority.encode("latin-1")
+            scope["headers"] = [(k, value if k.lower() == b"host" else v) for k, v in raw_headers]
+            if all(k.lower() != b"host" for k, _ in raw_headers):
+                scope["headers"].append((b"host", value))
+        if forwarded.prefix:
+            scope["root_path"] = forwarded.prefix + scope.get("root_path", "")
+        return scope
 
     # -- Operation scopes --------------------------------------------------
 
@@ -1727,34 +2002,57 @@ class LaurenApp:
             )
         return error
 
-    def _enforce_json_content_type(self, request: Request, compiled: CompiledHandler) -> None:
-        """Apply ``strict_content_type`` to a request bound for a JSON body parameter.
+    def _enforce_content_type(self, request: Request, gate: Any, route: str) -> None:
+        """Apply a route's :class:`~lauren._codecs._plan.ContentGate` before the body is read.
 
-        Strict mode raises :class:`UnsupportedMediaTypeError` (415) before any
-        body byte is read; "warn" mode logs the first occurrence of each media
-        type per route (up to a bounded number per route) and lets the request
-        through.
+        A strict gate raises :class:`UnsupportedMediaTypeError` (415, with
+        ``Accept-Post`` / ``Accept-Patch`` listing what is supported); a "warn"
+        gate logs the first occurrence of each media type per route (up to a
+        bounded number per route) and lets the request through.
         """
-        problem = _json_content_type_problem(request.headers)
+        problem = gate.problem(request.headers)
         if problem is None:
             return
-        method, route = request.method, compiled.path_template
-        if self._strict_content_type is True:
-            received = request.headers.get("content-type")
+        method = request.method
+        if gate.strict:
+            headers = {gate.allow_header: ", ".join(gate.supported)} if gate.allow_header else None
             raise UnsupportedMediaTypeError(
-                f"{method} {route} expects a JSON body (application/json), got {problem}",
-                detail={"content_type": received, "supported": list(_JSON_MEDIA_TYPES)},
+                f"{method} {route} expects {gate.label}, got {problem}",
+                detail={
+                    "content_type": request.headers.get("content-type"),
+                    "supported": list(gate.supported),
+                },
+                headers=headers,
             )
         seen = self._content_type_warned.setdefault((method, route), set())
         if problem in seen or len(seen) >= _CONTENT_TYPE_WARN_LIMIT:
             return
         seen.add(problem)
         message = (
-            f"{method} {route} accepted a JSON body with {problem}; "
+            f"{method} {route} accepted a body with {problem} (expects {gate.label}); "
             "set ContentConfig(strict_content_type=True) to reject such requests with 415"
         )
         logger.warning(message)
         self._logger.warn(message, context="ContentPolicy", method=method, path=route, content_type=problem)
+
+    def _negotiated_response(
+        self,
+        raw: Any,
+        negotiation: Any,
+        media: str | None,
+        json_encoder: Any,
+        plan: Any,
+        request: Request,
+    ) -> Response:
+        """Serialize a structured result in the media type negotiated from ``Accept``."""
+        if media is None:  # ``strict_accept`` and nothing acceptable
+            raise negotiation.not_acceptable(request.headers.get("accept"))
+        encoder = negotiation.encoder(media, json_encoder)
+        if plan is not None:
+            response = plan.coerce(raw, encoder)
+        else:
+            response = _coerce_to_response(raw, encoder=encoder, pagination=self._pagination)
+        return _add_vary_accept(response) if negotiation.vary else response
 
     def _log_unhandled(self, exc: BaseException, request: Request, *, origin: str) -> None:
         """Log an exception that no handler claimed, with its traceback."""
@@ -1881,6 +2179,62 @@ class LaurenApp:
         )
         logger.warning(message)
         self._logger.warn(message, context="ResponseContract", route=route, error=type(exc).__name__)
+
+    def _routing_path(self, request: Request) -> str:
+        """The path the router matches: the raw path under ``match_raw_path``, else ``request.path``."""
+        if self._match_raw_path:
+            raw: str | None = getattr(request, _RAW_PATH_ATTR, None)
+            return raw if raw is not None else raw_routing_path(None, request.path)
+        return request.path
+
+    async def _render_routing_error(
+        self,
+        exc: HTTPError,
+        *,
+        request: Request,
+        request_cache: dict[type, Any],
+        framework_values: dict[type, Any],
+    ) -> Response:
+        """Render a 404 / 405 / 400 from routing, offering it to the global exception handlers first.
+
+        A handler's 405 response without ``Allow`` gets the router's list
+        (RFC 9110 §15.5.6). Unclaimed, the error renders its own envelope.
+        """
+        if self._global_exception_handlers:
+            try:
+                handled = await self._dispatch_exception_handlers(
+                    exc,
+                    request=request,
+                    handlers=self._global_exception_handlers,
+                    request_cache=request_cache,
+                    framework_values=framework_values,
+                    owning_module=None,
+                    compiled=None,
+                )
+            except _ExceptionHandlerFailure as failure:
+                self._log_handler_failure(failure, request)
+                return self._internal_error_response(failure.handler_error, request=request)
+            if handled is not None:
+                if (
+                    isinstance(exc, MethodNotAllowedError)
+                    and exc.allow
+                    and handled.status == 405
+                    and "allow" not in handled.headers
+                ):
+                    handled = handled.with_header("allow", ", ".join(exc.allow))
+                return handled
+        return self._render_error(exc, request=request)
+
+    def _slash_redirect(self, request: Request, path: str) -> Response:
+        """``308`` to the canonical spelling of the request path (query and root path kept)."""
+        root: str = request.root_path
+        location = path if self._match_raw_path else quote(path, safe=_LOCATION_PATH_SAFE)
+        if root:
+            location = quote(root.rstrip("/"), safe=_LOCATION_PATH_SAFE) + location
+        query = request._raw_query_string
+        if query:
+            location += "?" + query.decode("latin-1")
+        return Response(b"", status=308, headers=Headers([("location", location)]))
 
     async def _render_outer_error(
         self,
@@ -2038,13 +2392,38 @@ class LaurenApp:
 
                     # --- Routing ---
                     try:
-                        entry, params = self._router.find(req.method, req.path)
-                    except (RouteNotFoundError, MethodNotAllowedError) as e:
-                        # The error carries its own headers (``Allow`` on a 405).
+                        if self._host_routing:
+                            entry, params, host_params = self._router.find_host(
+                                req.method,
+                                self._routing_path(req),
+                                req.host,
+                            )
+                            if host_params:
+                                req._host_params = MappingProxyType(host_params)
+                        else:
+                            entry, params = self._router.find(
+                                req.method, self._routing_path(req) if self._match_raw_path else req.path
+                            )
+                    except RouteRedirect as redirect:
+                        return self._slash_redirect(req, redirect.path)
+                    except (RouteNotFoundError, MethodNotAllowedError, BadRequestError) as e:
+                        if (
+                            self._auto_options
+                            and isinstance(e, MethodNotAllowedError)
+                            and req.method == "OPTIONS"
+                        ):
+                            # ``RoutingConfig(auto_options=True)``: answer the
+                            # path's methods (CORS preflights were already
+                            # handled by a global middleware, if any).
+                            return Response(b"", status=204, headers=Headers([("allow", ", ".join(e.allow))]))
+                        # Global exception handlers may claim routing errors
+                        # (no route — hence no route/controller chain — exists).
                         captured_error = e
-                        return self._render_error(e, request=req)
+                        return await self._render_routing_error(
+                            e, request=req, request_cache=request_cache, framework_values=framework_values
+                        )
 
-                    compiled = self._handlers[(entry.method, entry.path_template)]
+                    compiled = self._handlers[entry.handler_key]
                     # Per-route encoder wins over the app-level encoder.
                     effective_encoder = compiled.encoder or self._json_encoder
                     # Sanctioned in-place reuse — the one place the framework mutates
@@ -2105,7 +2484,7 @@ class LaurenApp:
                             handler_class=compiled.controller_cls,
                             handler_func=compiled.handler_fn,
                             route_template=compiled.path_template,
-                            metadata=dict(compiled.metadata),
+                            metadata=compiled.metadata,
                         )
                         for guard_cls in effective_guards:
                             # Global guards have no controller-module
@@ -2132,8 +2511,19 @@ class LaurenApp:
                         # Content-type gate: right after guards (401/403 still
                         # win), before interceptors and before any body byte
                         # is read.
-                        if compiled.json_body and self._strict_content_type is not False:
-                            self._enforce_json_content_type(req2, compiled)
+                        if compiled.content_gate is not None:
+                            self._enforce_content_type(req2, compiled.content_gate, compiled.path_template)
+                        # Response negotiation (``produces=``): chosen once, before
+                        # interceptors, so a response cache can key on it.
+                        _negotiation = compiled.negotiation
+                        _negotiated: str | None = None
+                        if _negotiation is not None:
+                            _accept = req2.headers.get("accept")
+                            _negotiated = _negotiation.select(_accept)
+                            if _negotiated is None and _negotiation.early:
+                                raise _negotiation.not_acceptable(_accept)
+                            if _negotiation.vary:
+                                req2._negotiated_media_type = _negotiated or _negotiation.offers[0]  # type: ignore[attr-defined]
 
                         # ------------ inner invocation (wrapped by interceptors) ---
                         async def _invoke_handler() -> Any:
@@ -2173,6 +2563,10 @@ class LaurenApp:
                                     # routing; startup validation guarantees it is
                                     # present whenever a handler injects Session.
                                     kwargs_dict[ext.name] = req2.state.session
+                                elif ext.source == "state_key" and not ext.pipes:
+                                    # ``Annotated[T, Key]``: a dict read; a missing
+                                    # value raises the key's error (500 by default).
+                                    kwargs_dict[ext.name] = read_state_key(req2, ext)
                                 else:
                                     try:
                                         kwargs_dict[ext.name] = await extract_parameter(
@@ -2251,6 +2645,15 @@ class LaurenApp:
                                     adapter=compiled.streaming_adapter,
                                     plan=_plan,
                                     on_violation=self._log_contract_violation,
+                                )
+                            if _negotiation is not None and _produces_structured(raw):
+                                return self._negotiated_response(
+                                    raw,
+                                    _negotiation,
+                                    _negotiated,
+                                    _captured_effective_encoder,
+                                    _plan,
+                                    _captured_req2,
                                 )
                             if _plan is not None:
                                 return _plan.coerce(raw, _captured_effective_encoder)
@@ -2339,6 +2742,11 @@ class LaurenApp:
                         # torn down by ``handle`` once the whole request —
                         # global middleware and outer error rendering
                         # included — is done with them.
+                        # The route's own body limit, before per-route middleware
+                        # can read the body (global middleware is bounded by the
+                        # app limit).
+                        if compiled.body_limit is not None:
+                            req._set_body_limit(compiled.body_limit)
                         chain: CallNext = run_handler
                         for mw_cls in reversed(mw_classes):
                             # Middleware declared on the controller resolves
@@ -2463,13 +2871,20 @@ class LaurenApp:
         # HTTP and WebSocket scopes can match a path prefix; other ASGI types
         # (e.g. custom extensions) are left to fall through to the normal path.
         if scope["type"] in ("http", "websocket") and self._mounts:
-            raw = scope.get("path", "/")
+            # Match mounts against the app-relative path, not an unstripped
+            # ``root_path=``. The public root is inherited by the child.
+            raw, mount_root = self._split_root(scope)
+            original_root = scope.get("root_path") or ""
+            own_prefix = (
+                mount_root[len(original_root) :] if mount_root.startswith(original_root) else mount_root
+            )
             for prefix, sub in self._mounts:
                 if raw == prefix or raw.startswith(prefix + "/"):
                     stripped = raw[len(prefix) :] or "/"
-                    child_scope = dict(scope)
+                    # A trusted proxy's view travels to the sub-app in its scope.
+                    child_scope = dict(self._forwarded_scope(scope, self._proxy) if self._proxy else scope)
                     child_scope["path"] = stripped
-                    child_scope["root_path"] = scope.get("root_path", "") + prefix
+                    child_scope["root_path"] = (child_scope.get("root_path") or "") + own_prefix + prefix
                     await sub(child_scope, receive, send)
                     return
         if scope["type"] == "websocket":
@@ -2480,28 +2895,20 @@ class LaurenApp:
         headers = Headers([(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope.get("headers", [])])
         client = scope.get("client") or (None, None)
         server = scope.get("server") or (None, None)
-        # Resolve the effective request path, stripping a configured
-        # ``root_path`` prefix when the upstream ASGI server hasn't
-        # already done so.  Uvicorn honours ``--root-path`` by setting
-        # ``scope["root_path"]`` *and* pre-stripping ``scope["path"]``;
-        # a plain nginx proxy typically leaves ``scope["root_path"]``
-        # empty and the full prefixed path in ``scope["path"]``.
-        _own_root = getattr(self, "_root_path", "")
-        raw_path = scope["path"]
-        scope_root = scope.get("root_path")
-        if _own_root and not scope_root and raw_path.startswith(_own_root):
-            effective_path = raw_path[len(_own_root) :] or "/"
-            public_root = _own_root
-        else:
-            effective_path = raw_path
-            # A server-stripped prefix (``uvicorn --root-path``, a mount) is
-            # part of the public URL unless the path already carries it.
-            public_root = (
-                scope_root
-                if scope_root
-                and not (raw_path == scope_root or raw_path.startswith(scope_root.rstrip("/") + "/"))
-                else ""
-            )
+        effective_path, public_root = self._split_root(scope)
+        client_info = ClientInfo(client[0] if client else None, client[1] if client else None)
+        scheme: str = scope.get("scheme") or "http"
+        authority: str | None = None
+        if self._proxy is not None and not scope.get("_lauren_forwarding_resolved"):
+            # Trusted proxies: one decision per request, before any middleware.
+            forwarded = resolve_forwarded(self._proxy, client[0], headers)
+            if forwarded is not None:
+                if forwarded.client is not None:
+                    client_info = ClientInfo(*forwarded.client)
+                scheme = forwarded.scheme or scheme
+                authority = _forwarded_authority(forwarded, headers)
+                if forwarded.prefix:
+                    public_root = forwarded.prefix + public_root
         # Acquire a Request through the arena so pooled instances are
         # reused where possible. ``acquire_request`` dispatches to
         # :meth:`Request.reset` for pooled instances and to the
@@ -2513,17 +2920,23 @@ class LaurenApp:
             path=effective_path,
             raw_query_string=scope.get("query_string", b"") or b"",
             headers=headers,
-            client=ClientInfo(client[0] if client else None, client[1] if client else None),
+            client=client_info,
             server=ServerInfo(server[0] if server else None, server[1] if server else None),
             receive=receive,
             app_state=self._app_state,
             max_body_size=self._max_body_size,
             extensions=scope.get("extensions"),
+            scheme=scheme,
+            root_path=public_root,
+            authority=authority,
+            urls=self._urls,
         )
-        if public_root:
-            # The public path prefix (proxy root path / mount prefix), read
-            # by pagination links; ``Request.reset`` clears it.
-            setattr(request, _ROOT_PATH_ATTR, public_root)
+        if self._match_raw_path:
+            # ``RoutingConfig(match_raw_path=True)``: route on the raw path,
+            # percent-decoding each segment (``Request.reset`` clears it).
+            setattr(request, _RAW_PATH_ATTR, raw_routing_path(scope.get("raw_path"), effective_path))
+        # RFC 9110 §9.3.2: a HEAD response never carries a body, whoever built it.
+        head = scope["method"] == "HEAD"
         task = asyncio.current_task()
         if task is not None:
             self._in_flight.add(task)
@@ -2534,7 +2947,7 @@ class LaurenApp:
         try:
             response = await self.handle(request)
             _bg: _BackgroundTasks | None = request.state.get(_BG_TASKS_ATTR)
-            await _send_response(response, send)
+            await _send_response(response, send, head=head)
             _response_sent = True
             if _bg is not None and _bg._has_tasks():
                 await _bg._run(signals=self._signals, logger=self._logger)
@@ -2585,7 +2998,7 @@ class LaurenApp:
                         code="internal_error",
                         request=request,
                     )
-                    await _send_response(_fallback.with_header("connection", "close"), send)
+                    await _send_response(_fallback.with_header("connection", "close"), send, head=head)
                 except Exception:
                     pass  # Cannot send — ASGI server will close the connection
         finally:
@@ -2639,14 +3052,38 @@ class LaurenApp:
                 return
             await send({"type": "websocket.close", "code": 1008})
             return
-        from .._ws_runtime import handle_websocket
+        from .._ws_runtime import WsConnectionInfo, handle_websocket
+
+        # Routing and URL accessors must use the same trusted public host.
+        # The marker on the lowered scope prevents double prefix/client updates.
+        if self._proxy is not None and not scope.get("_lauren_forwarding_resolved"):
+            scope = self._forwarded_scope(scope, self._proxy)
 
         # Apply the same root_path stripping as HTTP requests.
-        _own_root = getattr(self, "_root_path", "")
-        if _own_root and not scope.get("root_path"):
-            raw_ws_path = scope.get("path", "/")
-            if raw_ws_path.startswith(_own_root):
-                scope = {**scope, "path": raw_ws_path[len(_own_root) :] or "/"}
+        effective_path, public_root = self._split_root(scope)
+        if effective_path != scope.get("path", "/"):
+            scope = {**scope, "path": effective_path}
+        client = scope.get("client") or (None, None)
+        scheme: str = scope.get("scheme") or "ws"
+        authority: str | None = None
+        if self._proxy is not None and not scope.get("_lauren_forwarding_resolved"):
+            raw_headers = scope.get("headers", [])
+            headers = Headers([(k.decode("latin-1"), v.decode("latin-1")) for k, v in raw_headers])
+            forwarded = resolve_forwarded(self._proxy, client[0], headers, websocket=True)
+            if forwarded is not None:
+                if forwarded.client is not None:
+                    client = forwarded.client
+                scheme = forwarded.scheme or scheme
+                authority = _forwarded_authority(forwarded, headers)
+                if forwarded.prefix:
+                    public_root = forwarded.prefix + public_root
+        connection = WsConnectionInfo(
+            client=(client[0], client[1]) if client[0] is not None else None,
+            scheme=scheme,
+            root_path=public_root,
+            authority=authority,
+            urls=self._urls,
+        )
         task = asyncio.current_task()
         if task is not None:
             self._in_flight.add(task)
@@ -2661,6 +3098,7 @@ class LaurenApp:
                 send,
                 global_ws_guards=self._global_ws_guards or None,
                 global_ws_interceptors=self._global_ws_interceptors or None,
+                connection=connection,
             )
         except asyncio.CancelledError:
             raise  # server shutdown — let Uvicorn handle it
@@ -2713,6 +3151,18 @@ class LaurenApp:
                     )
                     await send({"type": "lifespan.shutdown.failed", "message": str(e)})
                 return
+
+
+def _forwarded_authority(forwarded: Forwarded, headers: Headers) -> str | None:
+    """The ``host[:port]`` a trusted proxy forwarded (its port applied to the request's host)."""
+    authority = forwarded.host
+    if forwarded.port is not None:
+        parsed = _parse_authority(
+            (authority or headers.get("host") or headers.get(":authority") or "").strip()
+        )
+        if parsed is not None:
+            authority = f"{parsed[0]}:{forwarded.port}"
+    return authority
 
 
 def _cancel_background_tasks(request: Request) -> None:
@@ -2814,7 +3264,12 @@ def _coerce_to_response(
             return resp
 
     if isinstance(value, Response):
-        if encoder is not None and isinstance(value, EventStream):
+        # SSE frames are JSON: a negotiated response codec never reframes them.
+        if (
+            encoder is not None
+            and isinstance(value, EventStream)
+            and not hasattr(encoder, "lauren_media_type")
+        ):
             value._reframe(encoder)
         return value
     # Private hook until F01's response-conversion protocol lands: pages
@@ -3135,7 +3590,15 @@ def _error_response(
 async def _send_response(
     response: Response,
     send: Callable[[dict[str, Any]], Awaitable[None]],
+    *,
+    head: bool = False,
 ) -> None:
+    """Send ``response``; with ``head=True`` (a HEAD request) send its headers only.
+
+    A buffered HEAD response keeps the ``content-length`` its body would have
+    had; a streaming one is never iterated — its iterator's ``aclose()`` runs
+    when it has one — and keeps only a ``content-length`` it already set.
+    """
     raw_headers: list[tuple[bytes, bytes]] = [
         (k.encode("latin-1"), v.encode("latin-1")) for k, v in response.headers.raw()
     ]
@@ -3151,7 +3614,7 @@ async def _send_response(
                 "headers": raw_headers,
             }
         )
-        await send({"type": "http.response.body", "body": body, "more_body": False})
+        await send({"type": "http.response.body", "body": b"" if head else body, "more_body": False})
     else:
         await send(
             {
@@ -3160,6 +3623,10 @@ async def _send_response(
                 "headers": raw_headers,
             }
         )
+        if head:
+            await _close_unread_stream(stream)
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+            return
         # Once the response headers are sent we cannot send a fallback error
         # response if streaming fails.  Wrap the body loop so that:
         # - asyncio.CancelledError  → re-raised (server shutdown / client gone)
@@ -3176,6 +3643,19 @@ async def _send_response(
             raise
         except Exception:
             pass  # client disconnected mid-stream; connection will be closed
+
+
+async def _close_unread_stream(stream: Any) -> None:
+    """``aclose()`` a streaming body that will never be iterated (HEAD); errors are logged."""
+    aclose = getattr(stream, "aclose", None)
+    if aclose is None:
+        return
+    try:
+        await aclose()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning("closing an unread streaming body for a HEAD response failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -3226,6 +3706,10 @@ class LaurenFactory:
         response_validation: str = "off",
         json_fallback: str = "warn",
         pagination: PaginationConfig | None = None,
+        routing: RoutingConfig | None = None,
+        proxy: ProxyConfig | None = None,
+        public_base_url: str | None = None,
+        url_signing: UrlSigningConfig | None = None,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -3250,7 +3734,18 @@ class LaurenFactory:
         ``content`` sets the request-body content policy
         (:class:`~lauren.types.ContentConfig`). Left unset, apps with
         ``sessions=`` log mismatched JSON ``Content-Type`` values ("warn")
-        and other apps do not check them.
+        and other apps do not check them. It also registers body codecs
+        (``codecs=[MsgpackCodec()]``), the response media types of routes
+        without ``produces=`` (``default_produces``), the 406 policy
+        (``strict_accept``) and the status of malformed bodies
+        (``malformed_body_status``). A media type named by a route's
+        ``consumes=`` / ``produces=`` that no codec serves fails here
+        (``reason="codec_not_registered"``).
+
+        ``max_body_size`` is the app-wide body limit, also the ceiling for
+        global middleware that reads the body before routing;
+        ``@post(..., max_body_size=...)`` and ``@controller(..., max_body_size=...)``
+        set a route's own limit (larger or smaller), applied right after routing.
 
         ``error_format`` picks the error wire shape: ``"default"`` (the
         ``{"error": {...}}`` envelope), ``"rfc9457"`` (RFC 9457 Problem
@@ -3303,8 +3798,33 @@ class LaurenFactory:
         cursor secret; ``Annotated[OffsetPagination, PaginationConfig(...)]``
         overrides per parameter. A route using ``CursorPagination`` without a
         cursor secret fails here (``reason="pagination_secret_missing"``).
+
+        ``routing`` (a :class:`~lauren.routing.RoutingConfig`) sets the router's
+        HTTP semantics: implicit ``HEAD`` (on by default) and ``OPTIONS``, the
+        trailing-slash policy, slash merging, raw-path matching and custom
+        path converters. Routing misses (404 / 405) reach the global
+        exception handlers before the built-in envelope is rendered.
+        ``proxy`` (a :class:`~lauren.urls.ProxyConfig`) names the trusted
+        reverse proxies whose ``Forwarded`` / ``X-Forwarded-*`` headers set
+        ``request.client`` / ``scheme`` / ``host`` / ``root_path``; headers from
+        any other peer are ignored. ``public_base_url`` (``"https://api.example.com"``)
+        is the app's public URL, used by the injectable
+        :class:`~lauren.urls.UrlBuilder` for absolute links outside a request
+        and as the origin of pagination ``Link`` URLs. ``url_signing`` (a
+        :class:`~lauren.urls.UrlSigningConfig`) enables signed URLs; the
+        :class:`~lauren.urls.ValidSignature` guard without it fails here
+        (``reason="url_signing_disabled"``). Every HTTP route and WebSocket
+        gateway is named here; two routes with one explicit ``name=`` raise
+        :class:`~lauren.exceptions.RouterConflictError`
+        (``reason="duplicate_route_name"``).
         """
         _log: Logger = logger or NullLogger()
+        if routing is not None and not isinstance(routing, RoutingConfig):
+            raise StartupError(
+                f"routing must be a RoutingConfig, got {type(routing).__name__}",
+                detail={"reason": "invalid_routing_config", "got": repr(routing)},
+            )
+        routing_config = routing if routing is not None else RoutingConfig()
         if response_validation not in RESPONSE_VALIDATION_MODES:
             raise StartupError(
                 f"response_validation must be one of {', '.join(map(repr, RESPONSE_VALIDATION_MODES))}, "
@@ -3329,29 +3849,25 @@ class LaurenFactory:
             from ._debug import resolve_config as _resolve_debug_config
 
             debug_config = _resolve_debug_config(debug)
-        content_config = content if content is not None else ContentConfig()
-        if not isinstance(content_config, ContentConfig):
-            raise StartupError(
-                f"content= expects a ContentConfig, got {type(content).__name__}",
-                detail={"reason": "invalid_content_config", "got": type(content).__name__},
-            )
-        declared_strict = content_config.strict_content_type
-        if not (declared_strict is None or isinstance(declared_strict, bool) or declared_strict == "warn"):
-            raise StartupError(
-                f"ContentConfig(strict_content_type={declared_strict!r}) is invalid; "
-                'use True, False, "warn" or None',
-                detail={"reason": "invalid_content_config", "strict_content_type": repr(declared_strict)},
-            )
-        effective_strict_content_type: bool | str = (
-            declared_strict if declared_strict is not None else ("warn" if sessions is not None else False)
-        )
+        # ``ContentConfig``: content-type policy, codecs, default produces, 406.
+        content_runtime: ContentRuntime = resolve_content(content, sessions=sessions is not None)
+        declared_strict = content_runtime.declared_strict
+        effective_strict_content_type: bool | str = content_runtime.strict
         policy = validation if validation is not None else ValidationPolicy()
         if not isinstance(policy, ValidationPolicy):
             raise StartupError(
                 f"validation= expects a ValidationPolicy, got {type(validation).__name__}",
                 detail={"reason": "invalid_validation_policy", "got": type(validation).__name__},
             )
-        pagination_config = _resolve_pagination(pagination)
+        url_setup = _prepare_urls(
+            proxy=proxy,
+            public_base_url=public_base_url,
+            url_signing=url_signing,
+            root_path=root_path,
+            logger=_log,
+            raw_path=routing_config.match_raw_path,
+        )
+        pagination_config = _resolve_pagination(pagination, public_origin=url_setup.builder._origin or None)
         validation_runtime = ValidationRuntime(
             TypeCompiler(policy),
             include_input=policy.include_input
@@ -3381,7 +3897,14 @@ class LaurenFactory:
         # ---- Phase 1: Module graph construction ----
         t0 = time.perf_counter()
         graph = ModuleGraph()
-        graph.compile(root_module, substitutions=override_plan.modules if override_plan is not None else None)
+        try:
+            graph.compile(
+                root_module, substitutions=override_plan.modules if override_plan is not None else None
+            )
+        except StartupError as exc:
+            from .._diagnostics import enrich_startup_error
+
+            raise enrich_startup_error(exc, graph=graph, controller=root_module)
         _log.verbose(
             f"Phase 1/7 module graph built: {len(graph.modules)} module(s), "
             f"{len(graph.all_controllers)} controller(s), "
@@ -3523,6 +4046,9 @@ class LaurenFactory:
                     _ensure_injectable(gp)
                     container.register(gp, owning_module=None)
 
+        # The app's UrlBuilder: injectable everywhere; Phase 5 binds the routes.
+        _install_urls(container, url_setup)
+
         # ---- Phase 2b: Typed configuration ----
         # Load and validate every ConfigModule spec in the graph (one
         # aggregated ConfigValidationError) and register the settings.
@@ -3566,7 +4092,12 @@ class LaurenFactory:
 
         # ---- Phase 4: DI graph compilation ----
         t0 = time.perf_counter()
-        container.compile()
+        try:
+            container.compile()
+        except StartupError as exc:
+            from .._diagnostics import enrich_startup_error
+
+            raise enrich_startup_error(exc, graph=graph, container=container)
         _log.verbose(
             f"Phase 4/7 DI graph compiled ({format_duration_ms(time.perf_counter() - t0)})",
             context="DIContainer",
@@ -3574,7 +4105,7 @@ class LaurenFactory:
 
         # ---- Phase 5: Router compilation ----
         phase5_t0 = time.perf_counter()
-        router = Router()
+        router = Router(routing_config)
         compiled_handlers: dict[tuple[str, str], CompiledHandler] = {}
         # Routes whose ``response_model=`` only documents (contract off).
         documentation_only_models: list[str] = []
@@ -3595,7 +4126,7 @@ class LaurenFactory:
             ctrl_guards = list(ctrl_cls.__dict__.get(USE_GUARDS, []))
             ctrl_interceptors = list(ctrl_cls.__dict__.get(USE_INTERCEPTORS, []))
             ctrl_exc_handlers = list(ctrl_cls.__dict__.get(USE_EXCEPTION_HANDLERS, []))
-            ctrl_extra_meta: dict[str, Any] = dict(ctrl_cls.__dict__.get(SET_METADATA, {}))
+            ctrl_meta_values, ctrl_meta_keys = own_metadata(ctrl_cls)
 
             # Register controller's guards/middleware/interceptors as providers
             for cls in ctrl_mw + ctrl_guards + ctrl_interceptors:
@@ -3654,7 +4185,15 @@ class LaurenFactory:
                 fn_guards = list(getattr(fn, USE_GUARDS, []))
                 fn_interceptors = list(getattr(fn, USE_INTERCEPTORS, []))
                 fn_exc_handlers = list(getattr(fn, USE_EXCEPTION_HANDLERS, []))
-                fn_meta: dict[str, Any] = dict(getattr(fn, SET_METADATA, {}))
+                fn_meta_values, fn_meta_keys = own_metadata(fn)
+                # Merged once per handler: controller (outer) ⟵ route; typed
+                # keys apply their merge policy, string keys most-specific-wins.
+                route_metadata = merge_metadata_levels(
+                    [
+                        (f"controller {ctrl_cls.__qualname__}", ctrl_meta_values, ctrl_meta_keys),
+                        (f"route {ctrl_cls.__qualname__}.{fn.__name__}", fn_meta_values, fn_meta_keys),
+                    ]
+                )
                 # Per-route encoder: method-level wins over controller-level.
                 fn_encoder = getattr(fn, USE_ENCODER, None)
                 ctrl_encoder = ctrl_cls.__dict__.get(USE_ENCODER)
@@ -3671,33 +4210,66 @@ class LaurenFactory:
                         _ensure_injectable(h)
                         container.register(h)
                 ctrl_owning_module = graph.module_for_controller(ctrl_cls)
+                # ``host=``: the controller's own, else its module's.
+                ctrl_host = getattr(ctrl_meta, "host", None) or getattr(
+                    (ctrl_owning_module.__dict__.get(MODULE_META) if ctrl_owning_module else None),
+                    "host",
+                    None,
+                )
                 for rmeta in route_metas:
-                    full_path = _normalize_path(ctrl_meta.prefix, rmeta.path)
-                    entry = router.add_route(
-                        rmeta.method,
-                        full_path,
-                        fn,
-                        handler_class=ctrl_cls,
-                        metadata={
-                            "controller_meta": ctrl_meta,
-                            "route_meta": rmeta,
-                            "extra": {**ctrl_extra_meta, **fn_meta},
-                            "binding": binding,
-                        },
-                    )
+                    full_path = _route_path(ctrl_meta.prefix, rmeta.path)
+                    if routing_config.infer_converters:
+                        full_path = _infer_converters(full_path, fn)
+                    try:
+                        entry = router.add_route(
+                            rmeta.method,
+                            full_path,
+                            fn,
+                            handler_class=ctrl_cls,
+                            metadata={
+                                "controller_meta": ctrl_meta,
+                                "route_meta": rmeta,
+                                "extra": route_metadata,
+                                "binding": binding,
+                            },
+                            host=ctrl_host,
+                        )
+                    except RouterConflictError as exc:
+                        from .._diagnostics import enrich_startup_error
+
+                        previous = next(
+                            (
+                                r.handler
+                                for r in router.routes()
+                                if r.method == rmeta.method and r.path_template == full_path
+                            ),
+                            None,
+                        )
+                        raise enrich_startup_error(
+                            exc, graph=graph, container=container, handler=fn, conflicting_handler=previous
+                        ) from None
                     # Compile handler extractions now that we know the path.
                     # The controller's owning module bounds which DI
                     # providers an endpoint parameter may resolve to.
-                    extractions, _ = _compile_handler_signature(
-                        ctrl_cls,
-                        fn,
-                        container,
-                        path_param_names=set(entry.param_names),
-                        owning_module=ctrl_owning_module,
-                        validation=validation_runtime,
-                        route=f"{rmeta.method} {entry.path_template}",
-                        pagination=pagination_config,
-                    )
+                    try:
+                        extractions, _ = _compile_handler_signature(
+                            ctrl_cls,
+                            fn,
+                            container,
+                            path_param_names=set(entry.param_names),
+                            owning_module=ctrl_owning_module,
+                            validation=validation_runtime,
+                            route=f"{rmeta.method} {entry.path_template}",
+                            pagination=pagination_config,
+                            path_converters=entry.converters,
+                        )
+                        _check_host_params(ctrl_cls, fn, extractions, entry)
+                    except StartupError as exc:
+                        from .._diagnostics import enrich_startup_error
+
+                        raise enrich_startup_error(
+                            exc, graph=graph, container=container, handler=fn, controller=ctrl_cls
+                        ) from None
                     # Resolve the handler's return annotation once at
                     # startup so the request path stays reflection-free.
                     return_hint = _safe_type_hints(fn).get("return", inspect.Parameter.empty)
@@ -3731,11 +4303,25 @@ class LaurenFactory:
                         fn=fn,
                         route=route_label,
                     )
+                    # Content rules: Content-Type gate, body codecs, produces
+                    # negotiation and body limit (unknown media types fail here).
+                    route_content = compile_route_content(
+                        content_runtime,
+                        method=rmeta.method,
+                        route=route_label,
+                        handler=f"{ctrl_cls.__name__}.{fn.__name__}",
+                        route_meta=rmeta,
+                        controller_meta=ctrl_meta,
+                        extractions=extractions,
+                        table=response_table,
+                        streaming=streaming_item is not None,
+                    )
                     compiled = CompiledHandler(
                         controller_cls=ctrl_cls,
                         handler_fn=fn,
                         route_meta=rmeta,
                         path_template=entry.path_template,
+                        host=entry.host,
                         extractions=extractions,
                         middleware_chain=tuple(ctrl_mw + fn_mw),
                         guards=tuple(ctrl_guards + fn_guards),
@@ -3747,7 +4333,8 @@ class LaurenFactory:
                         # handlers fall through next; globals are
                         # appended at dispatch time.
                         exception_handlers=tuple(fn_exc_handlers + ctrl_exc_handlers),
-                        metadata={**ctrl_extra_meta, **fn_meta},
+                        metadata=route_metadata,
+                        metadata_key_defs=tuple({**ctrl_meta_keys, **fn_meta_keys}.values()),
                         owning_module=ctrl_owning_module,
                         streaming_item_type=streaming_item,
                         streaming_adapter=streaming_adapter,
@@ -3760,8 +4347,14 @@ class LaurenFactory:
                         response_table=response_table,
                         response_plan=response_plan,
                         raises=tuple(route_raises),
+                        content_gate=route_content.gate,
+                        negotiation=route_content.negotiation,
+                        body_limit=route_content.body_limit,
+                        consumes=route_content.consumes,
+                        produces=route_content.produces,
+                        consumes_declared=route_content.consumes_declared,
                     )
-                    compiled_handlers[(entry.method, entry.path_template)] = compiled
+                    compiled_handlers[entry.handler_key] = compiled
                     _log.log(
                         f"Mapped {{{rmeta.method} {entry.path_template}}} "
                         f"→ {ctrl_cls.__name__}.{fn.__name__}",
@@ -3857,7 +4450,9 @@ class LaurenFactory:
         # make it into the DI graph before it's re-compiled below.
         from .._ws_runtime import compile_gateways
 
-        ws_router = Router()
+        # The WebSocket router accepts only the ``WEBSOCKET`` pseudo-verb — an
+        # instance property, so nothing process-wide changes.
+        ws_router = Router(routing_config, methods=frozenset({"WEBSOCKET"}))
         ws_gateways = compile_gateways(
             graph, container, ws_router=ws_router, logger=_log, validation=validation_runtime
         )
@@ -3881,10 +4476,61 @@ class LaurenFactory:
         for guard_cls in all_guards:
             if guard_cls not in guard_denials:
                 guard_denials[guard_cls] = _compile_guard_denial(guard_cls)
+        # ``ValidSignature`` needs ``url_signing=``.
+        guard_uses: list[tuple[Any, str]] = [
+            (g, "every request (global guard)") for g in effective_global_guards
+        ]
+        guard_uses.extend(
+            (g, "every WebSocket connection (global guard)") for g in effective_global_ws_guards
+        )
+        for (method, path_t), ch in compiled_handlers.items():
+            guard_uses.extend((g, f"route {method} {path_t}") for g in ch.guards)
+        for gw in ws_gateways.values():
+            gateway_guards = [*gw.guards, *gw.on_connect_guards]
+            for ws_message in gw.messages.values():
+                gateway_guards.extend(ws_message.guards)
+            guard_uses.extend((g, f"WebSocket gateway {gw.path_template}") for g in gateway_guards)
+        _check_signature_guards(guard_uses, url_setup)
+        # Route names: every HTTP route and gateway, uniqueness checked here.
+        route_table = _build_route_table(
+            compiled_handlers,
+            ws_gateways,
+            url_setup.builder,
+            logger=_log,
+            http_entries=router.routes(),
+            ws_entries=ws_router.routes(),
+        )
+        http_names = {(r.method, (r.host or "") + r.path_template): r.name for r in route_table.http.routes}
+        ws_names = {(r.host or "") + r.path_template: r.name for r in route_table.ws.routes}
+        for entry in router.routes():
+            entry.name = http_names.get(entry.handler_key)
+            compiled_handlers[entry.handler_key].route_name = entry.name
+        for entry in ws_router.routes():
+            entry.name = ws_names.get(entry.handler_key[1])
+            ws_gateways[entry.handler_key[1]].route_name = entry.name
+
+        # State provenance: a parameter injecting a ``StateKey(...,
+        # require_provider=True)`` needs a guard / middleware / interceptor in
+        # its chain that declares ``@provides_state(key)``.
+        _check_route_state_provenance(
+            compiled_handlers,
+            ws_gateways,
+            container,
+            global_middlewares=effective_global_middlewares,
+            global_guards=effective_global_guards,
+            global_interceptors=effective_global_interceptors,
+            global_ws_guards=effective_global_ws_guards,
+            global_ws_interceptors=effective_global_ws_interceptors,
+        )
 
         # Re-compile after late registrations.
         container._compiled = False
-        container.compile()
+        try:
+            container.compile()
+        except StartupError as exc:
+            from .._diagnostics import enrich_startup_error
+
+            raise enrich_startup_error(exc, graph=graph, container=container)
         router.freeze()
         _log.verbose(
             f"Phase 5/7 router compiled: {len(compiled_handlers)} route(s), "
@@ -3989,6 +4635,7 @@ class LaurenFactory:
             validation=validation_runtime,
             response_validation=response_validation,
             json_fallback=json_fallback,
+            routing=routing_config,
         )
         # The immutable Phase 6a index; feature consumers read their markers.
         app._discovery = discovery
@@ -4002,6 +4649,12 @@ class LaurenFactory:
         app._config_pending = config_pending
         app._commands = commands
         app._pagination = pagination_config
+        # The codec registry and content policy belong to this app, never to
+        # a process-global encoder or parser cache. Route plans keep references
+        # to the same registry for request decoding and response negotiation.
+        app._content = content_runtime
+        app._urls = url_setup.builder
+        app._proxy = url_setup.proxy
         # Install the JSON encoder — user-supplied wins, otherwise the
         # process-wide default (stdlib out of the box, swappable via
         # ``lauren.serialization.set_active_encoder``). Pinning the
@@ -4069,6 +4722,90 @@ class LaurenFactory:
         return app.context(hosted_services=hosted_services, scheduler=scheduler, drain_timeout=drain_timeout)
 
 
+def _check_route_state_provenance(
+    compiled_handlers: Mapping[tuple[str, str], CompiledHandler],
+    ws_gateways: Mapping[str, Any],
+    container: DIContainer,
+    *,
+    global_middlewares: list[type],
+    global_guards: list[type],
+    global_interceptors: list[type],
+    global_ws_guards: list[type],
+    global_ws_interceptors: list[type],
+) -> None:
+    """Fail startup when a ``require_provider=True`` ``StateKey`` parameter has no provider.
+
+    The chain of an HTTP route is every global middleware (the session engine
+    included), guard and interceptor plus the route's own; a WebSocket hook's
+    chain is the global and gateway-level WebSocket guards / interceptors
+    (connection state persists across frames) plus the handler's own.
+    """
+    needs = any(
+        ext.source == "state_key" and ext.state_key is not None and ext.state_key.require_provider
+        for ch in compiled_handlers.values()
+        for ext in ch.extractions
+    ) or any(
+        ext.source == "state_key" and ext.state_key is not None and ext.state_key.require_provider
+        for gw in ws_gateways.values()
+        for exts in (
+            gw.on_connect_extractions,
+            gw.on_disconnect_extractions,
+            gw.on_error_extractions,
+            *(m.extractions for m in gw.messages.values()),
+        )
+        for ext in exts
+    )
+    if not needs:
+        return
+    candidates: dict[Any, None] = dict.fromkeys(p.cls for p in container.all_providers())
+    candidates.update(dict.fromkeys([*global_middlewares, *global_guards, *global_interceptors]))
+    for (method, path_t), ch in compiled_handlers.items():
+        check_state_provenance(
+            ch.extractions,
+            (
+                *global_middlewares,
+                *ch.middleware_chain,
+                *global_guards,
+                *ch.guards,
+                *global_interceptors,
+                *ch.interceptors,
+            ),
+            owner=ch.controller_cls.__name__,
+            handler=getattr(ch.handler_fn, "__name__", "?"),
+            route=f"{method} {path_t}",
+            candidates=candidates,
+        )
+    for gw in ws_gateways.values():
+        connect_chain = (
+            *global_ws_guards,
+            *gw.guards,
+            *gw.on_connect_guards,
+            *global_ws_interceptors,
+            *gw.interceptors,
+            *gw.on_connect_interceptors,
+        )
+        hooks = [
+            (gw.on_connect, gw.on_connect_extractions, connect_chain),
+            (gw.on_disconnect, gw.on_disconnect_extractions, connect_chain),
+            (gw.on_error, gw.on_error_extractions, connect_chain),
+        ]
+        hooks.extend(
+            (m.handler_fn, m.extractions, (*connect_chain, *m.guards, *m.interceptors))
+            for m in gw.messages.values()
+        )
+        for fn, extractions, chain in hooks:
+            if fn is None:
+                continue
+            check_state_provenance(
+                extractions,
+                chain,
+                owner=gw.controller_cls.__name__,
+                handler=getattr(fn, "__name__", "?"),
+                route=f"WEBSOCKET {gw.path_template}",
+                candidates=candidates,
+            )
+
+
 def _compile_guard_denial(guard_cls: type) -> Any:
     """Validate a guard's ``deny_error`` and return what its denials raise.
 
@@ -4105,6 +4842,29 @@ def _compile_guard_denial(guard_cls: type) -> Any:
         f"guard {name} declares an invalid deny_error: {reason}",
         detail={"guard": name, "deny_error": repr(deny), "reason": "invalid_deny_error"},
     )
+
+
+def _check_host_params(
+    ctrl_cls: type, fn: Callable[..., Any], extractions: Iterable[Extraction], entry: RouteEntry
+) -> None:
+    """Every ``HostParam`` must name a label of the route's ``host=`` pattern."""
+    from ..exceptions import UnresolvableParameterError
+
+    for ext in extractions:
+        if ext.source == "host_param" and ext.name not in entry.host_param_names:
+            handler = f"{ctrl_cls.__name__}.{getattr(fn, '__name__', '?')}"
+            where = f"host pattern {entry.host!r}" if entry.host else "no host= pattern"
+            raise UnresolvableParameterError(
+                f"HostParam {ext.name!r} of {handler} is not a label of the route's host ({where}); "
+                "declare it in @controller(host=...) / @module(host=...)",
+                detail={
+                    "class": ctrl_cls.__name__,
+                    "handler": getattr(fn, "__name__", "?"),
+                    "param": ext.name,
+                    "host": entry.host,
+                    "reason": "unknown_host_param",
+                },
+            )
 
 
 def _ensure_injectable(cls: type) -> None:
@@ -4275,7 +5035,7 @@ def _register_docs_routes(
             owning_module=None,
             is_coroutine=inspect.iscoroutinefunction(fn),
         )
-        compiled_handlers[(method, entry.path_template)] = compiled
+        compiled_handlers[entry.handler_key] = compiled
 
 
 __all__ = ["LaurenApp", "LaurenFactory", "CompiledHandler"]

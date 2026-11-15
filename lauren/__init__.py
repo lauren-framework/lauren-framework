@@ -45,6 +45,9 @@ Core capabilities
 * Response contracts: ``status_code=`` and typed results (``Ok``,
   ``Created``, ``Accepted``, ``NoContent``) declare a route's statuses;
   ``response_validation="filter"`` keeps undeclared fields off the wire.
+* Named routes and URL generation (``request.url_for``, ``url_path_for``,
+  an injectable ``UrlBuilder``), trusted reverse proxies (``ProxyConfig``)
+  and signed, expiring links (``UrlSigningConfig`` + ``ValidSignature``).
 * Strict inheritance: subclasses are controllers / injectables only when
   re-decorated explicitly.
 
@@ -98,6 +101,9 @@ from ._di.custom import (
     use_value,
 )
 from ._routing import Router, RouteEntry
+from .codecs import Codec, JsonCodec, MsgpackCodec
+
+from .routing import PathConverter, RoutingConfig
 from .serialization import (
     JSONEncoder,
     MsgspecEncoder,
@@ -107,6 +113,7 @@ from .serialization import (
     auto_encoder,
 )
 from .decorators import (
+    any_method,
     controller,
     delete,
     exception_handler,
@@ -124,6 +131,7 @@ from .decorators import (
     pre_destruct,
     put,
     raises,
+    route,
     set_metadata,
     use_encoder,
     use_exception_handlers,
@@ -133,6 +141,12 @@ from .decorators import (
     propagate_metadata,
     OpenAPISecurityMeta,
     PUBLIC_METADATA_KEY,
+    MetadataKey,
+    MetadataSetKey,
+    StateKey,
+    compose,
+    provides_state,
+    reject_bare_usage,
 )
 from .exceptions import (
     BadRequestError,
@@ -196,6 +210,7 @@ from .extractors import (
     HeaderField,
     Json,
     Path,
+    HostParam,
     PathField,
     Pipe,
     PipeContext,
@@ -285,6 +300,8 @@ from .reflect import (
     reflect_user_metadata,
     reflect_encoder,
     # app-level readers
+    AppManifest,
+    describe_app,
     get_all_routes,
     get_all_ws_gateways,
     get_route_metadata,
@@ -312,6 +329,7 @@ from .pagination import (
     paginate_sequence,
 )
 from .config import ConfigModule, Secret
+from .urls import URL, ProxyConfig, UrlBuilder, UrlSigningConfig, ValidSignature
 from .scheduling import (
     CronExpression,
     JobContext,
@@ -412,13 +430,21 @@ __all__ = [
     "MsgspecEncoder",
     "PydanticEncoder",
     "auto_encoder",
+    # body codecs & content negotiation
+    "Codec",
+    "JsonCodec",
+    "MsgpackCodec",
     "serialization",
     "docs",
     "logging",
     "signals",
     "Router",
     "RouteEntry",
+    "RoutingConfig",
+    "PathConverter",
     # decorators
+    "route",
+    "any_method",
     "controller",
     "module",
     "injectable",
@@ -441,6 +467,12 @@ __all__ = [
     "use_exception_handlers",
     "set_metadata",
     "PUBLIC_METADATA_KEY",
+    "MetadataKey",
+    "MetadataSetKey",
+    "StateKey",
+    "compose",
+    "provides_state",
+    "reject_bare_usage",
     "propagate_metadata",
     "openapi_security",
     "OpenAPISecurityMeta",
@@ -461,6 +493,12 @@ __all__ = [
     "Page",
     "CursorPage",
     "paginate_sequence",
+    # named routes, URL generation, trusted proxies, signed URLs (lauren.urls)
+    "URL",
+    "UrlBuilder",
+    "ProxyConfig",
+    "UrlSigningConfig",
+    "ValidSignature",
     # typed configuration (the rest lives in lauren.config)
     "ConfigModule",
     "Secret",
@@ -526,6 +564,7 @@ __all__ = [
     "Discriminated",
     # extractors
     "Path",
+    "HostParam",
     "Query",
     "Header",
     "Cookie",
@@ -595,6 +634,8 @@ __all__ = [
     "reflect_user_metadata",
     "reflect_encoder",
     # reflect — app-level readers
+    "AppManifest",
+    "describe_app",
     "get_all_routes",
     "get_all_ws_gateways",
     "get_route_metadata",

@@ -8,7 +8,7 @@
 [attributes]
 "lauren.background.TaskHandle" = ["task_id", "status", "done", "result", "cancel"]
 "lauren.testing.TestResponse" = [
-    "status_code", "headers", "body", "content", "text", "json", "header", "headers_all", "cookies",
+    "status_code", "headers", "body", "content", "text", "json", "msgpack", "header", "headers_all", "cookies",
     "is_success", "is_redirect", "is_client_error", "is_server_error", "raise_for_status",
     "aborted", "url", "request", "elapsed", "history",
 ]
@@ -42,11 +42,20 @@
     "receive", "receive_text", "receive_bytes", "receive_json", "receive_event", "close",
     "close_code", "close_reason", "accepted_subprotocol",
 ]
-"lauren.types.Request" = ["extensions"]
+"lauren.types.Request" = [
+    "extensions", "host_params", "scheme", "host", "port", "root_path", "base_url", "full_url",
+    "path_with_query", "url_for", "url_path_for", "ws_url_for",
+]
 "lauren.types.UploadFile" = ["filename", "content_type", "headers", "name", "size", "read", "read_sync"]
 "lauren.types.Headers" = ["get", "getall", "items", "keys", "values"]
-"lauren.types.State" = ["get", "set", "has", "get_typed", "require", "asdict"]
-"lauren.types.ContentConfig" = ["strict_content_type"]
+"lauren.types.State" = ["get", "set", "has", "get_typed", "require", "asdict", "__getitem__", "__setitem__", "__contains__"]
+"lauren.types.AppState" = ["seal", "__setitem__", "set"]
+"lauren.types.ContentConfig" = [
+    "strict_content_type", "malformed_body_status", "codecs", "default_produces", "strict_accept",
+]
+"lauren.JsonCodec" = ["media_types", "backend", "fast", "decode", "encode"]
+"lauren.MsgpackCodec" = ["media_types", "decode", "encode"]
+"lauren.Codec" = ["decode", "encode"]
 "lauren.DebugConfig" = [
     "include_4xx", "allow_remote", "redact_headers", "redact_query_keys",
     "source_context", "max_frames", "include_locals",
@@ -63,17 +72,15 @@
     "json", "text", "html", "bytes", "xml", "file", "empty", "redirect", "stream", "sse",
 ]
 "lauren.Lauren" = [
-    "get", "post", "put", "patch", "delete", "head",
-    "include_module", "add_middleware", "add_guard", "add_interceptor",
-    "add_exception_handler", "add_provider", "mount", "on_startup", "on_shutdown",
-    "startup", "shutdown", "openapi", "routes", "container", "scope", "state", "debug",
-    "lifecycle_state", "begin_draining",
+    "get", "post", "put", "patch", "delete", "head", "options", "route", "any_method", "include_module",
+    "add_middleware", "add_guard", "add_interceptor", "add_exception_handler", "add_provider", "mount",
+    "on_startup", "on_shutdown", "startup", "shutdown", "openapi", "routes", "container", "scope", "state",
+    "debug", "lifecycle_state", "begin_draining", "url_path_for",
 ]
 "lauren.LaurenApp" = [
-    "router", "container", "app_state", "routes", "openapi",
-    "startup", "shutdown", "on_shutdown", "mount", "mounts", "scope", "context", "error_format",
-    "type_compiler", "validation_policy", "response_validation", "json_fallback",
-    "lifecycle_state", "begin_draining",
+    "router", "container", "app_state", "routes", "openapi", "startup", "shutdown", "on_shutdown", "mount",
+    "mounts", "scope", "context", "error_format", "describe", "type_compiler", "validation_policy",
+    "response_validation", "json_fallback", "lifecycle_state", "begin_draining", "url_path_for", "urls",
 ]
 "lauren.Ok" = ["value", "headers", "status"]
 "lauren.Created" = ["value", "location", "headers", "status"]
@@ -81,9 +88,23 @@
 "lauren.NoContent" = ["headers", "status"]
 "lauren.Status" = ["code", "description"]
 "lauren.decorators.RaisesSpec" = ["exc_type", "description", "status_code", "code"]
-"lauren.ReflectedRoute" = ["status_code", "responses_typed", "raises", "response_model", "handler"]
+"lauren.ReflectedRoute" = [
+    "status_code", "responses_typed", "raises", "response_model", "handler", "name", "consumes",
+    "produces", "max_body_size", "host", "guards", "interceptors", "middlewares",
+]
+"lauren.AppManifest" = [
+    "manifest_version", "lauren_version", "app", "globals", "modules", "providers", "routes",
+    "websocket_gateways", "mounts", "openapi", "sections", "to_dict", "to_json",
+]
+"lauren.reflect.ManifestApp" = ["root_module", "error_format", "json_encoder", "max_body_size", "root_path", "docs", "sessions", "profile", "debug"]
+"lauren.reflect.ManifestRoute" = [
+    "method", "path", "name", "handler", "module", "params", "guards", "interceptors",
+    "middlewares", "exception_handlers", "metadata_keys", "status_code", "metadata_values", "host",
+]
+"lauren.ReflectedWsGateway" = ["cls", "path_template", "meta", "owning_module", "name"]
+"lauren._routing.RouteEntry" = ["method", "path_template", "handler", "name"]
 "lauren.ReflectedResponse" = ["status", "body_type", "description", "source"]
-"lauren.ValidationPolicy" = ["stdlib_models", "json_mode", "extra", "include_input", "max_issues"]
+"lauren.ValidationPolicy" = ["stdlib_models", "json_mode", "extra", "include_input", "max_issues", "missing_state"]
 "lauren.ValidationIssue" = ["loc", "type", "msg", "input", "ctx", "to_dict", "prefixed"]
 "lauren.validation.ValidationFailed" = ["errors"]
 "lauren.validation.TypeCompiler" = ["compile", "policy", "max_issues"]
@@ -131,16 +152,53 @@
     "event", "payload",
 ]
 "lauren.types.ExecutionContext" = ["request", "handler_class", "handler_func", "route_template", "metadata", "get_metadata"]
+"lauren.reflect.WsUpgradeRequest" = [
+    "host_params",
+    "headers", "path", "path_params", "query_string", "client", "method", "state", "app_state", "scheme",
+    "host", "port", "root_path", "base_url", "ws_url_for",
+]
+"lauren.MetadataKey" = ["name", "default", "merge", "validate", "public", "description", "site", "read"]
+"lauren.MetadataSetKey" = ["name", "merge", "validate", "public", "description", "site", "read"]
+"lauren.StateKey" = ["name", "on_missing", "require_provider", "description", "site", "missing_error"]
+"lauren.reflect.ReflectedComposition" = ["name", "decorators"]
 "lauren.SessionConfig" = [
     "secret", "store", "cookie_name", "max_age", "idle_timeout", "rolling", "path", "domain",
     "secure", "http_only", "same_site", "serializer", "autoload", "revocation_store", "user_id_key",
 ]
+"lauren.Router" = ["config", "methods", "has_hosts", "add_route", "freeze", "find", "find_host", "allowed_methods", "routes", "static_route_count"]
+"lauren.RouteEntry" = [
+    "method", "path_template", "path_format", "param_names", "converters", "host", "host_param_names",
+    "handler_key", "build_path", "build_host",
+]
+"lauren.RoutingConfig" = [
+    "auto_head", "auto_options", "trailing_slash", "merge_slashes", "match_raw_path",
+    "converters", "infer_converters",
+]
+"lauren.PathConverter" = ["name", "python_type", "matches", "to_python", "to_url", "openapi_schema", "spec"]
+"lauren.extractors.HostParam" = ["source"]
+"lauren.websockets.WsControllerMeta" = ["host"]
 "lauren.PaginationConfig" = [
     "default_limit", "max_limit", "max_offset", "limit_param", "offset_param", "page_param",
     "per_page_param", "cursor_param", "envelope", "meta_keys", "total_header", "base_url",
     "cursor_secret", "cursor_max_age",
 ]
 "lauren.OffsetPagination" = ["limit", "offset"]
+"lauren.URL" = [
+    "scheme", "netloc", "host", "port", "path", "query", "fragment", "is_absolute",
+    "with_query", "with_fragment", "replace",
+]
+"lauren.UrlBuilder" = [
+    "path_for", "url_for", "ws_url_for", "signed_url_for", "signed_ws_url_for", "public_base_url", "root_path",
+]
+"lauren.ProxyConfig" = ["trusted", "headers", "max_hops", "trust_prefix", "server_applied"]
+"lauren.UrlSigningConfig" = [
+    "secret", "default_ttl", "bind_method", "bind_host", "expires_param", "signature_param", "clock",
+]
+"lauren.ValidSignature" = ["can_activate"]
+"lauren.websockets.WebSocket" = [
+    "client", "scheme", "host", "port", "root_path", "base_url", "url_for", "url_path_for", "ws_url_for",
+]
+
 "lauren.PageNumberPagination" = ["page", "per_page", "limit", "offset"]
 "lauren.CursorPagination" = ["cursor", "direction", "limit", "encode_cursor"]
 "lauren.Page" = ["items", "limit", "offset", "total", "has_next", "of", "from_rows"]

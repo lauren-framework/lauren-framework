@@ -16,15 +16,24 @@ You'll usually take a more specific extractor (`Path`, `Query`, `Json`, ...) ins
 |---|---|
 | `method` | `str` (e.g. `"GET"`) |
 | `path` | `str` |
-| `url` | full URL with scheme + host + query |
+| `url` / `path_with_query` | `path?query` (app-relative, `str`) |
 | `path_params` | `dict[str, str]` of matched URL params |
 | `query_params` | multi-value query map |
 | `headers` | case-insensitive `Headers` |
 | `cookies` | parsed cookie map |
-| `client` | `ClientInfo(host, port)` |
+| `client` | `ClientInfo(host, port)` — the real client behind a trusted proxy |
 | `server` | `ServerInfo(host, port)` |
 | `state` | per-request `State` (read/write) |
 | `app_state` | sealed `AppState` (read-only) |
+| `scheme` | `"http"` / `"https"` |
+| `host` / `port` | the host and port the client addressed |
+| `root_path` | public path prefix (mounts, `root_path=`, a trusted proxy) |
+| `base_url` / `full_url` | absolute `URL`s of the app root and of this request |
+
+`request.url_for(...)`, `request.url_path_for(...)` and
+`request.ws_url_for(...)` build URLs to named routes; behind a load balancer,
+`ProxyConfig` makes `client`, `scheme`, `host` and `root_path` reflect the
+public request. See [URLs, Proxies & Signed Links](../guides/urls-and-proxies.md).
 
 ### Request lifetime — don't store it
 

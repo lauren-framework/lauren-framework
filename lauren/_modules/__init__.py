@@ -162,6 +162,8 @@ class CompiledModule:
     #: for the same ``provide=`` token are all preserved (a plain dict
     #: would silently keep only the last one).
     custom_providers: dict[Any, list[CustomProvider]] = field(default_factory=dict)
+    #: Resolved imports after forward references and testing substitutions.
+    imports: tuple[type, ...] = ()
 
 
 class ModuleGraph:
@@ -239,10 +241,13 @@ class ModuleGraph:
             # Each entry may be a real class or a ForwardRef / string that
             # is resolved lazily here (all modules are loaded by compile time).
             imported_exports: set[Any] = set()
+            imported_modules: list[type] = []
             for imp in meta.imports:
                 resolved_imp = _substitute(_resolve_forward_import(imp, mod_cls))
                 sub = visit(resolved_imp)
+                imported_modules.append(resolved_imp)
                 imported_exports |= sub.exported
+            compiled.imports = tuple(imported_modules)
 
             # Each entry in ``meta.providers`` is either a class /
             # function token (registered as-is) or a CustomProvider

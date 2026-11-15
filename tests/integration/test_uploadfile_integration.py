@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import os
 
+import pytest
 
 from lauren import (
     LaurenFactory,
@@ -29,6 +30,7 @@ from lauren import (
     module,
     post,
 )
+from lauren.exceptions import StartupError
 from lauren.testing import TestClient
 
 
@@ -124,15 +126,35 @@ def test_single_upload_missing_field_returns_422() -> None:
     assert r.status_code == 422
 
 
-def test_single_upload_with_non_multipart_content_type_fails_cleanly() -> None:
-    """Sending plain JSON to an upload endpoint must produce a\n    422 rather than a 500 \u2014 the framework should surface the\n    multipart parser's own ``ExtractorError``.\n"""
+def test_single_upload_with_non_multipart_content_type_is_415() -> None:
+    """Sending plain JSON to an upload endpoint is a 415 (F03), before the body is read."""
     app = LaurenFactory.create(_SingleUploadModule)
     r = TestClient(app).post(
         "/upload/avatar",
         content=b'{"avatar": null}',
         headers={"content-type": "application/json"},
     )
-    assert r.status_code == 422
+    assert r.status_code == 415
+    assert r.json()["error"]["detail"]["supported"] == ["multipart/form-data"]
+    assert r.headers["accept-post"] == "multipart/form-data"
+
+
+def test_upload_declaring_a_non_multipart_consumes_fails_at_startup() -> None:
+    @controller("/broken")
+    class BadUpload:
+        @post("/", consumes="application/json")
+        async def send(self, file: UploadFile) -> dict:
+            return {"size": file.size}
+
+    @module(controllers=[BadUpload])
+    class BadModule:
+        pass
+
+    with pytest.raises(StartupError) as excinfo:
+        LaurenFactory.create(BadModule)
+
+    assert excinfo.value.detail["reason"] == "invalid_upload_consumes"
+    assert excinfo.value.detail["route"] == "POST /broken"
 
 
 # ---------------------------------------------------------------------------

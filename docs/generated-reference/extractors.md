@@ -10,6 +10,18 @@ Typed extractors for decomposing HTTP requests into strongly-typed Python values
 class Path
 ```
 
+### `HostParam`
+
+```python
+class HostParam
+```
+
+A ``{name}`` label of the route's ``host=`` pattern: ``tenant: HostParam[str]``.
+
+The value comes from the matched host (lower-cased, port dropped) and is
+validated like a path parameter. The parameter name must be a label of
+the controller's / module's ``host=`` pattern, else startup fails.
+
 ### `Query`
 
 ```python
@@ -324,6 +336,15 @@ the instance method form above.
 ```python
 class State
 ```
+
+Legacy name-based state extractor (``lauren.StateExtractor``).
+
+Reads ``request.state`` (then ``app_state``) under the *parameter name*.
+Prefer a :class:`~lauren.StateKey` — ``user: Annotated[AuthUser,
+CurrentUser]`` — whose missing value is a server error. A missing value
+here answers 422 with a ``DeprecationWarning`` unless
+``ValidationPolicy(missing_state="error")`` is set (the 2.0 default),
+which raises :class:`~lauren.MissingStateError` (500) instead.
 
 ### `FieldDescriptor`
 

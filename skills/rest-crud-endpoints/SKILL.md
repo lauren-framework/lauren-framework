@@ -76,8 +76,10 @@ class TaskRepository:
 
 ```python
 from lauren import NoContent, NotFoundError, controller, get, post, put, delete, raises, Path, Json, OffsetPagination, Page
+from lauren.types import Request
+from lauren.responses import Created
 
-@controller("/tasks")
+@controller("/tasks", name="tasks")
 class TaskController:
     def __init__(self, repo: TaskRepository) -> None:
         self._repo = repo
@@ -87,12 +89,15 @@ class TaskController:
         rows, total = self._repo.list_page(limit=paging.limit, offset=paging.offset)
         return Page.of([TaskResponse(**t) for t in rows], paging, total=total)
 
-    @post("/", status_code=201)
-    async def create_task(self, body: Json[CreateTask]) -> TaskResponse:
+    @post("/")
+    async def create_task(self, body: Json[CreateTask], request: Request) -> Created[TaskResponse]:
         task = self._repo.create(body.title, body.description)
-        return TaskResponse(**task)
+        return Created(
+            TaskResponse(**task),
+            location=request.url_path_for(TaskController.get_task, task_id=task["id"]),
+        )
 
-    @get("/{task_id}")
+    @get("/{task_id}", name="show")
     @raises(NotFoundError)
     async def get_task(self, task_id: Path[int]) -> TaskResponse:
         return TaskResponse(**self._repo.get(task_id))
@@ -143,9 +148,10 @@ class TaskModule:
 
 - `NotFoundError` (HTTP 404, built in) is the error for missing resources; declare it with `@raises(NotFoundError)`.
 - `-> NoContent` (or `-> None`) produces HTTP 204 with no body, documented as 204.
-- Use `@post(..., status_code=201)` (or `-> Created[TaskResponse]` +
-  `return Created(task, location=...)`) for created resources — the status is
-  sent and documented in OpenAPI; `@raises(NotFoundError)` documents the 404.
+- Return `Created(task, location=request.url_path_for(TaskController.get_task,
+  task_id=task.id))` for created resources: the `Location` follows controller,
+  mount and proxy prefixes. Don't hand-build it with an f-string. The status
+  is sent and documented in OpenAPI; `@raises(NotFoundError)` documents 404.
 - Set `response_validation="filter"` on the app so a repository record with
   extra fields never leaks past the annotated `TaskResponse`.
 - `UpdateTask` uses `exclude_none=True` so only supplied fields are patched.

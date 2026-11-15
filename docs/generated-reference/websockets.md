@@ -7,7 +7,7 @@ First-class WebSocket support via `@ws_controller` gateways.
 ### `ws_controller`
 
 ```python
-def ws_controller(path: str = '', tags: list[str] | None = None, summary: str | None = None, description: str | None = None) -> Callable[[C], C]
+def ws_controller(path: str = '', tags: list[str] | None = None, summary: str | None = None, description: str | None = None, host: str | None = None, name: str | None = None) -> Callable[[C], C]
 ```
 
 Mark a class as a WebSocket gateway mounted at ``path``.
@@ -24,6 +24,12 @@ status — they must be re-decorated. This is symmetric with
 and registers the gateway at the module root. The bare form
 ``@ws_controller`` (no parentheses) is rejected with
 :class:`~lauren.exceptions.DecoratorUsageError`.
+
+``host`` routes the gateway by the handshake's ``Host`` header, like
+``@controller(host=...)``.
+``name`` names the gateway for ``request.ws_url_for(...)`` (namespaced
+by ``@module(name=...)``); without it the gateway is reachable by its
+class name or by the class itself.
 
 ### `on_connect`
 
@@ -104,7 +110,7 @@ open.
 ### `WebSocket`
 
 ```python
-class WebSocket(scope: dict[str, Any], receive: Callable[[], Awaitable[dict[str, Any]]], send: Callable[[dict[str, Any]], Awaitable[None]], path_template: str, path_params: dict[str, str], app_state: Any = None, json_encoder: Any = None)
+class WebSocket(scope: dict[str, Any], receive: Callable[[], Awaitable[dict[str, Any]]], send: Callable[[dict[str, Any]], Awaitable[None]], path_template: str, path_params: dict[str, str], app_state: Any = None, json_encoder: Any = None, connection: Any = None)
 ```
 
 A live WebSocket connection.

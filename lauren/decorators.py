@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Callable, ForwardRef, TypeVar
 
 from ._di import INJECTABLE_META, InjectableMeta
+from ._urls._names import check_name, name_problem
 from .exceptions import (
     DecoratorUsageError,
     ExceptionHandlerConfigError,
@@ -14,6 +15,19 @@ from .exceptions import (
     InterceptorConfigError,
     LifecycleConfigError,
     MiddlewareConfigError,
+)
+from ._metadata import (
+    COMPOSED_META,
+    METADATA_KEYS,
+    PROVIDES_STATE_META,
+    MetadataKey,
+    MetadataSetKey,
+    StateKey,
+    compose,
+    propagate_user_metadata,
+    provides_state,
+    reject_bare_usage,
+    stack_metadata,
 )
 from .types import Scope
 
@@ -31,27 +45,8 @@ def _describe(obj: Any) -> str:
     return repr(obj)
 
 
-def _reject_bare_usage(decorator_name: str, arg: Any) -> None:
-    """Raise if a configurable decorator was used without parentheses.
-
-    When a user writes ``@controller`` instead of ``@controller()`` Python
-    passes the decorated class or function straight to the decorator's
-    factory as its first positional argument, which almost always produces
-    a confusing downstream error (or, worse, silently "succeeds" and
-    creates a broken registration). By checking at decoration time we
-    surface the mistake immediately with actionable guidance.
-    """
-    if isinstance(arg, type) or callable(arg):
-        raise DecoratorUsageError(
-            f"@{decorator_name} must be used with parentheses: write "
-            f"'@{decorator_name}()' even when all arguments are default. "
-            "The bare form is rejected because it silently binds the "
-            "decorated object as the first positional configuration argument.",
-            detail={
-                "decorator": decorator_name,
-                "target": getattr(arg, "__qualname__", repr(arg)),
-            },
-        )
+#: Private alias kept for the framework's own decorators (public: :func:`reject_bare_usage`).
+_reject_bare_usage = reject_bare_usage
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -154,6 +149,8 @@ class ModuleMeta:
         providers: list[type] | None = None,
         imports: list[type | ForwardRef | str] | None = None,
         exports: list[type] | None = None,
+        host: str | None = None,
+        name: str | None = None,
     ) -> None:
         self.controllers = tuple(controllers or [])
         self.providers = tuple(providers or [])
@@ -161,6 +158,10 @@ class ModuleMeta:
         # during ModuleGraph.compile() once all modules are loaded.
         self.imports: tuple[type | ForwardRef | str, ...] = tuple(imports or [])
         self.exports = tuple(exports or [])
+        #: Host pattern for the module's own controllers / gateways that set none.
+        self.host = host
+        #: Namespace prefixed to the explicit route names of the module's controllers.
+        self.name = name
 
 
 def module(
@@ -169,15 +170,28 @@ def module(
     providers: list[type] | None = None,
     imports: list[type | ForwardRef | str] | None = None,
     exports: list[type] | None = None,
+    host: str | None = None,
+    name: str | None = None,
 ) -> Callable[[C], C]:
     """Declare a module boundary.
 
     Must be invoked with parentheses: ``@module()`` at minimum. The bare
     form ``@module`` is rejected because it is ambiguous (Python would
     pass the decorated class where configuration is expected).
+
+    ``host`` (e.g. ``"{tenant}.example.com"``) routes the module's own
+    controllers and WebSocket gateways by the request's ``Host`` header,
+    unless a controller declares its own ``host=``; it does not apply to
+    imported modules.
+    ``name`` (dot-separated identifiers) namespaces the explicit route names
+    of the module's controllers: ``@module(name="accounts")`` +
+    ``@controller(name="users")`` + ``@get(name="show")`` is
+    ``"accounts.users.show"``.
     """
     if args:
         _reject_bare_usage("module", args[0])
+    if host is not None:
+        _check_host("module", host)
 
     def decorator(cls: C) -> C:
         setattr(
@@ -188,6 +202,8 @@ def module(
                 providers=providers,
                 imports=imports,
                 exports=exports,
+                host=host,
+                name=check_name(name, decorator="module", target=cls),
             ),
         )
         return cls
@@ -210,6 +226,11 @@ class ControllerMeta:
         description: str | None = None,
         deprecated: bool = False,
         security: list[dict[str, Any]] | None = None,
+        consumes: tuple[str, ...] | None = None,
+        produces: tuple[str, ...] | None = None,
+        max_body_size: int | None = None,
+        host: str | None = None,
+        name: str | None = None,
     ) -> None:
         self.prefix = prefix
         self.tags = tuple(tags or [])
@@ -217,6 +238,15 @@ class ControllerMeta:
         self.description = description
         self.deprecated = deprecated
         self.security = tuple(security or [])
+        #: Default ``consumes`` / ``produces`` / ``max_body_size`` of the controller's routes.
+        self.consumes = consumes
+        self.produces = produces
+        self.max_body_size = max_body_size
+
+        #: Host pattern (``"{tenant}.example.com"``); ``None`` serves every host.
+        self.host = host
+        #: Namespace prefixed to the explicit route names of the controller.
+        self.name = name
 
 
 def controller(
@@ -227,6 +257,11 @@ def controller(
     description: str | None = None,
     deprecated: bool = False,
     security: list[dict[str, Any]] | None = None,
+    consumes: Sequence[str] | str | None = None,
+    produces: Sequence[str] | str | None = None,
+    max_body_size: int | None = None,
+    host: str | None = None,
+    name: str | None = None,
 ) -> Callable[[C], C]:
     """Declare a controller class.
 
@@ -249,13 +284,33 @@ def controller(
     ``@controller`` must always be invoked with parentheses. Writing bare
     ``@controller`` on a class is rejected with :class:`DecoratorUsageError`
     because it would otherwise silently bind the class as the URL prefix.
+
+    ``consumes`` / ``produces`` / ``max_body_size`` are defaults for the
+    controller's routes (a route's own value wins); ``consumes`` applies to the
+    routes that read a body. They are validated like the route options.
+
+    ``host`` (``"admin.example.com"``, ``"{tenant}.example.com"``) restricts
+    the controller's routes to requests whose ``Host`` matches; ``{name}``
+    labels are read with :class:`~lauren.extractors.HostParam`.
+    ``name`` (dot-separated identifiers) namespaces the explicit route names
+    of the controller: ``@controller("/users", name="users")`` with
+    ``@get("/{id}", name="show")`` is the route ``"users.show"``.
     """
     # ``prefix`` defaults to an empty string, so bare ``@controller`` would
     # pass the decorated class as ``prefix``. Detect and reject.
     if isinstance(prefix, type) or (callable(prefix) and not isinstance(prefix, str)):
         _reject_bare_usage("controller", prefix)
+    if host is not None:
+        _check_host("controller", host)
 
     def decorator(cls: C) -> C:
+        content_options = _validate_route_options(
+            "controller",
+            cls,
+            {"consumes": consumes, "produces": produces, "max_body_size": max_body_size},
+        )
+
+        _check_path("controller", cls, prefix)
         setattr(
             cls,
             CONTROLLER_META,
@@ -266,6 +321,9 @@ def controller(
                 description=description,
                 deprecated=deprecated,
                 security=security,
+                **content_options,
+                host=host,
+                name=check_name(name, decorator="controller", target=cls),
             ),
         )
         # Mark this class as injectable in its OWN __dict__ — never by
@@ -294,6 +352,10 @@ class RouteMeta:
         status_code: int | None = None,
         response_validation: str | None = None,
         response_headers: Mapping[str, Any] | None = None,
+        consumes: tuple[str, ...] | None = None,
+        produces: tuple[str, ...] | None = None,
+        max_body_size: int | None = None,
+        name: str | None = None,
     ) -> None:
         self.method = method.upper()
         self.path = path
@@ -311,6 +373,14 @@ class RouteMeta:
         self.response_validation = response_validation
         #: Documentation-only response headers: name → description or OpenAPI Header Object.
         self.response_headers: dict[str, Any] = dict(response_headers or {})
+        #: Accepted request media types (``None``: inferred from the body parameters).
+        self.consumes = consumes
+        #: Response media types, negotiated from ``Accept`` (``None``: controller / app default).
+        self.produces = produces
+        #: Body size limit in bytes (``None``: controller / app default).
+        self.max_body_size = max_body_size
+        #: Route name (``name=``); namespaced by the controller / module names.
+        self.name = name
 
 
 # ---------------------------------------------------------------------------
@@ -373,20 +443,93 @@ def _check_response_headers(value: Any) -> dict[str, Any]:
     return out
 
 
+def _check_media_types(value: Any, *, option: str, wildcards: bool) -> tuple[str, ...]:
+    from ._codecs._media import normalize_media_range
+
+    entries = (value,) if isinstance(value, str) else value
+    if not isinstance(entries, (list, tuple)) or not entries:
+        raise _RouteOptionError(
+            f"invalid_{option}", f"{option} must be a media type or a non-empty list of them, got {value!r}"
+        )
+    out: list[str] = []
+    for entry in entries:
+        try:
+            media = normalize_media_range(entry, wildcards=wildcards)
+        except ValueError as exc:
+            raise _RouteOptionError(f"invalid_{option}", f"{option}: {exc}") from None
+        if media not in out:
+            out.append(media)
+    return tuple(out)
+
+
+def _check_consumes(value: Any) -> tuple[str, ...]:
+    return _check_media_types(value, option="consumes", wildcards=True)
+
+
+def _check_produces(value: Any) -> tuple[str, ...]:
+    return _check_media_types(value, option="produces", wildcards=False)
+
+
+def _check_max_body_size(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise _RouteOptionError(
+            "invalid_max_body_size",
+            f"max_body_size must be a positive int (bytes, e.g. 10 * 1024 * 1024), got {value!r}",
+        )
+    return value
+
+
+#: Methods ``@route(methods=[...])`` accepts (no custom HTTP verbs).
+ROUTE_METHODS: frozenset[str] = frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"})
+
+
+def _check_route_methods(value: Any) -> tuple[str, ...]:
+    """Validate and de-duplicate ``@route(methods=...)`` method names at decoration time."""
+    if isinstance(value, str) or not isinstance(value, Iterable):
+        raise _RouteOptionError("invalid_method", f"methods must be a list of HTTP methods, got {value!r}")
+    names: list[str] = []
+    for method in value:
+        name = method.upper() if isinstance(method, str) else method
+        if not isinstance(name, str) or name not in ROUTE_METHODS:
+            raise _RouteOptionError(
+                "invalid_method",
+                f"method {method!r} is not one of {', '.join(sorted(ROUTE_METHODS))} "
+                "(use @any_method to accept every method)",
+            )
+        if name not in names:
+            names.append(name)
+    if not names:
+        raise _RouteOptionError("invalid_method", "methods needs at least one HTTP method")
+    return tuple(names)
+
+
+def _check_route_name(value: Any) -> str:
+    problem = name_problem(value)
+    if problem is not None:
+        raise _RouteOptionError("invalid_route_name", problem)
+    return str(value)
+
+
 #: Route-decorator option validators: keyword name → ``validate(value)``.
 #:
 #: Every verb decorator (``@get`` … ``@options``, and ``Lauren``'s ``@app.get``
 #: …) runs its options through :func:`_validate_route_options`, so a bad value
 #: fails at decoration time with a :class:`DecoratorUsageError` whose ``detail``
 #: is ``{"decorator", "target", "option", "reason"}``. A validator returns the
-#: normalised value or raises :class:`_RouteOptionError`; ``None`` always means
-#: "not set" and skips it. To add an option: add the keyword to
-#: ``_route_decorator``'s factory and to :class:`RouteMeta`, and register its
-#: validator here.
+#: normalised value or raises :class:`_RouteOptionError`; ``None`` means
+#: "not set" except for ``@route(methods=...)``, which is required. To add a
+#: per-route option: add the keyword to ``_route_decorator``'s factory and to
+#: :class:`RouteMeta`, and register its validator here. ``methods`` is a
+#: method-list-only option — it is not stored on :class:`RouteMeta`.
 _ROUTE_OPTION_VALIDATORS: dict[str, Callable[[Any], Any]] = {
     "status_code": _check_status_code,
     "response_validation": _check_response_validation,
     "response_headers": _check_response_headers,
+    "consumes": _check_consumes,
+    "produces": _check_produces,
+    "max_body_size": _check_max_body_size,
+    "methods": _check_route_methods,
+    "name": _check_route_name,
 }
 
 
@@ -395,7 +538,7 @@ def _validate_route_options(decorator: str, target: Any, options: Mapping[str, A
     out: dict[str, Any] = {}
     for name, value in options.items():
         validate = _ROUTE_OPTION_VALIDATORS.get(name)
-        if value is None or validate is None:
+        if validate is None or (value is None and name != "methods"):
             out[name] = value
             continue
         try:
@@ -409,7 +552,46 @@ def _validate_route_options(decorator: str, target: Any, options: Mapping[str, A
     return out
 
 
+def _check_path(decorator: str, target: Any, path: Any) -> None:
+    """Parse a route template now so syntax / converter-argument mistakes fail on import."""
+    from ._routing._converters import TemplateError, check_template
+
+    target_name = getattr(target, "__qualname__", None) or _describe(target)
+    if not isinstance(path, str):
+        raise DecoratorUsageError(
+            f"@{decorator}(...) on {target_name}: the path must be a string, got {type(path).__name__}",
+            detail={
+                "decorator": decorator,
+                "target": target_name,
+                "option": "path",
+                "reason": "invalid_path",
+            },
+        )
+    try:
+        check_template(path)
+    except TemplateError as exc:
+        raise DecoratorUsageError(
+            f"@{decorator}({path!r}) on {target_name}: {exc}",
+            detail={"decorator": decorator, "target": target_name, "option": "path", "reason": exc.reason},
+        ) from None
+
+
+def _check_host(decorator: str, host: Any) -> None:
+    """Parse a ``host=`` pattern at decoration time (custom converter names resolve at startup)."""
+    from ._routing._converters import TemplateError, parse_host
+
+    try:
+        parse_host(host, None, strict_names=False)
+    except TemplateError as exc:
+        raise DecoratorUsageError(
+            f"@{decorator}(host={host!r}): {exc}",
+            detail={"decorator": decorator, "option": "host", "host": repr(host), "reason": exc.reason},
+        ) from None
+
+
 def _route_decorator(method: str) -> Callable[..., Callable[[F], F]]:
+    label = "any_method" if method == "*" else method.lower()
+
     def factory(
         path: str = "",
         *,
@@ -424,21 +606,30 @@ def _route_decorator(method: str) -> Callable[..., Callable[[F], F]]:
         status_code: int | None = None,
         response_validation: str | None = None,
         response_headers: Mapping[str, Any] | None = None,
+        consumes: Sequence[str] | str | None = None,
+        produces: Sequence[str] | str | None = None,
+        max_body_size: int | None = None,
+        name: str | None = None,
     ) -> Callable[[F], F]:
         # Bare usage — ``@get`` on a function — passes the function as
         # ``path``. Reject loudly: the undetected case would silently
         # never register the route.
         if callable(path) and not isinstance(path, str):
-            _reject_bare_usage(method.lower(), path)
+            _reject_bare_usage(label, path)
 
         def decorator(fn: F) -> F:
+            _check_path(label, fn, path)
             options = _validate_route_options(
-                method.lower(),
+                label,
                 fn,
                 {
                     "status_code": status_code,
                     "response_validation": response_validation,
                     "response_headers": response_headers,
+                    "consumes": consumes,
+                    "produces": produces,
+                    "max_body_size": max_body_size,
+                    "name": name,
                 },
             )
             existing: list[RouteMeta] = getattr(fn, ROUTE_META, [])
@@ -472,6 +663,41 @@ delete = _route_decorator("DELETE")
 patch = _route_decorator("PATCH")
 head = _route_decorator("HEAD")
 options = _route_decorator("OPTIONS")
+
+
+def route(path: str = "", *, methods: Iterable[str], **kwargs: Any) -> Callable[[F], F]:
+    """Register one handler for several HTTP methods.
+
+    Sugar for stacking verb decorators: ``@route("/x", methods=["POST",
+    "PUT"])`` appends one route per method (stacking accumulates), and every
+    other keyword is a verb-decorator option (``summary=``,
+    ``status_code=``, …). Method names are validated here
+    (:class:`DecoratorUsageError`, ``reason="invalid_method"``).
+    """
+    if callable(path) and not isinstance(path, str):
+        _reject_bare_usage("route", path)
+    names = _validate_route_options("route", route, {"methods": methods})["methods"]
+    verbs = [_route_decorator(name)(path, **kwargs) for name in names]
+
+    def decorator(fn: F) -> F:
+        for verb in verbs:
+            verb(fn)
+        return fn
+
+    return decorator
+
+
+def any_method(path: str = "", **kwargs: Any) -> Callable[[F], F]:
+    """Register a handler for every HTTP method at ``path`` (proxies, webhook sinks, fallbacks).
+
+    An explicit verb handler at the same path wins over it, and a path with
+    an any-method handler never answers 405. Takes the verb decorators'
+    options. Method-agnostic routes are left out of the OpenAPI document;
+    use :func:`route` to document a fixed method list.
+    """
+    if callable(path) and not isinstance(path, str):
+        _reject_bare_usage("any_method", path)
+    return _route_decorator("*")(path, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -998,8 +1224,10 @@ def propagate_metadata(
     For **encoder** metadata, the source encoder is copied only when the target
     has no encoder of its own (target's explicit ``@use_encoder`` wins).
 
-    For **user metadata** (``@set_metadata`` key/value pairs), the source dict
-    is merged in and the target's existing keys take precedence.
+    For **user metadata** (``@set_metadata`` key/value pairs and typed keys),
+    the source values are merged in and the target's existing values take
+    precedence — except :class:`~lauren.MetadataSetKey` items, which are
+    unioned (source items first).
 
     Use ``guards=False``, ``interceptors=False``, etc. to suppress individual
     categories::
@@ -1084,21 +1312,9 @@ def propagate_metadata(
                     except (AttributeError, TypeError):  # pragma: no cover
                         pass
 
-        # ---- user metadata dict: merge, target keys win ----
+        # ---- user metadata: source values are defaults; typed collection keys union ----
         if user_metadata:
-            src_meta: dict[str, Any] = (
-                dict(source.__dict__.get(SET_METADATA, {}))
-                if isinstance(source, type)
-                else dict(getattr(source, SET_METADATA, {}))
-            )
-            if src_meta:
-                if isinstance(target, type):
-                    existing_meta = dict(target.__dict__.get(SET_METADATA, {}))
-                else:
-                    existing_meta = dict(getattr(target, SET_METADATA, {}))
-                # source provides defaults; existing target values win
-                merged = {**src_meta, **existing_meta}
-                setattr(target, SET_METADATA, merged)
+            propagate_user_metadata(source, target)
 
         return target
 
@@ -1240,13 +1456,30 @@ def openapi_security(
     return decorator
 
 
-def set_metadata(key: str, value: Any) -> Callable[[_T], _T]:
-    """Attach free-form metadata observable from ``ExecutionContext``."""
+def set_metadata(key: Any, value: Any) -> Callable[[_T], _T]:
+    """Attach metadata observable from ``ExecutionContext.get_metadata``.
+
+    *key* is a string (legacy: the last write on a target wins; a more
+    specific level replaces a controller's value) or a typed key —
+    ``@set_metadata(Roles, ("admin",))`` is ``@Roles("admin")`` and
+    ``@set_metadata(IsPublic, True)`` is ``@IsPublic(True)``, with the key's
+    stacking and merge rules. On classes only the class's **own** metadata is
+    read and extended (strict inheritance); use ``@propagate_metadata(Parent)``
+    to copy a parent's values deliberately.
+    """
+    if isinstance(key, MetadataSetKey):
+        if isinstance(value, (str, bytes)) or not isinstance(value, (tuple, list, set, frozenset)):
+            raise DecoratorUsageError(
+                f"@set_metadata({key!r}, {value!r}): a MetadataSetKey takes a tuple of items, "
+                f"e.g. @set_metadata(key, ({value!r},)) — or apply the key directly: @key(item, ...)",
+                detail={"decorator": "set_metadata", "key": key.name, "reason": "invalid_metadata_value"},
+            )
+        return key(*value)
+    if isinstance(key, MetadataKey):
+        return key(value)
 
     def decorator(target: _T) -> _T:
-        existing: dict[str, Any] = dict(getattr(target, SET_METADATA, {}))
-        existing[key] = value
-        setattr(target, SET_METADATA, existing)
+        stack_metadata(target, key, value)
         return target
 
     return decorator
@@ -1444,6 +1677,12 @@ __all__ = [
     "use_encoder",
     "set_metadata",
     "propagate_metadata",
+    "compose",
+    "provides_state",
+    "reject_bare_usage",
+    "MetadataKey",
+    "MetadataSetKey",
+    "StateKey",
     "openapi_security",
     "raises",
     "ControllerMeta",
@@ -1463,6 +1702,9 @@ __all__ = [
     "USE_EXCEPTION_HANDLERS",
     "EXCEPTION_HANDLER_META",
     "SET_METADATA",
+    "METADATA_KEYS",
+    "COMPOSED_META",
+    "PROVIDES_STATE_META",
     "PUBLIC_METADATA_KEY",
     "OPENAPI_SECURITY_META",
     "USE_ENCODER",

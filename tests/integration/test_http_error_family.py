@@ -129,7 +129,7 @@ def test_router_405_sends_a_single_allow_header() -> None:
     r = _client().post("/raise/x")
 
     assert r.status_code == 405
-    assert r.headers_all("allow") == ["GET"]
+    assert r.headers_all("allow") == ["GET, HEAD"]
 
 
 def test_domain_subclass_keeps_the_family_status_with_its_own_code() -> None:

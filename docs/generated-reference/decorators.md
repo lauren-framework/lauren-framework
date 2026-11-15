@@ -7,7 +7,7 @@ All user-facing class and method decorators exported by the framework.
 ### `module`
 
 ```python
-def module(args: Any = (), controllers: list[type] | None = None, providers: list[type] | None = None, imports: list[type | ForwardRef | str] | None = None, exports: list[type] | None = None) -> Callable[[C], C]
+def module(args: Any = (), controllers: list[type] | None = None, providers: list[type] | None = None, imports: list[type | ForwardRef | str] | None = None, exports: list[type] | None = None, host: str | None = None, name: str | None = None) -> Callable[[C], C]
 ```
 
 Declare a module boundary.
@@ -16,10 +16,19 @@ Must be invoked with parentheses: ``@module()`` at minimum. The bare
 form ``@module`` is rejected because it is ambiguous (Python would
 pass the decorated class where configuration is expected).
 
+``host`` (e.g. ``"{tenant}.example.com"``) routes the module's own
+controllers and WebSocket gateways by the request's ``Host`` header,
+unless a controller declares its own ``host=``; it does not apply to
+imported modules.
+``name`` (dot-separated identifiers) namespaces the explicit route names
+of the module's controllers: ``@module(name="accounts")`` +
+``@controller(name="users")`` + ``@get(name="show")`` is
+``"accounts.users.show"``.
+
 ### `controller`
 
 ```python
-def controller(prefix: str = '', tags: list[str] | None = None, summary: str | None = None, description: str | None = None, deprecated: bool = False, security: list[dict[str, Any]] | None = None) -> Callable[[C], C]
+def controller(prefix: str = '', tags: list[str] | None = None, summary: str | None = None, description: str | None = None, deprecated: bool = False, security: list[dict[str, Any]] | None = None, consumes: Sequence[str] | str | None = None, produces: Sequence[str] | str | None = None, max_body_size: int | None = None, host: str | None = None, name: str | None = None) -> Callable[[C], C]
 ```
 
 Declare a controller class.
@@ -43,6 +52,17 @@ decoration.
 ``@controller`` must always be invoked with parentheses. Writing bare
 ``@controller`` on a class is rejected with :class:`DecoratorUsageError`
 because it would otherwise silently bind the class as the URL prefix.
+
+``consumes`` / ``produces`` / ``max_body_size`` are defaults for the
+controller's routes (a route's own value wins); ``consumes`` applies to the
+routes that read a body. They are validated like the route options.
+
+``host`` (``"admin.example.com"``, ``"{tenant}.example.com"``) restricts
+the controller's routes to requests whose ``Host`` matches; ``{name}``
+labels are read with :class:`~lauren.extractors.HostParam`.
+``name`` (dot-separated identifiers) namespaces the explicit route names
+of the controller: ``@controller("/users", name="users")`` with
+``@get("/{id}", name="show")`` is the route ``"users.show"``.
 
 ### `injectable`
 
@@ -91,6 +111,197 @@ decorated object as a positional configuration argument.
 ### `head`
 
 ### `options`
+
+### `route`
+
+```python
+def route(path: str = '', methods: Iterable[str], kwargs: Any = {}) -> Callable[[F], F]
+```
+
+Register one handler for several HTTP methods.
+
+Sugar for stacking verb decorators: ``@route("/x", methods=["POST",
+"PUT"])`` appends one route per method (stacking accumulates), and every
+other keyword is a verb-decorator option (``summary=``,
+``status_code=``, …). Method names are validated here
+(:class:`DecoratorUsageError`, ``reason="invalid_method"``).
+
+### `any_method`
+
+```python
+def any_method(path: str = '', kwargs: Any = {}) -> Callable[[F], F]
+```
+
+Register a handler for every HTTP method at ``path`` (proxies, webhook sinks, fallbacks).
+
+An explicit verb handler at the same path wins over it, and a path with
+an any-method handler never answers 405. Takes the verb decorators'
+options. Method-agnostic routes are left out of the OpenAPI document;
+use :func:`route` to document a fixed method list.
+
+## Metadata & composition
+
+### `MetadataKey`
+
+A typed scalar route-metadata key: a decorator and a typed lookup handle.
+
+``IsPublic = MetadataKey[bool]("app.is_public", default=False)`` declares
+the key; ``@IsPublic(True)`` attaches a value to a controller, route or
+WebSocket gateway; ``ctx.get_metadata(IsPublic)`` reads it back as ``bool``
+(the ``default`` when no level set it). Stacking the key twice on one
+target with different values raises :class:`DecoratorUsageError` at
+decoration time. Across levels (controller ⟵ route) ``merge`` decides:
+``"override"`` (most specific wins), ``"outer"`` (outermost wins — pin
+security settings), ``"error"`` (conflicting levels fail
+``LaurenFactory.create``) or a callable ``(outer, inner) -> value``.
+``validate=True`` checks every decorated value against ``T`` at
+decoration time; ``public=True`` records future manifest visibility.
+
+### `MetadataSetKey`
+
+A typed collection route-metadata key whose items accumulate.
+
+``Roles = MetadataSetKey[str]("app.roles")`` declares the key;
+``@Roles("admin", "auditor")`` adds items; ``ctx.get_metadata(Roles)``
+reads ``tuple[str, ...]`` (``()`` when no level set it). Stacked
+decorators on one target accumulate (de-duplicated, application order,
+like ``@use_guards``). Across levels ``merge="union"`` (default) gives the
+ordered union, outer level first; ``"override"`` lets the most specific
+level replace the outer items; a callable ``(outer, inner) -> tuple`` is
+also accepted.
+
+### `StateKey`
+
+A typed slot in ``request.state`` (and ``app_state`` / ``ws.state``).
+
+``CurrentUser = StateKey[AuthUser]("app.user")`` names the slot. Guards
+and middleware write ``ctx.request.state[CurrentUser] = user``; handlers
+read ``request.state[CurrentUser]`` or declare a parameter
+``user: Annotated[AuthUser, CurrentUser]``, compiled at startup into a
+single dict read. Values are stored under ``name``, so string readers
+(``request.state.get("app.user")``) interoperate.
+
+A missing value raises ``on_missing`` — :class:`MissingStateError` (500)
+by default, or an :class:`HTTPError` subclass / zero-argument factory
+(``UnauthorizedError`` for authentication keys). ``require_provider=True``
+makes ``LaurenFactory.create`` check that every route injecting the key
+has a guard, middleware or interceptor declaring
+``@provides_state(key)`` in its chain.
+
+### `set_metadata`
+
+```python
+def set_metadata(key: Any, value: Any) -> Callable[[_T], _T]
+```
+
+Attach metadata observable from ``ExecutionContext.get_metadata``.
+
+*key* is a string (legacy: the last write on a target wins; a more
+specific level replaces a controller's value) or a typed key —
+``@set_metadata(Roles, ("admin",))`` is ``@Roles("admin")`` and
+``@set_metadata(IsPublic, True)`` is ``@IsPublic(True)``, with the key's
+stacking and merge rules. On classes only the class's **own** metadata is
+read and extended (strict inheritance); use ``@propagate_metadata(Parent)``
+to copy a parent's values deliberately.
+
+### `compose`
+
+Bundle decorators into one reusable decorator.
+
+``compose(a, b)(f)`` is exactly ``a(b(f))`` — the decorators apply as if
+stacked in the written order, so accumulation semantics are unchanged.
+Every step must return the object it received (Lauren decorators only
+attach metadata): a wrapping decorator raises
+:class:`DecoratorUsageError` naming it. Each application is recorded on
+the target (``lauren.reflect.reflect_composed``)::
+
+    def auth(*roles: str):
+        reject_bare_usage("auth", roles[0] if roles else None)
+        return compose(use_guards(JwtGuard, RolesGuard), Roles(*roles), name="auth")
+
+### `propagate_metadata`
+
+```python
+def propagate_metadata(source: Any, guards: bool = True, interceptors: bool = True, middlewares: bool = True, exception_handlers: bool = True, encoder: bool = True, user_metadata: bool = True) -> Callable[[_T], _T]
+```
+
+Copy Lauren decorator metadata from *source* to the decorated target.
+
+Like :func:`functools.wraps` but for Lauren's ``@use_guards``,
+``@use_interceptors``, ``@use_middlewares``, ``@use_exception_handlers``,
+``@use_encoder``, and ``@set_metadata`` annotations rather than standard
+Python dunder attributes.
+
+For **list-based** metadata (guards, interceptors, middlewares, exception
+handlers), the source entries are **prepended** before the target's own
+existing entries so that propagated behaviour runs as the outermost layer:
+
+.. code-block:: python
+
+    # source declares GuardA; target already has GuardB from @use_guards.
+    # After propagation the effective order is [GuardA, GuardB].
+
+    @propagate_metadata(source)     # applied last — GuardA prepended
+    @use_guards(GuardB)             # applied first — GuardB in dict
+    @controller("/x")
+    class Target: ...
+
+For **encoder** metadata, the source encoder is copied only when the target
+has no encoder of its own (target's explicit ``@use_encoder`` wins).
+
+For **user metadata** (``@set_metadata`` key/value pairs and typed keys),
+the source values are merged in and the target's existing values take
+precedence — except :class:`~lauren.MetadataSetKey` items, which are
+unioned (source items first).
+
+Use ``guards=False``, ``interceptors=False``, etc. to suppress individual
+categories::
+
+    @propagate_metadata(BaseController, interceptors=False)
+    @controller("/derived")
+    class DerivedController: ...
+
+*source* may be any class or callable decorated with Lauren's ``@use_*``
+family.  It does not need to be a ``@controller`` — plain classes and
+functions work as sources.
+
+:param source: The class or callable whose metadata is copied.
+:param guards: Propagate ``@use_guards`` entries.
+:param interceptors: Propagate ``@use_interceptors`` entries.
+:param middlewares: Propagate ``@use_middlewares`` entries.
+:param exception_handlers: Propagate ``@use_exception_handlers`` entries.
+:param encoder: Propagate ``@use_encoder`` (only when target has none).
+:param user_metadata: Propagate ``@set_metadata`` key/value pairs (target
+    keys win on conflict).
+
+### `provides_state`
+
+Declare that a guard, middleware or interceptor class sets these state keys.
+
+Pure metadata (own ``__dict__``; a subclass must re-declare it). Stacking
+accumulates. ``LaurenFactory.create`` uses it to check routes that inject
+a ``StateKey(..., require_provider=True)``::
+
+    @provides_state(CurrentUser)
+    class JwtGuard:
+        async def can_activate(self, ctx) -> bool:
+            ctx.request.state[CurrentUser] = AuthUser(...)
+            return True
+
+### `reject_bare_usage`
+
+Raise if a configurable decorator was used without parentheses.
+
+When a user writes ``@controller`` instead of ``@controller()`` Python
+passes the decorated class or function straight to the decorator's
+factory as its first positional argument, which almost always produces
+a confusing downstream error (or, worse, silently "succeeds" and
+creates a broken registration). Call this with the factory's first
+argument to surface the mistake at decoration time::
+
+    def auth(*roles: str):
+        reject_bare_usage("auth", roles[0] if roles else None)
+        return compose(use_guards(JwtGuard), Roles(*roles), name="auth")
 
 ## Middleware & Guards
 

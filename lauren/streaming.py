@@ -100,25 +100,22 @@ def negotiate_stream_format(
 ) -> str:
     """Pick a canonical wire format from an ``Accept`` / ``Content-Type`` header.
 
-    The header is parsed as a simple comma-separated list (quality values are
-    intentionally ignored — streaming clients rarely use ``q=``, and the
-    first match wins is the standard negotiation Rust/Axum-style frameworks
-    apply). If no known token is present, ``default`` is returned; an empty
-    or missing header is treated as ``*/*`` and also returns the default.
+    The header is parsed with the framework's RFC 9110 ``Accept`` parser (the
+    one ``produces=`` negotiation uses): quality values count and ``q=0``
+    excludes a format, the most specific matching range decides a format's
+    quality (``text/event-stream`` › ``text/*`` › ``*/*``), and among equally
+    preferred formats the one the client lists first wins. Parameters such as
+    ``; charset=utf-8`` are ignored. A missing, empty or unknown header — or
+    one that only matches through ``*/*`` — returns ``default``.
     """
     if not accept_or_content_type:
         return default
-    # Simple left-to-right scan: pick the first token whose media type (or
-    # an accepted synonym) we know. Parameters (``; charset=utf-8``) are
-    # stripped before comparison so we tolerate clients that decorate the
-    # type with charset or boundary info.
-    for part in accept_or_content_type.split(","):
-        media = part.split(";", 1)[0].strip().lower()
-        if media in MEDIA_TYPE_TO_FORMAT:
-            return MEDIA_TYPE_TO_FORMAT[media]
-        if media == "*/*":
-            return default
-    return default
+    from ._codecs._accept import negotiate
+
+    default_media = FORMAT_TO_MEDIA_TYPE[default]
+    offers = [default_media, *(m for m in MEDIA_TYPE_TO_FORMAT if m != default_media)]
+    chosen = negotiate(accept_or_content_type, offers, client_order=True)
+    return MEDIA_TYPE_TO_FORMAT[chosen] if chosen is not None else default
 
 
 # ---------------------------------------------------------------------------

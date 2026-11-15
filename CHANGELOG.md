@@ -7,6 +7,89 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-11-15
+
+### Added
+
+- Named HTTP and WebSocket routes with controller/module namespaces, immutable
+  `URL` values, request/connection URL helpers and an injectable `UrlBuilder`.
+  URL expansion uses compiled path converters, strict slashes and routed host
+  patterns; manifests expose the full compiled names.
+- `ProxyConfig` resolves public clients, schemes, hosts and prefixes only from
+  trusted peers, consistently for HTTP, WebSocket and mounted applications.
+  `public_base_url` supplies canonical out-of-request and pagination origins.
+- Expiring, rotatable signed links through `UrlSigningConfig` and
+  `ValidSignature`, reusing the shared signer. Signatures preserve routing and
+  repeated-query semantics; missing signing configuration fails at startup.
+- Generated Markdown references for routing, URLs, codecs and compiled app
+  manifests, ready for the website's documentation sync.
+
+- `RoutingConfig` groups automatic HEAD, opt-in OPTIONS, trailing-slash and
+  slash-merging policies, raw-path matching, converter inference and custom
+  typed path converters. `PathConverter` also formats values back into paths.
+- `route(methods=...)` and `any_method()` decorators, typed path templates,
+  controller/module/WebSocket host patterns and `HostParam` extraction.
+- Host-aware app manifests and reflection keep host patterns separate from
+  paths; `get_route_metadata(..., host=...)` selects an exact host route.
+
+- Body codecs and content negotiation (`Codec`, `JsonCodec`, `MsgpackCodec`),
+  registered per app through `ContentConfig(codecs=...)`. Structured request
+  bodies share the native validation pipeline regardless of wire format.
+- Route/controller `consumes=`, `produces=` and `max_body_size=` options,
+  validated at startup and exposed in reflection and OpenAPI. Declared content
+  types are enforced with 415 responses; response negotiation honors Accept
+  quality values and adds `Vary: Accept` where required.
+- `ContentConfig(strict_accept=True)` opts into 406 responses, and
+  `malformed_body_status=400` opts into 400 for malformed bodies (422 remains
+  the compatibility default). Per-route limits cover buffered and streamed
+  reads; negotiated response caching isolates representations.
+
+- Typed `MetadataKey`, `MetadataSetKey` and `StateKey` declarations, additive
+  decorator composition (`compose`) and composition reflection. Metadata merge
+  policies compile into read-only per-route mappings; state keys work for HTTP,
+  WebSocket and app state, with optional startup provenance checks.
+- `provides_state` and public `reject_bare_usage` helpers for extension authors.
+  Typed keys marked `public=True` expose their values in app manifests while
+  retaining nested `Secret` redaction.
+
+- `describe_app(app)` / `app.describe()` return an `AppManifest` immediately after
+  compilation, without lifecycle startup. Deterministic snapshots include
+  resolved module imports, provider dependencies and scopes, effective HTTP/WS
+  policy chains, mounts, redacted metadata and an OpenAPI fingerprint.
+- Graph-aware startup diagnostics preserve existing exceptions while adding
+  actionable hints, source locations, dependency paths, documentation links and
+  PEP 678 traceback notes.
+- `python -m lauren check`, `routes` and `openapi export` inspect an app without
+  serving it. CI checks support JSON and GitHub annotation output.
+- Compiled `ReflectedRoute` values expose `guards`, `interceptors` and
+  `middlewares`; the existing readers still require startup.
+
+### Changed
+
+- Compiled HTTP and WebSocket metadata is read-only. Use request/connection
+  state for mutable per-request values; typed collection keys merge by ordered
+  union unless another policy is configured.
+
+### Deprecated
+
+- Missing name-based `StateExtractor` values warn before their default 422
+  becomes 500; `ValidationPolicy(missing_state="error")` opts into that behavior.
+
+### Fixed
+
+- HTTP and WebSocket guards share read-only matched host parameters, retaining
+  tenant labels safely across request-pool reuse.
+- Decorating subclass metadata no longer silently copies a parent class's
+  metadata; the own-class inheritance rule is preserved.
+- GET routes answer HEAD with the same headers and no response body unless an
+  explicit HEAD handler overrides them. Streaming HEAD responses are closed
+  without emitting body frames, and `Allow` includes implicit methods.
+- WebSocket route compilation uses an instance-owned method set instead of
+  temporarily mutating the router's process-wide method constant.
+
+- Preserve an orjson fallback callback's original policy rejection instead of
+  replacing it with an error about the outer dictionary.
+
 ## [1.11.0] - 2026-11-05
 
 ### Added
@@ -1081,7 +1164,8 @@ Seven framework source files migrated from direct pydantic calls to
   complete reference) shipped inside the wheel.
 - **`TestClient` / `WsTestClient`** — in-process ASGI test clients.
 
-[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.12.0...HEAD
+[1.12.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.12.0
 [1.11.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.11.0
 [1.10.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.10.0
 [1.9.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.9.0

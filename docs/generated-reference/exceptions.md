@@ -435,7 +435,7 @@ matches the envelope lauren-middlewares' ``timeout`` middleware emits.
 class MissingStateError
 ```
 
-``request.state.require(key, T)`` found no value for ``key``.
+A required ``request.state`` value is missing (``require(key, T)``, ``state[key]``, a ``StateKey`` parameter).
 
 ### `StateTypeError`
 

@@ -15,7 +15,16 @@ from urllib.parse import urljoin
 from ._cookies import CookieJar
 from ._portal import Portal, stop_portal
 from ._response import ResponseHeaders, SentRequest, StreamingTestResponse, TestResponse
-from ._transport import EXTENSION_KEY, BaseURL, Body, Exchange, ForeignLifespan, Target, encode_body
+from ._transport import (
+    EXTENSION_KEY,
+    BaseURL,
+    Body,
+    Exchange,
+    ForeignLifespan,
+    Target,
+    asgi_paths,
+    encode_body,
+)
 from ._ws import WebSocketTestSession
 
 T = TypeVar("T")
@@ -24,6 +33,9 @@ LifespanMode = Literal["auto", "on", "off"]
 
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _MAX_REDIRECTS = 20
+#: The peer address every request reports (``scope["client"]``) unless ``client=`` says otherwise.
+_DEFAULT_CLIENT: tuple[str, int] = ("127.0.0.1", 12345)
+
 #: Per-request time limit (seconds) unless the client says otherwise.
 DEFAULT_TIMEOUT = 30.0
 #: Sentinel: "use the client's configured value".
@@ -275,6 +287,7 @@ class _ClientBase:
         root_path: str,
         strict_cookies: bool,
         persist_cookies: bool | None,
+        client: tuple[str, int] | None = _DEFAULT_CLIENT,
     ) -> None:
         if lifespan not in ("auto", "on", "off"):
             raise ValueError(f"lifespan must be 'auto', 'on' or 'off', got {lifespan!r}")
@@ -292,6 +305,8 @@ class _ClientBase:
         self._timeout_setting: Any = timeout
         self.raise_server_exceptions = raise_server_exceptions
         self.root_path = root_path
+        #: The peer address sent as ``scope["client"]`` (``None``: no client, like a Unix socket).
+        self.client_address: tuple[str, int] | None = client
         self._lifespan: LifespanMode = lifespan
         self._strict_cookies = strict_cookies
         self._persist_cookies = persist_cookies
@@ -326,12 +341,13 @@ class _ClientBase:
         headers: Any,
         cookies: Mapping[str, str] | None,
         json: Any,
+        msgpack: Any,
         data: Any,
         files: Any,
         content: Any,
     ) -> _Spec:
         target = self._base.target(url, params)
-        body = encode_body(json=json, data=data, files=files, content=content)
+        body = encode_body(json=json, msgpack=msgpack, data=data, files=files, content=content)
         explicit = _header_items(headers)
         overridden = {k.lower() for k, _ in explicit}
         merged = [(k, v) for k, v in self.headers.items() if k.lower() not in overridden] + explicit
@@ -362,18 +378,19 @@ class _ClientBase:
             query = target.query.encode("latin-1")
         except UnicodeEncodeError:
             query = target.query.encode("utf-8")
+        path, raw_path = asgi_paths(target.path)
         scope: dict[str, Any] = {
             "type": "http",
             "asgi": {"version": "3.0"},
             "http_version": "1.1",
             "method": method,
             "scheme": target.scheme,
-            "path": target.path,
-            "raw_path": target.path.encode("utf-8"),
+            "path": path,
+            "raw_path": raw_path,
             "query_string": query,
             "root_path": self.root_path,
             "headers": [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in sent],
-            "client": ("127.0.0.1", 12345),
+            "client": self.client_address,
             "server": (target.host, target.port),
         }
         if driver.foreign is not None:
@@ -744,6 +761,7 @@ class TestClient(_ClientBase):
         root_path: str = "",
         strict_cookies: bool = False,
         persist_cookies: bool | None = None,
+        client: tuple[str, int] | None = _DEFAULT_CLIENT,
     ) -> None:
         super().__init__(
             app,
@@ -757,6 +775,7 @@ class TestClient(_ClientBase):
             root_path=root_path,
             strict_cookies=strict_cookies,
             persist_cookies=persist_cookies,
+            client=client,
         )
         # 1.x compatibility: a bare ``TestClient(app)`` neither stored cookies
         # nor limited request time; ``with TestClient(app)`` (and
@@ -905,6 +924,7 @@ class TestClient(_ClientBase):
             root_path=self.root_path,
             strict_cookies=self._strict_cookies,
             persist_cookies=self._persist_cookies,
+            client=self.client_address,
         )
         child._backend_options = self._backend_options
         child._closed = False
@@ -924,6 +944,7 @@ class TestClient(_ClientBase):
         headers: Any = None,
         cookies: Mapping[str, str] | None = None,
         json: Any = None,
+        msgpack: Any = None,
         data: Any = None,
         files: Any = None,
         content: Any = None,
@@ -941,6 +962,7 @@ class TestClient(_ClientBase):
             headers=headers,
             cookies=cookies,
             json=json,
+            msgpack=msgpack,
             data=data,
             files=files,
             content=content,
@@ -967,6 +989,7 @@ class TestClient(_ClientBase):
             headers=kwargs.pop("headers", None),
             cookies=kwargs.pop("cookies", None),
             json=kwargs.pop("json", None),
+            msgpack=kwargs.pop("msgpack", None),
             data=kwargs.pop("data", None),
             files=kwargs.pop("files", None),
             content=kwargs.pop("content", None),
@@ -1016,6 +1039,7 @@ class TestClient(_ClientBase):
         headers: Any = None,
         cookies: Mapping[str, str] | None = None,
         json: Any = None,
+        msgpack: Any = None,
         data: Any = None,
         files: Any = None,
         content: Any = None,
@@ -1037,6 +1061,7 @@ class TestClient(_ClientBase):
             headers=headers,
             cookies=cookies,
             json=json,
+            msgpack=msgpack,
             data=data,
             files=files,
             content=content,
@@ -1087,6 +1112,7 @@ class TestClient(_ClientBase):
                 server_timeout=timeout if timeout is not None else 2.0,
                 scheme=scheme,
                 server=server,
+                client=self.client_address,
             )
             return await session.__aenter__()
 
@@ -1181,6 +1207,7 @@ class AsyncTestClient(_ClientBase):
         root_path: str = "",
         strict_cookies: bool = False,
         persist_cookies: bool | None = None,
+        client: tuple[str, int] | None = _DEFAULT_CLIENT,
     ) -> None:
         super().__init__(
             app,
@@ -1194,6 +1221,7 @@ class AsyncTestClient(_ClientBase):
             root_path=root_path,
             strict_cookies=strict_cookies,
             persist_cookies=persist_cookies,
+            client=client,
         )
         self._driver: _Driver | None = None
         self._owner = False
@@ -1276,6 +1304,7 @@ class AsyncTestClient(_ClientBase):
             root_path=self.root_path,
             strict_cookies=self._strict_cookies,
             persist_cookies=self._persist_cookies,
+            client=self.client_address,
         )
         child._driver = self._driver
         child._child = True
@@ -1296,6 +1325,7 @@ class AsyncTestClient(_ClientBase):
         headers: Any = None,
         cookies: Mapping[str, str] | None = None,
         json: Any = None,
+        msgpack: Any = None,
         data: Any = None,
         files: Any = None,
         content: Any = None,
@@ -1312,6 +1342,7 @@ class AsyncTestClient(_ClientBase):
             headers=headers,
             cookies=cookies,
             json=json,
+            msgpack=msgpack,
             data=data,
             files=files,
             content=content,
@@ -1355,6 +1386,7 @@ class AsyncTestClient(_ClientBase):
         headers: Any = None,
         cookies: Mapping[str, str] | None = None,
         json: Any = None,
+        msgpack: Any = None,
         data: Any = None,
         files: Any = None,
         content: Any = None,
@@ -1370,6 +1402,7 @@ class AsyncTestClient(_ClientBase):
             headers=headers,
             cookies=cookies,
             json=json,
+            msgpack=msgpack,
             data=data,
             files=files,
             content=content,
@@ -1413,6 +1446,7 @@ class AsyncTestClient(_ClientBase):
             server_timeout=timeout if timeout is not None else 2.0,
             scheme=scheme,
             server=server,
+            client=self.client_address,
         )
         async with session as ws:
             yield ws
