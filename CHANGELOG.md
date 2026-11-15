@@ -9,6 +9,14 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- `RoutingConfig` groups automatic HEAD, opt-in OPTIONS, trailing-slash and
+  slash-merging policies, raw-path matching, converter inference and custom
+  typed path converters. `PathConverter` also formats values back into paths.
+- `route(methods=...)` and `any_method()` decorators, typed path templates,
+  controller/module/WebSocket host patterns and `HostParam` extraction.
+- Host-aware app manifests and reflection keep host patterns separate from
+  paths; `get_route_metadata(..., host=...)` selects an exact host route.
+
 - Body codecs and content negotiation (`Codec`, `JsonCodec`, `MsgpackCodec`),
   registered per app through `ContentConfig(codecs=...)`. Structured request
   bodies share the native validation pipeline regardless of wire format.
@@ -42,6 +50,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `middlewares`; the existing readers still require startup.
 
 ### Fixed
+
+- GET routes answer HEAD with the same headers and no response body unless an
+  explicit HEAD handler overrides them. Streaming HEAD responses are closed
+  without emitting body frames, and `Allow` includes implicit methods.
+- WebSocket route compilation uses an instance-owned method set instead of
+  temporarily mutating the router's process-wide method constant.
 
 - Preserve an orjson fallback callback's original policy rejection instead of
   replacing it with an error about the outer dictionary.

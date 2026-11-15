@@ -176,6 +176,9 @@ def coverage(session: nox.Session) -> None:
     branch coverage (``--cov-fail-under=90``), locally and in the CI ``coverage``
     job that runs it.
 
+    Install optional msgspec and orjson backends for this measurement; the
+    separate extras matrix continues to test bare-runtime installations.
+
     Arguments passed after ``--`` *replace* that default list instead of
     extending it, so leaving a path unnamed makes pytest fall back to its
     ``testpaths`` (``tests``) — which is what the ``coverage`` job in
@@ -185,7 +188,19 @@ def coverage(session: nox.Session) -> None:
         nox -s coverage -- tests/unit --cov-report=xml
     """
     session.run("uv", "sync", "--extra", "dev", "--active", external=True)
-    session.run("uv", "pip", "install", "coverage[toml]", "pytest-cov", external=True)
+    # Measure the optional validator/codec paths too. Bare-runtime behavior is
+    # tested separately by the extras matrix; skipped backends must not leave
+    # the canonical coverage report blind to their implementation.
+    session.run(
+        "uv",
+        "pip",
+        "install",
+        "coverage[toml]",
+        "pytest-cov",
+        "msgspec>=0.18",
+        "orjson>=3.10",
+        external=True,
+    )
     args = session.posargs or [
         "tests/unit",
         "tests/integration",

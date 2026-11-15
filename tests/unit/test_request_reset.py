@@ -9,7 +9,10 @@ pooled object could observe stale data (a silent cross-request data leak).
 
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import Any
+
+import pytest
 
 from lauren.types import AppState, ClientInfo, Headers, Request, ServerInfo
 
@@ -23,6 +26,7 @@ _EXPECTED_RESET_ATTRS = frozenset(
         "_raw_query_string",
         "_headers",
         "_path_params",
+        "_host_params",
         "_query_params",
         "_client",
         "_server",
@@ -140,3 +144,24 @@ class TestResetRepopulatesCanonicalFields:
         assert req.path_params is not held
         assert held == {"user_id": "42"}  # the retained dict is untouched
         assert req.path_params == {}
+
+
+def test_reset_drops_host_params_without_mutating_a_retained_mapping() -> None:
+    request = _make_request()
+    request._host_params = MappingProxyType({"tenant": "first"})
+    held = request.host_params
+
+    request.reset(**_reset_kwargs())
+
+    assert request.host_params == {}
+    assert request.host_params is not held
+    assert held == {"tenant": "first"}
+
+
+def test_default_host_params_cannot_be_mutated_across_requests() -> None:
+    first, second = _make_request(), _make_request()
+
+    with pytest.raises(TypeError):
+        first.host_params["tenant"] = "first"  # type: ignore[index]
+
+    assert second.host_params == {}
