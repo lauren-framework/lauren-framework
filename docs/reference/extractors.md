@@ -7,6 +7,7 @@ Typed extractors for decomposing HTTP requests into strongly-typed Python values
 | Extractor | Source | Description |
 |---|---|---|
 | `Path[T]` | URL path segment | Coerces path params to `T` |
+| `HostParam[T]` | `host=` pattern label | Reads a case-insensitive host label and validates it as `T` |
 | `Query[T]` | Query string | Coerces query params to `T` |
 | `Header[T]` | Request header | Coerces header values to `T` |
 | `Cookie[T]` | Cookie header | Coerces cookie values to `T` |
@@ -22,6 +23,8 @@ Typed extractors for decomposing HTTP requests into strongly-typed Python values
 ## Path, Query, Header, Cookie
 
 ::: lauren.Path
+
+::: lauren.HostParam
 
 ::: lauren.Query
 

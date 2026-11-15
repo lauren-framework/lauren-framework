@@ -87,6 +87,7 @@ class ManifestRoute:
     tags: tuple[str, ...]
     operation_id: str | None
     metadata_values: dict[str, Any] = field(default_factory=dict)
+    host: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +113,7 @@ class ManifestGateway:
     interceptors: tuple[str, ...]
     middlewares: tuple[str, ...]
     metadata_keys: tuple[str, ...]
+    host: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,7 +344,8 @@ def describe_app(app: Any, *, include_metadata_values: bool = False) -> AppManif
     routes = tuple(
         ManifestRoute(
             method=method,
-            path=path,
+            path=ch.path_template,
+            host=ch.host,
             name=getattr(ch.route_meta, "name", None),
             handler=_name(ch.handler_fn),
             module=_name(ch.owning_module) if ch.owning_module else None,
@@ -374,11 +377,14 @@ def describe_app(app: Any, *, include_metadata_values: bool = False) -> AppManif
                 or any(key.name == k and key.public for key in ch.metadata_key_defs)
             },
         )
-        for (method, path), ch in sorted(app._handlers.items(), key=lambda item: (item[0][1], item[0][0]))
+        for (method, _), ch in sorted(
+            app._handlers.items(), key=lambda item: (item[1].path_template, item[0][0], item[1].host or "")
+        )
     )
     gateways = tuple(
         ManifestGateway(
-            path=path,
+            path=gw.path_template,
+            host=gw.host,
             cls=_name(gw.controller_cls),
             module=_name(gw.owning_module) if gw.owning_module else None,
             events=tuple(
@@ -400,7 +406,7 @@ def describe_app(app: Any, *, include_metadata_values: bool = False) -> AppManif
             middlewares=tuple(map(_name, gw.middlewares)),
             metadata_keys=tuple(sorted(map(_metadata_key, gw.metadata))),
         )
-        for path, gw in sorted(app._ws_gateways.items())
+        for gw in sorted(app._ws_gateways.values(), key=lambda gw: (gw.path_template, gw.host or ""))
     )
     mounts = tuple(
         ManifestMount(prefix, _name(type(subapp)))

@@ -7,9 +7,11 @@ import functools
 import inspect
 import logging
 import time
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Iterable
+from urllib.parse import quote
 
 import anyio.to_thread
 
@@ -51,10 +53,13 @@ from ..background import BackgroundTasks as _BackgroundTasks, _BG_TASKS_ATTR
 from ..context import ApplicationContext, OperationScope
 from .._lifecycle import LifecycleScheduler
 from .._modules import ModuleGraph
-from .._routing import RouteEntry, Router
+from .._routing import RouteEntry, RouteRedirect, Router, raw_routing_path
+from .._routing._config import RoutingConfig
+from .._routing._converters import is_builtin_converter
 from ..decorators import (
     CONTROLLER_META,
     EXCEPTION_HANDLER_META,
+    MODULE_META,
     RAISES_META,
     RESPONSE_VALIDATION_MODES,
     ROUTE_META,
@@ -69,6 +74,7 @@ from ..decorators import (
     RouteMeta,
 )
 from ..exceptions import (
+    BadRequestError,
     ExceptionHandlerConfigError,
     ExtractorError,
     ForbiddenError,
@@ -105,6 +111,8 @@ from .._validation import is_json_body_type as _is_json_body_type
 from .._schema._compiler import TypeCompiler
 from .._schema._markers import ValidationPolicy
 from .._schema._params import (
+    NATIVE as _NATIVE,
+    WARN as _WARN,
     ValidationRuntime,
     build_param_plan,
     failure_weight as _failure_weight,
@@ -171,6 +179,12 @@ from ._contracts import (
 from ..responses import RESULT_TYPES as _RESULT_TYPES
 
 logger = logging.getLogger("lauren")
+
+#: Request attribute holding the raw routing path under
+#: ``RoutingConfig(match_raw_path=True)``; ``Request.reset`` clears it.
+_RAW_PATH_ATTR = "_lauren_raw_path"
+#: Characters kept verbatim in a redirect ``Location`` path.
+_LOCATION_PATH_SAFE = "/:@!$&'()*+,;="
 
 #: Last-resort 500 body when no encoder can render the error envelope.
 _STATIC_INTERNAL_ERROR_BODY = (
@@ -278,6 +292,8 @@ class CompiledHandler:
     raises: tuple[Any, ...] = ()
     #: Typed metadata declarations captured at compile time for manifest visibility.
     metadata_key_defs: tuple[Any, ...] = ()
+    #: Canonical host pattern of this compiled route (separate from its path).
+    host: str | None = None
     #: ``Content-Type`` check (:class:`lauren._codecs._plan.ContentGate`), or
     #: ``None`` when the route does not check it.
     content_gate: Any = None
@@ -313,6 +329,7 @@ def _compile_handler_signature(
     validation: ValidationRuntime | None = None,
     route: str = "",
     pagination: ResolvedPagination | None = None,
+    path_converters: Mapping[str, Any] | None = None,
 ) -> tuple[tuple[Extraction, ...], list[str]]:
     """Introspect a handler and produce its extraction plan.
 
@@ -336,10 +353,18 @@ def _compile_handler_signature(
     ``CursorPagination[C]``) become the ``"pagination"`` source; their plan —
     the effective ``PaginationConfig`` (``pagination`` is the app's), integer
     validators and the cursor codec — is compiled here.
+
+    ``path_converters`` maps the route's path parameters to their converters
+    (``{id:int}``): an unannotated path parameter takes the converter's
+    ``python_type``, and an annotation that can never agree with the
+    converter (``{id:uuid}`` with ``id: int``) raises
+    :class:`~lauren.exceptions.UnresolvableParameterError`.
     """
     sig = inspect.signature(fn)
     hints = _safe_type_hints(fn)
     path_param_names = path_param_names or set()
+    # Unannotated path parameters typed by a converter ({id:int} → int).
+    converter_typed: set[str] = set()
     extractions: list[Extraction] = []
     param_names: list[str] = []
     annotations: dict[str, Any] = {}
@@ -407,7 +432,14 @@ def _compile_handler_signature(
 
         # Auto-promote bare parameters whose name matches a path variable.
         if source is None and name in path_param_names:
-            inner_type = _strip_param_annotated(ann) if ann is not inspect.Parameter.empty else str
+            converter = path_converters.get(name) if path_converters else None
+            if ann is not inspect.Parameter.empty:
+                inner_type = _strip_param_annotated(ann)
+            else:
+                # An unannotated parameter takes its converter's type ({id:int} → int).
+                inner_type = getattr(converter, "python_type", str) if converter is not None else str
+                if inner_type is not str:
+                    converter_typed.add(name)
             extractions.append(
                 Extraction(
                     name=name,
@@ -417,6 +449,13 @@ def _compile_handler_signature(
                     default=default,
                     has_default=has_default,
                     pipes=pipes,
+                    converter=(
+                        converter
+                        if ann is inspect.Parameter.empty
+                        and converter is not None
+                        and not is_builtin_converter(converter)
+                        else None
+                    ),
                 )
             )
             param_names.append(name)
@@ -662,10 +701,14 @@ def _compile_handler_signature(
         # No startup restriction on instance-method extractors: both
         # @injectable (DI-resolved) and plain (no-arg cache) forms are valid.
         param_names.append(name)
+    if path_converters:
+        for ext in extractions:
+            if ext.source == "path" and ext.name in path_converters:
+                _check_converter_annotation(controller_cls, fn, ext, path_converters[ext.name])
     if validation is not None:
         for ext in extractions:
-            if ext.source == "pagination":
-                continue  # compiled above
+            if ext.source == "pagination" or ext.converter is not None:
+                continue  # pagination compiled above; custom converter owns conversion
             ext.compiled = build_param_plan(
                 ext,
                 annotations.get(ext.name),
@@ -674,7 +717,96 @@ def _compile_handler_signature(
                 owner=controller_cls.__name__,
                 handler=getattr(fn, "__name__", "?"),
             )
+            if ext.name in converter_typed and ext.compiled is not None and ext.compiled.strategy == _WARN:
+                # The converter already guaranteed the segment's format, so
+                # the native validator is exact: ``{key:uuid}`` gives a UUID
+                # even under the 1.x ``stdlib_models="warn"`` default.
+                ext.compiled.strategy = _NATIVE
     return tuple(extractions), param_names
+
+
+#: Types a converter and an annotation can disagree on for every value.
+_CONVERTER_SCALARS: tuple[type, ...] = (int, float, uuid.UUID)
+
+
+def _check_converter_annotation(
+    controller_cls: type, fn: Callable[..., Any], ext: Extraction, converter: Any
+) -> None:
+    """Fail startup when a converter and its parameter's annotation can never agree.
+
+    Only clear contradictions fail: a ``uuid`` segment for an ``int`` /
+    ``float`` parameter, or an ``int`` / ``float`` segment for a ``UUID`` one.
+    ``str`` and unknown types are accepted (the annotation still coerces).
+    """
+    from ..exceptions import UnresolvableParameterError
+
+    converter_type = getattr(converter, "python_type", str)
+    annotation, _ = _peel_optional(_strip_param_annotated(ext.inner_type))
+    if converter_type not in _CONVERTER_SCALARS or annotation not in _CONVERTER_SCALARS:
+        return
+    if (converter_type is uuid.UUID) == (annotation is uuid.UUID):
+        return
+    handler = f"{controller_cls.__name__}.{getattr(fn, '__name__', '?')}"
+    raise UnresolvableParameterError(
+        f"path parameter {ext.name!r} of {handler} is annotated {annotation.__name__} but its converter "
+        f"{getattr(converter, 'spec', type(converter).__name__)!r} yields {converter_type.__name__} values; "
+        "change the annotation or the converter",
+        detail={
+            "class": controller_cls.__name__,
+            "handler": getattr(fn, "__name__", "?"),
+            "param": ext.name,
+            "converter": str(getattr(converter, "spec", type(converter).__name__)),
+            "annotation": annotation.__name__,
+            "reason": "converter_mismatch",
+        },
+    )
+
+
+def _route_path(prefix: str, path: str) -> str:
+    """Join a controller prefix and a route path, keeping a declared trailing slash.
+
+    A route path of ``"/"`` (or ``""``) names the prefix itself, so the
+    trailing slash then comes from the prefix. The router drops it again
+    under ``trailing_slash="ignore"`` (the default).
+    """
+    full = _normalize_path(prefix, path)
+    declared = path if path.strip("/") else prefix
+    if full != "/" and declared.endswith("/") and declared.strip("/"):
+        full += "/"
+    return full
+
+
+def _infer_converters(path: str, fn: Callable[..., Any]) -> str:
+    """``RoutingConfig(infer_converters=True)``: type untyped ``{name}`` segments from annotations.
+
+    ``int`` parameters route as ``{name:sint}`` and ``uuid.UUID`` ones as
+    ``{name:uuid}``; every other segment is kept as written.
+    """
+    if "{" not in path:
+        return path
+    hints = _safe_type_hints(fn)
+    out: list[str] = []
+    for segment in path.split("/"):
+        if segment.startswith("{") and segment.endswith("}") and ":" not in segment and "*" not in segment:
+            spec = _inferred_spec(hints.get(segment[1:-1], inspect.Parameter.empty))
+            if spec is not None:
+                segment = "{" + segment[1:-1] + ":" + spec + "}"
+        out.append(segment)
+    return "/".join(out)
+
+
+def _inferred_spec(ann: Any) -> str | None:
+    if ann is inspect.Parameter.empty:
+        return None
+    source, inner, *_ = parse_extractor_hint(ann)
+    if source not in (None, "path"):
+        return None
+    tp, _ = _peel_optional(_strip_param_annotated(inner if source else ann))
+    if tp is int:
+        return "sint"
+    if tp is uuid.UUID:
+        return "uuid"
+    return None
 
 
 def _strip_param_annotated(tp: Any) -> Any:
@@ -951,8 +1083,14 @@ class LaurenApp:
         validation: ValidationRuntime | None = None,
         response_validation: str = "off",
         json_fallback: str = "warn",
+        routing: RoutingConfig | None = None,
     ) -> None:
         self._router = router
+        #: Router HTTP semantics (``routing=``); the router holds the same object.
+        self._routing: RoutingConfig = routing if routing is not None else router.config
+        self._auto_options = self._routing.auto_options
+        self._match_raw_path = self._routing.match_raw_path
+        self._host_routing = router.has_hosts
         self._container = container
         self._module_graph = module_graph
         self._lifecycle = lifecycle
@@ -1941,6 +2079,62 @@ class LaurenApp:
         logger.warning(message)
         self._logger.warn(message, context="ResponseContract", route=route, error=type(exc).__name__)
 
+    def _routing_path(self, request: Request) -> str:
+        """The path the router matches: the raw path under ``match_raw_path``, else ``request.path``."""
+        if self._match_raw_path:
+            raw: str | None = getattr(request, _RAW_PATH_ATTR, None)
+            return raw if raw is not None else raw_routing_path(None, request.path)
+        return request.path
+
+    async def _render_routing_error(
+        self,
+        exc: HTTPError,
+        *,
+        request: Request,
+        request_cache: dict[type, Any],
+        framework_values: dict[type, Any],
+    ) -> Response:
+        """Render a 404 / 405 / 400 from routing, offering it to the global exception handlers first.
+
+        A handler's 405 response without ``Allow`` gets the router's list
+        (RFC 9110 §15.5.6). Unclaimed, the error renders its own envelope.
+        """
+        if self._global_exception_handlers:
+            try:
+                handled = await self._dispatch_exception_handlers(
+                    exc,
+                    request=request,
+                    handlers=self._global_exception_handlers,
+                    request_cache=request_cache,
+                    framework_values=framework_values,
+                    owning_module=None,
+                    compiled=None,
+                )
+            except _ExceptionHandlerFailure as failure:
+                self._log_handler_failure(failure, request)
+                return self._internal_error_response(failure.handler_error, request=request)
+            if handled is not None:
+                if (
+                    isinstance(exc, MethodNotAllowedError)
+                    and exc.allow
+                    and handled.status == 405
+                    and "allow" not in handled.headers
+                ):
+                    handled = handled.with_header("allow", ", ".join(exc.allow))
+                return handled
+        return self._render_error(exc, request=request)
+
+    def _slash_redirect(self, request: Request, path: str) -> Response:
+        """``308`` to the canonical spelling of the request path (query and root path kept)."""
+        root: str = getattr(request, _ROOT_PATH_ATTR, "")
+        location = path if self._match_raw_path else quote(path, safe=_LOCATION_PATH_SAFE)
+        if root:
+            location = quote(root.rstrip("/"), safe=_LOCATION_PATH_SAFE) + location
+        query = request._raw_query_string
+        if query:
+            location += "?" + query.decode("latin-1")
+        return Response(b"", status=308, headers=Headers([("location", location)]))
+
     async def _render_outer_error(
         self,
         exc: Exception,
@@ -2097,13 +2291,38 @@ class LaurenApp:
 
                     # --- Routing ---
                     try:
-                        entry, params = self._router.find(req.method, req.path)
-                    except (RouteNotFoundError, MethodNotAllowedError) as e:
-                        # The error carries its own headers (``Allow`` on a 405).
+                        if self._host_routing:
+                            entry, params, host_params = self._router.find_host(
+                                req.method,
+                                self._routing_path(req),
+                                req.headers.get("host") or req.headers.get(":authority"),
+                            )
+                            if host_params:
+                                req._host_params = host_params
+                        else:
+                            entry, params = self._router.find(
+                                req.method, self._routing_path(req) if self._match_raw_path else req.path
+                            )
+                    except RouteRedirect as redirect:
+                        return self._slash_redirect(req, redirect.path)
+                    except (RouteNotFoundError, MethodNotAllowedError, BadRequestError) as e:
+                        if (
+                            self._auto_options
+                            and isinstance(e, MethodNotAllowedError)
+                            and req.method == "OPTIONS"
+                        ):
+                            # ``RoutingConfig(auto_options=True)``: answer the
+                            # path's methods (CORS preflights were already
+                            # handled by a global middleware, if any).
+                            return Response(b"", status=204, headers=Headers([("allow", ", ".join(e.allow))]))
+                        # Global exception handlers may claim routing errors
+                        # (no route — hence no route/controller chain — exists).
                         captured_error = e
-                        return self._render_error(e, request=req)
+                        return await self._render_routing_error(
+                            e, request=req, request_cache=request_cache, framework_values=framework_values
+                        )
 
-                    compiled = self._handlers[(entry.method, entry.path_template)]
+                    compiled = self._handlers[entry.handler_key]
                     # Per-route encoder wins over the app-level encoder.
                     effective_encoder = compiled.encoder or self._json_encoder
                     # Sanctioned in-place reuse — the one place the framework mutates
@@ -2612,6 +2831,12 @@ class LaurenApp:
             # The public path prefix (proxy root path / mount prefix), read
             # by pagination links; ``Request.reset`` clears it.
             setattr(request, _ROOT_PATH_ATTR, public_root)
+        if self._match_raw_path:
+            # ``RoutingConfig(match_raw_path=True)``: route on the raw path,
+            # percent-decoding each segment (``Request.reset`` clears it).
+            setattr(request, _RAW_PATH_ATTR, raw_routing_path(scope.get("raw_path"), effective_path))
+        # RFC 9110 §9.3.2: a HEAD response never carries a body, whoever built it.
+        head = scope["method"] == "HEAD"
         task = asyncio.current_task()
         if task is not None:
             self._in_flight.add(task)
@@ -2622,7 +2847,7 @@ class LaurenApp:
         try:
             response = await self.handle(request)
             _bg: _BackgroundTasks | None = request.state.get(_BG_TASKS_ATTR)
-            await _send_response(response, send)
+            await _send_response(response, send, head=head)
             _response_sent = True
             if _bg is not None and _bg._has_tasks():
                 await _bg._run(signals=self._signals, logger=self._logger)
@@ -2673,7 +2898,7 @@ class LaurenApp:
                         code="internal_error",
                         request=request,
                     )
-                    await _send_response(_fallback.with_header("connection", "close"), send)
+                    await _send_response(_fallback.with_header("connection", "close"), send, head=head)
                 except Exception:
                     pass  # Cannot send — ASGI server will close the connection
         finally:
@@ -3228,7 +3453,15 @@ def _error_response(
 async def _send_response(
     response: Response,
     send: Callable[[dict[str, Any]], Awaitable[None]],
+    *,
+    head: bool = False,
 ) -> None:
+    """Send ``response``; with ``head=True`` (a HEAD request) send its headers only.
+
+    A buffered HEAD response keeps the ``content-length`` its body would have
+    had; a streaming one is never iterated — its iterator's ``aclose()`` runs
+    when it has one — and keeps only a ``content-length`` it already set.
+    """
     raw_headers: list[tuple[bytes, bytes]] = [
         (k.encode("latin-1"), v.encode("latin-1")) for k, v in response.headers.raw()
     ]
@@ -3244,7 +3477,7 @@ async def _send_response(
                 "headers": raw_headers,
             }
         )
-        await send({"type": "http.response.body", "body": body, "more_body": False})
+        await send({"type": "http.response.body", "body": b"" if head else body, "more_body": False})
     else:
         await send(
             {
@@ -3253,6 +3486,10 @@ async def _send_response(
                 "headers": raw_headers,
             }
         )
+        if head:
+            await _close_unread_stream(stream)
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+            return
         # Once the response headers are sent we cannot send a fallback error
         # response if streaming fails.  Wrap the body loop so that:
         # - asyncio.CancelledError  → re-raised (server shutdown / client gone)
@@ -3269,6 +3506,19 @@ async def _send_response(
             raise
         except Exception:
             pass  # client disconnected mid-stream; connection will be closed
+
+
+async def _close_unread_stream(stream: Any) -> None:
+    """``aclose()`` a streaming body that will never be iterated (HEAD); errors are logged."""
+    aclose = getattr(stream, "aclose", None)
+    if aclose is None:
+        return
+    try:
+        await aclose()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning("closing an unread streaming body for a HEAD response failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -3319,6 +3569,7 @@ class LaurenFactory:
         response_validation: str = "off",
         json_fallback: str = "warn",
         pagination: PaginationConfig | None = None,
+        routing: RoutingConfig | None = None,
     ) -> LaurenApp:
         """Build a :class:`LaurenApp` from a root ``@module`` class.
 
@@ -3407,8 +3658,20 @@ class LaurenFactory:
         cursor secret; ``Annotated[OffsetPagination, PaginationConfig(...)]``
         overrides per parameter. A route using ``CursorPagination`` without a
         cursor secret fails here (``reason="pagination_secret_missing"``).
+
+        ``routing`` (a :class:`~lauren.routing.RoutingConfig`) sets the router's
+        HTTP semantics: implicit ``HEAD`` (on by default) and ``OPTIONS``, the
+        trailing-slash policy, slash merging, raw-path matching and custom
+        path converters. Routing misses (404 / 405) reach the global
+        exception handlers before the built-in envelope is rendered.
         """
         _log: Logger = logger or NullLogger()
+        if routing is not None and not isinstance(routing, RoutingConfig):
+            raise StartupError(
+                f"routing must be a RoutingConfig, got {type(routing).__name__}",
+                detail={"reason": "invalid_routing_config", "got": repr(routing)},
+            )
+        routing_config = routing if routing is not None else RoutingConfig()
         if response_validation not in RESPONSE_VALIDATION_MODES:
             raise StartupError(
                 f"response_validation must be one of {', '.join(map(repr, RESPONSE_VALIDATION_MODES))}, "
@@ -3678,7 +3941,7 @@ class LaurenFactory:
 
         # ---- Phase 5: Router compilation ----
         phase5_t0 = time.perf_counter()
-        router = Router()
+        router = Router(routing_config)
         compiled_handlers: dict[tuple[str, str], CompiledHandler] = {}
         # Routes whose ``response_model=`` only documents (contract off).
         documentation_only_models: list[str] = []
@@ -3783,8 +4046,16 @@ class LaurenFactory:
                         _ensure_injectable(h)
                         container.register(h)
                 ctrl_owning_module = graph.module_for_controller(ctrl_cls)
+                # ``host=``: the controller's own, else its module's.
+                ctrl_host = getattr(ctrl_meta, "host", None) or getattr(
+                    (ctrl_owning_module.__dict__.get(MODULE_META) if ctrl_owning_module else None),
+                    "host",
+                    None,
+                )
                 for rmeta in route_metas:
-                    full_path = _normalize_path(ctrl_meta.prefix, rmeta.path)
+                    full_path = _route_path(ctrl_meta.prefix, rmeta.path)
+                    if routing_config.infer_converters:
+                        full_path = _infer_converters(full_path, fn)
                     try:
                         entry = router.add_route(
                             rmeta.method,
@@ -3797,6 +4068,7 @@ class LaurenFactory:
                                 "extra": route_metadata,
                                 "binding": binding,
                             },
+                            host=ctrl_host,
                         )
                     except RouterConflictError as exc:
                         from .._diagnostics import enrich_startup_error
@@ -3825,7 +4097,9 @@ class LaurenFactory:
                             validation=validation_runtime,
                             route=f"{rmeta.method} {entry.path_template}",
                             pagination=pagination_config,
+                            path_converters=entry.converters,
                         )
+                        _check_host_params(ctrl_cls, fn, extractions, entry)
                     except StartupError as exc:
                         from .._diagnostics import enrich_startup_error
 
@@ -3883,6 +4157,7 @@ class LaurenFactory:
                         handler_fn=fn,
                         route_meta=rmeta,
                         path_template=entry.path_template,
+                        host=entry.host,
                         extractions=extractions,
                         middleware_chain=tuple(ctrl_mw + fn_mw),
                         guards=tuple(ctrl_guards + fn_guards),
@@ -3915,7 +4190,7 @@ class LaurenFactory:
                         produces=route_content.produces,
                         consumes_declared=route_content.consumes_declared,
                     )
-                    compiled_handlers[(entry.method, entry.path_template)] = compiled
+                    compiled_handlers[entry.handler_key] = compiled
                     _log.log(
                         f"Mapped {{{rmeta.method} {entry.path_template}}} "
                         f"→ {ctrl_cls.__name__}.{fn.__name__}",
@@ -4011,7 +4286,9 @@ class LaurenFactory:
         # make it into the DI graph before it's re-compiled below.
         from .._ws_runtime import compile_gateways
 
-        ws_router = Router()
+        # The WebSocket router accepts only the ``WEBSOCKET`` pseudo-verb — an
+        # instance property, so nothing process-wide changes.
+        ws_router = Router(routing_config, methods=frozenset({"WEBSOCKET"}))
         ws_gateways = compile_gateways(
             graph, container, ws_router=ws_router, logger=_log, validation=validation_runtime
         )
@@ -4162,6 +4439,7 @@ class LaurenFactory:
             validation=validation_runtime,
             response_validation=response_validation,
             json_fallback=json_fallback,
+            routing=routing_config,
         )
         # The immutable Phase 6a index; feature consumers read their markers.
         app._discovery = discovery
@@ -4368,6 +4646,29 @@ def _compile_guard_denial(guard_cls: type) -> Any:
     )
 
 
+def _check_host_params(
+    ctrl_cls: type, fn: Callable[..., Any], extractions: Iterable[Extraction], entry: RouteEntry
+) -> None:
+    """Every ``HostParam`` must name a label of the route's ``host=`` pattern."""
+    from ..exceptions import UnresolvableParameterError
+
+    for ext in extractions:
+        if ext.source == "host_param" and ext.name not in entry.host_param_names:
+            handler = f"{ctrl_cls.__name__}.{getattr(fn, '__name__', '?')}"
+            where = f"host pattern {entry.host!r}" if entry.host else "no host= pattern"
+            raise UnresolvableParameterError(
+                f"HostParam {ext.name!r} of {handler} is not a label of the route's host ({where}); "
+                "declare it in @controller(host=...) / @module(host=...)",
+                detail={
+                    "class": ctrl_cls.__name__,
+                    "handler": getattr(fn, "__name__", "?"),
+                    "param": ext.name,
+                    "host": entry.host,
+                    "reason": "unknown_host_param",
+                },
+            )
+
+
 def _ensure_injectable(cls: type) -> None:
     """Auto-mark a class as injectable if it isn't already.
 
@@ -4536,7 +4837,7 @@ def _register_docs_routes(
             owning_module=None,
             is_coroutine=inspect.iscoroutinefunction(fn),
         )
-        compiled_handlers[(method, entry.path_template)] = compiled
+        compiled_handlers[entry.handler_key] = compiled
 
 
 __all__ = ["LaurenApp", "LaurenFactory", "CompiledHandler"]

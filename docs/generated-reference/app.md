@@ -13,7 +13,7 @@ Produces :class:`LaurenApp` instances via the 7-phase pipeline.
 #### `LaurenFactory.create`
 
 ```python
-def create(root_module: type, strict_lifecycle: bool = True, global_middlewares: Iterable[type] | None = None, global_guards: Iterable[type] | None = None, global_interceptors: Iterable[type] | None = None, global_exception_handlers: Iterable[Any] | None = None, global_providers: Iterable[Any] | None = None, global_ws_guards: Iterable[type] | None = None, global_ws_interceptors: Iterable[type] | None = None, max_body_size: int = 1048576, app_state: AppState | None = None, logger: Logger | None = None, openapi_info: dict[str, Any] | None = None, openapi_servers: list[dict[str, Any]] | None = None, openapi_security_schemes: dict[str, Any] | None = None, openapi_url: str | None = None, docs_url: str | None = None, redoc_url: str | None = None, arena: RequestArena | None = None, arena_capacity: int | None = None, json_encoder: JSONEncoder | None = None, signals: SignalBus | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, sessions: SessionConfig | None = None, content: ContentConfig | None = None, problem_type_base: str | None = None, debug: bool | DebugConfig = False, lazy_startup: bool = True, hosted_services: bool = True, scheduler: bool = True, validation: ValidationPolicy | None = None, strict_request_scope: bool = False, response_validation: str = 'off', json_fallback: str = 'warn', pagination: PaginationConfig | None = None) -> LaurenApp
+def create(root_module: type, strict_lifecycle: bool = True, global_middlewares: Iterable[type] | None = None, global_guards: Iterable[type] | None = None, global_interceptors: Iterable[type] | None = None, global_exception_handlers: Iterable[Any] | None = None, global_providers: Iterable[Any] | None = None, global_ws_guards: Iterable[type] | None = None, global_ws_interceptors: Iterable[type] | None = None, max_body_size: int = 1048576, app_state: AppState | None = None, logger: Logger | None = None, openapi_info: dict[str, Any] | None = None, openapi_servers: list[dict[str, Any]] | None = None, openapi_security_schemes: dict[str, Any] | None = None, openapi_url: str | None = None, docs_url: str | None = None, redoc_url: str | None = None, arena: RequestArena | None = None, arena_capacity: int | None = None, json_encoder: JSONEncoder | None = None, signals: SignalBus | None = None, error_format: str = 'default', root_path: str = '', mounts: dict[str, Any] | None = None, sessions: SessionConfig | None = None, content: ContentConfig | None = None, problem_type_base: str | None = None, debug: bool | DebugConfig = False, lazy_startup: bool = True, hosted_services: bool = True, scheduler: bool = True, validation: ValidationPolicy | None = None, strict_request_scope: bool = False, response_validation: str = 'off', json_fallback: str = 'warn', pagination: PaginationConfig | None = None, routing: RoutingConfig | None = None) -> LaurenApp
 ```
 
 Build a :class:`LaurenApp` from a root ``@module`` class.
@@ -104,6 +104,12 @@ cursor secret; ``Annotated[OffsetPagination, PaginationConfig(...)]``
 overrides per parameter. A route using ``CursorPagination`` without a
 cursor secret fails here (``reason="pagination_secret_missing"``).
 
+``routing`` (a :class:`~lauren.routing.RoutingConfig`) sets the router's
+HTTP semantics: implicit ``HEAD`` (on by default) and ``OPTIONS``, the
+trailing-slash policy, slash merging, raw-path matching and custom
+path converters. Routing misses (404 / 405) reach the global
+exception handlers before the built-in envelope is rendered.
+
 #### `LaurenFactory.create_context`
 
 ```python
@@ -123,7 +129,7 @@ Hosted services and the scheduler are **off** by default (pass
 ### `Lauren`
 
 ```python
-class Lauren(title: str = 'lauren application', version: str = '1.0.0', description: str | None = None, openapi_url: str | None = '/openapi.json', docs_url: str | None = '/docs', redoc_url: str | None = '/redoc', servers: list[dict[str, Any]] | None = None, security_schemes: dict[str, Any] | None = None, debug: bool | DebugConfig = False, max_body_size: int = 1048576, strict_lifecycle: bool = True, app_state: AppState | None = None, logger: Any | None = None, global_middlewares: list[type] | None = None, global_guards: list[type] | None = None, global_interceptors: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, sessions: Any | None = None, content: Any | None = None, json_encoder: Any | None = None, error_format: str = 'default', problem_type_base: str | None = None, root_path: str = '', mounts: dict[str, Any] | None = None, signals: Any | None = None, arena: Any | None = None, arena_capacity: int | None = None, lazy_startup: bool = True, hosted_services: bool = True, scheduler: bool = True, validation: Any | None = None, strict_request_scope: bool = False, response_validation: str = 'off', json_fallback: str = 'warn', pagination: Any | None = None)
+class Lauren(title: str = 'lauren application', version: str = '1.0.0', description: str | None = None, openapi_url: str | None = '/openapi.json', docs_url: str | None = '/docs', redoc_url: str | None = '/redoc', servers: list[dict[str, Any]] | None = None, security_schemes: dict[str, Any] | None = None, debug: bool | DebugConfig = False, max_body_size: int = 1048576, strict_lifecycle: bool = True, app_state: AppState | None = None, logger: Any | None = None, global_middlewares: list[type] | None = None, global_guards: list[type] | None = None, global_interceptors: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, sessions: Any | None = None, content: Any | None = None, json_encoder: Any | None = None, error_format: str = 'default', problem_type_base: str | None = None, root_path: str = '', mounts: dict[str, Any] | None = None, signals: Any | None = None, arena: Any | None = None, arena_capacity: int | None = None, lazy_startup: bool = True, hosted_services: bool = True, scheduler: bool = True, validation: Any | None = None, strict_request_scope: bool = False, response_validation: str = 'off', json_fallback: str = 'warn', pagination: Any | None = None, routing: Any | None = None)
 ```
 
 A FastAPI-inspired ASGI application over lauren's module pipeline.
@@ -177,6 +183,22 @@ def head(self, path: str = '/', kw: Any = {}) -> Callable[[Callable[..., Any]], 
 ```python
 def options(self, path: str = '/', kw: Any = {}) -> Callable[[Callable[..., Any]], Callable[..., Any]]
 ```
+
+#### `Lauren.route`
+
+```python
+def route(self, path: str = '/', methods: Any, kw: Any = {}) -> Callable[[Callable[..., Any]], Callable[..., Any]]
+```
+
+Register one handler for several methods, like :func:`lauren.route`.
+
+#### `Lauren.any_method`
+
+```python
+def any_method(self, path: str = '/', kw: Any = {}) -> Callable[[Callable[..., Any]], Callable[..., Any]]
+```
+
+Register a handler for every method at ``path``, like :func:`lauren.any_method`.
 
 #### `Lauren.include_module`
 
@@ -374,7 +396,7 @@ Same as :meth:`LaurenApp.begin_draining`; ``False`` before the app has compiled.
 ### `LaurenApp`
 
 ```python
-class LaurenApp(router: Router, container: DIContainer, module_graph: ModuleGraph, lifecycle: LifecycleScheduler, compiled_handlers: dict[tuple[str, str], CompiledHandler], global_middlewares: list[type], app_state: AppState, strict_lifecycle: bool = True, max_body_size: int = 1048576, logger: Logger | None = None, ws_router: Router | None = None, ws_gateways: dict[str, Any] | None = None, arena: RequestArena | None = None, signals: SignalBus | None = None, error_format: str = 'default', global_guards: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_interceptors: list[type] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, strict_content_type: bool | str = False, problem_type_base: str | None = None, debug: DebugConfig | None = None, guard_denials: dict[type, Any] | None = None, lazy_startup: bool = True, validation: ValidationRuntime | None = None, response_validation: str = 'off', json_fallback: str = 'warn')
+class LaurenApp(router: Router, container: DIContainer, module_graph: ModuleGraph, lifecycle: LifecycleScheduler, compiled_handlers: dict[tuple[str, str], CompiledHandler], global_middlewares: list[type], app_state: AppState, strict_lifecycle: bool = True, max_body_size: int = 1048576, logger: Logger | None = None, ws_router: Router | None = None, ws_gateways: dict[str, Any] | None = None, arena: RequestArena | None = None, signals: SignalBus | None = None, error_format: str = 'default', global_guards: list[type] | None = None, global_exception_handlers: list[Any] | None = None, global_interceptors: list[type] | None = None, global_providers: list[Any] | None = None, global_ws_guards: list[type] | None = None, global_ws_interceptors: list[type] | None = None, strict_content_type: bool | str = False, problem_type_base: str | None = None, debug: DebugConfig | None = None, guard_denials: dict[type, Any] | None = None, lazy_startup: bool = True, validation: ValidationRuntime | None = None, response_validation: str = 'off', json_fallback: str = 'warn', routing: RoutingConfig | None = None)
 ```
 
 A compiled, ready-to-serve ASGI application.

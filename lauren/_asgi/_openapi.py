@@ -18,6 +18,8 @@ import inspect as _inspect
 from typing import Any, ForwardRef, TYPE_CHECKING, get_args, get_origin
 
 from .._cache._policy import CACHE_RESPONSE_META
+from .._routing import ANY_METHOD
+from .._routing._converters import is_builtin_converter
 from .._typing import resolve_type_hints
 from ..decorators import OPENAPI_SECURITY_META, ControllerMeta, RouteMeta
 from ..extractors import FieldDescriptor, Extraction
@@ -743,6 +745,23 @@ def _apply_media_types(op: dict[str, Any], compiled: Any) -> None:
             content.setdefault(media, dict(response_schema))
 
 
+def _apply_converter_schema(param: dict[str, Any], ext: Extraction, converter: Any) -> None:
+    """Describe a typed path segment by its converter (``{id:int(min=1)}`` → integer, minimum 1).
+
+    Applies when the handler's annotation adds nothing more specific: the
+    parameter is ``str``-typed, unannotated or of the converter's own type.
+    Untyped ``{name}`` and wildcard segments keep the annotation's schema.
+    """
+    if is_builtin_converter(converter) and getattr(converter, "name", "") in ("str", "path"):
+        return
+    if ext.inner_type is not str and ext.inner_type is not getattr(converter, "python_type", str):
+        return
+    schema = dict(converter.openapi_schema())
+    if ext.field_descriptor is not None:
+        _apply_field_descriptor(schema, ext.field_descriptor)
+    param["schema"] = schema
+
+
 def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
     info = getattr(app, "_openapi_info", None) or DEFAULT_INFO
     servers = getattr(app, "_openapi_servers", None)
@@ -763,10 +782,13 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
     for entry in app.router.routes():
         rmeta: RouteMeta = entry.metadata["route_meta"]
         ctrl_meta: ControllerMeta = entry.metadata["controller_meta"]
-        if not rmeta.include_in_schema:
+        # Method-agnostic routes (``@any_method``) have no OpenAPI operation;
+        # synthesized HEAD / OPTIONS answers are not routes at all.
+        if not rmeta.include_in_schema or entry.method == ANY_METHOD:
             continue
-        compiled = app._handlers.get((entry.method, entry.path_template))  # type: ignore[attr-defined]
-        path_item = paths.setdefault(entry.path_template, {})
+        compiled = app._handlers.get(entry.handler_key)  # type: ignore[attr-defined]
+        # ``path_format`` drops converter specs: ``/items/{id:int}`` → ``/items/{id}``.
+        path_item = paths.setdefault(entry.path_format, {})
         op: dict[str, Any] = {}
         if rmeta.summary or ctrl_meta.summary:
             op["summary"] = rmeta.summary or ctrl_meta.summary
@@ -788,6 +810,8 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             seen_param_keys: set[tuple[str, str]] = set()
             for ext in compiled.extractions:
                 p = _build_parameter(ext, components)
+                if p is not None and p["in"] == "path" and ext.name in entry.converters:
+                    _apply_converter_schema(p, ext, entry.converters[ext.name])
                 if p is not None:
                     key = (p["in"], p["name"])
                     if key in seen_param_keys:
@@ -812,6 +836,14 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             op["parameters"] = params
         if request_body is not None:
             op["requestBody"] = request_body
+        host_pattern = getattr(entry, "_host_pattern", None)
+        if host_pattern is not None:
+            # Host-routed operations name their host; ``{label}`` parameters
+            # become server variables.
+            server: dict[str, Any] = {"url": host_pattern.openapi_url()}
+            if host_pattern.param_names:
+                server["variables"] = {name: {"default": name} for name in host_pattern.param_names}
+            op["servers"] = [server]
         # Extract return annotation from the handler function for response schema inference.
         return_annotation: Any = None
         table = getattr(compiled, "response_table", None) if compiled is not None else None
@@ -883,7 +915,20 @@ def generate_openapi(app: "LaurenApp") -> dict[str, Any]:
             if guard_sec is not None:
                 op["security"] = guard_sec
 
-        path_item[entry.method.lower()] = op
+        method_key = entry.method.lower()
+        previous = path_item.get(method_key)
+        if previous is not None and ("servers" in previous or "servers" in op):
+            # OpenAPI permits only one operation per path and method, even
+            # when Lauren routes different handlers on different hosts. Keep
+            # the first operation's shape and advertise every host through
+            # its operation-level server list rather than silently losing
+            # the first host when the later entry overwrites the slot.
+            known = {server["url"] for server in previous.get("servers", ())}
+            for server in op.get("servers", ()):
+                if server["url"] not in known:
+                    previous.setdefault("servers", []).append(server)
+            continue
+        path_item[method_key] = op
 
     result_components: dict[str, Any] = {"schemas": registry.as_dict()}
     if security_schemes:

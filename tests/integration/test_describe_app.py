@@ -223,3 +223,48 @@ def test_manifest_includes_only_public_typed_values_and_redacts_secrets() -> Non
     assert route.metadata_values == {"visibility.public": {"enabled": True, "secret": "***"}}
     assert "private-value" not in describe_app(app).to_json()
     assert "do-not-publish" not in describe_app(app, include_metadata_values=True).to_json()
+
+
+def test_host_routed_manifests_keep_host_and_path_separate() -> None:
+    from lauren.reflect import get_all_ws_gateways
+    from lauren.testing import TestClient
+
+    @controller("/hosted", host="admin.example.test")
+    class Admin:
+        @get("/")
+        async def show(self) -> dict:
+            return {}
+
+    @controller("/hosted", host="public.example.test")
+    class Public:
+        @get("/")
+        async def show(self) -> dict:
+            return {}
+
+    @ws_controller("/hosted-ws", host="admin.example.test")
+    class Gateway:
+        @on_connect
+        async def join(self) -> None:
+            pass
+
+    @module(controllers=[Public, Admin, Gateway])
+    class Root:
+        pass
+
+    app = LaurenFactory.create(Root)
+    manifest = describe_app(app)
+    assert [(route.host, route.path) for route in manifest.routes] == [
+        ("admin.example.test", "/hosted"),
+        ("public.example.test", "/hosted"),
+    ]
+    assert manifest.websocket_gateways[0].path == "/hosted-ws"
+    assert manifest.websocket_gateways[0].host == "admin.example.test"
+    with TestClient(app):
+        assert {route.full_path for route in get_all_routes(app)} == {"/hosted"}
+        assert get_all_ws_gateways(app)[0].path_template == "/hosted-ws"
+        from lauren.reflect import get_route_metadata
+
+        route = get_route_metadata(app, "GET", "/hosted", host="admin.example.test")
+        assert route is not None and route.host == "admin.example.test"
+        assert route.full_path == "/hosted"
+        assert get_all_ws_gateways(app)[0].host == "admin.example.test"

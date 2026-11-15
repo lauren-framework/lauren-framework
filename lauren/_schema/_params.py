@@ -388,6 +388,10 @@ class ScalarPlan(ParamPlan):
             raw = request.path_params.get(ext.name)
             if raw is None:
                 return self._missing(ext, f"missing path parameter {ext.name!r}", ext.name)
+        elif source == "host_param":
+            raw = request.host_params.get(ext.name)
+            if raw is None:
+                return self._missing(ext, f"missing host parameter {ext.name!r}", ext.name)
         elif source == "header":
             raw = request.headers.get(self.key)
             if raw is None:
@@ -831,7 +835,7 @@ def _compile_node(runtime: ValidationRuntime, tp: Any, flavor: int, where: dict[
         return None
 
 
-_SCALAR_SOURCES = ("path", "query", "header", "cookie")
+_SCALAR_SOURCES = ("path", "query", "header", "cookie", "host_param")
 
 
 def build_param_plan(
@@ -864,7 +868,7 @@ def build_param_plan(
         target = _target_with(inner, (*extra, fd) if fd is not None else extra)
         node = _compile_node(runtime, target, STRING, where)
         alias = _alias_of(extra)
-        if source == "path":
+        if source in ("path", "host_param"):
             key = ext.name
         elif source == "header":
             key = alias or (fd.alias if fd and fd.alias else ext.name.replace("_", "-"))

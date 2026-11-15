@@ -189,6 +189,8 @@ class WsControllerMeta:
     tags: tuple[str, ...] = ()
     summary: str | None = None
     description: str | None = None
+    #: Host pattern (``"{tenant}.example.com"``); ``None`` serves every host.
+    host: str | None = None
 
 
 @dataclass(frozen=True)
@@ -243,6 +245,7 @@ def ws_controller(
     tags: list[str] | None = None,
     summary: str | None = None,
     description: str | None = None,
+    host: str | None = None,
 ) -> Callable[[C], C]:
     """Mark a class as a WebSocket gateway mounted at ``path``.
 
@@ -258,15 +261,24 @@ def ws_controller(
     and registers the gateway at the module root. The bare form
     ``@ws_controller`` (no parentheses) is rejected with
     :class:`~lauren.exceptions.DecoratorUsageError`.
+
+    ``host`` routes the gateway by the handshake's ``Host`` header, like
+    ``@controller(host=...)``.
     """
     _reject_bare_usage("ws_controller", path)
+    from .decorators import _check_host, _check_path
+
+    if host is not None:
+        _check_host("ws_controller", host)
 
     def decorator(cls: C) -> C:
+        _check_path("ws_controller", cls, path)
         meta = WsControllerMeta(
             path=path,
             tags=tuple(tags or []),
             summary=summary,
             description=description,
+            host=host,
         )
         # Attach to the class's own __dict__ ONLY — never to a parent.
         setattr(cls, WS_CONTROLLER_META, meta)
@@ -446,6 +458,8 @@ class WebSocket:
         self._state_code = self.STATE_CONNECTING
         self._path_template = path_template
         self._path_params = dict(path_params)
+        #: ``{name}`` labels of a host-routed gateway (``HostParam``).
+        self.host_params: dict[str, str] = {}
         self._headers = Headers(
             [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope.get("headers", [])]
         )

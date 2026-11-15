@@ -7,7 +7,7 @@ First-class WebSocket support via `@ws_controller` gateways.
 ### `ws_controller`
 
 ```python
-def ws_controller(path: str = '', tags: list[str] | None = None, summary: str | None = None, description: str | None = None) -> Callable[[C], C]
+def ws_controller(path: str = '', tags: list[str] | None = None, summary: str | None = None, description: str | None = None, host: str | None = None) -> Callable[[C], C]
 ```
 
 Mark a class as a WebSocket gateway mounted at ``path``.
@@ -24,6 +24,9 @@ status — they must be re-decorated. This is symmetric with
 and registers the gateway at the module root. The bare form
 ``@ws_controller`` (no parentheses) is rejected with
 :class:`~lauren.exceptions.DecoratorUsageError`.
+
+``host`` routes the gateway by the handshake's ``Host`` header, like
+``@controller(host=...)``.
 
 ### `on_connect`
 

@@ -13,50 +13,51 @@ common mistakes.
 2. [Minimal Example](#minimal-example)
 3. [Application Factory & Lifecycle](#application-factory--lifecycle)
 4. [Decorators](#decorators)
-5. [Types (Request / Response / State / Headers)](#types-request--response--state--headers)
-6. [Extractors](#extractors)
-7. [Validation](#validation)
-8. [Pipes](#pipes)
-9. [Custom Extractors (plugin API)](#custom-extractors-plugin-api)
-10. [Dependency Injection](#dependency-injection)
-11. [Custom Providers](#custom-providers)
-12. [Modules](#modules)
-13. [Guards & Middleware](#guards--middleware)
-14. [Interceptors](#interceptors)
-15. [Exception Handlers](#exception-handlers)
-16. [`@propagate_metadata` — copy Lauren decorator metadata between objects](#propagate_metadata--copy-lauren-decorator-metadata-between-objects)
-17. [Typed Metadata & State Keys](#typed-metadata--state-keys)
-18. [Auto-Serialization](#auto-serialization)
-19. [Response Contracts](#response-contracts)
-20. [Pagination](#pagination)
-21. [Sync vs Async Handlers](#sync-vs-async-handlers)
-22. [Background Tasks](#background-tasks)
-23. [Hosted Services & Scheduling](#hosted-services--scheduling)
-24. [Standalone Context & Commands](#standalone-context--commands)
-25. [Error Catalog](#error-catalog)
-26. [Debug Error Pages](#debug-error-pages)
-27. [Testing](#testing)
-28. [Strict Decorator Inheritance](#strict-decorator-inheritance)
-29. [OpenAPI 3.1 Generation](#openapi-31-generation)
-30. [Logging](#logging)
-31. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
-32. [Health & Readiness](#health--readiness)
-33. [Application Events](#application-events)
-34. [WebSockets](#websockets)
-35. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
-36. [Typed Streaming](#typed-streaming)
-37. [Socket.IO Compatibility](#socketio-compatibility)
-38. [Sessions](#sessions)
-39. [Stores & Caching](#stores--caching)
-40. [Codecs & content negotiation](#codecs--content-negotiation)
-41. [Configuration](#configuration)
-42. [Static Files](#static-files)
-43. [Request Arena](#request-arena)
-44. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
-45. [AI Documentation Access](#ai-documentation-access)
-46. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
-47. [Companion Packages](#companion-packages)
-48. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
+5. [HTTP Routing](#http-routing)
+6. [Types (Request / Response / State / Headers)](#types-request--response--state--headers)
+7. [Extractors](#extractors)
+8. [Validation](#validation)
+9. [Pipes](#pipes)
+10. [Custom Extractors (plugin API)](#custom-extractors-plugin-api)
+11. [Dependency Injection](#dependency-injection)
+12. [Custom Providers](#custom-providers)
+13. [Modules](#modules)
+14. [Guards & Middleware](#guards--middleware)
+15. [Interceptors](#interceptors)
+16. [Exception Handlers](#exception-handlers)
+17. [`@propagate_metadata` — copy Lauren decorator metadata between objects](#propagate_metadata--copy-lauren-decorator-metadata-between-objects)
+18. [Typed Metadata & State Keys](#typed-metadata--state-keys)
+19. [Auto-Serialization](#auto-serialization)
+20. [Response Contracts](#response-contracts)
+21. [Pagination](#pagination)
+22. [Sync vs Async Handlers](#sync-vs-async-handlers)
+23. [Background Tasks](#background-tasks)
+24. [Hosted Services & Scheduling](#hosted-services--scheduling)
+25. [Standalone Context & Commands](#standalone-context--commands)
+26. [Error Catalog](#error-catalog)
+27. [Debug Error Pages](#debug-error-pages)
+28. [Testing](#testing)
+29. [Strict Decorator Inheritance](#strict-decorator-inheritance)
+30. [OpenAPI 3.1 Generation](#openapi-31-generation)
+31. [Logging](#logging)
+32. [Graceful Shutdown & Signals](#graceful-shutdown--signals)
+33. [Health & Readiness](#health--readiness)
+34. [Application Events](#application-events)
+35. [WebSockets](#websockets)
+36. [Server-Sent Events (`EventStream`)](#server-sent-events-eventstream)
+37. [Typed Streaming](#typed-streaming)
+38. [Socket.IO Compatibility](#socketio-compatibility)
+39. [Sessions](#sessions)
+40. [Stores & Caching](#stores--caching)
+41. [Codecs & content negotiation](#codecs--content-negotiation)
+42. [Configuration](#configuration)
+43. [Static Files](#static-files)
+44. [Request Arena](#request-arena)
+45. [Reflect — Metadata Introspection API](#reflect--metadata-introspection-api)
+46. [AI Documentation Access](#ai-documentation-access)
+47. [Common Patterns & Anti-Patterns](#common-patterns--anti-patterns)
+48. [Companion Packages](#companion-packages)
+49. [Appendix: Cheat Sheet](#appendix-cheat-sheet)
 
 ---
 
@@ -120,7 +121,7 @@ assert client.post("/users/", json={"name": "Ada", "age": 36}).status_code == 20
 
 ## Application Factory & Lifecycle
 
-### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, problem_type_base=None, debug=False, lazy_startup=True, hosted_services=True, scheduler=True, validation=None, strict_request_scope=False, response_validation="off", json_fallback="warn", pagination=None)`
+### `LaurenFactory.create(root_module, *, strict_lifecycle=True, global_middlewares=None, global_guards=None, global_interceptors=None, global_ws_guards=None, global_ws_interceptors=None, global_exception_handlers=None, global_providers=None, max_body_size=1048576, app_state=None, logger=None, openapi_info=None, openapi_servers=None, openapi_security_schemes=None, openapi_url=None, docs_url=None, redoc_url=None, arena=None, arena_capacity=None, json_encoder=None, signals=None, error_format="default", root_path="", mounts=None, sessions=None, content=None, problem_type_base=None, debug=False, lazy_startup=True, hosted_services=True, scheduler=True, validation=None, strict_request_scope=False, response_validation="off", json_fallback="warn", pagination=None, routing=None)`
 
 Synchronous factory. Returns a `LaurenApp` ready to be served. Executes seven phases:
 
@@ -175,6 +176,7 @@ Failures in phases 1–6 raise a `StartupError` subclass immediately — the app
 | `response_validation` | `str` | `"off"` | Default response contract of every route: `"off"`, `"filter"` (undeclared fields never leave) or `"strict"` (also validates) — see [Response Contracts](#response-contracts); `StartupError` with `reason="invalid_response_validation"` for anything else |
 | `json_fallback` | `str` | `"warn"` | What encoders do with an object no rule covers: `"dict"` (public attributes), `"warn"` (same, logged once per type) or `"error"` (500) — see [Response Contracts](#response-contracts); `StartupError` with `reason="invalid_json_fallback"` |
 | `pagination` | `PaginationConfig` | `None` | App-wide paging defaults, maxima, parameter names, page envelope and cursor secret (see [Pagination](#pagination); `StartupError` with `reason="invalid_pagination_config"` / `"pagination_secret_missing"`) |
+| `routing` | `RoutingConfig` | `None` | HTTP router policies (defaults: auto HEAD on, auto OPTIONS off, trailing slash ignored, raw path off). See [HTTP Routing](#http-routing); invalid config raises `StartupError` (`reason="invalid_routing_config"`). |
 
 `LaurenFactory.create_context(root_module, *, hosted_services=False, scheduler=False, drain_timeout=10.0, **create_kwargs)` builds the same app and wraps it in an `ApplicationContext` — the DI graph and lifecycle without HTTP, for scripts, commands and workers (see [Standalone Context & Commands](#standalone-context--commands)).
 
@@ -216,7 +218,7 @@ the factory when the app compiles — see [Debug Error Pages](#debug-error-pages
 `app.debug` reports whether it is on. It internally creates a root module from
 the registered routes and modules. Mutators — `include_module`, `add_middleware`,
 `add_guard`, `add_interceptor`, `add_exception_handler`, `add_provider`,
-`mount(path, asgi_app)` and the route decorators — must run before the app
+`mount(path, asgi_app)` and the route decorators (`get`, `post`, `route(methods=[...])`, `any_method`, …) — must run before the app
 compiles (first request or `await app.startup()`); afterwards they raise
 `LifecycleViolationError`. `on_startup` hooks run inside `LaurenApp.startup()`
 (the ASGI lifespan, `TestClient`, an `ApplicationContext`) after every
@@ -306,7 +308,7 @@ class Child(Base):  # explicit opt-in
     pass
 ```
 
-### `@module(*, controllers=None, providers=None, imports=None, exports=None)`
+### `@module(*, controllers=None, providers=None, imports=None, exports=None, host=None)`
 
 Declares a module boundary (NestJS-style).
 
@@ -325,12 +327,13 @@ class AppModule:
 - `providers` — classes to register with the DI container.
 - `imports` — other `@module` classes; their `exports` become visible here.
 - `exports` — subset of providers/imports re-exported to modules that import this one.
+- `host` — optional host pattern for the module’s own controllers/gateways, overridden by a controller’s `host=`; see [HTTP Routing](#http-routing).
 
 Violations raised at startup:
 - `CircularModuleError` — an import cycle exists.
 - `ModuleExportViolation` — an export is neither declared nor imported.
 
-### `@controller(prefix="", *, tags=None, summary=None, description=None, deprecated=False, security=None, consumes=None, produces=None, max_body_size=None)`
+### `@controller(prefix="", *, tags=None, summary=None, description=None, deprecated=False, security=None, consumes=None, produces=None, max_body_size=None, host=None)`
 
 Declares a controller class. Automatically makes the class `@injectable(scope=Scope.SINGLETON)` (NestJS behaviour): one instance for the app, so a controller may depend only on singletons. For per-request construction (request-scoped dependencies, per-request `@post_construct`), add `@injectable(scope=Scope.REQUEST)` *below* `@controller`.
 
@@ -345,6 +348,9 @@ class UserController:
 
 - `@get(path="", *, summary=None, description=None, response_model=None, responses=None, deprecated=False, operation_id=None, include_in_schema=True, tags=None, status_code=None, response_validation=None, response_headers=None, consumes=None, produces=None, max_body_size=None)`
 - `@post(...)`, `@put(...)`, `@patch(...)`, `@delete(...)`, `@head(...)`, `@options(...)`
+- `@route(path="", *, methods=["GET", "POST"], **options)` — one metadata entry per verb; invalid methods raise `DecoratorUsageError` at decoration time.
+- `@any_method(path="", **options)` — catch any method at a node; explicit verb handlers win. Not an OpenAPI operation.
+- `@controller(host="{tenant:slug}.example.com")` and `@ws_controller(host=...)` restrict routes to a host; `@module(host=...)` supplies a default.
 
 Each decorator attaches a `RouteMeta` to the method. Multiple route decorators on the same method register multiple routes.
 
@@ -414,11 +420,67 @@ class B: ...
 
 ---
 
+## HTTP Routing
+
+`RoutingConfig(*, auto_head=True, auto_options=False, trailing_slash="ignore", merge_slashes=False, match_raw_path=False, converters={}, infer_converters=False)` is a frozen per-app configuration. Pass it as `LaurenFactory.create(AppModule, routing=RoutingConfig(...))` or `Lauren(routing=...)`. Invalid fields, duplicate built-in converter names and non-converter instances raise `StartupError` (`detail["reason"] == "invalid_routing_config"`). The 1.x default of `match_raw_path=False` is preserved until a major release.
+
+### Path converters, hosts and a canonical example
+
+Route templates support `{name}` (any non-empty segment), `{id:int}`, `{id:int(min=1,max=100)}`, `{id:sint}` (signed integer), `{price:float}`, `{key:uuid}`, `{slug:slug}`, `{code:re([A-Z]{3})}` (whole single-segment fullmatch), and `{*rest}` / `{rest:path}` (remainder). Static segments win, then typed param children by specificity (`re`/custom → `uuid` → `int`/`sint` → `float` → `slug`), then untyped `str`, then wildcard; ties use registration order and a failed branch backtracks. Converter mismatches return 404 (or fall through to a sibling); an untyped `{id}` with `id: int` still matches arbitrary text and gives a 422. `infer_converters=True` opts into `sint`/`uuid` routing for untyped parameters with `int`/`uuid.UUID` annotations. The handler still coerces the string capture; `request.path_params` stays `dict[str, str]`. An unannotated handler argument uses the converter's `python_type`. Conflicting converter/annotation pairs raise `UnresolvableParameterError` during startup. Parameter names belong to each route, so `/users/{id}` and `/users/{user_id}/posts` coexist; identical templates up to names still conflict. OpenAPI paths omit converter specs but use their schemas.
+
+```python run
+from lauren import HostParam, LaurenFactory, RoutingConfig, controller, get, module
+from lauren.testing import TestClient
+
+@controller("/inventory")
+class RoutingInventory:
+    @get("/{id:int(min=1)}")
+    async def by_id(self, id: int) -> dict:
+        return {"id": id}
+
+    @get("/{slug:slug}")
+    async def by_slug(self, slug: str) -> dict:
+        return {"slug": slug}
+
+@controller("/", host="{tenant:slug}.example.com")
+class RoutingTenant:
+    @get("/whoami")
+    async def whoami(self, tenant: HostParam[str]) -> dict:
+        return {"tenant": tenant}
+
+@module(controllers=[RoutingInventory, RoutingTenant])
+class RoutingModule:
+    pass
+
+routing_app = LaurenFactory.create(RoutingModule, routing=RoutingConfig(auto_options=True))
+with TestClient(routing_app) as routing_client:
+    assert routing_client.get("/inventory/7").json() == {"id": 7}
+    assert routing_client.get("/inventory/blue-mug").json() == {"slug": "blue-mug"}
+    assert routing_client.get("/inventory/Bad_Slug").status_code == 404
+    assert routing_client.head("/inventory/7").content == b""
+    assert routing_client.options("/inventory/7").header("allow") == "GET, HEAD, OPTIONS"
+    assert routing_client.get("/whoami", headers={"Host": "Acme.Example.com"}).json() == {"tenant": "acme"}
+```
+
+`PathConverter` is the custom converter base/protocol: set `python_type`, implement `matches(segment) -> bool`, `to_python(segment)`, `to_url(value) -> str` and `openapi_schema() -> dict`; register an **instance** with `RoutingConfig(converters={"isbn": IsbnConverter()})`. Implement `to_url` so `matches(to_url(value))` holds. The matched `RouteEntry.converters[name]` and `RouteEntry.build_path(mapping_or_kwargs)` expose the URL-generation seam (format with `to_url`, then percent-encode each segment; wildcards preserve `/`); `RouteEntry.build_host(...)` formats host labels. Template/host syntax and built-in converter args are checked at decoration; custom converter names resolve at startup. `Router(methods={"WEBSOCKET"})` accepts pseudo-methods on one instance; no process-global method mutation.
+
+### Method and path policies
+
+- **HEAD**: every GET route answers HEAD by running the GET pipeline (request method stays `"HEAD"`), preserving status and headers but sending no body — also for explicit HEAD and error responses. Buffered responses send the would-be GET `Content-Length`; streams are never iterated (call `aclose()` if available), so they keep only an already-declared length. GET handlers' background tasks run. `auto_head=False` restores 405. 405 `Allow` lists HEAD whenever GET is allowed. Synthetic HEAD is not in OpenAPI.
+- **OPTIONS**: `auto_options=True` opts in to 204 + `Allow` on an existing path with no explicit `@options` route; defaults to 405 with `Allow`. Global CORS middleware can answer preflights *before* routing. No handler, guard or interceptor runs for synthetic OPTIONS.
+- **Method-agnostic**: `@route(path, methods=["POST", "PUT"])` appends one route per method; `@any_method(path)` answers every method unless an explicit method handler wins. Any-method routes never 405 and are omitted from OpenAPI. `Lauren` offers `app.route(...)` and `app.any_method(...)`.
+- **Trailing slashes**: `"ignore"` (default) treats `/x` and `/x/` as one route; `"strict"` distinguishes them; `"redirect"` answers the non-declared form with a method-preserving 308 and canonical `Location` including query string and root/mount prefix. `merge_slashes=True` collapses `//`, optionally redirecting to the merged URL.
+- **Raw paths**: the default routes on ASGI's percent-decoded `scope["path"]` (so `%2F` may become a separator). `match_raw_path=True` splits ASGI's `scope["raw_path"]` *before* per-segment strict UTF-8 decoding: `%2F` remains inside a capture, malformed escapes yield `BadRequestError` (400). If `raw_path` is missing, fall back to `path`; `TestClient` supplies realistic `path`/`raw_path`.
+- **Hosts**: `@controller(host="{tenant:slug}.example.com")`, `@module(host=...)` (default for its own controllers/gateways), `@ws_controller(host=...)` and `tenant: HostParam[str]`. Literal and typed parameter labels (no wildcard), case-insensitive host, port ignored. Exact hosts win over parameter hosts (fewer params then declaration order), then host-agnostic routes. Host and path params may not share a name. Host routing is **not authorization**: validate hosts with `lauren-middlewares.trusted_hosts`, authenticate tenants, and accept forwarded hosts only from trusted proxies (the router does not trust forwarded headers directly).
+- **Custom 404/405**: global `@exception_handler(RouteNotFoundError)` / `@exception_handler(MethodNotAllowedError)` can customize routing misses; there is no matched route whose controller/route handlers could run. A handled 405 response that remains status 405 gets `Allow` if the custom response omitted it.
+
+---
+
 ## Types (Request / Response / State / Headers)
 
 ### `Request`
 
-Properties: `method`, `path`, `url`, `path_params`, `query_params`, `headers`, `cookies`, `client`, `server`, `state`, `app_state`, `extensions` (the ASGI `scope["extensions"]`, read-only; empty when the server sent none).
+Properties: `method`, `path`, `url`, `path_params`, `host_params` (matched host labels, read-only mapping), `query_params`, `headers`, `cookies`, `client`, `server`, `state`, `app_state`, `extensions` (the ASGI `scope["extensions"]`, read-only; empty when the server sent none).
 
 Body methods (async): `await request.body() -> bytes`, `await request.text()`, `await request.json()`, `await request.form()`, `request.stream()`.
 
@@ -523,6 +585,7 @@ Extractors convert request data into typed Python values. Built-in:
 | Extractor | Source | Reads body |
 |---|---|---|
 | `Path[T]` | URL path param | no |
+| `HostParam[T]` | host pattern label from `host=` (lowercased) | no |
 | `Query[T]` | query string | no |
 | `Header[T]` | request header | no |
 | `Cookie[T]` | cookie | no |
@@ -1591,6 +1654,7 @@ whose declared types match (`isinstance(exc, declared)`) wins.
   it was handling (`origin="exception_handler"`, `handler`, `cause`).
 * Errors raised by a **global** middleware (or the session engine) are
   outside any route, so only **global** handlers can claim them.
+* Routing misses (`RouteNotFoundError` / `MethodNotAllowedError`) also reach only **global** handlers. A custom 405 response retains the router’s `Allow` header if it still has status 405; GET includes HEAD when auto HEAD is on.
 * A handler that returns its own `Response` owns it: the error's `headers`
   (`WWW-Authenticate`, `Retry-After`, …) are **not** merged — copy them from
   `exc.headers` if needed.
@@ -5606,6 +5670,10 @@ free — put connections in `@post_construct`.
 | `ReflectedModule` | `cls`, `meta` |
 | `ReflectedWsGateway` | `cls`, `path_template`, `meta`, `guards`, `interceptors`, `middlewares`, `messages`, `owning_module` |
 | `ReflectedError` | `cls`, `code`, `status_code`, `category`, `problem_type`, `problem_title`, `summary` — from `error_catalog(include_user=True)` (see [Error catalog as data](#error-catalog-as-data)) |
+
+Host-routed manifests and compiled reflection entries expose `host` separately
+from the path. `get_route_metadata(app, method, path, host=...)` looks up the
+exact registered host pattern; `host=None` retains host-independent lookup.
 
 ### `reflect` module
 

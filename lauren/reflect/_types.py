@@ -101,6 +101,9 @@ class ReflectedRoute:
     :func:`~lauren.reflect.get_all_routes`, the effective list (``ContentConfig.default_produces``
     when undeclared)."""
 
+    host: str | None = None
+    """Canonical host pattern, or ``None`` for a host-independent route."""
+
     max_body_size: int | None = None
     """The route's body limit in bytes (route, else controller); ``None`` means the app's
     ``max_body_size``."""
@@ -173,6 +176,7 @@ class ReflectedWsGateway:
     middlewares: tuple[type, ...]
     messages: tuple[ReflectedWsMessage, ...]
     owning_module: type | None
+    host: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

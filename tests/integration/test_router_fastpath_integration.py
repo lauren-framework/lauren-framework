@@ -78,7 +78,7 @@ def test_pure_static_app_method_not_allowed() -> None:
     app = LaurenFactory.create(_StaticModule)
     r = TestClient(app).delete("/api/health")
     assert r.status_code == 405
-    assert r.header("allow") == "GET"
+    assert r.header("allow") == "GET, HEAD"
 
 
 def test_pure_static_app_route_not_found() -> None:

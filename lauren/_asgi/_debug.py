@@ -255,7 +255,7 @@ def _route(request: Request, app: Any) -> dict[str, Any] | None:
     entry = getattr(request, "_matched_route", None)
     if entry is None:
         return None
-    compiled = app._handlers.get((entry.method, entry.path_template))
+    compiled = app._handlers.get(getattr(entry, "handler_key", None) or (entry.method, entry.path_template))
     if compiled is None:
         return {"method": entry.method, "path_template": entry.path_template}
     return {

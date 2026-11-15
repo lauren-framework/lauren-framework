@@ -50,7 +50,8 @@ class UsersController:
 
 | Annotation | Source | Notes |
 |---|---|---|
-| `Path[T]` | URL segment `{name}` | Auto-applied when param name matches segment |
+| `Path[T]` | URL segment `{name}` | Auto-applied when param name matches segment; `{id:int}` constrains matching (bad id → 404 rather than 422) |
+| `HostParam[T]` | `{name}` in `@controller(host="{name}.example.com")` | DNS-case-insensitive; port ignored; host is not an auth boundary |
 | `Query[T]` | `?key=value` | `list[str]` collects multi-value |
 | `Header[T]` | request header | case-insensitive |
 | `Cookie[T]` | cookie jar | |
@@ -67,7 +68,7 @@ class UsersController:
 - Annotation is a Pydantic model, `msgspec.Struct`, dataclass, `TypedDict`, or `Discriminated[A|B,"key"]` → `Json[T]`
 - Annotation is `int/str/float/bool` → `Query[T]`
 
-See [extractors.md](extractors.md) for field descriptors, pipes, and upload files.
+Path matching prefers static → typed converters (`re`, custom, `uuid`, `int`/`sint`, `float`, `slug`) → untyped `{name}` → wildcard. `RoutingConfig` controls automatic HEAD, optional OPTIONS, trailing slashes, slash merging, and opt-in raw-path matching. See [HTTP Routing](../../docs/guides/routing.md) and [extractors.md](extractors.md) for field descriptors, pipes, and upload files.
 
 ## Validation and the 422 payload
 

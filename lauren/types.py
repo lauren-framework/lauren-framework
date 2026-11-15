@@ -444,6 +444,9 @@ class Request:
         self._raw_query_string = raw_query_string
         self._headers = headers or Headers()
         self._path_params: dict[str, str] = dict(path_params or {})
+        # ``{name}`` labels of a host-routed request (``HostParam``); set by
+        # the router, shared empty mapping otherwise.
+        self._host_params: Mapping[str, str] = _EMPTY_HOST_PARAMS
         self._query_params: dict[str, list[str]] | None = None
         self._client = client or ClientInfo(None, None)
         self._server = server or ServerInfo(None, None)
@@ -525,6 +528,7 @@ class Request:
         # what that code sees. (Same reasoning as the fresh ``State()``
         # below.)
         self._path_params = {}
+        self._host_params = _EMPTY_HOST_PARAMS
         self._query_params = None
         self._client = client
         self._server = server
@@ -565,6 +569,11 @@ class Request:
     @property
     def path_params(self) -> dict[str, str]:
         return self._path_params
+
+    @property
+    def host_params(self) -> Mapping[str, str]:
+        """``{name}`` labels of the matched ``host=`` pattern (lower-cased; empty otherwise)."""
+        return self._host_params
 
     @property
     def query_params(self) -> dict[str, list[str]]:
@@ -741,6 +750,7 @@ class Request:
 
 
 _EMPTY_EXTENSIONS: Mapping[str, Any] = MappingProxyType({})
+_EMPTY_HOST_PARAMS: Mapping[str, str] = MappingProxyType({})
 
 
 async def _empty_receive() -> dict[str, Any]:

@@ -117,7 +117,7 @@ nox -s ver_dec -- --patch
 | `lauren/_health/`                 | Health internals: `@health_check` marker (`_meta`), values + aggregation (`_types`), built-in indicators (`_indicators`), check validation + per-app `HealthRuntime` (`_runtime`), `HealthModule.for_root` + factory hooks (`_module`) |
 | `lauren/_discriminated.py`        | `Discriminated[A\|B,"key"]` — detection, validation, OpenAPI schema |
 | `lauren/_encoders/`               | Optional encoder backends (e.g. `pydantic.py`) |
-| `lauren/_routing/__init__.py`     | Radix-tree router                            |
+| `lauren/_routing/__init__.py`     | Radix-tree router, typed converters, host routing, HEAD/OPTIONS and slash policies |
 | `lauren/_modules/__init__.py`     | Module graph, imports/exports validation     |
 | `lauren/_lifecycle/__init__.py`   | post_construct / pre_destruct scheduler; sync hooks run in thread pool via asyncio.to_thread (timeout-protected, event-loop-safe); second pass runs generator provider teardown (code after yield) for SINGLETON scope |
 | `lauren/_typing/`                 | ForwardRef / PEP 563 resolver                |

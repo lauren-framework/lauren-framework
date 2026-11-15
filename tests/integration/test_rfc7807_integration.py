@@ -228,7 +228,7 @@ def test_rfc7807_method_not_allowed() -> None:
     assert payload["status"] == 405
     assert payload["title"] == "Method Not Allowed"
     # ``Allow`` header still set alongside the problem response.
-    assert r.header("allow") == "GET"
+    assert r.header("allow") == "GET, HEAD"
 
 
 def test_rfc7807_extractor_validation_error() -> None:

@@ -99,6 +99,8 @@ from ._di.custom import (
 )
 from ._routing import Router, RouteEntry
 from .codecs import Codec, JsonCodec, MsgpackCodec
+
+from .routing import PathConverter, RoutingConfig
 from .serialization import (
     JSONEncoder,
     MsgspecEncoder,
@@ -108,6 +110,7 @@ from .serialization import (
     auto_encoder,
 )
 from .decorators import (
+    any_method,
     controller,
     delete,
     exception_handler,
@@ -125,6 +128,7 @@ from .decorators import (
     pre_destruct,
     put,
     raises,
+    route,
     set_metadata,
     use_encoder,
     use_exception_handlers,
@@ -203,6 +207,7 @@ from .extractors import (
     HeaderField,
     Json,
     Path,
+    HostParam,
     PathField,
     Pipe,
     PipeContext,
@@ -431,7 +436,11 @@ __all__ = [
     "signals",
     "Router",
     "RouteEntry",
+    "RoutingConfig",
+    "PathConverter",
     # decorators
+    "route",
+    "any_method",
     "controller",
     "module",
     "injectable",
@@ -545,6 +554,7 @@ __all__ = [
     "Discriminated",
     # extractors
     "Path",
+    "HostParam",
     "Query",
     "Header",
     "Cookie",
