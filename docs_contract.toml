@@ -153,6 +153,7 @@
 ]
 "lauren.types.ExecutionContext" = ["request", "handler_class", "handler_func", "route_template", "metadata", "get_metadata"]
 "lauren.reflect.WsUpgradeRequest" = [
+    "host_params",
     "headers", "path", "path_params", "query_string", "client", "method", "state", "app_state", "scheme",
     "host", "port", "root_path", "base_url", "ws_url_for",
 ]

@@ -33,6 +33,7 @@ import json as _jsonlib
 import logging as _stdlib_logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Annotated, Any, Awaitable, Callable, Iterable, TypeVar, get_args, get_origin, overload
 
 from ._di import DIContainer, INJECTABLE_META, InjectableMeta
@@ -153,6 +154,7 @@ class WsUpgradeRequest(UrlAccess):
     root_path: str = ""
     _urls: Any = field(default=None, repr=False, compare=False)
     _lauren_raw_path: str | None = field(default=None, repr=False, compare=False)
+    host_params: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
     def _url_parts(self) -> tuple[str, str, int, str, Any]:
         return self.scheme, self.host, self.port, self.root_path, self._urls
@@ -1235,6 +1237,7 @@ async def handle_websocket(
             headers=ws.headers,
             path=ws.path,
             path_params=dict(ws.path_params),
+            host_params=MappingProxyType(dict(ws.host_params)),
             query_string=scope.get("query_string", b"").decode("latin-1"),
             state=ws.state,
             app_state=ws.app_state,

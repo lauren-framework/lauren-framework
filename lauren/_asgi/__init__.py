@@ -10,6 +10,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Iterable
 from urllib.parse import quote
 
@@ -2398,7 +2399,7 @@ class LaurenApp:
                                 req.host,
                             )
                             if host_params:
-                                req._host_params = host_params
+                                req._host_params = MappingProxyType(host_params)
                         else:
                             entry, params = self._router.find(
                                 req.method, self._routing_path(req) if self._match_raw_path else req.path

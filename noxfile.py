@@ -379,13 +379,14 @@ def bench_plots(session: nox.Session) -> None:
 # ---------------------------------------------------------------------------
 @nox.session(python=PRIMARY_PYTHON, reuse_venv=True)
 def lint(session: nox.Session) -> None:
-    """Run ruff against the package and tests.
+    """Check package, tests and scripts without changing files.
 
-    Use ``nox -s lint -- --fix`` to auto-fix.
+    Use ``nox -s lint -- --fix`` to opt into auto-fixes.
     """
-    session.install("ruff>=0.6")
-    extra = session.posargs or ["--fix"]
-    session.run("ruff", "check", *extra, "lauren")
+    # Match the pre-commit hook; newer defaults must not rewrite a green tree.
+    session.install("ruff==0.15.12")
+    extra = session.posargs
+    session.run("ruff", "check", *extra, "lauren", "tests", "scripts")
 
 
 @nox.session(python=PRIMARY_PYTHON, reuse_venv=True)
@@ -394,7 +395,7 @@ def format(session: nox.Session) -> None:  # noqa: A001 - intentional name
 
     This *writes* changes. Run ``nox -s lint`` afterwards to verify.
     """
-    session.install("ruff>=0.6")
+    session.install("ruff==0.15.12")
     session.run("ruff", "format", "lauren", "tests")
     session.run("ruff", "check", "--fix", "lauren", "tests")
 

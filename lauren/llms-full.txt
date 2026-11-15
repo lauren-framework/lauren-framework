@@ -5655,7 +5655,8 @@ class ApiKeyGuard:
         return ctx.request.headers.get("x-api-key") == "secret"
 ```
 
-Fields: `headers`, `path`, `path_params`, `query_string`, `client`,
+Fields: `headers`, `path`, `path_params`, `host_params` (read-only matched
+host labels), `query_string`, `client`,
 `method` (always `"GET"`), `state` (the connection's `ws.state`, so
 `ctx.request.state[Key] = value` works in a WebSocket guard) and `app_state`.
 

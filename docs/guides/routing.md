@@ -128,3 +128,8 @@ routes; no internal host-prefixed lookup key is exposed as a URL path.
 `get_all_routes(app)` and `get_all_ws_gateways(app)` return the host pattern
 after startup. To query one exact host route, use
 `get_route_metadata(app, "GET", "/items/{id:int}", host="admin.example.com")`.
+
+HTTP requests and WebSocket upgrade requests expose the same read-only
+`host_params` mapping, so a tenant guard can read
+`ctx.request.host_params.get("tenant")` on either transport. Retaining a
+matched mapping does not expose later pooled requests.

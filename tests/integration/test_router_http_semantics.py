@@ -883,3 +883,71 @@ def test_custom_converter_to_python_supplies_unannotated_handler_value() -> None
         response = client.get("/codes/zz")
 
     assert response.json() == {"value": 1295, "type": "int"}
+
+
+def test_tenant_guard_reads_the_same_host_params_for_http_and_websocket() -> None:
+    from lauren import injectable, use_guards
+
+    @injectable()
+    class TenantGuard:
+        async def can_activate(self, ctx) -> bool:
+            return ctx.request.host_params.get("tenant") == "acme"
+
+    @controller("/tenant-bridge", host="{tenant}.example.test")
+    @use_guards(TenantGuard)
+    class HTTP:
+        @get("/")
+        async def show(self) -> dict:
+            return {"ok": True}
+
+    @ws_controller("/tenant-bridge-ws", host="{tenant}.example.test")
+    @use_guards(TenantGuard)
+    class WS:
+        @on_connect
+        async def join(self, ws: WebSocket) -> None:
+            await ws.accept()
+            await ws.send_json({"ok": True})
+
+    @module(controllers=[HTTP, WS], providers=[TenantGuard])
+    class Root:
+        pass
+
+    with TestClient(LaurenFactory.create(Root), base_url="http://acme.example.test") as client:
+        response = client.get("/tenant-bridge")
+        with client.websocket_connect("/tenant-bridge-ws") as session:
+            message = session.receive_json()
+    assert response.status_code == 200
+    assert message == {"ok": True}
+
+
+def test_matched_host_params_are_immutable_and_retained_across_pool_reuse() -> None:
+    from lauren import injectable, use_guards
+
+    @injectable()
+    class Capture:
+        def __init__(self) -> None:
+            self.seen: list[Any] = []
+
+        async def can_activate(self, ctx) -> bool:
+            self.seen.append(ctx.request.host_params)
+            return True
+
+    @controller("/host-snapshot", host="{tenant}.example.test")
+    @use_guards(Capture)
+    class Snapshot:
+        @get("/")
+        async def show(self) -> dict:
+            return {}
+
+    @module(controllers=[Snapshot], providers=[Capture])
+    class Root:
+        pass
+
+    with TestClient(LaurenFactory.create(Root)) as client:
+        first = client.get("/host-snapshot", headers={"host": "acme.example.test"})
+        second = client.get("/host-snapshot", headers={"host": "other.example.test"})
+        captures = client.resolve(Capture).seen
+    assert first.status_code == second.status_code == 200
+    assert captures == [{"tenant": "acme"}, {"tenant": "other"}]
+    with pytest.raises(TypeError):
+        captures[0]["tenant"] = "changed"

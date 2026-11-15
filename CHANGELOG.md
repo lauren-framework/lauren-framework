@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-11-15
+
 ### Added
 
 - Named HTTP and WebSocket routes with controller/module namespaces, immutable
@@ -62,8 +64,23 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Compiled `ReflectedRoute` values expose `guards`, `interceptors` and
   `middlewares`; the existing readers still require startup.
 
+### Changed
+
+- Compiled HTTP and WebSocket metadata is read-only. Use request/connection
+  state for mutable per-request values; typed collection keys merge by ordered
+  union unless another policy is configured.
+
+### Deprecated
+
+- Missing name-based `StateExtractor` values warn before their default 422
+  becomes 500; `ValidationPolicy(missing_state="error")` opts into that behavior.
+
 ### Fixed
 
+- HTTP and WebSocket guards share read-only matched host parameters, retaining
+  tenant labels safely across request-pool reuse.
+- Decorating subclass metadata no longer silently copies a parent class's
+  metadata; the own-class inheritance rule is preserved.
 - GET routes answer HEAD with the same headers and no response body unless an
   explicit HEAD handler overrides them. Streaming HEAD responses are closed
   without emitting body frames, and `Allow` includes implicit methods.
@@ -72,12 +89,6 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - Preserve an orjson fallback callback's original policy rejection instead of
   replacing it with an error about the outer dictionary.
-
-
-### Deprecated
-
-- Missing name-based `StateExtractor` values warn before their default 422
-  becomes 500; `ValidationPolicy(missing_state="error")` opts into that behavior.
 
 ## [1.11.0] - 2026-11-05
 
@@ -1153,7 +1164,8 @@ Seven framework source files migrated from direct pydantic calls to
   complete reference) shipped inside the wheel.
 - **`TestClient` / `WsTestClient`** — in-process ASGI test clients.
 
-[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.12.0...HEAD
+[1.12.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.12.0
 [1.11.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.11.0
 [1.10.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.10.0
 [1.9.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.9.0
