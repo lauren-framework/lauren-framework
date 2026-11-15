@@ -19,7 +19,7 @@ pass the decorated class where configuration is expected).
 ### `controller`
 
 ```python
-def controller(prefix: str = '', tags: list[str] | None = None, summary: str | None = None, description: str | None = None, deprecated: bool = False, security: list[dict[str, Any]] | None = None) -> Callable[[C], C]
+def controller(prefix: str = '', tags: list[str] | None = None, summary: str | None = None, description: str | None = None, deprecated: bool = False, security: list[dict[str, Any]] | None = None, consumes: Sequence[str] | str | None = None, produces: Sequence[str] | str | None = None, max_body_size: int | None = None) -> Callable[[C], C]
 ```
 
 Declare a controller class.
@@ -43,6 +43,10 @@ decoration.
 ``@controller`` must always be invoked with parentheses. Writing bare
 ``@controller`` on a class is rejected with :class:`DecoratorUsageError`
 because it would otherwise silently bind the class as the URL prefix.
+
+``consumes`` / ``produces`` / ``max_body_size`` are defaults for the
+controller's routes (a route's own value wins); ``consumes`` applies to the
+routes that read a body. They are validated like the route options.
 
 ### `injectable`
 

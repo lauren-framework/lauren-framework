@@ -17,7 +17,7 @@ The top-level entry points for creating and running a Lauren application.
 | `global_interceptors` | `Iterable[type]` | `None` | Interceptor classes wrapping handler execution |
 | `global_exception_handlers` | `Iterable[Any]` | `None` | Exception handlers (`@exception_handler` decorated) |
 | `global_providers` | `Iterable[Any]` | `None` | DI providers visible to every module |
-| `max_body_size` | `int` | `1_048_576` | Max request body size in bytes |
+| `max_body_size` | `int` | `1_048_576` | App-wide request body limit in bytes (routes override it with `max_body_size=`) |
 | `app_state` | `AppState` | `None` | Application-level state container |
 | `logger` | `Logger` | `None` | Logger instance (defaults to `NullLogger`) |
 | `openapi_info` | `dict[str, Any]` | `None` | OpenAPI info block (`title`, `version`, etc.) |
@@ -36,7 +36,7 @@ The top-level entry points for creating and running a Lauren application.
 | `root_path` | `str` | `""` | ASGI root path prefix stripped from requests |
 | `mounts` | `dict[str, Any]` | `None` | Pre-built sub-app mounts (`{path: app}`) |
 | `sessions` | `SessionConfig` | `None` | Enable signed-cookie sessions |
-| `content` | `ContentConfig` | `None` | Request-body content policy (`strict_content_type`) |
+| `content` | `ContentConfig` | `None` | Content policy: `strict_content_type`, `malformed_body_status`, `codecs`, `default_produces`, `strict_accept` — see [Content Negotiation & Body Limits](../guides/content-negotiation.md) |
 | `lazy_startup` | `bool` | `True` | Start on the first HTTP / WebSocket request when the server sent no lifespan events (logs a warning); `False` keeps the app cold until `await app.startup()` |
 | `hosted_services` | `bool` | `True` | `False` discovers and validates `@hosted_service` classes but does not start them |
 | `scheduler` | `bool` | `True` | `False` keeps scheduled jobs validated (and `SchedulerRegistry.trigger` working) but fires nothing |

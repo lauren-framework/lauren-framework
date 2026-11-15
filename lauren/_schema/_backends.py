@@ -16,7 +16,7 @@ messages become ``value_error`` issues that keep the original text.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from ._issues import MISSING, ValidationIssue, _Invalid, jsonable, make_issue
@@ -72,6 +72,13 @@ class PydanticModelNode(Node):
         except self._error as exc:
             raise _Invalid(translate_pydantic(exc)) from None
 
+    def validate_json(self, body: bytes) -> Any:
+        """Parse and validate a JSON body in one pass (``model_validate_json``)."""
+        try:
+            return self.model.model_validate_json(body)  # type: ignore[attr-defined]
+        except self._error as exc:
+            raise _Invalid(translate_pydantic(exc)) from None
+
     def project(self, value: Any) -> Any:
         if not isinstance(value, self.model):
             value = self.model.model_validate(value)  # type: ignore[attr-defined]
@@ -124,6 +131,13 @@ class PydanticAdapterNode(Node):
     def validate(self, value: Any) -> Any:
         try:
             return self._adapter.validate_python(value)
+        except self._error as exc:
+            raise _Invalid(translate_pydantic(exc)) from None
+
+    def validate_json(self, body: bytes) -> Any:
+        """Parse and validate a JSON body in one pass (``TypeAdapter.validate_json``)."""
+        try:
+            return self._adapter.validate_json(body)
         except self._error as exc:
             raise _Invalid(translate_pydantic(exc)) from None
 
@@ -294,6 +308,16 @@ class MsgspecStructNode(Node):
         msgspec = self._msgspec
         try:
             return msgspec.json.decode(body, type=self.struct)
+        except msgspec.ValidationError as exc:
+            raise _Invalid(translate_msgspec(str(exc)), str(exc)) from None
+        except msgspec.DecodeError as exc:
+            raise MsgspecDecodeError(str(exc)) from None
+
+    def decode_with(self, decode: Callable[[bytes, type], Any], body: bytes) -> Any:
+        """Decode and validate a body with a typed msgspec decoder (MessagePack)."""
+        msgspec = self._msgspec
+        try:
+            return decode(body, self.struct)
         except msgspec.ValidationError as exc:
             raise _Invalid(translate_msgspec(str(exc)), str(exc)) from None
         except msgspec.DecodeError as exc:

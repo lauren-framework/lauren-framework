@@ -154,6 +154,7 @@ only. An explicit `Cookie` header turns the jar off for that request.
 | Argument | Sends |
 |---|---|
 | `json=` | `application/json` |
+| `msgpack=` | `application/msgpack` (requires msgspec; `response.msgpack()` decodes the reply) |
 | `data={...}` | `application/x-www-form-urlencoded` (lists repeat the key) |
 | `files={...}` (± `data=`) | `multipart/form-data`, WHATWG-escaped part headers |
 | `content=b"..."` / `"..."` | raw bytes |

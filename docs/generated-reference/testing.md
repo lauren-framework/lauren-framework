@@ -58,7 +58,7 @@ ownership of startup and shutdown.
 #### `TestClient.request`
 
 ```python
-def request(self, method: str, url: str, params: Any = None, headers: Any = None, cookies: Mapping[str, str] | None = None, json: Any = None, data: Any = None, files: Any = None, content: Any = None, follow_redirects: bool | None = None, timeout: float | None = _UNSET, disconnect_after: float | None = None) -> TestResponse
+def request(self, method: str, url: str, params: Any = None, headers: Any = None, cookies: Mapping[str, str] | None = None, json: Any = None, msgpack: Any = None, data: Any = None, files: Any = None, content: Any = None, follow_redirects: bool | None = None, timeout: float | None = _UNSET, disconnect_after: float | None = None) -> TestResponse
 ```
 
 Send one request and return the buffered :class:`TestResponse`.
@@ -116,7 +116,7 @@ def options(self, url: str, kw: Any = {}) -> TestResponse
 #### `TestClient.stream`
 
 ```python
-def stream(self, method: str, url: str, params: Any = None, headers: Any = None, cookies: Mapping[str, str] | None = None, json: Any = None, data: Any = None, files: Any = None, content: Any = None, timeout: float | None = _UNSET, disconnect_after: float | None = None) -> Iterator[StreamingTestResponse]
+def stream(self, method: str, url: str, params: Any = None, headers: Any = None, cookies: Mapping[str, str] | None = None, json: Any = None, msgpack: Any = None, data: Any = None, files: Any = None, content: Any = None, timeout: float | None = _UNSET, disconnect_after: float | None = None) -> Iterator[StreamingTestResponse]
 ```
 
 Send a request and read the response incrementally.

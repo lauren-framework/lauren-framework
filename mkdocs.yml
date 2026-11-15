@@ -174,6 +174,7 @@ nav:
     - Custom Extractors: guides/custom-extractors.md
     - Pipes: guides/pipes.md
     - File Uploads: guides/file-uploads.md
+    - Content Negotiation & Body Limits: guides/content-negotiation.md
     - File Responses & XML: guides/file-responses.md
     - Custom Responses: guides/custom-responses.md
     - Response Contracts: guides/response-contracts.md

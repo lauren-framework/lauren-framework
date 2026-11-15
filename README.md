@@ -205,6 +205,13 @@ core ideas:
   Unsafe configuration is rejected at startup. Pair with
   `content=ContentConfig(strict_content_type=True)` so cross-site `text/plain`
   posts to JSON routes are rejected (415).
+* **Body codecs & content negotiation** — routes declare `consumes=`,
+  `produces=` and `max_body_size=` (also per controller): a 50 MiB upload
+  route no longer raises the limit of every JSON route, `Content-Length` is
+  checked before anything is read and every oversize body is a 413. JSON is
+  decoded with msgspec when installed (pydantic bodies in one pass);
+  `ContentConfig(codecs=[MsgpackCodec()])` adds MessagePack, negotiated from
+  `Accept` with `Vary: Accept` (406 with `strict_accept=True`).
 * **Stores & caching** — one async key-value `Store` protocol (bounded
   `MemoryStore` in core; Redis and friends plug in) behind sessions, session
   revocation, the `Cache` service (`get_or_set` with single-flight, tag

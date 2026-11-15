@@ -143,6 +143,8 @@ nox -s ver_dec -- --patch
 | `lauren/stores.py`                | Public store surface (`Store`, `MemoryStore`, `PrefixedStore`, `StoresModule`, `StoreToken`, `StoreRegistry`, `Lock`, `StoreSessionStore`, `StoreRevocationStore`) |
 | `lauren/_stores/`                 | Store protocol + checks (`_protocol`), bounded `TTLMap` / `MemoryStore` (`_memory`), `PrefixedStore`, `Lock`, `StoresModule` + Phase 2 `install_stores` (`_module`), lifecycle adoption (`_lifecycle`) |
 | `lauren/cache.py`                 | Public caching surface (`Cache`, `TypedCache`, `CacheModule`, `CacheCodec`, `JsonCacheCodec`, `cache_response`, `idempotent`, policies) |
+| `lauren/codecs.py`                | Public codec surface (`Codec`, `JsonCodec`, `MsgpackCodec`, `ContentConfig`) |
+| `lauren/_codecs/`                 | Media types (`_media`), RFC 9110 `Accept` parser + negotiation shared with streams (`_accept`), codecs (`_codec`), `ContentConfig` resolution and per-route `ContentGate` / `BodyDecoding` / `Negotiation` compiled in Phase 5 (`_plan`) |
 | `lauren/_cache/`                  | `Cache` service (`_service`), entry layout (`_entry`), codecs + typed decode (`_codec`), decorators (`_policy`), response-cache keying / store rules / interceptor (`_response`), idempotency interceptor (`_idempotency`), `CacheModule` + factory hooks (`_module`) |
 | `lauren/testing/store_contract.py` | Shared `Store` contract suite (`run_store_contract`, `STORE_CONTRACT_CHECKS`) for core and companion backends |
 | `lauren/_signing.py`              | The shared HMAC signer: key rotation, constant-time verify, per-feature `namespace` (sessions, pagination cursors, signed URLs) |
@@ -404,6 +406,9 @@ Full index: [`skills/README.md`](skills/README.md)
 | `StartupError` (`reason="duplicate_store_name"` / `"invalid_store"`) | Two default stores / one store name registered twice, or a store factory that returned a non-`Store` | Configure each store once in `StoresModule.for_root(...)` |
 | `StartupError` (`reason="pagination_secret_missing"`) | A route takes `CursorPagination` but no cursor secret is configured | `LaurenFactory.create(..., pagination=PaginationConfig(cursor_secret=...))` with a dedicated key (never the session secret) |
 | `StartupError` (`reason="invalid_pagination_config"`) | A `PaginationConfig` value is invalid (`default_limit > max_limit` at one level, duplicate parameter names, `envelope` set per parameter, …) — `detail["field"]` names it | Fix the field; `envelope` / `meta_keys` belong on the app-level config |
+| `StartupError` (`reason="codec_not_registered"`) | A route's `consumes=` (on a `Json[T]` body) or `produces=`, or `ContentConfig.default_produces`, names a media type no codec serves — `detail["media_type"]` / `["route"]` | Add the codec to `ContentConfig(codecs=[...])`, or read the body as `Bytes` |
+| `StartupError` (`reason="codec_conflict"` / `"invalid_content_config"`) | Two codecs claim one media type, or a `ContentConfig` field is invalid | Register each media type once; fix the field named in `detail` |
+| `DecoratorUsageError` (`reason="invalid_max_body_size"` / `"invalid_consumes"` / `"invalid_produces"`) | `max_body_size=` not a positive int (`"10MB"`, `0`), a media type with parameters, or a wildcard in `produces=` | `max_body_size=10 * 1024 * 1024`; bare `type/subtype` entries |
 | `StartupError` (generic) | Missing required parameter in constructor injection | Add the type as a `@module` provider or import its module |
 
 ## Interceptor `CallHandler.handle()` contract (v1.4.2+)

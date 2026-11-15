@@ -20,7 +20,7 @@ nox -s tests_unit                   # unit only  (tests/unit/)
 nox -s tests_integration            # integration only  (tests/integration/)
 nox -s tests_e2e                    # end-to-end only  (tests/e2e/)
 nox -s tests_property               # Hypothesis property tests (tests/property/)
-nox -s coverage                     # tests + branch coverage; fails below 90 %
+nox -s coverage                     # tests + optional backends; branch coverage fails below 90 %
 
 # Run a single test file / specific test without nox overhead
 pip install -e ".[dev]"             # one-time local install
@@ -110,6 +110,7 @@ lauren/                      — framework package
 ├── _socketio.py             — Engine.IO/Socket.IO adapter (private)
 ├── _stores/                 — Store protocol, bounded MemoryStore/TTLMap, Lock, StoresModule (private)
 ├── _cache/                  — Cache service, @cache_response / @idempotent runtime, CacheModule (private)
+├── _codecs/                 — body codecs, Accept parser, per-route content gate / decoding / negotiation (private)
 ├── _schema/                 — native validation engine (F02); `_contract.py` = response projectors
 ├── responses.py             — typed results: Ok / Created / Accepted / NoContent / Status
 ├── reflect/                 — public sub-package: full metadata introspection API
@@ -140,6 +141,7 @@ lauren/                      — framework package
 ├── sse.py                   — EventStream, ServerSentEvent, last_event_id
 ├── stores.py                — public Store / MemoryStore / StoresModule / Lock / session adapters
 ├── cache.py                 — public Cache / CacheModule / cache_response / idempotent
+├── codecs.py                — public Codec / JsonCodec / MsgpackCodec (+ ContentConfig)
 ├── socketio.py              — public Socket.IO controller surface
 ├── testing/                 — TestClient / AsyncTestClient, Test.create_testing_module, pytest_plugin
 ├── types.py                 — Request, Response, State, Headers, Scope, Discriminated, …
@@ -278,6 +280,8 @@ without updating `lauren/__init__.py::__all__` *and* `llms-full.txt`.
 | Sign a value the client must not forge | `lauren._signing.Signer(secrets, namespace="<feature>")` (first key signs, all verify) — never hand-rolled `hmac` |
 | Read typed configuration | `ConfigModule.for_root(Settings)` (or `for_feature`) + inject `Settings`; `load_settings` for factory kwargs |
 | Override JSON encoder per route or controller | `@use_encoder(OrjsonEncoder())` on method or class |
+| Accept a non-JSON body / serve MessagePack | `consumes=` / `produces=` on the route or controller + `ContentConfig(codecs=[MsgpackCodec()])` |
+| Allow a large body on one route only | `@post(..., max_body_size=...)` (or `@controller(..., max_body_size=...)`) — keep the app `max_body_size` small |
 | Declare a route's success status | `@post("/", status_code=201)` or a typed result `-> Created[T]` (`Ok` / `Accepted` / `NoContent` / `Annotated[T, Status(206)]`) |
 | Keep internal fields off the wire (declare the output shape) | Annotate the public type and set `response_validation="filter"` (app or route; `"strict"` also validates) |
 | Document the errors a route raises | `@raises(NotFoundError, ...)` on the method or controller |
@@ -630,6 +634,19 @@ exit).
   once per route and media type) and get one startup WARN until a policy is
   set explicitly; strict mode answers 415 `UnsupportedMediaTypeError` before
   the body is read (guards still run first).
+- ❌ Relying on CORS to stop cross-site JSON POSTs. CORS only hides the
+  response; the "simple" request still runs. Enable
+  `ContentConfig(strict_content_type=True)` (or declare `consumes=`, which is
+  always enforced).
+- ❌ Raising the app-wide `max_body_size` for one upload route — every JSON
+  route then accepts documents that large. Set `max_body_size=` on that route
+  (or its controller); the app limit stays the ceiling for global middleware
+  that reads the body before routing.
+- ❌ Expecting `produces=` to re-encode a returned `Response`, `str` or
+  `bytes` — only values the framework serializes are negotiated. A media type
+  in `consumes=` / `produces=` that no codec serves fails startup
+  (`reason="codec_not_registered"`); `Bytes` routes may name any type in
+  `consumes=`.
 - ❌ Registering a store (or any object with `@post_construct` / `startup()`)
   through `use_value` and expecting its hooks to run — `use_value` never runs
   lifecycle hooks. Use `StoresModule.for_root(default=...)`, pass it to
@@ -879,6 +896,12 @@ exit).
 - `lauren/exceptions.py` — the full error hierarchy (generated table:
    `docs/reference/errors.md`). Pick the closest existing class before adding a new one.
 - `lauren/signals.py` — `SignalBus`, lifecycle events, POSIX signal handlers.
+- `lauren/codecs.py` / `lauren/_codecs/` — `Codec`, `JsonCodec`, `MsgpackCodec`;
+  the RFC 9110 `Accept` parser shared with stream negotiation (`_accept.py`),
+  media-type matching (`_media.py`) and the per-route content rules the factory
+  compiles in Phase 5 (`_plan.py`: `ContentGate`, `BodyDecoding`, `Negotiation`,
+  `resolve_content`). Body decoding itself lives in `JsonPlan`
+  (`lauren/_schema/_params.py`).
 - `lauren/stores.py` / `lauren/_stores/` — `Store` protocol, `MemoryStore` and
   its `TTLMap` engine, `PrefixedStore`, `Lock`, `StoresModule` (Phase 2 hook
   `install_stores`); session adapters in `lauren/_sessions/_adapters.py`;

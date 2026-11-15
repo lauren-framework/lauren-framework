@@ -125,8 +125,15 @@ class Body:
         return not self.streamed
 
 
-def encode_body(*, json: Any, data: Any, files: Any, content: Any) -> Body:
-    """Encode the body arguments of a request (same rules as ``httpx``)."""
+def encode_body(*, json: Any, data: Any, files: Any, content: Any, msgpack: Any = None) -> Body:
+    """Encode one request body (``msgpack=`` needs the optional msgspec package)."""
+    if msgpack is not None:
+        if any(value is not None for value in (json, data, files, content)):
+            raise TypeError("msgpack= cannot be combined with json=, data=, files= or content=")
+        from ..codecs import MsgpackCodec
+
+        codec = MsgpackCodec()
+        return Body(codec.encode(msgpack), codec.media_types[0])
     if files is not None:
         if json is not None or content is not None:
             raise TypeError("files= cannot be combined with json= or content=")

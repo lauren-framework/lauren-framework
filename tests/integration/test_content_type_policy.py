@@ -95,6 +95,7 @@ _REJECTED = [
     "multipart/form-data; boundary=xyz",
     "text/json",
     "application/json; charset=latin-1",
+    "application/json; charset=utf8",  # RFC 8259 names UTF-8, not the alias
 ]
 
 

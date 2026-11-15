@@ -143,3 +143,74 @@ def test_scalar_query_route_throughput() -> None:
     print(f"{'enforce':<28} {enforce:>8.1f}")
 
     assert enforce / warn < 2.0
+
+
+def test_body_codec_decode_cost() -> None:
+    """Compare 1 KiB / 100 KiB body decoding through the installed backends.
+
+    Print wall-clock results (no timing assertions on shared CI hosts). The
+    fast typed paths avoid the JSON-to-dict-to-model second conversion.
+    """
+    import json
+
+    from lauren import JsonCodec
+
+    @dataclasses.dataclass
+    class Payload:
+        values: list[int]
+
+    stdlib, auto = JsonCodec(backend="stdlib"), JsonCodec()
+    model = TypeCompiler(ValidationPolicy(stdlib_models="enforce")).compile(Payload)
+    for size, count in (("~1 KiB", 300), ("~100 KiB", 19_000)):
+        body = json.dumps({"values": list(range(count))}, separators=(",", ":")).encode("utf-8")
+        runs = 1000 if count == 300 else 60
+        rows = [
+            ("stdlib + dataclass", _per_call_us(lambda: model.validate(stdlib.decode(body)), n=runs)),
+            ("auto + dataclass", _per_call_us(lambda: model.validate(auto.decode(body)), n=runs)),
+        ]
+        try:
+            import pydantic
+
+            class PydanticPayload(pydantic.BaseModel):
+                values: list[int]
+
+            rows.extend(
+                [
+                    (
+                        "stdlib + pydantic",
+                        _per_call_us(lambda: PydanticPayload.model_validate(stdlib.decode(body)), n=runs),
+                    ),
+                    (
+                        "pydantic single-pass",
+                        _per_call_us(lambda: PydanticPayload.model_validate_json(body), n=runs),
+                    ),
+                ]
+            )
+        except ImportError:  # pragma: no cover - optional dependency
+            pass
+        try:
+            import msgspec
+
+            class MsgspecPayload(msgspec.Struct):
+                values: list[int]
+
+            rows.extend(
+                [
+                    (
+                        "stdlib + msgspec",
+                        _per_call_us(
+                            lambda: msgspec.convert(stdlib.decode(body), type=MsgspecPayload), n=runs
+                        ),
+                    ),
+                    (
+                        "msgspec single-pass",
+                        _per_call_us(lambda: msgspec.json.decode(body, type=MsgspecPayload), n=runs),
+                    ),
+                ]
+            )
+        except ImportError:  # pragma: no cover - optional dependency
+            pass
+        print(f"\n=== body decode {size} ({len(body)} bytes, us/call) ===")
+        for label, us in rows:
+            print(f"{label:<28} {us:>8.2f}")
+        assert model.validate(stdlib.decode(body)) == model.validate(auto.decode(body))

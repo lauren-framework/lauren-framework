@@ -138,6 +138,23 @@ app = LaurenFactory.create(
 
 For full CORS support (preflight, credentials, max-age, vary), use the `CorsMiddleware` from the `lauren-middlewares` companion package.
 
+## CORS does not stop cross-site JSON posts
+
+CORS only hides the *response*: a browser sends `text/plain`,
+`application/x-www-form-urlencoded` and `multipart/form-data` cross-origin
+without a preflight, and a forged `<form enctype="text/plain">` can produce a
+valid JSON body. Turn on the content-type backstop so JSON routes reject it
+with 415 before the body is read:
+
+```python fragment
+from lauren import ContentConfig, LaurenFactory
+
+app = LaurenFactory.create(AppModule, content=ContentConfig(strict_content_type=True))
+```
+
+Start with `strict_content_type="warn"` to log offending clients first. Keep
+`lauren-guards`' `csrf()` for form-encoded routes that use cookie auth.
+
 ## Testing
 
 ```python

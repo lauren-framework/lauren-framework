@@ -103,4 +103,10 @@ def validate(self, data: bytes, ...) -> dict:
   `["form", "<field>"]` (`ValidationPolicy(stdlib_models="enforce")`). Typed
   multipart form models (files and fields in one model) are planned.
 - Add `Content-Type` header validation as a second check on top of magic bytes
-  to prevent header spoofing.
+  to prevent header spoofing. An `UploadFile` route already answers a request
+  that is not `multipart/form-data` with 415; a `Bytes` route can declare
+  `consumes=["image/png", "image/jpeg"]` to get the same check.
+- Set the size limit on the upload route, not app-wide:
+  `@post("/", max_body_size=10 * 1024 * 1024)`. Every other route keeps the
+  small app default, a `Content-Length` above the limit is rejected before the
+  body is read, and an oversize upload is a 413.
