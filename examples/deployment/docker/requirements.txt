@@ -1,0 +1,2 @@
+lauren>=1.12,<2
+uvicorn[standard]>=0.30,<1
