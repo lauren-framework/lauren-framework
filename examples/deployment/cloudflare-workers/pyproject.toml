@@ -1,0 +1,14 @@
+[project]
+name = "lauren-cloudflare-worker"
+version = "0.1.0"
+description = "A Lauren ASGI application running on Cloudflare Python Workers"
+requires-python = ">=3.12"
+dependencies = [
+    "lauren>=1.12,<2",
+]
+
+[dependency-groups]
+dev = [
+    "workers-py",
+    "workers-runtime-sdk",
+]
