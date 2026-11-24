@@ -9,7 +9,7 @@ class HelloController:
     @get("/")
     async def hello(self) -> dict[str, str]:
         return {"message": "Hello from Lauren"}
-    
+
 
 @module(controllers=[HelloController])
 class AppModule:
