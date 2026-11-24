@@ -1,0 +1,7 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "lauren-hello",
+  "main": "src/worker.py",
+  "compatibility_date": "2026-11-24",
+  "compatibility_flags": ["python_workers"]
+}
