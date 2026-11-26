@@ -86,7 +86,7 @@ BENCH_PYTHON_VERSION = "3.13"
 # env var so contributors / CI can pin to whatever interpreter is
 # installed without editing this file (e.g. ``LAUREN_PRIMARY_PYTHON=3.13``).
 PRIMARY_PYTHON = os.environ.get("LAUREN_PRIMARY_PYTHON", "3.12")
-SUPPORTED_PYTHONS = ["3.11", "3.12", "3.13", "3.14"]
+SUPPORTED_PYTHONS = ["3.11", "3.12", "3.13", "3.14", "3.15"]
 
 # Default sessions when running ``nox`` with no -s argument: keep this
 # list short and fast — these gate every PR locally.
