@@ -1164,7 +1164,8 @@ Seven framework source files migrated from direct pydantic calls to
   complete reference) shipped inside the wheel.
 - **`TestClient` / `WsTestClient`** — in-process ASGI test clients.
 
-[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/lauren-framework/lauren-framework/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.13.0
 [1.12.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.12.0
 [1.11.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.11.0
 [1.10.0]: https://github.com/lauren-framework/lauren-framework/releases/tag/v1.10.0
